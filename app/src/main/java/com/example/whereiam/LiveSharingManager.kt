@@ -19,9 +19,8 @@ import java.security.SecureRandom
 import java.util.Locale
 
 enum class LiveShareProvider(val displayName: String) {
-    SYNOLOGY("Synology NAS (Self-Hosted)"),
     LOCAL("Local Test Server (Port 3003)"),
-    GITHUB("GitHub Pages (Serverless)")
+    SYNOLOGY("Self-Hosted Public Server")
 }
 
 data class LivePoint(
@@ -66,26 +65,21 @@ data class LiveSession(
     fun getViewerUrl(useStatic: Boolean = false, staticId: String? = null): String {
         val targetId = if (useStatic && !staticId.isNullOrBlank()) staticId else id
         val cleanBase = serverUrl.trimEnd('/')
-        // GH Pages viewer base — always januszhatala.github.io/WhereAmI
         val ghPagesBase = "https://januszhatala.github.io/WhereAmI"
         return when (provider) {
             LiveShareProvider.LOCAL ->
                 // LOCAL: viewer served by the local Node.js process (accessible in browser on PC)
                 "http://localhost:3003/live/$targetId"
             LiveShareProvider.SYNOLOGY ->
-                // SYNOLOGY: use GH Pages as the viewer, point it at the Synology API server
-                "$ghPagesBase/live/?id=$targetId&server=${java.net.URLEncoder.encode(cleanBase, "UTF-8")}"
-            LiveShareProvider.GITHUB ->
-                // GITHUB: GH Pages viewer, server URL encoded so the static page knows where the API is
+                // SYNOLOGY: GH Pages viewer with server URL encoded — works for any public HTTPS server
                 "$ghPagesBase/live/?id=$targetId&server=${java.net.URLEncoder.encode(cleanBase, "UTF-8")}"
         }
     }
 
     fun getApiBaseUrl(): String {
-        val cleanBase = serverUrl.trimEnd('/')
         return when (provider) {
             LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-            else -> cleanBase
+            LiveShareProvider.SYNOLOGY -> serverUrl.trimEnd('/')
         }
     }
 }
@@ -195,8 +189,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         val defaultUrl = when (provider) {
             LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-            LiveShareProvider.GITHUB -> "https://januszhatala.github.io/WhereAmI"
-            LiveShareProvider.SYNOLOGY -> "https://live.yourdomain.com"
+            LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
         }
 
         val rawSavedUrl = prefs.getString(KEY_SESSION_SERVER, defaultUrl) ?: defaultUrl
