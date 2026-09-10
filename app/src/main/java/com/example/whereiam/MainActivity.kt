@@ -184,6 +184,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
+    val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
 
@@ -3198,8 +3199,11 @@ fun LocationScreen(viewModel: MainViewModel) {
         var inputServerUrl by remember { mutableStateOf(liveSession?.serverUrl ?: "https://live.yourdomain.com") }
         var selectedProvider by remember { mutableStateOf(liveSession?.provider ?: LiveShareProvider.LOCAL) }
         var providerDropdownExpanded by remember { mutableStateOf(false) }
+        var durationDropdownExpanded by remember { mutableStateOf(false) }
         var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: 5) }
         var selectedDuration by remember { mutableStateOf(6) } // 0 = permanent, 2, 6, 12, 24
+        var upcomingSessionId by remember { mutableStateOf(LiveSharingManager.generate10CharSlug()) }
+        var activeShareModeStatic by remember { mutableStateOf(false) }
 
         Dialog(onDismissRequest = { showLiveShareDialog = false }) {
             Card(
@@ -3240,7 +3244,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     if (liveSession?.isActive == true) {
                         // ── Active Session View ──
                         val session = liveSession!!
-                        val viewerUrl = session.getViewerUrl()
+                        val viewerUrl = session.getViewerUrl(useStatic = activeShareModeStatic, staticId = staticLiveId)
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                             shape = RoundedCornerShape(12.dp),
@@ -3274,8 +3278,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
 
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text("Session Slug: ${session.id}", fontSize = 13.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
-                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Trip Slug: ${session.id}", fontSize = 12.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
+                                    if (staticLiveId.isNotBlank()) {
+                                        Text("Personal ID: $staticLiveId", fontSize = 12.sp, color = Color(0xFF10B981), fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
 
                                 // Live countdown ticker
                                 var remainingMillis by remember(session.expiresAt) {
@@ -3304,19 +3316,91 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
 
                                 Text("Remaining: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(viewerUrl, fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                Spacer(modifier = Modifier.height(10.dp))
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                                // Segmented Link Mode Toggle: Trip Link vs Personal Static Link
+                                Text("Select Link to Share:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 4.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0F172A))
+                                        .padding(3.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (!activeShareModeStatic) Color(0xFF0284C7) else Color.Transparent)
+                                            .clickable { activeShareModeStatic = false }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "🎫 Trip Link (Random)",
+                                            fontSize = 12.sp,
+                                            fontWeight = if (!activeShareModeStatic) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (!activeShareModeStatic) Color.White else Color(0xFF94A3B8)
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (activeShareModeStatic) Color(0xFF0284C7) else Color.Transparent)
+                                            .clickable { activeShareModeStatic = true }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "📡 Personal Link (Static)",
+                                            fontSize = 12.sp,
+                                            fontWeight = if (activeShareModeStatic) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (activeShareModeStatic) Color.White else Color(0xFF94A3B8)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = if (activeShareModeStatic) {
+                                        "Permanent link: visitors can bookmark this link to view any live journey."
+                                    } else {
+                                        "Single-trip link: ephemeral link valid only for this session."
+                                    },
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF38BDF8)
+                                )
+
+                                Surface(
+                                    color = Color(0xFF0F172A),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                ) {
+                                    Text(
+                                        text = viewerUrl,
+                                        fontSize = 11.sp,
+                                        color = Color.LightGray,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Button(
                                         onClick = {
+                                            val shareText = if (activeShareModeStatic) {
+                                                "Follow my live journey anytime on WhereAmI: $viewerUrl"
+                                            } else {
+                                                "Follow my live track on WhereAmI: $viewerUrl"
+                                            }
                                             val sendIntent = Intent().apply {
                                                 action = Intent.ACTION_SEND
-                                                putExtra(Intent.EXTRA_TEXT, "Follow my live track on WhereAmI: $viewerUrl")
+                                                putExtra(Intent.EXTRA_TEXT, shareText)
                                                 type = "text/plain"
                                             }
                                             context.startActivity(Intent.createChooser(sendIntent, "Share Live Track Link"))
@@ -3334,7 +3418,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                             val clip = android.content.ClipData.newPlainText("WhereAmI Live Link", viewerUrl)
                                             clipboard.setPrimaryClip(clip)
-                                            android.widget.Toast.makeText(context, "Link copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                            val label = if (activeShareModeStatic) "Personal Static Link" else "Trip Link"
+                                            android.widget.Toast.makeText(context, "$label copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
@@ -3475,6 +3560,90 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
+
+                        // Upcoming Trip Session ID (with Pre-generation Refresh)
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Trip Session ID (Single Use)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    Text(upcomingSessionId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                                }
+                                IconButton(
+                                    onClick = {
+                                        upcomingSessionId = LiveSharingManager.generate10CharSlug()
+                                        android.widget.Toast.makeText(context, "New Trip ID generated", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Regenerate Trip ID", tint = Color(0xFF38BDF8), modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Personal Static Live ID (Permanent)
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Personal Static Live ID (Permanent)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    Text(staticLiveId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            val newId = liveSharingManager.regenerateStaticLiveId()
+                                            android.widget.Toast.makeText(context, "Regenerated Personal ID: $newId", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "Regenerate Static ID", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            val serverUrl = when (selectedProvider) {
+                                                LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+                                                LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
+                                                LiveShareProvider.GITHUB -> "https://januszhatala.github.io/WhereAmI"
+                                            }
+                                            val dummySession = LiveSession(
+                                                id = staticLiveId,
+                                                title = "",
+                                                createdAt = 0L,
+                                                expiresAt = 0L,
+                                                isActive = false,
+                                                serverUrl = serverUrl,
+                                                provider = selectedProvider,
+                                                syncIntervalMinutes = selectedInterval
+                                            )
+                                            val staticUrl = dummySession.getViewerUrl(useStatic = true, staticId = staticLiveId)
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                            val clip = android.content.ClipData.newPlainText("WhereAmI Static Live Link", staticUrl)
+                                            clipboard.setPrimaryClip(clip)
+                                            android.widget.Toast.makeText(context, "Personal link copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy Static Link", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text("Share Target / Provider", fontSize = 13.sp, color = Color(0xFF94A3B8))
 
                         // Sleek Dropdown Picker
@@ -3590,28 +3759,69 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                         Spacer(modifier = Modifier.height(12.dp))
                         Text("Session Lifetime", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                2 to "2h",
-                                6 to "6h",
-                                12 to "12h",
-                                24 to "24h",
-                                0 to "∞ No limit"
-                            ).forEach { (hrs, label) ->
-                                val isSel = selectedDuration == hrs
-                                Button(
-                                    onClick = { selectedDuration = hrs },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp),
-                                    modifier = Modifier.weight(1f)
+
+                        val lifetimeOptions = listOf(
+                            2 to "⏳ 2 hours",
+                            6 to "⏳ 6 hours (Recommended)",
+                            12 to "⏳ 12 hours",
+                            24 to "⏳ 24 hours (Full Day)",
+                            0 to "♾️ Permanent (No limit until stopped)"
+                        )
+
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            Surface(
+                                onClick = { durationDropdownExpanded = true },
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF1E293B),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(label, fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                    val currentLifetimeLabel = lifetimeOptions.firstOrNull { it.first == selectedDuration }?.second
+                                        ?: "$selectedDuration hours"
+                                    Text(currentLifetimeLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Lifetime", tint = Color(0xFF94A3B8))
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = durationDropdownExpanded,
+                                onDismissRequest = { durationDropdownExpanded = false },
+                                modifier = Modifier.background(Color(0xFF1E293B))
+                            ) {
+                                lifetimeOptions.forEach { (hrs, label) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    color = if (selectedDuration == hrs) Color(0xFF38BDF8) else Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = if (selectedDuration == hrs) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                                if (selectedDuration == hrs) {
+                                                    Icon(
+                                                        Icons.Default.Check,
+                                                        contentDescription = "Selected",
+                                                        tint = Color(0xFF38BDF8),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            selectedDuration = hrs
+                                            durationDropdownExpanded = false
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -3629,8 +3839,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     durationHours = selectedDuration,
                                     serverUrl = serverUrl,
                                     provider = selectedProvider,
-                                    syncIntervalMinutes = selectedInterval
+                                    syncIntervalMinutes = selectedInterval,
+                                    customSlug = upcomingSessionId
                                 )
+                                upcomingSessionId = LiveSharingManager.generate10CharSlug()
                                 android.widget.Toast.makeText(context, "Started Live Share: ${s.id}", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(10.dp),

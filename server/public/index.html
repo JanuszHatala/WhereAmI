@@ -181,7 +181,18 @@
         const lastSeenStr = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec / 60) + 'm ago');
         const lastTimeStr = data.current?.t ? new Date(data.current.t).toLocaleTimeString() : '';
 
-        if (data.ended) {
+        if (data.isStatic && data.ended) {
+          badge.textContent = 'STANDBY';
+          badge.style.background = 'rgba(100, 116, 139, 0.2)';
+          badge.style.color = '#94a3b8';
+          alertBox.className = 'status-alert alert-paused';
+          alertBox.textContent = '📡 Personal Live Link • Host is not currently broadcasting. This page will update automatically when a new live session begins.';
+          alertBox.style.display = 'block';
+          if (!data.current) {
+            document.getElementById('placeName').textContent = 'Waiting for live broadcast...';
+            document.getElementById('countdownChip').style.display = 'none';
+          }
+        } else if (data.ended) {
           badge.textContent = 'ENDED';
           badge.style.background = 'rgba(239, 68, 68, 0.2)';
           badge.style.color = '#ef4444';
