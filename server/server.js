@@ -12,16 +12,28 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 let sessions = new Map();
+let staticAliases = new Map();
 
 function loadSessions() {
   try {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, 'utf8');
       const parsed = JSON.parse(raw);
-      for (const [k, v] of Object.entries(parsed)) {
-        sessions.set(k, v);
+      if (parsed.sessions && typeof parsed.sessions === 'object') {
+        for (const [k, v] of Object.entries(parsed.sessions)) {
+          sessions.set(k, v);
+        }
+        if (parsed.staticAliases && typeof parsed.staticAliases === 'object') {
+          for (const [k, v] of Object.entries(parsed.staticAliases)) {
+            staticAliases.set(k, v);
+          }
+        }
+      } else {
+        for (const [k, v] of Object.entries(parsed)) {
+          sessions.set(k, v);
+        }
       }
-      console.log(`Loaded ${sessions.size} sessions from disk.`);
+      console.log(`Loaded ${sessions.size} sessions and ${staticAliases.size} static aliases from disk.`);
     }
   } catch (e) {
     console.error('Error loading sessions:', e.message);
@@ -30,10 +42,10 @@ function loadSessions() {
 
 function saveSessions() {
   try {
-    const obj = {};
-    for (const [k, v] of sessions.entries()) {
-      obj[k] = v;
-    }
+    const obj = {
+      sessions: Object.fromEntries(sessions),
+      staticAliases: Object.fromEntries(staticAliases)
+    };
     fs.writeFileSync(DATA_FILE, JSON.stringify(obj, null, 2), 'utf8');
   } catch (e) {
     console.error('Error saving sessions:', e.message);
@@ -43,7 +55,7 @@ function saveSessions() {
 loadSessions();
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'WhereIAm Live Server', version: '1.3.1', activeSessions: sessions.size });
+  res.json({ status: 'ok', service: 'WhereIAm Live Server', version: '1.3.3', activeSessions: sessions.size, staticAliases: staticAliases.size });
 });
 
 app.get('/live/:id', (req, res) => {
@@ -52,11 +64,12 @@ app.get('/live/:id', (req, res) => {
 
 app.post('/api/sessions/:id', (req, res) => {
   const { id } = req.params;
-  const { title, createdAt, expiresAt } = req.body;
+  const { title, createdAt, expiresAt, staticId } = req.body;
   let session = sessions.get(id);
   if (!session) {
     session = {
       id,
+      staticId: staticId || null,
       title: title || 'Live Hike',
       createdAt: createdAt || Date.now(),
       expiresAt: expiresAt || 0,
@@ -69,8 +82,14 @@ app.post('/api/sessions/:id', (req, res) => {
   } else {
     if (title) session.title = title;
     if (expiresAt !== undefined) session.expiresAt = expiresAt;
+    if (staticId) session.staticId = staticId;
     session.ended = false;
   }
+
+  if (staticId) {
+    staticAliases.set(staticId, id);
+  }
+
   saveSessions();
   res.json({ success: true, session });
 });
@@ -110,7 +129,32 @@ app.post('/api/sessions/:id/points', (req, res) => {
 
 app.get('/api/sessions/:id', (req, res) => {
   const { id } = req.params;
-  const session = sessions.get(id);
+  let targetId = id;
+  let isStaticLookup = false;
+
+  if (staticAliases.has(id)) {
+    targetId = staticAliases.get(id);
+    isStaticLookup = true;
+  }
+
+  const session = sessions.get(targetId);
+
+  // If looking up via static ID:
+  if (isStaticLookup) {
+    if (!session || session.ended || (session.expiresAt > 0 && Date.now() > session.expiresAt)) {
+      return res.json({
+        id,
+        isStatic: true,
+        active: false,
+        ended: true,
+        title: session ? session.title : 'Live Location',
+        lastSeen: session ? (session.current?.t || session.endedAt || session.createdAt) : null,
+        message: 'Host is currently offline. This personal live link will update automatically when a new live session begins.'
+      });
+    }
+    return res.json({ ...session, isStatic: true, staticId: id });
+  }
+
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (session.expiresAt > 0 && Date.now() > session.expiresAt) {
     session.ended = true;

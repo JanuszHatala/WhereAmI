@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master", "main" ]
     paths:
       - 'server/**'
       - '.github/workflows/docker-publish.yml'
@@ -10,7 +10,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}-live
 
 jobs:
   build-and-push:
@@ -33,11 +32,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set image name to lowercase
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository }}-live"
+          echo "IMAGE_NAME=${IMAGE,,}" >> $GITHUB_ENV
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
             type=sha

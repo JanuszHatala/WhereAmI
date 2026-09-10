@@ -63,14 +63,15 @@ data class LiveSession(
         return if (hours > 0) "${hours}h ${minutes}m left" else "${minutes}m left"
     }
 
-    fun getViewerUrl(): String {
+    fun getViewerUrl(useStatic: Boolean = false, staticId: String? = null): String {
+        val targetId = if (useStatic && !staticId.isNullOrBlank()) staticId else id
         val cleanBase = serverUrl.trimEnd('/')
         return when (provider) {
-            LiveShareProvider.SYNOLOGY -> "$cleanBase/live/$id"
-            LiveShareProvider.LOCAL -> "http://localhost:3003/live/$id"
+            LiveShareProvider.SYNOLOGY -> "$cleanBase/live/$targetId"
+            LiveShareProvider.LOCAL -> "http://localhost:3003/live/$targetId"
             LiveShareProvider.GITHUB -> {
                 val base = if (cleanBase.startsWith("http") && !cleanBase.contains("127.0.0.1") && !cleanBase.contains("localhost")) cleanBase else "https://januszhatala.github.io/WhereAmI"
-                "$base/live/?id=$id"
+                "$base/live/?id=$targetId"
             }
         }
     }
@@ -107,6 +108,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         private const val KEY_SESSION_PROVIDER = "active_session_provider"
         private const val KEY_SESSION_INTERVAL = "active_session_interval"
         private const val KEY_SESSION_LAST_SYNC = "active_session_last_sync"
+        private const val KEY_STATIC_LIVE_ID = "personal_static_live_id"
 
         private val SLUG_CHARS = "23456789abcdefghjkmnpqrstuvwxyz".toCharArray()
         private val random = SecureRandom()
@@ -118,6 +120,14 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
             return sb.toString()
         }
+
+        fun generateStaticSlug(): String {
+            val sb = StringBuilder(6)
+            for (i in 0 until 6) {
+                sb.append(SLUG_CHARS[random.nextInt(SLUG_CHARS.size)])
+            }
+            return "jh-${sb}"
+        }
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -127,13 +137,43 @@ class LiveSharingManager private constructor(private val context: Context) {
     private val _currentSession = MutableStateFlow<LiveSession?>(null)
     val currentSession: StateFlow<LiveSession?> = _currentSession.asStateFlow()
 
+    private val _staticLiveId = MutableStateFlow<String>("")
+    val staticLiveId: StateFlow<String> = _staticLiveId.asStateFlow()
+
     private val memoryPointsQueue = mutableListOf<LivePoint>()
     private var lastRecordedLat: Double = 0.0
     private var lastRecordedLng: Double = 0.0
 
     init {
         loadSavedSession()
+        loadStaticLiveId()
     }
+
+    private fun loadStaticLiveId() {
+        val saved = prefs.getString(KEY_STATIC_LIVE_ID, null)
+        if (saved.isNullOrBlank()) {
+            val generated = generateStaticSlug()
+            prefs.edit().putString(KEY_STATIC_LIVE_ID, generated).apply()
+            _staticLiveId.value = generated
+        } else {
+            _staticLiveId.value = saved
+        }
+    }
+
+    fun regenerateStaticLiveId(): String {
+        val newId = generateStaticSlug()
+        prefs.edit().putString(KEY_STATIC_LIVE_ID, newId).apply()
+        _staticLiveId.value = newId
+        val current = _currentSession.value
+        if (current != null && current.isActive) {
+            scope.launch {
+                postSessionMeta(current, newId)
+            }
+        }
+        return newId
+    }
+
+    fun getStaticLiveId(): String = _staticLiveId.value
 
     private fun loadSavedSession() {
         val id = prefs.getString(KEY_SESSION_ID, null) ?: return
@@ -410,7 +450,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
     }
 
-    private suspend fun postSessionMeta(session: LiveSession): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun postSessionMeta(session: LiveSession, staticIdOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
             val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
@@ -420,11 +460,15 @@ class LiveSharingManager private constructor(private val context: Context) {
             conn.readTimeout = 4000
             conn.doOutput = true
 
+            val targetStaticId = staticIdOverride ?: _staticLiveId.value
             val body = JSONObject().apply {
                 put("id", session.id)
                 put("title", session.title)
                 put("createdAt", session.createdAt)
                 put("expiresAt", session.expiresAt)
+                if (targetStaticId.isNotBlank()) {
+                    put("staticId", targetStaticId)
+                }
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
