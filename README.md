@@ -49,9 +49,106 @@ WhereIAm/
 
 ---
 
-## Live Location Server Setup
+## Live Location Server — Docker Deployment
 
-For complete instructions on deploying the live location sharing service to your **Synology NAS** via Container Manager or Docker Compose, see [server/README.md](file:///c:/DevWorkspaces/jh/ProjektyIT/Android/WhereIAm/server/README.md).
+The live tracking backend is a Node.js service packaged as a Docker image and published to the **GitHub Container Registry (GHCR)**.
+
+### Image
+
+```
+ghcr.io/januszhatala/whereami-live:latest
+```
+
+> The image exposes **port 3003** internally. Map it to whatever external port you prefer (e.g. 80 or a reverse proxy upstream port).
+
+---
+
+### Option A — `docker run`
+
+```bash
+docker run -d \
+  --name whereami-live \
+  --restart unless-stopped \
+  -p 3003:3003 \
+  -v whereami-data:/app/data \
+  ghcr.io/januszhatala/whereami-live:latest
+```
+
+| Flag | Purpose |
+|---|---|
+| `-p 3003:3003` | Expose port 3003. Change the left side to use a different host port, e.g. `-p 80:3003` |
+| `-v whereami-data:/app/data` | Persistent volume for `sessions.json` (keeps data across restarts) |
+
+---
+
+### Option B — Docker Compose
+
+```yaml
+version: "3.8"
+services:
+  whereami-live:
+    image: ghcr.io/januszhatala/whereami-live:latest
+    container_name: whereami-live
+    restart: unless-stopped
+    ports:
+      - "3003:3003"        # Change left side to remap the host port
+    volumes:
+      - whereami-data:/app/data
+
+volumes:
+  whereami-data:
+```
+
+Start with:
+```bash
+docker compose up -d
+```
+
+---
+
+### Visitor View
+
+Once running, visitors open the **GitHub Pages viewer** at:
+
+```
+https://januszhatala.github.io/WhereAmI/live/?id=<SESSION_ID>&server=<YOUR_SERVER_URL>
+```
+
+The shared link from the WhereAmI Android app (with **🌐 Public Server** provider) already encodes the correct `server=` URL automatically.
+
+---
+
+### Changing the Exposed Port
+
+Only the left (host) side of the `-p` mapping needs changing. The container always listens on **3003** internally:
+
+```bash
+# Expose on host port 8080 instead:
+-p 8080:3003
+```
+
+If using a Cloudflare Tunnel or nginx reverse proxy, you can bind to any internal port and let the proxy expose it publicly (as used at `https://whereami.janush.tech`).
+
+---
+
+### Updating to a New Version
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/januszhatala/whereami-live:latest
+
+# Restart the container with the new image
+docker compose pull && docker compose up -d
+# — or with docker run —
+docker stop whereami-live && docker rm whereami-live
+docker run -d ... ghcr.io/januszhatala/whereami-live:latest
+```
+
+Sessions data is preserved in the named volume and survives updates.
+
+---
+
+For full Synology NAS / Container Manager deployment steps, see [server/README.md](server/README.md).
 
 ---
 

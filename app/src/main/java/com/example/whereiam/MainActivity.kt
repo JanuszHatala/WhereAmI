@@ -582,17 +582,26 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                     }
 
-                    // Top Utilities Row: Saved Place / Live Badge on Left, Maps/Share/Collapse on Right
+                    // Top Utilities Row: Country + Badges on Left, Maps/Share/Collapse on Right
+                    val country = primaryPlace?.country?.takeIf { it.isNotBlank() && it != "Unknown Country" } ?: ""
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Left Badges
+                        // Left side: Country + Saved Place / Live Badge
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (country.isNotEmpty()) {
+                                Text(
+                                    text = country,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFCBD5E1)
+                                )
+                            }
                             if (nearbySavedPlace != null) {
                                 Box(
                                     modifier = Modifier
@@ -748,7 +757,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             lineHeight = 36.sp
                         )
                         if (activeTrip != null) {
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "🚩" + activeTrip!!.placesVisited.size,
                                 fontSize = 14.sp,
@@ -798,18 +807,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
 
-                    // Country
-                    val country = primaryPlace?.country ?: ""
-                    if (country.isNotEmpty() && country != "Unknown Country") {
-                        Text(
-                            text = country,
-                            fontSize = 12.sp,
-                            color = Color(0xFFCBD5E1),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
-
+                    // Country is shown in the header row (top of card)
                     // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
                     val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
                     val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
@@ -3198,9 +3196,9 @@ fun LocationScreen(viewModel: MainViewModel) {
         var inputTitle by remember { mutableStateOf(liveSession?.title ?: "My Live Hike") }
         var inputServerUrl by remember {
             val savedUrl = liveSession?.serverUrl ?: ""
-            // Sanitize: if the saved serverUrl is a GH Pages viewer URL (not a real API), reset to placeholder
-            val isViewerUrl = savedUrl.contains("github.io") || savedUrl.contains("januszhatala.github.io")
-            mutableStateOf(if (savedUrl.isBlank() || isViewerUrl) "https://live.yourdomain.com" else savedUrl)
+            // If saved URL is the old viewer URL or a local addr, reset to the real public server
+            val isStaleUrl = savedUrl.contains("github.io") || savedUrl.contains("yourdomain.com")
+            mutableStateOf(if (savedUrl.isBlank() || isStaleUrl) "https://whereami.janush.tech" else savedUrl)
         }
         var selectedProvider by remember { mutableStateOf(liveSession?.provider ?: LiveShareProvider.LOCAL) }
         var providerDropdownExpanded by remember { mutableStateOf(false) }
@@ -3283,13 +3281,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
 
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Trip Slug: ${session.id}", fontSize = 12.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "Trip Slug: ${session.id}",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF38BDF8),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
                                     if (staticLiveId.isNotBlank()) {
-                                        Text("Personal ID: $staticLiveId", fontSize = 12.sp, color = Color(0xFF10B981), fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            text = "Personal ID: $staticLiveId",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF10B981),
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(top = 2.dp)
+                                        )
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -3323,51 +3329,48 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Text("Remaining: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
                                 Spacer(modifier = Modifier.height(10.dp))
 
-                                // Segmented Link Mode Toggle: Trip Link vs Personal Static Link
+                                // Link Mode Dropdown: Trip vs Personal Static
                                 Text("Select Link to Share:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 4.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF0F172A))
-                                        .padding(3.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (!activeShareModeStatic) Color(0xFF0284C7) else Color.Transparent)
-                                            .clickable { activeShareModeStatic = false }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
+                                var linkModeDropdownExpanded by remember { mutableStateOf(false) }
+                                Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                                    Surface(
+                                        onClick = { linkModeDropdownExpanded = true },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFF1E293B),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text(
-                                            text = "🎫 Trip Link (Random)",
-                                            fontSize = 12.sp,
-                                            fontWeight = if (!activeShareModeStatic) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (!activeShareModeStatic) Color.White else Color(0xFF94A3B8)
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = if (activeShareModeStatic) "📡 Personal Link (Static)" else "🎫 Trip Link (Random)",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
+                                        }
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (activeShareModeStatic) Color(0xFF0284C7) else Color.Transparent)
-                                            .clickable { activeShareModeStatic = true }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
+                                    DropdownMenu(
+                                        expanded = linkModeDropdownExpanded,
+                                        onDismissRequest = { linkModeDropdownExpanded = false },
+                                        modifier = Modifier.background(Color(0xFF1E293B))
                                     ) {
-                                        Text(
-                                            text = "📡 Personal Link (Static)",
-                                            fontSize = 12.sp,
-                                            fontWeight = if (activeShareModeStatic) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (activeShareModeStatic) Color.White else Color(0xFF94A3B8)
+                                        DropdownMenuItem(
+                                            text = { Text("🎫 Trip Link (Random)", color = Color.White, fontSize = 13.sp) },
+                                            onClick = { activeShareModeStatic = false; linkModeDropdownExpanded = false }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("📡 Personal Link (Static)", color = Color.White, fontSize = 13.sp) },
+                                            onClick = { activeShareModeStatic = true; linkModeDropdownExpanded = false }
                                         )
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = if (activeShareModeStatic) {
                                         "Permanent link: visitors can bookmark this link to view any live journey."
@@ -3622,8 +3625,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         onClick = {
                                             val serverUrl = when (selectedProvider) {
                                                 LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                                LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
-                                                LiveShareProvider.GITHUB -> "http://127.0.0.1:3003"
+                                                LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://whereami.janush.tech" }
                                             }
                                             val dummySession = LiveSession(
                                                 id = staticLiveId,
@@ -3667,8 +3669,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 ) {
                                     val providerLabel = when (selectedProvider) {
                                         LiveShareProvider.LOCAL -> "💻 Local Test Server (Port 3003)"
-                                        LiveShareProvider.SYNOLOGY -> "🏠 Synology NAS (Docker)"
-                                        LiveShareProvider.GITHUB -> "🐙 GitHub Pages"
+                                        LiveShareProvider.SYNOLOGY -> "🌐 Public Server (GH Pages viewer)"
                                     }
                                     Text(providerLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
@@ -3688,19 +3689,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("🏠 Synology NAS (Docker)", color = Color.White, fontSize = 13.sp) },
+                                    text = { Text("🌐 Public Server (GH Pages viewer)", color = Color.White, fontSize = 13.sp) },
                                     onClick = {
                                         selectedProvider = LiveShareProvider.SYNOLOGY
                                         if (inputServerUrl.contains("127.0.0.1") || inputServerUrl.contains("192.168.") || inputServerUrl.contains("localhost") || inputServerUrl.isBlank()) {
-                                            inputServerUrl = "https://live.yourdomain.com"
+                                            inputServerUrl = "https://whereami.janush.tech"
                                         }
-                                        providerDropdownExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("🐙 GitHub Pages", color = Color.White, fontSize = 13.sp) },
-                                    onClick = {
-                                        selectedProvider = LiveShareProvider.GITHUB
                                         providerDropdownExpanded = false
                                     }
                                 )
@@ -3711,17 +3705,18 @@ fun LocationScreen(viewModel: MainViewModel) {
                         when (selectedProvider) {
                             LiveShareProvider.LOCAL -> {
                                 Text(
-                                    text = "Local test server on PC port 3003 via ADB reverse (127.0.0.1:3003)",
+                                    text = "Local test server on PC port 3003 via ADB reverse. Viewer opens at localhost:3003 — dev/testing only, link not shareable.",
                                     fontSize = 12.sp,
                                     color = Color(0xFF38BDF8)
                                 )
                             }
                             LiveShareProvider.SYNOLOGY -> {
-                                Text("Synology Server URL (Docker Port 3003)", fontSize = 13.sp, color = Color(0xFF94A3B8))
+                                Text("Public API Server URL", fontSize = 13.sp, color = Color(0xFF94A3B8))
                                 OutlinedTextField(
                                     value = inputServerUrl,
                                     onValueChange = { inputServerUrl = it },
                                     singleLine = true,
+                                    placeholder = { Text("https://whereami.janush.tech", color = Color(0xFF475569), fontSize = 12.sp) },
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedTextColor = Color.White,
                                         unfocusedTextColor = Color.White,
@@ -3730,11 +3725,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     ),
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                                 )
-                            }
-                            LiveShareProvider.GITHUB -> {
                                 Text(
-                                    text = "🐙 Same local server as LOCAL (127.0.0.1:3003 via ADB), but the shared link opens on GitHub Pages — a publicly accessible viewer at januszhatala.github.io/WhereAmI/live/",
-                                    fontSize = 12.sp,
+                                    text = "Viewer: januszhatala.github.io/WhereAmI/live/ — link is shareable with anyone.",
+                                    fontSize = 11.sp,
                                     color = Color(0xFF38BDF8)
                                 )
                             }
@@ -3836,8 +3829,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             onClick = {
                                 val serverUrl = when (selectedProvider) {
                                     LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                    LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
-                                    LiveShareProvider.GITHUB -> "http://127.0.0.1:3003"
+                                    LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://whereami.janush.tech" }
                                 }
                                 val s = liveSharingManager.startSession(
                                     title = inputTitle,
