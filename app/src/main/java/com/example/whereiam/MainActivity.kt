@@ -372,11 +372,25 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        // Compact Action Icons (Maps, Share, Expand)
+                        // Compact Action Icons (Live Share, Maps, Share, Expand)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            if (liveSession?.isActive != true) {
+                                IconButton(
+                                    onClick = { showLiveShareDialog = true },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ShareLocation,
+                                        contentDescription = "Live Share Location",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
                             // Open in Google Maps
                             IconButton(
                                 onClick = {
@@ -614,6 +628,24 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                         // Right Utility Icons
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Live Share Shortcut (when inactive)
+                            if (liveSession?.isActive != true) {
+                                IconButton(
+                                    onClick = { showLiveShareDialog = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF1E293B))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ShareLocation,
+                                        contentDescription = "Live Share Location",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
                             // Open in Google Maps
                             IconButton(
                                 onClick = {
@@ -2379,6 +2411,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     color = Color.White
                 )
                 val tileDir = remember { org.osmdroid.config.Configuration.getInstance().osmdroidTileCache }
+                val cacheDownloadState by MapCacheHelper.downloadState.collectAsState()
                 var tileCacheSizeMb by remember {
                     mutableStateOf(
                         try {
@@ -2388,6 +2421,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                         } catch (_: Exception) { 0L }
                     )
                 }
+
+                LaunchedEffect(cacheDownloadState) {
+                    if (cacheDownloadState is CacheDownloadState.Completed) {
+                        try {
+                            var size = 0L
+                            tileDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
+                            tileCacheSizeMb = size / (1024 * 1024)
+                        } catch (_: Exception) {}
+                    }
+                }
+
                 Text(
                     text = "Disk cache: ${tileCacheSizeMb} MB / 500 MB maximum limit",
                     fontSize = 12.sp,
@@ -2416,17 +2460,95 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Clear Cache", color = Color(0xFFF87171), fontSize = 13.sp)
                     }
+                    val isDownloadingTiles = cacheDownloadState is CacheDownloadState.Downloading
                     Button(
                         onClick = {
-                            android.widget.Toast.makeText(context, "Pre-cached current area for offline use", android.widget.Toast.LENGTH_SHORT).show()
+                            val lat = currentLatLng?.first ?: 50.0647
+                            val lng = currentLatLng?.second ?: 19.9450
+                            MapCacheHelper.startCachingRegion(context, lat, lng)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        enabled = !isDownloadingTiles,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1E293B),
+                            disabledContainerColor = Color(0xFF1E293B).copy(alpha = 0.5f)
+                        ),
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Download, contentDescription = "Pre-cache", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Cache Region", color = Color(0xFF38BDF8), fontSize = 13.sp)
+                        Text(if (isDownloadingTiles) "Downloading..." else "Cache Region", color = Color(0xFF38BDF8), fontSize = 13.sp)
                     }
+                }
+
+                // Download progress & feedback
+                when (val state = cacheDownloadState) {
+                    is CacheDownloadState.Downloading -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E293B))
+                                .padding(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Downloading tiles: ${state.current} / ${state.total}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "${state.percent}%",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { state.percent / 100f },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFF38BDF8),
+                                trackColor = Color(0xFF0F172A)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = { MapCacheHelper.cancelDownload() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFF87171))
+                                }
+                            }
+                        }
+                    }
+                    is CacheDownloadState.Completed -> {
+                        Text(
+                            text = "✅ Cached ${state.totalTiles} tiles (+${String.format(Locale.getDefault(), "%.1f", state.addedMb)} MB)",
+                            fontSize = 12.sp,
+                            color = Color(0xFF10B981),
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    is CacheDownloadState.Failed -> {
+                        Text(
+                            text = "❌ Cache download failed: ${state.error}",
+                            fontSize = 12.sp,
+                            color = Color(0xFFEF4444),
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    else -> {}
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -3073,8 +3195,9 @@ fun LocationScreen(viewModel: MainViewModel) {
     // ── Live Location Sharing Management Dialog ─────────────────────────────
     if (showLiveShareDialog) {
         var inputTitle by remember { mutableStateOf(liveSession?.title ?: "My Live Hike") }
-        var inputServerUrl by remember { mutableStateOf(liveSession?.serverUrl ?: "http://192.168.1.100:3003") }
+        var inputServerUrl by remember { mutableStateOf(liveSession?.serverUrl ?: "https://live.yourdomain.com") }
         var selectedProvider by remember { mutableStateOf(liveSession?.provider ?: LiveShareProvider.LOCAL) }
+        var providerDropdownExpanded by remember { mutableStateOf(false) }
         var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: 5) }
         var selectedDuration by remember { mutableStateOf(6) } // 0 = permanent, 2, 6, 12, 24
 
@@ -3153,7 +3276,34 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text("Session Slug: ${session.id}", fontSize = 13.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text("Remaining: ${session.getFormattedRemaining()}", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
+
+                                // Live countdown ticker
+                                var remainingMillis by remember(session.expiresAt) {
+                                    mutableStateOf(if (session.expiresAt > 0L) maxOf(0L, session.expiresAt - System.currentTimeMillis()) else null)
+                                }
+                                LaunchedEffect(session.expiresAt) {
+                                    while (true) {
+                                        remainingMillis = if (session.expiresAt > 0L) maxOf(0L, session.expiresAt - System.currentTimeMillis()) else null
+                                        kotlinx.coroutines.delay(1000L)
+                                    }
+                                }
+                                val formattedRemaining = remember(remainingMillis, session.expiresAt) {
+                                    if (session.expiresAt <= 0L) {
+                                        "Permanent (until manually stopped)"
+                                    } else {
+                                        val rem = remainingMillis ?: 0L
+                                        if (rem <= 0L) {
+                                            "Expired"
+                                        } else {
+                                            val hrs = rem / 3600000L
+                                            val mins = (rem % 3600000L) / 60000L
+                                            val secs = (rem % 60000L) / 1000L
+                                            if (hrs > 0) "${hrs}h ${mins}m ${secs}s left" else "${mins}m ${secs}s left"
+                                        }
+                                    }
+                                }
+
+                                Text("Remaining: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(viewerUrl, fontSize = 12.sp, color = Color(0xFF94A3B8))
 
@@ -3218,35 +3368,64 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(if (session.isPaused) "▶️ Resume Live Sharing" else "⏸️ Pause Live Sharing", fontSize = 13.sp)
                                 }
 
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                                // Extend Buttons (2-columns)
+                                // Duration Adjustments (Decreasing and Increasing)
+                                Text("Adjust Sharing Duration:", fontSize = 11.sp, color = Color(0xFF94A3B8))
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Button(
                                         onClick = {
-                                            liveSharingManager.extendSession(1)
-                                            android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
+                                            liveSharingManager.adjustSession(-1.0)
+                                            android.widget.Toast.makeText(context, "Reduced session by -1 hour", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("Extend +1h", fontSize = 12.sp)
+                                        Text("-1h", fontSize = 11.sp)
                                     }
 
                                     Button(
                                         onClick = {
-                                            liveSharingManager.extendSession(6)
+                                            liveSharingManager.adjustSession(-0.5)
+                                            android.widget.Toast.makeText(context, "Reduced session by -30 min", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("-30m", fontSize = 11.sp)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            liveSharingManager.adjustSession(1.0)
+                                            android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("+1h", fontSize = 11.sp)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            liveSharingManager.adjustSession(6.0)
                                             android.widget.Toast.makeText(context, "Extended session by +6 hours", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("Extend +6h", fontSize = 12.sp)
+                                        Text("+6h", fontSize = 11.sp)
                                     }
                                 }
 
@@ -3297,27 +3476,60 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text("Share Target / Provider", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                LiveShareProvider.LOCAL to "Local Test",
-                                LiveShareProvider.SYNOLOGY to "Synology NAS",
-                                LiveShareProvider.GITHUB to "GitHub Pages"
-                            ).forEach { (prov, label) ->
-                                val isSel = selectedProvider == prov
-                                Button(
-                                    onClick = { selectedProvider = prov },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                                    modifier = Modifier.weight(1f)
+
+                        // Sleek Dropdown Picker
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            Surface(
+                                onClick = { providerDropdownExpanded = true },
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF1E293B),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(label, fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                    val providerLabel = when (selectedProvider) {
+                                        LiveShareProvider.LOCAL -> "💻 Local Test Server (Port 3003)"
+                                        LiveShareProvider.SYNOLOGY -> "🏠 Synology NAS (Docker)"
+                                        LiveShareProvider.GITHUB -> "🐙 GitHub Pages"
+                                    }
+                                    Text(providerLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
                                 }
+                            }
+
+                            DropdownMenu(
+                                expanded = providerDropdownExpanded,
+                                onDismissRequest = { providerDropdownExpanded = false },
+                                modifier = Modifier.background(Color(0xFF1E293B))
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("💻 Local Test Server (Port 3003)", color = Color.White, fontSize = 13.sp) },
+                                    onClick = {
+                                        selectedProvider = LiveShareProvider.LOCAL
+                                        providerDropdownExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("🏠 Synology NAS (Docker)", color = Color.White, fontSize = 13.sp) },
+                                    onClick = {
+                                        selectedProvider = LiveShareProvider.SYNOLOGY
+                                        if (inputServerUrl.contains("127.0.0.1") || inputServerUrl.contains("192.168.") || inputServerUrl.contains("localhost") || inputServerUrl.isBlank()) {
+                                            inputServerUrl = "https://live.yourdomain.com"
+                                        }
+                                        providerDropdownExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("🐙 GitHub Pages", color = Color.White, fontSize = 13.sp) },
+                                    onClick = {
+                                        selectedProvider = LiveShareProvider.GITHUB
+                                        providerDropdownExpanded = false
+                                    }
+                                )
                             }
                         }
 
@@ -3347,7 +3559,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                             LiveShareProvider.GITHUB -> {
                                 Text(
-                                    text = "GitHub Pages static viewer (https://<user>.github.io/WhereAmI/live/?id=...)",
+                                    text = "GitHub Pages static viewer (https://januszhatala.github.io/WhereAmI/live/?id=...)",
                                     fontSize = 12.sp,
                                     color = Color(0xFF38BDF8)
                                 )
@@ -3407,10 +3619,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.height(18.dp))
                         Button(
                             onClick = {
+                                val serverUrl = when (selectedProvider) {
+                                    LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+                                    LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
+                                    LiveShareProvider.GITHUB -> "https://januszhatala.github.io/WhereAmI"
+                                }
                                 val s = liveSharingManager.startSession(
                                     title = inputTitle,
                                     durationHours = selectedDuration,
-                                    serverUrl = if (selectedProvider == LiveShareProvider.SYNOLOGY) inputServerUrl else "http://127.0.0.1:3003",
+                                    serverUrl = serverUrl,
                                     provider = selectedProvider,
                                     syncIntervalMinutes = selectedInterval
                                 )
