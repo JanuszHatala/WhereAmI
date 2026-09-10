@@ -1,0 +1,493 @@
+package com.example.whereiam
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.os.BatteryManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.SecureRandom
+import java.util.Locale
+
+enum class LiveShareProvider(val displayName: String) {
+    SYNOLOGY("Synology NAS (Self-Hosted)"),
+    LOCAL("Local Test Server (Port 3003)"),
+    GITHUB("GitHub Pages (Serverless)")
+}
+
+data class LivePoint(
+    val lat: Double,
+    val lng: Double,
+    val speedKmh: Float,
+    val altitude: Double?,
+    val timestamp: Long
+)
+
+data class LiveSession(
+    val id: String,                    // 10-char slug
+    val title: String,
+    val createdAt: Long,
+    val expiresAt: Long,              // 0 = never / permanent (until manually stopped)
+    val isActive: Boolean,
+    val isPaused: Boolean = false,    // Pause / Resume state
+    val serverUrl: String,            // e.g. "https://whereami.yourdomain.com" or "http://127.0.0.1:3003"
+    val provider: LiveShareProvider,
+    val syncIntervalMinutes: Int,     // 1, 2, 5, 10
+    val lastSyncTime: Long = 0L,
+    val pendingPointsCount: Int = 0
+) {
+    val isExpired: Boolean
+        get() = expiresAt > 0L && System.currentTimeMillis() > expiresAt
+
+    fun getRemainingTimeMs(): Long {
+        if (expiresAt <= 0L) return -1L
+        val diff = expiresAt - System.currentTimeMillis()
+        return if (diff > 0) diff else 0L
+    }
+
+    fun getFormattedRemaining(): String {
+        val ms = getRemainingTimeMs()
+        if (ms < 0L) return "Until stopped (No limit)"
+        if (ms == 0L) return "Expired"
+        val hours = ms / (1000 * 3600)
+        val minutes = (ms % (1000 * 3600)) / (1000 * 60)
+        return if (hours > 0) "${hours}h ${minutes}m left" else "${minutes}m left"
+    }
+
+    fun getViewerUrl(): String {
+        val cleanBase = serverUrl.trimEnd('/')
+        return when (provider) {
+            LiveShareProvider.SYNOLOGY -> "$cleanBase/live/$id"
+            LiveShareProvider.LOCAL -> "http://localhost:3003/live/$id"
+            LiveShareProvider.GITHUB -> "$cleanBase/live/?id=$id"
+        }
+    }
+
+    fun getApiBaseUrl(): String {
+        val cleanBase = serverUrl.trimEnd('/')
+        return when (provider) {
+            LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+            else -> cleanBase
+        }
+    }
+}
+
+class LiveSharingManager private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile
+        private var INSTANCE: LiveSharingManager? = null
+
+        fun getInstance(context: Context): LiveSharingManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: LiveSharingManager(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
+        private const val PREFS_NAME = "where_i_am_live_share_prefs"
+        private const val KEY_SESSION_ID = "active_session_id"
+        private const val KEY_SESSION_TITLE = "active_session_title"
+        private const val KEY_SESSION_CREATED = "active_session_created"
+        private const val KEY_SESSION_EXPIRES = "active_session_expires"
+        private const val KEY_SESSION_ACTIVE = "active_session_is_active"
+        private const val KEY_SESSION_PAUSED = "active_session_is_paused"
+        private const val KEY_SESSION_SERVER = "active_session_server_url"
+        private const val KEY_SESSION_PROVIDER = "active_session_provider"
+        private const val KEY_SESSION_INTERVAL = "active_session_interval"
+        private const val KEY_SESSION_LAST_SYNC = "active_session_last_sync"
+
+        private val SLUG_CHARS = "23456789abcdefghjkmnpqrstuvwxyz".toCharArray()
+        private val random = SecureRandom()
+
+        fun generate10CharSlug(): String {
+            val sb = StringBuilder(10)
+            for (i in 0 until 10) {
+                sb.append(SLUG_CHARS[random.nextInt(SLUG_CHARS.size)])
+            }
+            return sb.toString()
+        }
+    }
+
+    private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private val dbHelper = TripDatabaseHelper(context)
+
+    private val _currentSession = MutableStateFlow<LiveSession?>(null)
+    val currentSession: StateFlow<LiveSession?> = _currentSession.asStateFlow()
+
+    private val memoryPointsQueue = mutableListOf<LivePoint>()
+    private var lastRecordedLat: Double = 0.0
+    private var lastRecordedLng: Double = 0.0
+
+    init {
+        loadSavedSession()
+    }
+
+    private fun loadSavedSession() {
+        val id = prefs.getString(KEY_SESSION_ID, null) ?: return
+        val isActive = prefs.getBoolean(KEY_SESSION_ACTIVE, false)
+        val isPaused = prefs.getBoolean(KEY_SESSION_PAUSED, false)
+        val expiresAt = prefs.getLong(KEY_SESSION_EXPIRES, 0L)
+        if (isActive && expiresAt > 0L && System.currentTimeMillis() > expiresAt) {
+            prefs.edit().putBoolean(KEY_SESSION_ACTIVE, false).apply()
+            return
+        }
+
+        val providerName = prefs.getString(KEY_SESSION_PROVIDER, LiveShareProvider.LOCAL.name) ?: LiveShareProvider.LOCAL.name
+        val provider = try { LiveShareProvider.valueOf(providerName) } catch (_: Exception) { LiveShareProvider.LOCAL }
+
+        val defaultUrl = when (provider) {
+            LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+            LiveShareProvider.GITHUB -> "https://janusz-h.github.io/WhereAmI"
+            LiveShareProvider.SYNOLOGY -> ""
+        }
+
+        val session = LiveSession(
+            id = id,
+            title = prefs.getString(KEY_SESSION_TITLE, "My Live Hike") ?: "My Live Hike",
+            createdAt = prefs.getLong(KEY_SESSION_CREATED, System.currentTimeMillis()),
+            expiresAt = expiresAt,
+            isActive = isActive,
+            isPaused = isPaused,
+            serverUrl = prefs.getString(KEY_SESSION_SERVER, defaultUrl) ?: defaultUrl,
+            provider = provider,
+            syncIntervalMinutes = prefs.getInt(KEY_SESSION_INTERVAL, 5),
+            lastSyncTime = prefs.getLong(KEY_SESSION_LAST_SYNC, 0L),
+            pendingPointsCount = memoryPointsQueue.size
+        )
+        _currentSession.value = session
+    }
+
+    fun startSession(
+        title: String,
+        durationHours: Int, // 0 = never
+        serverUrl: String,
+        provider: LiveShareProvider = LiveShareProvider.LOCAL,
+        syncIntervalMinutes: Int = 5,
+        customSlug: String? = null
+    ): LiveSession {
+        val slug = if (!customSlug.isNullOrBlank()) customSlug else generate10CharSlug()
+        val now = System.currentTimeMillis()
+        val expiresAt = if (durationHours > 0) now + durationHours * 3600_000L else 0L
+
+        val cleanUrl = serverUrl.trim().trimEnd('/')
+
+        val session = LiveSession(
+            id = slug,
+            title = if (title.isNotBlank()) title else "My Live Track",
+            createdAt = now,
+            expiresAt = expiresAt,
+            isActive = true,
+            isPaused = false,
+            serverUrl = cleanUrl,
+            provider = provider,
+            syncIntervalMinutes = syncIntervalMinutes,
+            lastSyncTime = 0L,
+            pendingPointsCount = 0
+        )
+
+        prefs.edit()
+            .putString(KEY_SESSION_ID, session.id)
+            .putString(KEY_SESSION_TITLE, session.title)
+            .putLong(KEY_SESSION_CREATED, session.createdAt)
+            .putLong(KEY_SESSION_EXPIRES, session.expiresAt)
+            .putBoolean(KEY_SESSION_ACTIVE, true)
+            .putBoolean(KEY_SESSION_PAUSED, false)
+            .putString(KEY_SESSION_SERVER, session.serverUrl)
+            .putString(KEY_SESSION_PROVIDER, session.provider.name)
+            .putInt(KEY_SESSION_INTERVAL, session.syncIntervalMinutes)
+            .putLong(KEY_SESSION_LAST_SYNC, 0L)
+            .apply()
+
+        synchronized(memoryPointsQueue) {
+            memoryPointsQueue.clear()
+        }
+        _currentSession.value = session
+
+        scope.launch {
+            postSessionMeta(session)
+        }
+
+        return session
+    }
+
+    fun pauseSession() {
+        val s = _currentSession.value ?: return
+        val paused = s.copy(isPaused = true)
+        prefs.edit().putBoolean(KEY_SESSION_PAUSED, true).apply()
+        _currentSession.value = paused
+
+        scope.launch {
+            postStatusUpdate(s, "paused")
+        }
+    }
+
+    fun resumeSession() {
+        val s = _currentSession.value ?: return
+        val resumed = s.copy(isPaused = false)
+        prefs.edit().putBoolean(KEY_SESSION_PAUSED, false).apply()
+        _currentSession.value = resumed
+
+        scope.launch {
+            postStatusUpdate(s, "active")
+        }
+    }
+
+    fun extendSession(additionalHours: Int) {
+        val s = _currentSession.value ?: return
+        val baseTime = if (s.expiresAt > System.currentTimeMillis()) s.expiresAt else System.currentTimeMillis()
+        val newExpires = baseTime + additionalHours * 3600_000L
+        val extended = s.copy(expiresAt = newExpires)
+        prefs.edit().putLong(KEY_SESSION_EXPIRES, newExpires).apply()
+        _currentSession.value = extended
+
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/extend"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.doOutput = true
+                val body = JSONObject().apply { put("additionalHours", additionalHours) }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun stopSession() {
+        val s = _currentSession.value ?: return
+        val stopped = s.copy(isActive = false, isPaused = false)
+        prefs.edit().putBoolean(KEY_SESSION_ACTIVE, false).putBoolean(KEY_SESSION_PAUSED, false).apply()
+        _currentSession.value = stopped
+
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/end"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun deleteSession() {
+        stopSession()
+        prefs.edit().clear().apply()
+        synchronized(memoryPointsQueue) {
+            memoryPointsQueue.clear()
+        }
+        _currentSession.value = null
+    }
+
+    fun onLocationUpdate(
+        lat: Double,
+        lng: Double,
+        speedKmh: Float,
+        altitude: Double?,
+        placeName: String?,
+        trekkingBadge: String?
+    ) {
+        val session = _currentSession.value ?: return
+        if (!session.isActive || session.isExpired || session.isPaused) {
+            if (session.isExpired && session.isActive) {
+                stopSession()
+            }
+            return
+        }
+
+        // Distance filter: require at least 15 meters or 15 seconds between breadcrumbs
+        val now = System.currentTimeMillis()
+        if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
+            val dist = FloatArray(1)
+            android.location.Location.distanceBetween(lastRecordedLat, lastRecordedLng, lat, lng, dist)
+            if (dist[0] < 15f && memoryPointsQueue.isNotEmpty() && (now - memoryPointsQueue.last().timestamp) < 15_000L) {
+                return
+            }
+        }
+
+        lastRecordedLat = lat
+        lastRecordedLng = lng
+
+        val point = LivePoint(
+            lat = lat,
+            lng = lng,
+            speedKmh = speedKmh,
+            altitude = altitude,
+            timestamp = now
+        )
+
+        synchronized(memoryPointsQueue) {
+            memoryPointsQueue.add(point)
+        }
+
+        _currentSession.value = session.copy(pendingPointsCount = memoryPointsQueue.size)
+
+        // Check if sync interval threshold is reached
+        val intervalMs = session.syncIntervalMinutes * 60_000L
+        val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
+
+        if (shouldSync) {
+            flushPointsToServer(lat, lng, speedKmh, altitude, placeName, trekkingBadge)
+        }
+    }
+
+    fun syncNow(
+        currentLat: Double? = null,
+        currentLng: Double? = null,
+        currentSpeed: Float? = null,
+        currentAlt: Double? = null,
+        placeName: String? = null,
+        trekkingBadge: String? = null
+    ) {
+        val lat = currentLat ?: lastRecordedLat
+        val lng = currentLng ?: lastRecordedLng
+        if (lat == 0.0 && lng == 0.0) return
+        flushPointsToServer(lat, lng, currentSpeed ?: 0f, currentAlt, placeName, trekkingBadge)
+    }
+
+    private fun flushPointsToServer(
+        lat: Double,
+        lng: Double,
+        speedKmh: Float,
+        altitude: Double?,
+        placeName: String?,
+        trekkingBadge: String?
+    ) {
+        val session = _currentSession.value ?: return
+        if (!session.isActive) return
+
+        val pointsToPost: List<LivePoint>
+        synchronized(memoryPointsQueue) {
+            pointsToPost = memoryPointsQueue.toList()
+        }
+
+        scope.launch {
+            val battery = getBatteryPercentage()
+            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, placeName, trekkingBadge, battery)
+            if (ok) {
+                val now = System.currentTimeMillis()
+                synchronized(memoryPointsQueue) {
+                    if (memoryPointsQueue.size > 3) {
+                        val retain = memoryPointsQueue.takeLast(3)
+                        memoryPointsQueue.clear()
+                        memoryPointsQueue.addAll(retain)
+                    }
+                }
+                prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
+                _currentSession.value = session.copy(lastSyncTime = now, pendingPointsCount = memoryPointsQueue.size)
+            }
+        }
+    }
+
+    private suspend fun postSessionMeta(session: LiveSession): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            conn.doOutput = true
+
+            val body = JSONObject().apply {
+                put("id", session.id)
+                put("title", session.title)
+                put("createdAt", session.createdAt)
+                put("expiresAt", session.expiresAt)
+            }
+
+            OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+            conn.responseCode in 200..299
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun postStatusUpdate(session: LiveSession, status: String): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}/status"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            conn.doOutput = true
+            val body = JSONObject().apply { put("status", status) }
+            OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+            conn.responseCode in 200..299
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun postSyncPayload(
+        session: LiveSession,
+        points: List<LivePoint>,
+        lat: Double,
+        lng: Double,
+        speed: Float,
+        altitude: Double?,
+        place: String?,
+        trekking: String?,
+        battery: Int
+    ): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}/points"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.doOutput = true
+
+            val pointsArr = JSONArray()
+            points.forEach { p ->
+                pointsArr.put(JSONObject().apply {
+                    put("lat", p.lat)
+                    put("lng", p.lng)
+                    put("spd", p.speedKmh)
+                    put("alt", p.altitude ?: JSONObject.NULL)
+                    put("t", p.timestamp)
+                })
+            }
+
+            val root = JSONObject().apply {
+                put("points", pointsArr)
+                put("current", JSONObject().apply {
+                    put("lat", lat)
+                    put("lng", lng)
+                    put("spd", speed)
+                    put("alt", altitude ?: JSONObject.NULL)
+                    put("place", place ?: "")
+                    put("trekking", trekking ?: "")
+                    put("battery", battery)
+                    put("t", System.currentTimeMillis())
+                })
+            }
+
+            OutputStreamWriter(conn.outputStream).use { it.write(root.toString()) }
+            conn.responseCode in 200..299
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun getBatteryPercentage(): Int {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        return bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+    }
+}
