@@ -3196,7 +3196,12 @@ fun LocationScreen(viewModel: MainViewModel) {
     // ── Live Location Sharing Management Dialog ─────────────────────────────
     if (showLiveShareDialog) {
         var inputTitle by remember { mutableStateOf(liveSession?.title ?: "My Live Hike") }
-        var inputServerUrl by remember { mutableStateOf(liveSession?.serverUrl ?: "https://live.yourdomain.com") }
+        var inputServerUrl by remember {
+            val savedUrl = liveSession?.serverUrl ?: ""
+            // Sanitize: if the saved serverUrl is a GH Pages viewer URL (not a real API), reset to placeholder
+            val isViewerUrl = savedUrl.contains("github.io") || savedUrl.contains("januszhatala.github.io")
+            mutableStateOf(if (savedUrl.isBlank() || isViewerUrl) "https://live.yourdomain.com" else savedUrl)
+        }
         var selectedProvider by remember { mutableStateOf(liveSession?.provider ?: LiveShareProvider.LOCAL) }
         var providerDropdownExpanded by remember { mutableStateOf(false) }
         var durationDropdownExpanded by remember { mutableStateOf(false) }
