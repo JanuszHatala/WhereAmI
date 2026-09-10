@@ -68,7 +68,10 @@ data class LiveSession(
         return when (provider) {
             LiveShareProvider.SYNOLOGY -> "$cleanBase/live/$id"
             LiveShareProvider.LOCAL -> "http://localhost:3003/live/$id"
-            LiveShareProvider.GITHUB -> "$cleanBase/live/?id=$id"
+            LiveShareProvider.GITHUB -> {
+                val base = if (cleanBase.startsWith("http") && !cleanBase.contains("127.0.0.1") && !cleanBase.contains("localhost")) cleanBase else "https://januszhatala.github.io/WhereAmI"
+                "$base/live/?id=$id"
+            }
         }
     }
 
@@ -147,9 +150,14 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         val defaultUrl = when (provider) {
             LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-            LiveShareProvider.GITHUB -> "https://janusz-h.github.io/WhereAmI"
-            LiveShareProvider.SYNOLOGY -> ""
+            LiveShareProvider.GITHUB -> "https://januszhatala.github.io/WhereAmI"
+            LiveShareProvider.SYNOLOGY -> "https://live.yourdomain.com"
         }
+
+        val rawSavedUrl = prefs.getString(KEY_SESSION_SERVER, defaultUrl) ?: defaultUrl
+        val cleanUrl = if (provider == LiveShareProvider.SYNOLOGY && (rawSavedUrl.contains("127.0.0.1") || rawSavedUrl.contains("192.168.") || rawSavedUrl.contains("localhost"))) {
+            "https://live.yourdomain.com"
+        } else rawSavedUrl
 
         val session = LiveSession(
             id = id,
@@ -158,7 +166,7 @@ class LiveSharingManager private constructor(private val context: Context) {
             expiresAt = expiresAt,
             isActive = isActive,
             isPaused = isPaused,
-            serverUrl = prefs.getString(KEY_SESSION_SERVER, defaultUrl) ?: defaultUrl,
+            serverUrl = cleanUrl,
             provider = provider,
             syncIntervalMinutes = prefs.getInt(KEY_SESSION_INTERVAL, 5),
             lastSyncTime = prefs.getLong(KEY_SESSION_LAST_SYNC, 0L),
@@ -242,13 +250,18 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
     }
 
-    fun extendSession(additionalHours: Int) {
+    fun adjustSession(additionalHours: Double) {
         val s = _currentSession.value ?: return
-        val baseTime = if (s.expiresAt > System.currentTimeMillis()) s.expiresAt else System.currentTimeMillis()
-        val newExpires = baseTime + additionalHours * 3600_000L
-        val extended = s.copy(expiresAt = newExpires)
+        val now = System.currentTimeMillis()
+        val newExpires = if (s.expiresAt <= 0L) {
+            if (additionalHours > 0) now + (additionalHours * 3600_000.0).toLong() else 0L
+        } else {
+            val baseTime = if (s.expiresAt > now) s.expiresAt else now
+            (baseTime + (additionalHours * 3600_000.0).toLong()).coerceAtLeast(now + 60_000L)
+        }
+        val adjusted = s.copy(expiresAt = newExpires)
         prefs.edit().putLong(KEY_SESSION_EXPIRES, newExpires).apply()
-        _currentSession.value = extended
+        _currentSession.value = adjusted
 
         scope.launch {
             try {
@@ -264,6 +277,10 @@ class LiveSharingManager private constructor(private val context: Context) {
                 conn.responseCode
             } catch (_: Exception) {}
         }
+    }
+
+    fun extendSession(additionalHours: Int) {
+        adjustSession(additionalHours.toDouble())
     }
 
     fun stopSession() {
