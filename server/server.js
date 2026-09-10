@@ -135,9 +135,15 @@ app.post('/api/sessions/:id/status', (req, res) => {
 app.post('/api/sessions/:id/extend', (req, res) => {
   const session = sessions.get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  const additionalHours = parseInt(req.body.additionalHours) || 1;
-  const baseTime = session.expiresAt > Date.now() ? session.expiresAt : Date.now();
-  session.expiresAt = baseTime + additionalHours * 3600_000;
+  const additionalHours = parseFloat(req.body.additionalHours) || 0;
+  if (session.expiresAt <= 0) {
+    if (additionalHours > 0) {
+      session.expiresAt = Date.now() + additionalHours * 3600_000;
+    }
+  } else {
+    const baseTime = session.expiresAt > Date.now() ? session.expiresAt : Date.now();
+    session.expiresAt = Math.max(Date.now() + 60000, baseTime + additionalHours * 3600_000);
+  }
   session.ended = false;
   saveSessions();
   res.json({ success: true, expiresAt: session.expiresAt });

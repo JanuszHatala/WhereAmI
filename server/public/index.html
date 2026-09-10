@@ -177,18 +177,31 @@
         const alertBox = document.getElementById('statusAlert');
         const badge = document.getElementById('liveBadge');
 
+        const agoSec = data.current?.t ? Math.max(0, Math.round((Date.now() - data.current.t) / 1000)) : 0;
+        const lastSeenStr = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec / 60) + 'm ago');
+        const lastTimeStr = data.current?.t ? new Date(data.current.t).toLocaleTimeString() : '';
+
         if (data.ended) {
           badge.textContent = 'ENDED';
           badge.style.background = 'rgba(239, 68, 68, 0.2)';
           badge.style.color = '#ef4444';
           alertBox.className = 'status-alert alert-ended';
           alertBox.textContent = '📍 Live Sharing Ended. The host has completed this trip.';
+          alertBox.style.display = 'block';
         } else if (data.paused) {
           badge.textContent = 'PAUSED';
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
           badge.style.color = '#fbbf24';
           alertBox.className = 'status-alert alert-paused';
           alertBox.textContent = '⏸️ Live Sharing is currently paused by the host.';
+          alertBox.style.display = 'block';
+        } else if (agoSec >= 180) {
+          badge.textContent = 'DISCONNECTED';
+          badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.color = '#fbbf24';
+          alertBox.className = 'status-alert alert-paused';
+          alertBox.textContent = `⚠️ Host disconnected (last seen ${lastSeenStr} at ${lastTimeStr}). Showing last known position.`;
+          alertBox.style.display = 'block';
         } else {
           badge.innerHTML = '<div class="pulse-dot"></div> LIVE';
           badge.style.background = 'rgba(16, 185, 129, 0.2)';
