@@ -3623,7 +3623,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             val serverUrl = when (selectedProvider) {
                                                 LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
                                                 LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
-                                                LiveShareProvider.GITHUB -> inputServerUrl.ifBlank { "http://127.0.0.1:3003" }
+                                                LiveShareProvider.GITHUB -> "http://127.0.0.1:3003"
                                             }
                                             val dummySession = LiveSession(
                                                 id = staticLiveId,
@@ -3701,9 +3701,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     text = { Text("🐙 GitHub Pages", color = Color.White, fontSize = 13.sp) },
                                     onClick = {
                                         selectedProvider = LiveShareProvider.GITHUB
-                                        if (inputServerUrl.isBlank() || inputServerUrl == "https://live.yourdomain.com") {
-                                            inputServerUrl = "http://127.0.0.1:3003"
-                                        }
                                         providerDropdownExpanded = false
                                     }
                                 )
@@ -3735,23 +3732,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 )
                             }
                             LiveShareProvider.GITHUB -> {
-                                Text("API Server URL (where your Node.js server runs)", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                                OutlinedTextField(
-                                    value = inputServerUrl,
-                                    onValueChange = { inputServerUrl = it },
-                                    singleLine = true,
-                                    placeholder = { Text("http://127.0.0.1:3003", color = Color(0xFF475569), fontSize = 12.sp) },
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        focusedBorderColor = Color(0xFF0284C7),
-                                        unfocusedBorderColor = Color(0xFF334155)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                                )
                                 Text(
-                                    text = "Viewer: januszhatala.github.io/WhereAmI/live/  •  The server URL above is encoded in the shared link so visitors' browsers can reach your API.",
-                                    fontSize = 11.sp,
+                                    text = "🐙 Same local server as LOCAL (127.0.0.1:3003 via ADB), but the shared link opens on GitHub Pages — a publicly accessible viewer at januszhatala.github.io/WhereAmI/live/",
+                                    fontSize = 12.sp,
                                     color = Color(0xFF38BDF8)
                                 )
                             }
@@ -3854,7 +3837,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 val serverUrl = when (selectedProvider) {
                                     LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
                                     LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://live.yourdomain.com" }
-                                    LiveShareProvider.GITHUB -> inputServerUrl.ifBlank { "http://127.0.0.1:3003" }
+                                    LiveShareProvider.GITHUB -> "http://127.0.0.1:3003"
                                 }
                                 val s = liveSharingManager.startSession(
                                     title = inputTitle,
