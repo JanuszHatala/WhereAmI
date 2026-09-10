@@ -66,13 +66,18 @@ data class LiveSession(
     fun getViewerUrl(useStatic: Boolean = false, staticId: String? = null): String {
         val targetId = if (useStatic && !staticId.isNullOrBlank()) staticId else id
         val cleanBase = serverUrl.trimEnd('/')
+        // GH Pages viewer base — always januszhatala.github.io/WhereAmI
+        val ghPagesBase = "https://januszhatala.github.io/WhereAmI"
         return when (provider) {
-            LiveShareProvider.SYNOLOGY -> "$cleanBase/live/$targetId"
-            LiveShareProvider.LOCAL -> "http://localhost:3003/live/$targetId"
-            LiveShareProvider.GITHUB -> {
-                val base = if (cleanBase.startsWith("http") && !cleanBase.contains("127.0.0.1") && !cleanBase.contains("localhost")) cleanBase else "https://januszhatala.github.io/WhereAmI"
-                "$base/live/?id=$targetId"
-            }
+            LiveShareProvider.LOCAL ->
+                // LOCAL: viewer served by the local Node.js process (accessible in browser on PC)
+                "http://localhost:3003/live/$targetId"
+            LiveShareProvider.SYNOLOGY ->
+                // SYNOLOGY: use GH Pages as the viewer, point it at the Synology API server
+                "$ghPagesBase/live/?id=$targetId&server=${java.net.URLEncoder.encode(cleanBase, "UTF-8")}"
+            LiveShareProvider.GITHUB ->
+                // GITHUB: GH Pages viewer, server URL encoded so the static page knows where the API is
+                "$ghPagesBase/live/?id=$targetId&server=${java.net.URLEncoder.encode(cleanBase, "UTF-8")}"
         }
     }
 
