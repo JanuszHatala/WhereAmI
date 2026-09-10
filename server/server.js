@@ -7,6 +7,12 @@ const app = express();
 const PORT = process.env.PORT || 3003;
 const DATA_FILE = path.join(__dirname, 'sessions.json');
 
+// Chrome Private Network Access: allow https pages (e.g. GH Pages) to fetch from http://127.0.0.1
+// Must be before cors() so this header is included in the preflight response
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
