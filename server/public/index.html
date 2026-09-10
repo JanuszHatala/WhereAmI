@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>WhereAmI • Live Location</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #0f172a; }
+    #map { width: 100%; height: 100%; z-index: 1; }
+    
+    .top-card {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      max-width: 500px;
+      margin: 0 auto;
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 14px 18px;
+      color: #fff;
+      z-index: 1000;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .status-badges { display: flex; align-items: center; gap: 8px; }
+    
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(16, 185, 129, 0.2); color: #10b981;
+      padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
+    
+    .countdown-chip {
+      background: rgba(255, 255, 255, 0.08);
+      color: #94a3b8;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 8px;
+      font-weight: 500;
+    }
+    
+    .place-name { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .trekking-badge { font-size: 13px; color: #38bdf8; font-weight: 600; margin-bottom: 8px; }
+    
+    .status-alert {
+      display: none;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .alert-paused { display: block; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .alert-ended { display: block; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    .stats-row { display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; font-size: 13px; color: #94a3b8; }
+    .stat-item b { color: #f8fafc; }
+    
+    .recenter-btn {
+      position: absolute;
+      bottom: 24px;
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #0284c7;
+      border: none;
+      color: #fff;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+    }
+
+    .live-user-marker {
+      width: 22px;
+      height: 22px;
+      background: #0284c7;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 12px rgba(2, 132, 199, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <div class="top-card">
+    <div class="header-row">
+      <span id="sessionTitle" style="font-weight: 600; font-size: 14px; color: #cbd5e1;">Live Location</span>
+      <div class="status-badges">
+        <span id="countdownChip" class="countdown-chip">Connecting...</span>
+        <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div> LIVE</div>
+      </div>
+    </div>
+    
+    <div id="statusAlert" class="status-alert"></div>
+    <div id="placeName" class="place-name">Connecting...</div>
+    <div id="trekkingBadge" class="trekking-badge" style="display: none;"></div>
+    
+    <div class="stats-row">
+      <div class="stat-item">Speed: <b id="speedVal">--</b></div>
+      <div class="stat-item">Alt: <b id="altVal">--</b></div>
+      <div class="stat-item">Battery: <b id="batteryVal">--</b></div>
+      <div class="stat-item"><span id="updatedVal">Waiting...</span></div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <button class="recenter-btn" onclick="recenterMap()">🎯</button>
+
+  <script>
+    const pathParts = window.location.pathname.split('/');
+    let sessionId = pathParts[pathParts.length - 1];
+    if (!sessionId || sessionId === 'live') {
+      const urlParams = new URLSearchParams(window.location.search);
+      sessionId = urlParams.get('id') || 'demo';
+    }
+
+    const map = L.map('map', { zoomControl: false }).setView([49.822, 19.044], 14);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let userMarker = null;
+    let trackPolyline = L.polyline([], { color: '#0284c7', weight: 5, opacity: 0.85 }).addTo(map);
+    let autoFollow = true;
+    let lastCoords = null;
+
+    map.on('dragstart', () => { autoFollow = false; });
+
+    function recenterMap() {
+      if (lastCoords) {
+        map.setView(lastCoords, 16);
+        autoFollow = true;
+      }
+    }
+
+    function formatTimeRemaining(expiresAt) {
+      if (!expiresAt || expiresAt <= 0) return "Continuous";
+      const diff = expiresAt - Date.now();
+      if (diff <= 0) return "Expired";
+      const hrs = Math.floor(diff / (1000 * 3600));
+      const mins = Math.floor((diff % (1000 * 3600)) / (1000 * 60));
+      return hrs > 0 ? `⏳ ${hrs}h ${mins}m left` : `⏳ ${mins}m left`;
+    }
+
+    async function fetchTrack() {
+      try {
+        const res = await fetch('/api/sessions/' + sessionId);
+        if (!res.ok) {
+          if (res.status === 404) {
+            document.getElementById('placeName').textContent = 'Session not found';
+            document.getElementById('liveBadge').textContent = 'OFFLINE';
+            document.getElementById('liveBadge').style.background = 'rgba(100, 116, 139, 0.2)';
+            document.getElementById('liveBadge').style.color = '#94a3b8';
+            document.getElementById('countdownChip').style.display = 'none';
+          }
+          return;
+        }
+        const data = await res.json();
+        
+        document.getElementById('sessionTitle').textContent = data.title || 'Live Location';
+        document.getElementById('countdownChip').textContent = formatTimeRemaining(data.expiresAt);
+
+        const alertBox = document.getElementById('statusAlert');
+        const badge = document.getElementById('liveBadge');
+
+        if (data.ended) {
+          badge.textContent = 'ENDED';
+          badge.style.background = 'rgba(239, 68, 68, 0.2)';
+          badge.style.color = '#ef4444';
+          alertBox.className = 'status-alert alert-ended';
+          alertBox.textContent = '📍 Live Sharing Ended. The host has completed this trip.';
+        } else if (data.paused) {
+          badge.textContent = 'PAUSED';
+          badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.color = '#fbbf24';
+          alertBox.className = 'status-alert alert-paused';
+          alertBox.textContent = '⏸️ Live Sharing is currently paused by the host.';
+        } else {
+          badge.innerHTML = '<div class="pulse-dot"></div> LIVE';
+          badge.style.background = 'rgba(16, 185, 129, 0.2)';
+          badge.style.color = '#10b981';
+          alertBox.className = 'status-alert';
+          alertBox.style.display = 'none';
+        }
+
+        if (data.current) {
+          const { lat, lng, spd, alt, place, trekking, battery, t } = data.current;
+          lastCoords = [lat, lng];
+
+          document.getElementById('placeName').textContent = place || 'Active Track';
+          document.getElementById('speedVal').textContent = spd ? (spd.toFixed(1) + ' km/h') : '0.0 km/h';
+          document.getElementById('altVal').textContent = alt ? (Math.round(alt) + ' m ASL') : '--';
+          document.getElementById('batteryVal').textContent = battery >= 0 ? ('🔋' + battery + '%') : '--';
+          
+          const agoSec = Math.max(0, Math.round((Date.now() - t) / 1000));
+          document.getElementById('updatedVal').textContent = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago');
+
+          if (trekking) {
+            document.getElementById('trekkingBadge').style.display = 'block';
+            document.getElementById('trekkingBadge').textContent = trekking;
+          } else {
+            document.getElementById('trekkingBadge').style.display = 'none';
+          }
+
+          if (!userMarker) {
+            const icon = L.divIcon({ className: 'live-user-marker', iconSize: [22, 22], iconAnchor: [11, 11] });
+            userMarker = L.marker([lat, lng], { icon }).addTo(map);
+            map.setView([lat, lng], 15);
+          } else {
+            userMarker.setLatLng([lat, lng]);
+            if (autoFollow) map.setView([lat, lng]);
+          }
+        }
+
+        if (Array.isArray(data.points) && data.points.length > 0) {
+          const latlngs = data.points.map(p => [p.lat, p.lng]);
+          trackPolyline.setLatLngs(latlngs);
+        }
+      } catch (err) {
+        console.error('Fetch error:', err);
+      }
+    }
+
+    fetchTrack();
+    setInterval(fetchTrack, 4000);
+  </script>
+</body>
+</html>
