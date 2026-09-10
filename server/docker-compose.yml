@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  whereiam-live:
+    build: .
+    container_name: whereiam-live
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003

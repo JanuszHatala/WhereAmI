@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="gpx_cache" path="gpx_exports/" />
+    <cache-path name="telemetry_cache" path="telemetry_exports/" />
+    <cache-path name="app_cache" path="." />
+</paths>

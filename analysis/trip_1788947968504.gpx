@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Where Am I App" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Trip on 2026-09-09 11:59</name>
+    <time>2026-09-09T09:59:28Z</time>
+  </metadata>
+  <wpt lat="49.8685192" lon="19.6308631">
+    <name>Barwałd Górny</name>
+    <desc>pow. wadowicki • woj. małopolskie</desc>
+    <time>2026-09-09T09:59:28Z</time>
+  </wpt>
+  <trk>
+    <name>Trip on 2026-09-09 11:59</name>
+    <trkseg>
+      <trkpt lat="49.8685192" lon="19.6308631"/>
+    </trkseg>
+  </trk>
+</gpx>
