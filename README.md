@@ -108,13 +108,13 @@ docker compose up -d
 
 ### Visitor View
 
-Once running, visitors open the **GitHub Pages viewer** at:
+Once running, visitors open the viewer directly from your server at:
 
 ```
-https://januszhatala.github.io/WhereAmI/live/?id=<SESSION_ID>&server=<YOUR_SERVER_URL>
+https://whereami.janush.tech/live/<SESSION_ID>
 ```
 
-The shared link from the WhereAmI Android app (with **🌐 Public Server** provider) already encodes the correct `server=` URL automatically.
+The shared link from the WhereAmI Android app (with **🌐 whereami.janush.tech (Public)** provider selected) already generates this clean URL automatically — no configuration needed on the visitor side.
 
 ---
 

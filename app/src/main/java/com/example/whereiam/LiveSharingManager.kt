@@ -65,14 +65,13 @@ data class LiveSession(
     fun getViewerUrl(useStatic: Boolean = false, staticId: String? = null): String {
         val targetId = if (useStatic && !staticId.isNullOrBlank()) staticId else id
         val cleanBase = serverUrl.trimEnd('/')
-        val ghPagesBase = "https://januszhatala.github.io/WhereAmI"
         return when (provider) {
             LiveShareProvider.LOCAL ->
-                // LOCAL: viewer served by the local Node.js process (accessible in browser on PC)
+                // LOCAL: viewer at http://localhost:3003/live/SESSION_ID
                 "http://localhost:3003/live/$targetId"
             LiveShareProvider.SYNOLOGY ->
-                // SYNOLOGY: GH Pages viewer with server URL encoded — works for any public HTTPS server
-                "$ghPagesBase/live/?id=$targetId&server=${java.net.URLEncoder.encode(cleanBase, "UTF-8")}"
+                // SYNOLOGY: viewer served directly by the user's own server — clean, no GH Pages
+                "$cleanBase/live/$targetId"
         }
     }
 
@@ -108,6 +107,11 @@ class LiveSharingManager private constructor(private val context: Context) {
         private const val KEY_SESSION_INTERVAL = "active_session_interval"
         private const val KEY_SESSION_LAST_SYNC = "active_session_last_sync"
         private const val KEY_STATIC_LIVE_ID = "personal_static_live_id"
+        // Dialog UI preference persistence
+        const val KEY_PREF_LINK_MODE_STATIC = "pref_link_mode_static"   // Boolean
+        const val KEY_PREF_PROVIDER = "pref_default_provider"           // String (enum name)
+        const val KEY_PREF_DURATION = "pref_default_duration_hours"     // Int (0 = permanent)
+        const val KEY_PREF_TITLE = "pref_default_title"                 // String
 
         private val SLUG_CHARS = "23456789abcdefghjkmnpqrstuvwxyz".toCharArray()
         private val random = SecureRandom()

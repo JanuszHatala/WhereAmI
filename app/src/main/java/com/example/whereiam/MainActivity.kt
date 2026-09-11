@@ -3193,28 +3193,32 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // ── Live Location Sharing Management Dialog ─────────────────────────────
     if (showLiveShareDialog) {
-        var inputTitle by remember { mutableStateOf(liveSession?.title ?: "My Live Hike") }
-        var inputServerUrl by remember {
-            val savedUrl = liveSession?.serverUrl ?: ""
-            // If saved URL is the old viewer URL or a local addr, reset to the real public server
-            val isStaleUrl = savedUrl.contains("github.io") || savedUrl.contains("yourdomain.com")
-            mutableStateOf(if (savedUrl.isBlank() || isStaleUrl) "https://whereami.janush.tech" else savedUrl)
+        val prefs = context.getSharedPreferences("where_i_am_live_share_prefs", android.content.Context.MODE_PRIVATE)
+        var inputTitle by remember {
+            mutableStateOf(liveSession?.title ?: prefs.getString(LiveSharingManager.KEY_PREF_TITLE, "My Live Hike") ?: "My Live Hike")
         }
-        var selectedProvider by remember { mutableStateOf(liveSession?.provider ?: LiveShareProvider.LOCAL) }
+        var selectedProvider by remember {
+            val saved = prefs.getString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.SYNOLOGY.name) ?: LiveShareProvider.SYNOLOGY.name
+            val prov = try { LiveShareProvider.valueOf(saved) } catch (_: Exception) { LiveShareProvider.SYNOLOGY }
+            mutableStateOf(liveSession?.provider ?: prov)
+        }
         var providerDropdownExpanded by remember { mutableStateOf(false) }
         var durationDropdownExpanded by remember { mutableStateOf(false) }
-        var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: 5) }
-        var selectedDuration by remember { mutableStateOf(6) } // 0 = permanent, 2, 6, 12, 24
+        var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: prefs.getInt("active_session_interval", 5)) }
+        var selectedDuration by remember { mutableStateOf(prefs.getInt(LiveSharingManager.KEY_PREF_DURATION, 6)) } // 0 = permanent
         var upcomingSessionId by remember { mutableStateOf(LiveSharingManager.generate10CharSlug()) }
-        var activeShareModeStatic by remember { mutableStateOf(false) }
+        var activeShareModeStatic by remember { mutableStateOf(prefs.getBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, false)) }
 
-        Dialog(onDismissRequest = { showLiveShareDialog = false }) {
+        Dialog(
+            onDismissRequest = { showLiveShareDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
             Card(
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -3361,11 +3365,19 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     ) {
                                         DropdownMenuItem(
                                             text = { Text("🎫 Trip Link (Random)", color = Color.White, fontSize = 13.sp) },
-                                            onClick = { activeShareModeStatic = false; linkModeDropdownExpanded = false }
+                                            onClick = {
+                                                activeShareModeStatic = false
+                                                linkModeDropdownExpanded = false
+                                                prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, false).apply()
+                                            }
                                         )
                                         DropdownMenuItem(
                                             text = { Text("📡 Personal Link (Static)", color = Color.White, fontSize = 13.sp) },
-                                            onClick = { activeShareModeStatic = true; linkModeDropdownExpanded = false }
+                                            onClick = {
+                                                activeShareModeStatic = true
+                                                linkModeDropdownExpanded = false
+                                                prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, true).apply()
+                                            }
                                         )
                                     }
                                 }
@@ -3463,62 +3475,69 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Duration Adjustments (Decreasing and Increasing)
-                                Text("Adjust Sharing Duration:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
+                                // Duration Adjustments — only meaningful when session has a time limit
+                                if (session.expiresAt <= 0L) {
+                                    // Permanent session: offer a button to switch to timed
                                     Button(
                                         onClick = {
-                                            liveSharingManager.adjustSession(-1.0)
-                                            android.widget.Toast.makeText(context, "Reduced session by -1 hour", android.widget.Toast.LENGTH_SHORT).show()
+                                            liveSharingManager.adjustSession(6.0) // sets to now+6h
+                                            android.widget.Toast.makeText(context, "Switched to 6h timed duration", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("-1h", fontSize = 11.sp)
+                                        Text("⏱ Switch to Timed Duration (+6h)", fontSize = 12.sp, color = Color(0xFFCBD5E1))
                                     }
-
-                                    Button(
-                                        onClick = {
-                                            liveSharingManager.adjustSession(-0.5)
-                                            android.widget.Toast.makeText(context, "Reduced session by -30 min", android.widget.Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
+                                } else {
+                                    Text("Adjust Sharing Duration:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text("-30m", fontSize = 11.sp)
-                                    }
+                                        Button(
+                                            onClick = {
+                                                liveSharingManager.adjustSession(-1.0)
+                                                android.widget.Toast.makeText(context, "Reduced session by -1 hour", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("-1h", fontSize = 11.sp) }
 
-                                    Button(
-                                        onClick = {
-                                            liveSharingManager.adjustSession(1.0)
-                                            android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("+1h", fontSize = 11.sp)
-                                    }
+                                        Button(
+                                            onClick = {
+                                                liveSharingManager.adjustSession(-0.5)
+                                                android.widget.Toast.makeText(context, "Reduced session by -30 min", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("-30m", fontSize = 11.sp) }
 
-                                    Button(
-                                        onClick = {
-                                            liveSharingManager.adjustSession(6.0)
-                                            android.widget.Toast.makeText(context, "Extended session by +6 hours", android.widget.Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("+6h", fontSize = 11.sp)
+                                        Button(
+                                            onClick = {
+                                                liveSharingManager.adjustSession(1.0)
+                                                android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("+1h", fontSize = 11.sp) }
+
+                                        Button(
+                                            onClick = {
+                                                liveSharingManager.adjustSession(6.0)
+                                                android.widget.Toast.makeText(context, "Extended session by +6 hours", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("+6h", fontSize = 11.sp) }
                                     }
                                 }
 
@@ -3625,7 +3644,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         onClick = {
                                             val serverUrl = when (selectedProvider) {
                                                 LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                                LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://whereami.janush.tech" }
+                                                LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
                                             }
                                             val dummySession = LiveSession(
                                                 id = staticLiveId,
@@ -3653,7 +3672,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text("Share Target / Provider", fontSize = 13.sp, color = Color(0xFF94A3B8))
 
-                        // Sleek Dropdown Picker
+                        // Provider Dropdown
                         Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                             Surface(
                                 onClick = { providerDropdownExpanded = true },
@@ -3668,8 +3687,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val providerLabel = when (selectedProvider) {
+                                        LiveShareProvider.SYNOLOGY -> "🌐 whereami.janush.tech (Public)"
                                         LiveShareProvider.LOCAL -> "💻 Local Test Server (Port 3003)"
-                                        LiveShareProvider.SYNOLOGY -> "🌐 Public Server (GH Pages viewer)"
                                     }
                                     Text(providerLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
@@ -3682,56 +3701,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 modifier = Modifier.background(Color(0xFF1E293B))
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("🌐 whereami.janush.tech (Public)", color = Color.White, fontSize = 13.sp) },
+                                    onClick = {
+                                        selectedProvider = LiveShareProvider.SYNOLOGY
+                                        providerDropdownExpanded = false
+                                        prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.SYNOLOGY.name).apply()
+                                    }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("💻 Local Test Server (Port 3003)", color = Color.White, fontSize = 13.sp) },
                                     onClick = {
                                         selectedProvider = LiveShareProvider.LOCAL
                                         providerDropdownExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("🌐 Public Server (GH Pages viewer)", color = Color.White, fontSize = 13.sp) },
-                                    onClick = {
-                                        selectedProvider = LiveShareProvider.SYNOLOGY
-                                        if (inputServerUrl.contains("127.0.0.1") || inputServerUrl.contains("192.168.") || inputServerUrl.contains("localhost") || inputServerUrl.isBlank()) {
-                                            inputServerUrl = "https://whereami.janush.tech"
-                                        }
-                                        providerDropdownExpanded = false
+                                        prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.LOCAL.name).apply()
                                     }
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        when (selectedProvider) {
-                            LiveShareProvider.LOCAL -> {
-                                Text(
-                                    text = "Local test server on PC port 3003 via ADB reverse. Viewer opens at localhost:3003 — dev/testing only, link not shareable.",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                            LiveShareProvider.SYNOLOGY -> {
-                                Text("Public API Server URL", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                                OutlinedTextField(
-                                    value = inputServerUrl,
-                                    onValueChange = { inputServerUrl = it },
-                                    singleLine = true,
-                                    placeholder = { Text("https://whereami.janush.tech", color = Color(0xFF475569), fontSize = 12.sp) },
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        focusedBorderColor = Color(0xFF0284C7),
-                                        unfocusedBorderColor = Color(0xFF334155)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                                )
-                                Text(
-                                    text = "Viewer: januszhatala.github.io/WhereAmI/live/ — link is shareable with anyone.",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (selectedProvider) {
+                                LiveShareProvider.SYNOLOGY -> "📤 Shared link: whereami.janush.tech/live/… — accessible to anyone."
+                                LiveShareProvider.LOCAL -> "🔒 Viewer at localhost:3003 — dev/testing only, link not shareable."
+                            },
+                            fontSize = 11.sp,
+                            color = Color(0xFF38BDF8)
+                        )
 
                         Spacer(modifier = Modifier.height(12.dp))
                         Text("Sync Interval (Battery Optimization)", fontSize = 13.sp, color = Color(0xFF94A3B8))
@@ -3818,6 +3814,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         onClick = {
                                             selectedDuration = hrs
                                             durationDropdownExpanded = false
+                                            prefs.edit().putInt(LiveSharingManager.KEY_PREF_DURATION, hrs).apply()
                                         }
                                     )
                                 }
@@ -3829,8 +3826,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                             onClick = {
                                 val serverUrl = when (selectedProvider) {
                                     LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                    LiveShareProvider.SYNOLOGY -> inputServerUrl.ifBlank { "https://whereami.janush.tech" }
+                                    LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
                                 }
+                                // Persist all settings so the dialog opens with same config next time
+                                prefs.edit()
+                                    .putString(LiveSharingManager.KEY_PREF_TITLE, inputTitle)
+                                    .putString(LiveSharingManager.KEY_PREF_PROVIDER, selectedProvider.name)
+                                    .putInt(LiveSharingManager.KEY_PREF_DURATION, selectedDuration)
+                                    .putInt("active_session_interval", selectedInterval)
+                                    .apply()
                                 val s = liveSharingManager.startSession(
                                     title = inputTitle,
                                     durationHours = selectedDuration,
