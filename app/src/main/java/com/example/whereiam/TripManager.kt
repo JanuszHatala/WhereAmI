@@ -100,6 +100,14 @@ class TripManager private constructor(private val context: Context) {
     fun setActivityProfile(profile: ActivityProfile) {
         _activityProfile.value = profile
         prefs.edit().putString(KEY_ACTIVITY_PROFILE, profile.name).apply()
+        val current = _activeTrip.value
+        if (current != null) {
+            val updated = current.copy(activityProfile = profile)
+            _activeTrip.value = updated
+            scope.launch {
+                dbHelper.updateTripActivityProfile(current.id, profile)
+            }
+        }
         TelemetryLogger.log("SETTINGS", "ActivityProfile changed to ${profile.displayName}")
     }
 
@@ -124,14 +132,16 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = now
         movingSinceTimestamp = null
 
+        val profile = _activityProfile.value
         val trip = TripRecord(
             startTime = now,
-            isAutoDetected = isAuto
+            isAutoDetected = isAuto,
+            activityProfile = profile
         )
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
         _activeTrip.value = started
-        TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${_activityProfile.value.displayName}")
+        TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
 
         // Start LiveTrackingService for background foreground notification & wake lock
         try {

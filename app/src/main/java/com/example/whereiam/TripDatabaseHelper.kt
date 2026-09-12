@@ -12,7 +12,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     companion object {
         private const val DATABASE_NAME = "where_i_am_trips.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -23,6 +23,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         private const val COL_MAX_SPEED = "max_speed"
         private const val COL_AVG_SPEED = "avg_speed"
         private const val COL_IS_AUTO = "is_auto"
+        private const val COL_ACTIVITY_PROFILE = "activity_profile"
         private const val COL_POINTS_JSON = "points_json"
         private const val COL_PLACES_JSON = "places_json"
 
@@ -50,6 +51,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 $COL_MAX_SPEED REAL NOT NULL,
                 $COL_AVG_SPEED REAL NOT NULL,
                 $COL_IS_AUTO INTEGER NOT NULL,
+                $COL_ACTIVITY_PROFILE TEXT DEFAULT 'CAR',
                 $COL_POINTS_JSON TEXT,
                 $COL_PLACES_JSON TEXT
             )
@@ -87,6 +89,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 createSavedPlacesTable(db)
             } catch (_: Exception) {}
         }
+        if (oldVersion < 4) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_ACTIVITY_PROFILE TEXT DEFAULT 'CAR'")
+            } catch (_: Exception) {}
+        }
     }
 
     fun insertTrip(trip: TripRecord): Long {
@@ -99,6 +106,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COL_MAX_SPEED, trip.maxSpeedKmh)
             put(COL_AVG_SPEED, trip.avgSpeedKmh)
             put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
+            put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
             put(COL_POINTS_JSON, pointsToJson(trip.points))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
         }
@@ -115,10 +123,19 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COL_MAX_SPEED, trip.maxSpeedKmh)
             put(COL_AVG_SPEED, trip.avgSpeedKmh)
             put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
+            put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
             put(COL_POINTS_JSON, pointsToJson(trip.points))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
         }
         db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(trip.id.toString()))
+    }
+
+    fun updateTripActivityProfile(id: Long, profile: ActivityProfile) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_ACTIVITY_PROFILE, profile.name)
+        }
+        db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
     fun renameTrip(id: Long, newTitle: String) {
@@ -152,6 +169,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 val maxSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_MAX_SPEED))
                 val avgSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_AVG_SPEED))
                 val isAuto = it.getInt(it.getColumnIndexOrThrow(COL_IS_AUTO)) == 1
+                val profileColIdx = it.getColumnIndex(COL_ACTIVITY_PROFILE)
+                val profile = if (profileColIdx >= 0 && !it.isNull(profileColIdx)) {
+                    try { ActivityProfile.valueOf(it.getString(profileColIdx)) } catch (_: Exception) { ActivityProfile.CAR }
+                } else {
+                    ActivityProfile.CAR
+                }
                 val pointsJson = it.getString(it.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
                 val placesJson = it.getString(it.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
 
@@ -165,6 +188,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                         maxSpeedKmh = maxSpeed,
                         avgSpeedKmh = avgSpeed,
                         isAutoDetected = isAuto,
+                        activityProfile = profile,
                         points = jsonToPoints(pointsJson),
                         placesVisited = jsonToPlaces(placesJson)
                     )
@@ -204,6 +228,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 val maxSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_MAX_SPEED))
                 val avgSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_AVG_SPEED))
                 val isAuto = it.getInt(it.getColumnIndexOrThrow(COL_IS_AUTO)) == 1
+                val profileColIdx = it.getColumnIndex(COL_ACTIVITY_PROFILE)
+                val profile = if (profileColIdx >= 0 && !it.isNull(profileColIdx)) {
+                    try { ActivityProfile.valueOf(it.getString(profileColIdx)) } catch (_: Exception) { ActivityProfile.CAR }
+                } else {
+                    ActivityProfile.CAR
+                }
                 val pointsJson = it.getString(it.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
                 val placesJson = it.getString(it.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
 
@@ -217,6 +247,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                         maxSpeedKmh = maxSpeed,
                         avgSpeedKmh = avgSpeed,
                         isAutoDetected = isAuto,
+                        activityProfile = profile,
                         points = jsonToPoints(pointsJson),
                         placesVisited = jsonToPlaces(placesJson)
                     )
