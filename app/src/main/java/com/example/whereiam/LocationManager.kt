@@ -9,10 +9,14 @@ import android.location.Location as AndroidLocation
 import android.os.Build
 import android.os.Looper
 import com.google.android.gms.location.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -66,6 +70,15 @@ private data class OsmPlaceResult(
 class LocationManager(private val context: Context) {
 
     companion object {
+        @Volatile
+        private var currentIntervalMs: Long = 1500L
+        @Volatile
+        private var currentMinIntervalMs: Long = 1000L
+        @Volatile
+        private var isGpsStopped: Boolean = false
+
+        private val activeCallbacks = Collections.synchronizedSet(mutableSetOf<LocationCallback>())
+
         /**
          * Country-aware hierarchy formatter:
          * - In Poland: gm. X • pow. Y • woj. Z (with smart deduplication)
@@ -121,6 +134,35 @@ class LocationManager(private val context: Context) {
 
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
+    private val ioScope = CoroutineScope(Dispatchers.IO)
+
+    @SuppressLint("MissingPermission")
+    fun updateSamplingInterval(intervalMs: Long, minIntervalMs: Long) {
+        currentIntervalMs = intervalMs
+        currentMinIntervalMs = minIntervalMs
+        isGpsStopped = false
+        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+            .setMinUpdateIntervalMillis(minIntervalMs)
+            .build()
+        synchronized(activeCallbacks) {
+            for (cb in activeCallbacks) {
+                try {
+                    fusedLocationClient.requestLocationUpdates(req, cb, Looper.getMainLooper())
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun stopLocationUpdates() {
+        isGpsStopped = true
+        synchronized(activeCallbacks) {
+            for (cb in activeCallbacks) {
+                try {
+                    fusedLocationClient.removeLocationUpdates(cb)
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
     // ── Hybrid Speed Smoothing (Kalman + Moving Average) ──────────────────────
     private var kalmanSpeed: Float? = null
@@ -361,9 +403,13 @@ class LocationManager(private val context: Context) {
     // ── Continuous location flow ───────────────────────────────────────────────
     @SuppressLint("MissingPermission")
     fun getLocationUpdates(displayLanguage: DisplayLanguage): Flow<LocationData> = callbackFlow {
+        val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
         // Initial state holding last known data if available
-        val initialSpeed = WidgetHelper.getLastSpeed(context) ?: 0f
-        val initialCoords = WidgetHelper.getLastCoordinates(context)
+        val initialSpeed = if (prefs.contains("speed")) prefs.getFloat("speed", 0f) else 0f
+        val initialCoords = if (prefs.contains("lat") && prefs.contains("lng")) {
+            Pair(prefs.getFloat("lat", 0f).toDouble(), prefs.getFloat("lng", 0f).toDouble())
+        } else null
+
         if (initialCoords != null) {
             val cachedData = resolveLocationData(initialCoords.first, initialCoords.second, initialSpeed, displayLanguage)
             trySend(cachedData)
@@ -371,8 +417,8 @@ class LocationManager(private val context: Context) {
             trySend(LocationData(null, null, initialSpeed, null, true))
         }
 
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500)
-            .setMinUpdateIntervalMillis(1000)
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, currentIntervalMs)
+            .setMinUpdateIntervalMillis(currentMinIntervalMs)
             .build()
 
         val locationCallback = object : LocationCallback() {
@@ -383,53 +429,63 @@ class LocationManager(private val context: Context) {
                         location.speedAccuracyMetersPerSecond else null
                     val speed = hybridSpeedUpdate(rawSpeed, accuracy)
 
-                    WidgetHelper.saveLastCoordinates(context, location.latitude, location.longitude)
-                    WidgetHelper.saveLastSpeed(context, speed)
+                    prefs.edit()
+                        .putFloat("lat", location.latitude.toFloat())
+                        .putFloat("lng", location.longitude.toFloat())
+                        .putFloat("speed", speed)
+                        .apply()
 
-                    val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
-                    val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
-                    val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized)
-                    WidgetHelper.saveMultiLanguageWidgetData(context, stabilizedMultiData)
+                    // CRITICAL FIX FOR ANR / SYSTEM FREEZE:
+                    // Perform geocoding asynchronously on IO thread to never block main looper!
+                    ioScope.launch {
+                        val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
+                        val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
+                        val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized)
 
-                    val data = buildLocationData(stabilizedMultiData, speed, displayLanguage)
+                        val data = buildLocationData(stabilizedMultiData, speed, displayLanguage)
 
-                    // Notify TripManager
-                    TripManager.getInstance(context).onLocationUpdate(
-                        location.latitude,
-                        location.longitude,
-                        speed,
-                        data.primaryPlace
-                    )
+                        // Notify TripManager
+                        TripManager.getInstance(context).onLocationUpdate(
+                            location.latitude,
+                            location.longitude,
+                            speed,
+                            data.primaryPlace
+                        )
 
-                    // Notify LiveSharingManager
-                    val speedKmh = speed * 3.6f
-                    val alt = if (location.hasAltitude()) location.altitude else null
-                    val placeName = data.primaryPlace?.let { p ->
-                        if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
+                        // Notify LiveSharingManager
+                        val speedKmh = speed * 3.6f
+                        val alt = if (location.hasAltitude()) location.altitude else null
+                        val placeName = data.primaryPlace?.let { p ->
+                            if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
+                        }
+                        LiveSharingManager.getInstance(context).onLocationUpdate(
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            speedKmh = speedKmh,
+                            altitude = alt,
+                            placeName = placeName,
+                            trekkingBadge = null
+                        )
+
+                        trySend(data)
                     }
-                    LiveSharingManager.getInstance(context).onLocationUpdate(
-                        lat = location.latitude,
-                        lng = location.longitude,
-                        speedKmh = speedKmh,
-                        altitude = alt,
-                        placeName = placeName,
-                        trekkingBadge = null
-                    )
-
-                    trySend(data)
                 }
             }
         }
 
-        fusedLocationClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback,
-            Looper.getMainLooper()
-        ).addOnFailureListener { e ->
-            trySend(LocationData(null, null, lastValidSpeedMs, e.message ?: "Failed to get location", false))
+        activeCallbacks.add(locationCallback)
+        if (!isGpsStopped) {
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                Looper.getMainLooper()
+            ).addOnFailureListener { e ->
+                trySend(LocationData(null, null, lastValidSpeedMs, e.message ?: "Failed to get location", false))
+            }
         }
 
         awaitClose {
+            activeCallbacks.remove(locationCallback)
             fusedLocationClient.removeLocationUpdates(locationCallback)
         }
     }
@@ -453,11 +509,17 @@ class LocationManager(private val context: Context) {
             }
         }
 
-        fusedLocationClient.requestLocationUpdates(locationRequest, cb, Looper.getMainLooper())
-        awaitClose { fusedLocationClient.removeLocationUpdates(cb) }
+        activeCallbacks.add(cb)
+        if (!isGpsStopped) {
+            fusedLocationClient.requestLocationUpdates(locationRequest, cb, Looper.getMainLooper())
+        }
+        awaitClose {
+            activeCallbacks.remove(cb)
+            fusedLocationClient.removeLocationUpdates(cb)
+        }
     }
 
-    // ── One-shot location (for widget Refresh) ────────────────────────────────
+    // ── One-shot location ────────────────────────────────
     @SuppressLint("MissingPermission")
     suspend fun getCurrentLocationSingle(displayLanguage: DisplayLanguage): LocationData =
         suspendCancellableCoroutine { cont ->
@@ -470,12 +532,18 @@ class LocationManager(private val context: Context) {
                                 location.speedAccuracyMetersPerSecond else null
                             val speed = hybridSpeedUpdate(rawSpeed, accuracy)
 
-                            WidgetHelper.saveLastCoordinates(context, location.latitude, location.longitude)
-                            WidgetHelper.saveLastSpeed(context, speed)
-                            val multiData = resolveMultiLanguageData(location.latitude, location.longitude)
-                            val stabilized = applyBorderHysteresis(location.latitude, location.longitude, multiData)
-                            WidgetHelper.saveMultiLanguageWidgetData(context, stabilized)
-                            cont.resume(buildLocationData(stabilized, speed, displayLanguage))
+                            val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putFloat("lat", location.latitude.toFloat())
+                                .putFloat("lng", location.longitude.toFloat())
+                                .putFloat("speed", speed)
+                                .apply()
+
+                            ioScope.launch {
+                                val multiData = resolveMultiLanguageData(location.latitude, location.longitude)
+                                val stabilized = applyBorderHysteresis(location.latitude, location.longitude, multiData)
+                                cont.resume(buildLocationData(stabilized, speed, displayLanguage))
+                            }
                         } else {
                             resumeFromCache(cont, displayLanguage)
                         }
@@ -492,10 +560,12 @@ class LocationManager(private val context: Context) {
         displayLanguage: DisplayLanguage,
         errorMsg: String? = null
     ) {
-        val lastCoords = WidgetHelper.getLastCoordinates(context)
-        val lastSpeed = WidgetHelper.getLastSpeed(context) ?: lastValidSpeedMs
-        if (lastCoords != null) {
-            cont.resume(resolveLocationData(lastCoords.first, lastCoords.second, lastSpeed, displayLanguage))
+        val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val lat = if (prefs.contains("lat")) prefs.getFloat("lat", 0f).toDouble() else null
+        val lng = if (prefs.contains("lng")) prefs.getFloat("lng", 0f).toDouble() else null
+        val lastSpeed = if (prefs.contains("speed")) prefs.getFloat("speed", 0f) else lastValidSpeedMs
+        if (lat != null && lng != null) {
+            cont.resume(resolveLocationData(lat, lng, lastSpeed, displayLanguage))
         } else {
             cont.resume(LocationData(null, null, lastSpeed, errorMsg ?: "Location unavailable", false))
         }

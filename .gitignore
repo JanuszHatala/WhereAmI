@@ -18,3 +18,5 @@ build/
 server/node_modules/
 server/sessions.json
 server/npm-debug.log*
+
+phone_diagnostics/
