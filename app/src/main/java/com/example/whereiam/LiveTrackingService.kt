@@ -31,14 +31,19 @@ class LiveTrackingService : Service() {
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereIAm:LiveTrackingWakeLock").apply {
-            acquire(12 * 60 * 60 * 1000L) // 12h max
+            acquire(6 * 60 * 60 * 1000L) // 6h max safe timeout
         }
         
-        startForegroundService()
+        try {
+            startForegroundService()
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "LiveTrackingService startForeground failed: ${e.message}")
+            stopSelf()
+            return
+        }
         
         val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("is_tracking", true).commit()
-        WidgetHelper.refreshWidgetUI(this)
+        prefs.edit().putBoolean("is_tracking", true).apply()
 
         startTracking()
     }
@@ -48,7 +53,15 @@ class LiveTrackingService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        return START_STICKY
+        // If neither trip nor live sharing is active, avoid running zombie service
+        val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        if (!hasTrip && !hasLive) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_NOT_STICKY // Avoid aggressive system restart loops
     }
 
     private fun startForegroundService() {
@@ -65,7 +78,7 @@ class LiveTrackingService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WhereIAm Active Tracking")
             .setContentText("Recording trip & background location active")
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_location)
             .setOngoing(true)
             .build()
 
@@ -76,7 +89,7 @@ class LiveTrackingService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WhereIAm Active Tracking")
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_location)
             .setOngoing(true)
             .build()
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -84,15 +97,26 @@ class LiveTrackingService : Service() {
     }
 
     private fun startTracking() {
-        val lang = WidgetHelper.getSavedLanguage(this)
+        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
+        val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
         serviceScope.launch {
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
                 val activeTrip = TripManager.getInstance(this@LiveTrackingService).activeTrip.value
+                val liveSession = LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.value
+                val isLiveActive = liveSession != null && liveSession.isActive
+
                 if (activeTrip != null) {
                     val distKm = activeTrip.distanceMeters / 1000.0
                     val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
                     val place = locationData.primaryPlace?.city ?: "In Transit"
-                    updateNotification(String.format(java.util.Locale.getDefault(), "%s • %.1f km (%.1f km/h)", place, distKm, speedKmh))
+                    val statusText = if (isLiveActive) " • [LIVE]" else ""
+                    updateNotification(String.format(java.util.Locale.getDefault(), "%s • %.1f km (%.1f km/h)%s", place, distKm, speedKmh, statusText))
+                } else if (isLiveActive) {
+                    val place = locationData.primaryPlace?.city ?: "In Transit"
+                    updateNotification("Live Sharing Active • $place")
+                } else {
+                    stopSelf()
                 }
             }
         }
@@ -108,8 +132,7 @@ class LiveTrackingService : Service() {
         } catch (_: Exception) {}
         
         val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("is_tracking", false).commit()
-        WidgetHelper.refreshWidgetUI(this)
+        prefs.edit().putBoolean("is_tracking", false).apply()
     }
 
     override fun onBind(intent: Intent?): IBinder? {

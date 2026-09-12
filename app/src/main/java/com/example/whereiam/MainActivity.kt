@@ -67,6 +67,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        AppStateManager.getInstance(this).setAppForegroundState(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppStateManager.getInstance(this).setAppForegroundState(false)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -158,6 +168,10 @@ fun LocationScreen(viewModel: MainViewModel) {
     val localityCardStyle by viewModel.localityCardStyle.collectAsState()
     val orientationMode by viewModel.orientationMode.collectAsState()
     val showHeatMap by viewModel.showHeatMap.collectAsState()
+
+    val powerPolicy by viewModel.powerPolicy.collectAsState()
+    val isCharging by viewModel.isCharging.collectAsState()
+    val lifecycleMode by viewModel.lifecycleMode.collectAsState()
 
     val selectedTripsList = remember(savedTrips, selectedTripIds) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
@@ -1593,16 +1607,67 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 color = Color(0xFF38BDF8)
                                             )
                                         }
-                                        Button(
-                                            onClick = {
-                                                showTripsSheet = false
-                                                viewModel.triggerFitTrack()
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Text("Fit Map", fontSize = 11.sp)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            var showActiveProfileMenu by remember { mutableStateOf(false) }
+                                            Box {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFF0F172A),
+                                                    modifier = Modifier.clickable { showActiveProfileMenu = true }
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = "${activityProfile.iconEmoji} ${activityProfile.displayName}",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color(0xFF38BDF8)
+                                                        )
+                                                        Icon(
+                                                            Icons.Default.ArrowDropDown,
+                                                            contentDescription = "Switch profile",
+                                                            tint = Color(0xFF94A3B8),
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                DropdownMenu(
+                                                    expanded = showActiveProfileMenu,
+                                                    onDismissRequest = { showActiveProfileMenu = false },
+                                                    modifier = Modifier.background(Color(0xFF1E293B))
+                                                ) {
+                                                    ActivityProfile.values().forEach { profile ->
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                    Text(profile.iconEmoji, fontSize = 14.sp)
+                                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                                    Text(profile.displayName, color = Color.White, fontSize = 13.sp)
+                                                                }
+                                                            },
+                                                            onClick = {
+                                                                showActiveProfileMenu = false
+                                                                viewModel.setActivityProfile(profile)
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Button(
+                                                onClick = {
+                                                    showTripsSheet = false
+                                                    viewModel.triggerFitTrack()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("Fit Map", fontSize = 11.sp)
+                                            }
                                         }
                                     }
 
@@ -1904,12 +1969,67 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 }
                                             }
 
-                                            val distKm = trip.distanceMeters / 1000.0
-                                            Text(
-                                                text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
-                                                color = Color(0xFF38BDF8),
-                                                fontSize = 12.sp
-                                            )
+                                            var showProfileMenu by remember { mutableStateOf(false) }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                val distKm = trip.distanceMeters / 1000.0
+                                                Text(
+                                                    text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
+                                                    color = Color(0xFF38BDF8),
+                                                    fontSize = 12.sp
+                                                )
+
+                                                Box {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        color = Color(0xFF0F172A),
+                                                        modifier = Modifier.clickable { showProfileMenu = true }
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                color = Color(0xFF34D399)
+                                                            )
+                                                            Icon(
+                                                                Icons.Default.ArrowDropDown,
+                                                                contentDescription = "Change profile",
+                                                                tint = Color(0xFF94A3B8),
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    DropdownMenu(
+                                                        expanded = showProfileMenu,
+                                                        onDismissRequest = { showProfileMenu = false },
+                                                        modifier = Modifier.background(Color(0xFF1E293B))
+                                                    ) {
+                                                        ActivityProfile.values().forEach { profile ->
+                                                            DropdownMenuItem(
+                                                                text = {
+                                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                        Text(profile.iconEmoji, fontSize = 14.sp)
+                                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                                        Text(profile.displayName, color = Color.White, fontSize = 13.sp)
+                                                                    }
+                                                                },
+                                                                onClick = {
+                                                                    showProfileMenu = false
+                                                                    viewModel.updateTripActivityProfile(trip.id, profile)
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
 
                                             if (trip.placesVisited.isNotEmpty()) {
                                                 val placesSummary = trip.placesVisited.joinToString(" → ") { it.placeName }
@@ -2594,6 +2714,87 @@ fun LocationScreen(viewModel: MainViewModel) {
                     modifier = Modifier.padding(top = 4.dp)
                 ) {
                     Text("⚡ Allow Unrestricted Background Battery (Prevents OS Killing)", fontSize = 12.sp, color = Color(0xFF38BDF8))
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Power & Battery Profile Section
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Power & Battery Profile",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (isCharging) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF065F46)
+                        ) {
+                            Text(
+                                text = "⚡ Charging",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF34D399),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Current Mode: ${lifecycleMode.displayName} • ${powerPolicy.description}",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    BatteryPowerPolicy.values().forEach { policy ->
+                        val isSelected = powerPolicy == policy
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.setPowerPolicy(policy) }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = policy.displayName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = policy.description,
+                                        fontSize = 11.sp,
+                                        color = if (isSelected) Color(0xFFE0F2FE) else Color(0xFF94A3B8)
+                                    )
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))

@@ -40,9 +40,10 @@ This document is the authoritative project register for all requested, implement
 | ID | Feature Name | Description | Status | Verification & Where to Check | Decision History / Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **SYS-01** | Android Auto Media Integration | Exposes location as an automotive media browser queue item with live metadata. | **Implemented** | Connect device to Android Auto. Check `AutoMediaService.kt`. | Allows passive, glanceable heads-up driving display. |
-| **SYS-02** | Home Screen App Widget | Interactive home screen widget displaying locality, street, speed, and refresh/live toggle. | **Implemented** | Add WhereIAm 4x2 widget to Android launcher. Check `WhereIAmWidget.kt`. | Supports manual refresh and background push. |
-| **SYS-03** | Foreground Service & WakeLock | Robust background tracking service preventing Android OS from terminating recording. | **Implemented** | Start trip, switch apps or turn off screen. Check `LiveTrackingService.kt`. | Uses `FOREGROUND_SERVICE_LOCATION` & `PARTIAL_WAKE_LOCK`. |
+| **SYS-02** | Home Screen App Widget | Interactive home screen widget displaying locality, street, speed, and refresh/live toggle. | **Retired / Backlog** | Removed from active runtime. Architecture specs preserved for future non-polling Glance rewrite. | Retired in v1.3.2 to eliminate main-thread geocoding ANR storms and background battery wakeups. |
+| **SYS-03** | Foreground Service & WakeLock | Robust background tracking service preventing Android OS from terminating recording. | **Implemented** | Start trip, switch apps or turn off screen. Check `LiveTrackingService.kt`. | Uses `FOREGROUND_SERVICE_LOCATION` & guarded WakeLocks. |
 | **SYS-04** | Battery Optimization Exemption | Direct prompt allowing user to whitelist WhereIAm from OS battery killing. | **Implemented** | Settings -> Battery Exemption button. Check `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. | Critical for all-day hiking and background trip logging. |
+| **SYS-05** | App State Machine & Power Policy | Intelligent lifecycle management (IDLE, LIVE_ONLY, TRIP_RECORDING, ANDROID_AUTO) with charging awareness and power policies. | **Implemented** | Settings -> Power & Battery Profile. Check `AppStateManager.kt`. | Shuts down GPS in IDLE; relaxes sampling when charging. |
 
 ---
 

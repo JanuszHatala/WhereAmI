@@ -42,6 +42,8 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         locationManager = LocationManager(this)
 
+        AppStateManager.getInstance(this).setAutoMediaActive(true)
+
         startForegroundService()
         startTracking()
     }
@@ -61,14 +63,20 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Android Auto Tracking")
             .setContentText("Broadcasting location to Android Auto")
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_location)
             .build()
 
-        startForeground(1, notification)
+        try {
+            startForeground(1, notification)
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "AutoMediaService startForeground failed: ${e.message}")
+        }
     }
 
     private fun startTracking() {
-        val lang = WidgetHelper.getSavedLanguage(this)
+        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
+        val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
         serviceScope.launch {
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
                 updateMediaMetadata(locationData)
@@ -222,11 +230,10 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         parentId: String,
         result: Result<MutableList<MediaBrowserCompat.MediaItem>>
     ) {
-        // Return playlist items in the browser hierarchy
-        val lastPlace = locationManager.resolveMultiLanguageData(
-            WidgetHelper.getLastCoordinates(this)?.first ?: 0.0,
-            WidgetHelper.getLastCoordinates(this)?.second ?: 0.0
-        ).pl
+        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val lat = prefs.getFloat("lat", 0f).toDouble()
+        val lng = prefs.getFloat("lng", 0f).toDouble()
+        val lastPlace = locationManager.resolveMultiLanguageData(lat, lng).pl
 
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
         fun addBrowserItem(id: String, title: String, subtitle: String) {
@@ -251,6 +258,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         super.onDestroy()
+        AppStateManager.getInstance(this).setAutoMediaActive(false)
         serviceJob.cancel()
         mediaSession.isActive = false
         mediaSession.release()

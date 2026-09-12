@@ -14,13 +14,24 @@ import kotlinx.coroutines.launch
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val locationManager = LocationManager(application)
     private val tripManager = TripManager.getInstance(application)
+    private val appStateManager = AppStateManager.getInstance(application)
     private val appPrefs = application.getSharedPreferences("where_i_am_ui_prefs", Context.MODE_PRIVATE)
 
     private val _locationData = MutableStateFlow(LocationData(null, null, null, null, false))
     val locationData: StateFlow<LocationData> = _locationData.asStateFlow()
 
-    private val _displayLanguage = MutableStateFlow(WidgetHelper.getSavedLanguage(application))
+    private val locPrefs = application.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+    private val initialLang = try {
+        DisplayLanguage.valueOf(locPrefs.getString("display_language", DisplayLanguage.EN.name) ?: DisplayLanguage.EN.name)
+    } catch (_: Exception) { DisplayLanguage.EN }
+
+    private val _displayLanguage = MutableStateFlow(initialLang)
     val displayLanguage: StateFlow<DisplayLanguage> = _displayLanguage.asStateFlow()
+
+    // Power policy and charging status
+    val powerPolicy: StateFlow<BatteryPowerPolicy> = appStateManager.powerPolicy
+    val isCharging: StateFlow<Boolean> = appStateManager.isCharging
+    val lifecycleMode: StateFlow<AppLifecycleMode> = appStateManager.currentMode
 
     /** Latest GPS coordinates for the map composable (lat, lng, bearing?). */
     private val _currentLatLng = MutableStateFlow<Triple<Double, Double, Float?>?>(null)
@@ -316,17 +327,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setPowerPolicy(policy: BatteryPowerPolicy) {
+        appStateManager.setPowerPolicy(policy)
+    }
+
+    fun updateTripActivityProfile(tripId: Long, profile: ActivityProfile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dbHelper.updateTripActivityProfile(tripId, profile)
+            _savedTrips.value = tripManager.getAllTrips()
+        }
+    }
+
     fun setDisplayLanguage(language: DisplayLanguage) {
-        WidgetHelper.saveLanguage(getApplication(), language)
+        locPrefs.edit().putString("display_language", language.name).apply()
         _displayLanguage.value = language
 
-        val lastCoords = WidgetHelper.getLastCoordinates(getApplication())
-        if (lastCoords != null) {
+        val lat = if (locPrefs.contains("lat")) locPrefs.getFloat("lat", 0f).toDouble() else null
+        val lng = if (locPrefs.contains("lng")) locPrefs.getFloat("lng", 0f).toDouble() else null
+        val speed = if (locPrefs.contains("speed")) locPrefs.getFloat("speed", 0f) else null
+        if (lat != null && lng != null) {
             viewModelScope.launch(Dispatchers.IO) {
-                val multiData = locationManager.resolveMultiLanguageData(lastCoords.first, lastCoords.second)
-                WidgetHelper.saveMultiLanguageWidgetData(getApplication(), multiData)
-                val lastSpeed = WidgetHelper.getLastSpeed(getApplication())
-                val resolved = locationManager.resolveLocationData(lastCoords.first, lastCoords.second, lastSpeed, language)
+                val resolved = locationManager.resolveLocationData(lat, lng, speed, language)
                 _locationData.value = resolved
             }
         }
