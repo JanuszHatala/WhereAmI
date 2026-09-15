@@ -13,9 +13,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 2** | Geocoding Stability, Road Names & Boundaries | 7 | 7 | 0 | 0 |
 | **Phase 3** | Map Controls, Overlays & Stationary Bearing | 5 | 5 | 0 | 0 |
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
-| **Round 2** | Field Testing (2026-09-15) Enhancements | 16 | 16 | 0 | 0 |
+| **Round 2** | Field Testing (2026-09-15) Enhancements | 25 | 25 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 4 | 0 | 0 | 4 |
-| **Total** | | **44** | **40** | **0** | **4** |
+| **Total** | | **53** | **49** | **0** | **4** |
 
 ---
 
@@ -91,6 +91,16 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **FT2-13** | Map Settings Dialog: full-width, review hiking symbology, explain raster tile scaling limits, unify offline cache. | `OsmMapView.kt` | **Completed** | Full-width `ModalBottomSheet` with explanation card regarding raster bitmap label rotation limits in `COURSE_UP` mode and unified disk cache purging. |
 | **FT2-14** | Places & Trips UI fixes: Driving badge wrapping, trip split naming, selection counter on delete, action bar layout. | `MainActivity.kt`, `TripDatabaseHelper.kt`, `MainViewModel.kt` | **Completed** | Fixed Driving badge wrapping with `maxLines = 1, softWrap = false`; split naming retains original title format (`$title - Part 1` / `$title - Part 2`) without repetition; cleared `_selectedTripIds` on delete/split. Covered by `TripSplitTest.kt`. |
 | **FT2-15** | Upside-down labels on rotated topographic map (Screenshot 155119). | `OsmMapView.kt` | **Completed** | Option B implemented: MapSettingsDialog includes clear educational notice explaining raster bitmap label physics and guidance to use North-Up if upright labels are desired. |
+| **FT2-16** | Gmina jumping/missing in Czaniec (`gm. Porąbka`). | `LocationManager.kt` | **Completed** | Added persistent locality-to-gmina cache in SharedPreferences (`loc_gmina_<city>`), unified multi-language geocoding into 1 shared Nominatim request to prevent HTTP 429 rate limits, and widened spatial cache grid to ~100m. |
+| **FT2-17** | Map Recenter floating pill persisting after tapping Recenter. | `OsmMapView.kt` | **Completed** | Added touch listener (`isUserDragging`) to distinguish physical finger drag from programmatic centering. Recenter button and pill immediately lock `isFollowing = true` without re-triggering scroll un-following. |
+| **FT2-18** | Map Label Font scaling expansion. | `OsmMapView.kt` | **Completed** | Expanded `MapFontScale` so previous 170% is now baseline `Normal (100%)`, scaling up through `Large (130%)`, `Extra Large (165%)`, and `Maximum (200%)` (~340% of standard OSM raster scale). |
+| **FT2-19** | "Share Current Position" bottom buttons styling & contrast. | `MainActivity.kt` | **Completed** | Re-styled "Copy Coords" and "Open Map" with `contentColor = Color.White` and cyan accent icons (`0xFF38BDF8`), ensuring high contrast against dark dialog backgrounds. |
+| **FT2-20** | Cross-city search ("Kraków", "Andrychów") broken by auto-appending local city. | `SearchHelper.kt` | **Completed** | Removed `trimmed.length <= 15` override that forced current locality on all queries; now searches query verbatim globally first, falling back to local search only for street/address queries. |
+| **FT2-21** | Move Offline Map Cache controls from App Settings to Map Settings Dialog. | `OsmMapView.kt`, `MainActivity.kt` | **Completed** | Added disk cache size display, Clear Cache, Cache 5km, and download progress bar directly inside `MapSettingsDialog`. Removed duplicate card from App Settings sheet. |
+| **FT2-22** | Live Sharing foreground service notification missing when trip not recording. | `LiveSharingManager.kt` | **Completed** | Starting Live Sharing now explicitly starts `LiveTrackingService` as a foreground service, guaranteeing a persistent notification with quick actions even without trip recording. |
+| **FT2-23** | Stats tab UI polish: mismatched card heights and frequency bars. | `MainActivity.kt` | **Completed** | Equalized summary card heights using `IntrinsicSize.Min` + `fillMaxHeight()`, and added visual frequency progress bars for visited localities. |
+| **FT2-24** | Places & Trips UI polish: crowded multi-select action bar and duplicate header. | `MainActivity.kt` | **Completed** | Removed redundant `Trips (21)` subheader; redesigned multi-select bar with `[N selected ✕]`, `[Merge]`, `[Fit Map]`, and `[Select All / Deselect All]`. |
+| **FT2-25** | Tourist trail marker coloring on OSM map. | `OsmMapView.kt` | **Completed** | Waymarked Trails Hiking transparent overlay renders official tourist trail colors (red, blue, green, yellow, black) with peak, pass, and route markers directly over any base map layer. |
 
 ---
 

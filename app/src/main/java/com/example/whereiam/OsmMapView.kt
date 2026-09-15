@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
@@ -64,9 +66,11 @@ enum class MapOrientationMode {
 }
 
 enum class MapFontScale(val label: String, val scaleFactor: Float) {
-    NORMAL("Normal (100%)", 1.0f),
-    LARGE("Large (135%)", 1.35f),
-    EXTRA_LARGE("Extra Large (170%)", 1.70f)
+    COMPACT("Compact (100%)", 1.0f),
+    NORMAL("Normal (170%)", 1.70f),
+    LARGE("Large (220%)", 2.20f),
+    EXTRA_LARGE("Extra Large (280%)", 2.80f),
+    MAXIMUM("Huge (340%)", 3.40f)
 }
 
 enum class MapBaseLayer(val label: String) {
@@ -549,10 +553,30 @@ fun OsmMapView(
                     })
                     overlays.add(0, eventsOverlay)
 
+                    var isUserDragging = false
+                    setOnTouchListener { _, event ->
+                        when (event.actionMasked) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                isUserDragging = true
+                            }
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                isUserDragging = true
+                                isFollowing = false
+                                snapHandler.removeCallbacks(snapRunnable)
+                            }
+                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                isUserDragging = false
+                            }
+                        }
+                        false
+                    }
+
                     addMapListener(object : org.osmdroid.events.MapListener {
                         override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
-                            isFollowing = false
-                            snapHandler.removeCallbacks(snapRunnable)
+                            if (isUserDragging) {
+                                isFollowing = false
+                                snapHandler.removeCallbacks(snapRunnable)
+                            }
                             return false
                         }
                         override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
@@ -721,7 +745,7 @@ fun OsmMapView(
                     mapView?.tileProvider?.clearTileCache()
                     hikingProviderRef?.clearTileCache()
                     latLng?.let { pos ->
-                        mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
+                        mapView?.controller?.setCenter(GeoPoint(pos.first, pos.second))
                     }
                     mapView?.invalidate()
                 },
@@ -804,8 +828,9 @@ fun OsmMapView(
                 onClick = {
                     isFollowing = true
                     latLng?.let { pos ->
-                        mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
+                        mapView?.controller?.setCenter(GeoPoint(pos.first, pos.second))
                     }
+                    mapView?.invalidate()
                 },
                 shape = RoundedCornerShape(20.dp),
                 color = ComposeColor(0xEE0284C7),
@@ -844,6 +869,7 @@ fun OsmMapView(
             onHikingOverlayToggle = { showHikingOverlay = it },
             currentFontScale = fontScale,
             onFontScaleChange = { fontScale = it },
+            currentLatLng = latLng,
             onClearCache = {
                 mapView?.tileProvider?.clearTileCache()
                 hikingProviderRef?.clearTileCache()
@@ -872,9 +898,11 @@ private fun MapSettingsDialog(
     onHikingOverlayToggle: (Boolean) -> Unit,
     currentFontScale: MapFontScale,
     onFontScaleChange: (MapFontScale) -> Unit,
+    currentLatLng: Triple<Double, Double, Float?>? = null,
     onClearCache: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = ComposeColor(0xFF0F172A),
@@ -1047,21 +1075,151 @@ private fun MapSettingsDialog(
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
 
-            // Tile Cache Purge
-            OutlinedButton(
-                onClick = onClearCache,
+            // Offline Map Cache & Pre-download Section (Consolidated into Map Settings)
+            Text(
+                text = "Offline Map Cache",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+
+            val tileDir = remember { Configuration.getInstance().osmdroidTileCache }
+            val cacheDownloadState by MapCacheHelper.downloadState.collectAsState()
+            var tileCacheSizeMb by remember {
+                mutableStateOf(
+                    try {
+                        var size = 0L
+                        tileDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
+                        size / (1024 * 1024)
+                    } catch (_: Exception) { 0L }
+                )
+            }
+
+            LaunchedEffect(cacheDownloadState) {
+                if (cacheDownloadState is CacheDownloadState.Completed) {
+                    try {
+                        var size = 0L
+                        tileDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
+                        tileCacheSizeMb = size / (1024 * 1024)
+                    } catch (_: Exception) {}
+                }
+            }
+
+            Text(
+                text = "Disk cache: ${tileCacheSizeMb} MB / 500 MB maximum limit",
+                fontSize = 12.sp,
+                color = ComposeColor(0xFF94A3B8)
+            )
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = ComposeColor(0xFFF87171)
-                )
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Clear Tile Disk Cache", fontSize = 13.sp)
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            tileDir.deleteRecursively()
+                            tileDir.mkdirs()
+                            tileCacheSizeMb = 0L
+                            onClearCache()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ComposeColor(0xFFF87171)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Clear Cache", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Clear Cache", fontSize = 12.sp)
+                }
+
+                val isDownloadingTiles = cacheDownloadState is CacheDownloadState.Downloading
+                Button(
+                    onClick = {
+                        val lat = currentLatLng?.first ?: 50.0647
+                        val lng = currentLatLng?.second ?: 19.9450
+                        MapCacheHelper.startCachingRegion(context, lat, lng)
+                    },
+                    enabled = !isDownloadingTiles,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ComposeColor(0xFF1E293B),
+                        disabledContainerColor = ComposeColor(0xFF1E293B).copy(alpha = 0.5f),
+                        contentColor = ComposeColor(0xFF38BDF8)
+                    ),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = "Pre-cache", modifier = Modifier.size(16.dp), tint = ComposeColor(0xFF38BDF8))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isDownloadingTiles) "Downloading..." else "Cache 5km", fontSize = 12.sp)
+                }
+            }
+
+            when (val state = cacheDownloadState) {
+                is CacheDownloadState.Downloading -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ComposeColor(0xFF1E293B))
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Downloading tiles: ${state.current} / ${state.total}",
+                                fontSize = 12.sp,
+                                color = ComposeColor(0xFF38BDF8)
+                            )
+                            Text(
+                                text = "${state.percent}%",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ComposeColor(0xFF38BDF8)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { state.percent / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = ComposeColor(0xFF38BDF8),
+                            trackColor = ComposeColor(0xFF0F172A)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = { MapCacheHelper.cancelDownload() },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text("Cancel", fontSize = 11.sp, color = ComposeColor(0xFFF87171))
+                            }
+                        }
+                    }
+                }
+                is CacheDownloadState.Completed -> {
+                    Text(
+                        text = "✅ Cached ${state.totalTiles} tiles (+${String.format(java.util.Locale.getDefault(), "%.1f", state.addedMb)} MB)",
+                        fontSize = 12.sp,
+                        color = ComposeColor(0xFF10B981)
+                    )
+                }
+                is CacheDownloadState.Failed -> {
+                    Text(
+                        text = "❌ Cache download failed: ${state.error}",
+                        fontSize = 12.sp,
+                        color = ComposeColor(0xFFF87171)
+                    )
+                }
+                else -> {}
             }
         }
     }

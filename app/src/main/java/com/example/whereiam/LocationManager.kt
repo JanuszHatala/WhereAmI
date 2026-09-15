@@ -694,7 +694,7 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    // GEO-07: Spatial grid LRU cache (~15m cell resolution, 30 min TTL, up to 300 locations)
+    // GEO-07: Spatial grid LRU cache (~100m cell resolution, 30 min TTL, up to 300 locations)
     private data class CachedMultiPlace(
         val timestamp: Long,
         val lat: Double,
@@ -709,7 +709,7 @@ class LocationManager private constructor(private val context: Context) {
         }
     )
 
-    // In-memory cache for Nominatim reverse-geocode responses (150 entries, 30 min TTL)
+    // In-memory cache for Nominatim reverse-geocode responses (150 entries, 30 min TTL, ~100m grid)
     private data class CachedOsmResult(
         val timestamp: Long,
         val result: OsmPlaceResult
@@ -730,7 +730,7 @@ class LocationManager private constructor(private val context: Context) {
 
     fun resolveMultiLanguageData(lat: Double, lng: Double): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
-        val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
+        val gridKey = "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}"
         val cached = spatialPlaceCache[gridKey]
         if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
             return cached.data
@@ -746,9 +746,12 @@ class LocationManager private constructor(private val context: Context) {
         val plAddress = geocode(lat, lng, Locale("pl", "PL")) ?: baseAddress
         val nativeAddress = geocode(lat, lng, nativeLocale) ?: baseAddress
 
-        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs)
-        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs)
-        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs)
+        // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
+        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
+
+        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm)
+        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm)
+        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm)
 
         if (enPlace.city != "Unknown City")     saveLastGood(prefs, "en",     lat, lng, enPlace)
         if (plPlace.city != "Unknown City")     saveLastGood(prefs, "pl",     lat, lng, plPlace)
@@ -767,50 +770,74 @@ class LocationManager private constructor(private val context: Context) {
         address: Address?,
         osmLang: String,
         countryCode: String,
-        prefs: SharedPreferences
+        prefs: SharedPreferences,
+        sharedOsm: OsmPlaceResult? = null
     ): PlaceInfo {
-        // Tier 1 – Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
-        if (address?.locality != null) {
-            val basePlace = address.toPlaceInfo(countryCode)
-            val osm = geocodeWithOsm(lat, lng, osmLang)
-            return if (osm != null) {
-                val canonicalStreet = if (!osm.roadRef.isNullOrBlank()) {
-                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
-                } else {
-                    basePlace.street ?: osm.street
-                }
-                basePlace.copy(
-                    street = canonicalStreet,
-                    roadRef = osm.roadRef ?: basePlace.roadRef,
-                    gmina = osm.municipality ?: basePlace.gmina,
-                    powiat = osm.county ?: basePlace.powiat,
-                    voivodeship = osm.state ?: basePlace.voivodeship
-                )
-            } else {
-                basePlace
-            }
-        }
-
-        // Tier 2a – Close to last known good
         val lastGood = loadLastGood(prefs, cacheKey)
         val lastGoodLat = prefs.getFloat("last_good_lat", Float.MIN_VALUE).toDouble()
         val lastGoodLng = prefs.getFloat("last_good_lng", Float.MIN_VALUE).toDouble()
-        if (lastGood != null && lastGoodLat != Float.MIN_VALUE.toDouble()) {
-            val distM = distanceBetween(lat, lng, lastGoodLat, lastGoodLng)
-            if (distM < 300f) return lastGood
+        val distToLastGood = if (lastGood != null && lastGoodLat != Float.MIN_VALUE.toDouble()) {
+            distanceBetween(lat, lng, lastGoodLat, lastGoodLng)
+        } else Float.MAX_VALUE
+
+        val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang)
+
+        // Tier 1 – Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
+        if (address?.locality != null) {
+            val basePlace = address.toPlaceInfo(countryCode)
+            val canonicalStreet = if (osm != null && !osm.roadRef.isNullOrBlank()) {
+                RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
+            } else {
+                basePlace.street ?: osm?.street
+            }
+
+            // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
+            val localityKey = basePlace.city.lowercase(Locale.ROOT)
+            val candidateGmina = osm?.municipality ?: basePlace.gmina
+            val effectiveGmina = if (!candidateGmina.isNullOrBlank()) {
+                prefs.edit().putString("loc_gmina_$localityKey", candidateGmina).apply()
+                candidateGmina
+            } else {
+                prefs.getString("loc_gmina_$localityKey", null)
+                    ?: if (lastGood?.city.equals(basePlace.city, ignoreCase = true) || distToLastGood < 1500f) lastGood?.gmina else null
+            }
+
+            val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
+            val effectiveVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
+
+            return basePlace.copy(
+                street = canonicalStreet,
+                roadRef = osm?.roadRef ?: basePlace.roadRef,
+                gmina = effectiveGmina,
+                powiat = effectivePowiat,
+                voivodeship = effectiveVoivodeship
+            )
+        }
+
+        // Tier 2a – Close to last known good
+        if (lastGood != null && distToLastGood < 300f) {
+            return lastGood
         }
 
         // Tier 2b – OpenStreetMap Nominatim
-        val osm = geocodeWithOsm(lat, lng, osmLang)
         if (osm != null) {
             val city = osm.city ?: osm.municipality ?: osm.county
             if (city != null) {
+                val localityKey = city.lowercase(Locale.ROOT)
+                val effectiveGmina = if (!osm.municipality.isNullOrBlank()) {
+                    prefs.edit().putString("loc_gmina_$localityKey", osm.municipality).apply()
+                    osm.municipality
+                } else {
+                    prefs.getString("loc_gmina_$localityKey", null)
+                        ?: if (lastGood?.city.equals(city, ignoreCase = true) || distToLastGood < 1500f) lastGood?.gmina else null
+                }
+
                 return PlaceInfo(
                     city = city,
                     street = osm.street ?: address?.thoroughfare?.let { RoadNameNormalizer.normalize(it, houseNumber = address.subThoroughfare) },
                     roadRef = osm.roadRef,
-                    gmina = osm.municipality,
-                    powiat = osm.county,
+                    gmina = effectiveGmina,
+                    powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
                     voivodeship = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region",
                     country = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country",
                     countryCode = osm.countryCode ?: countryCode
@@ -828,7 +855,8 @@ class LocationManager private constructor(private val context: Context) {
 
     private fun geocodeWithOsm(lat: Double, lng: Double, language: String): OsmPlaceResult? {
         val now = System.currentTimeMillis()
-        val osmKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}_$language"
+        // Quantize coordinates to ~100m grid cell so local movements don't hammer Nominatim
+        val osmKey = "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}_$language"
         val cachedOsm = osmResponseCache[osmKey]
         if (cachedOsm != null && (now - cachedOsm.timestamp) < 30 * 60 * 1000L) {
             return cachedOsm.result
@@ -873,11 +901,19 @@ class LocationManager private constructor(private val context: Context) {
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
                 val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum)
 
+                val rawMunicipality = str("municipality")
+                    ?: str("commune")
+                    ?: str("gmina")
+                    ?: str("district")
+                    ?: str("city_district")
+                    ?: str("subdistrict")
+                    ?: str("local_administrative_area")
+
                 val osmResult = OsmPlaceResult(
                     city = str("city") ?: str("town") ?: str("village") ?: str("hamlet") ?: str("suburb"),
                     street = normalizedStreet,
                     roadRef = rawRef,
-                    municipality = str("municipality") ?: str("commune") ?: str("gmina"),
+                    municipality = rawMunicipality,
                     county = str("county"),
                     state = str("state"),
                     country = str("country"),

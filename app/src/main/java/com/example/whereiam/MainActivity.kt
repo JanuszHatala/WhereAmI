@@ -1008,76 +1008,99 @@ fun LocationScreen(viewModel: MainViewModel) {
                         // Multi-Select Action Bar (Fit Map, Merge, Select All / Deselect All)
                         val allFilteredSelected = filteredTrips.isNotEmpty() && filteredTrips.all { selectedTripIds.contains(it.id) }
 
+                        // Action Bar: Selection Actions & Select All
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Trips (${filteredTrips.size}${if (filteredTrips.size != savedTrips.size) " of ${savedTrips.size}" else ""})",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (selectedTripIds.size >= 2) {
-                                    Button(
-                                        onClick = { viewModel.mergeSelectedTrips() },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                        modifier = Modifier.height(30.dp),
-                                        shape = RoundedCornerShape(6.dp)
+                            if (selectedTripIds.isNotEmpty()) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        color = Color(0xFF1E293B),
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
-                                        Icon(Icons.Default.CallMerge, contentDescription = "Merge", tint = Color.White, modifier = Modifier.size(13.dp))
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Merge (${selectedTripIds.size})", color = Color.White, fontSize = 11.sp)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${selectedTripIds.size} selected",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF38BDF8)
+                                            )
+                                            IconButton(
+                                                onClick = { viewModel.clearTripSelection() },
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color(0xFF94A3B8), modifier = Modifier.size(12.dp))
+                                            }
+                                        }
                                     }
-                                }
 
-                                if (selectedTripIds.isNotEmpty()) {
+                                    if (selectedTripIds.size >= 2) {
+                                        Button(
+                                            onClick = { viewModel.mergeSelectedTrips() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Icon(Icons.Default.CallMerge, contentDescription = "Merge", tint = Color.White, modifier = Modifier.size(13.dp))
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text("Merge", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+
                                     Button(
                                         onClick = {
                                             showTripsSheet = false
                                             viewModel.triggerFitTrack()
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                        modifier = Modifier.height(30.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp),
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Icon(Icons.Default.CropFree, contentDescription = "Fit Map", tint = Color.White, modifier = Modifier.size(13.dp))
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Fit", color = Color.White, fontSize = 11.sp)
-                                    }
-
-                                    TextButton(
-                                        onClick = { viewModel.clearTripSelection() },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text("Clear (${selectedTripIds.size})", color = Color(0xFFF87171), fontSize = 11.sp)
+                                        Text("Fit Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
-
-                                TextButton(
-                                    onClick = {
-                                        if (allFilteredSelected) {
-                                            viewModel.clearTripSelection()
-                                        } else {
-                                            viewModel.setSelectedTripIds(filteredTrips.map { it.id }.toSet())
-                                        }
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
+                            } else {
+                                if (filteredTrips.size != savedTrips.size) {
                                     Text(
-                                        text = if (allFilteredSelected) "Deselect" else "Select All (${filteredTrips.size})",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 11.sp
+                                        text = "Filtered: ${filteredTrips.size} of ${savedTrips.size}",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF94A3B8)
                                     )
+                                } else {
+                                    Spacer(modifier = Modifier.width(1.dp))
                                 }
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    if (allFilteredSelected) {
+                                        viewModel.clearTripSelection()
+                                    } else {
+                                        viewModel.setSelectedTripIds(filteredTrips.map { it.id }.toSet())
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (allFilteredSelected) "Deselect All" else "Select All (${filteredTrips.size})",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
                             }
                         }
 
@@ -1334,19 +1357,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                         ) {
                             // Lifetime Summary Cards Row
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Min),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Card(
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
                                         Text("Total Distance", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = String.format(Locale.getDefault(), "%.1f km", totalDistanceKm),
-                                            fontSize = 17.sp,
+                                            fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF38BDF8)
                                         )
@@ -1354,15 +1388,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
 
                                 Card(
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
                                         Text("Total Trips", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = "${savedTrips.size}",
-                                            fontSize = 17.sp,
+                                            fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF10B981)
                                         )
@@ -1370,15 +1413,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
 
                                 Card(
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
                                         Text("Top Speed", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = String.format(Locale.getDefault(), "%.0f km/h", maxSpeedOverall),
-                                            fontSize = 17.sp,
+                                            fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFFFBBF24)
                                         )
@@ -1417,6 +1469,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     )
                                 }
                             } else {
+                                val maxVisits = remember(allVisitedPlaces) { allVisitedPlaces.maxOfOrNull { it.second } ?: 1 }
                                 LazyColumn(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1429,40 +1482,50 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(
-                                                        Icons.Default.Place,
-                                                        contentDescription = null,
-                                                        tint = Color(0xFF38BDF8),
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Text(
-                                                        text = place,
-                                                        fontSize = 14.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = Color.White
-                                                    )
-                                                }
-                                                Surface(
-                                                    color = Color(0xFF0F172A),
-                                                    shape = RoundedCornerShape(6.dp)
+                                            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text(
-                                                        text = "$count ${if (count == 1) "visit" else "visits"}",
-                                                        color = Color(0xFFFBBF24),
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                                    )
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                            Icons.Default.Place,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFF38BDF8),
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = place,
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color.White
+                                                        )
+                                                    }
+                                                    Surface(
+                                                        color = Color(0xFF0F172A),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "$count ${if (count == 1) "visit" else "visits"}",
+                                                            color = Color(0xFFFBBF24),
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                        )
+                                                    }
                                                 }
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                LinearProgressIndicator(
+                                                    progress = { count.toFloat() / maxVisits },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(4.dp)
+                                                        .clip(RoundedCornerShape(2.dp)),
+                                                    color = Color(0xFF38BDF8),
+                                                    trackColor = Color(0xFF0F172A)
+                                                )
                                             }
                                         }
                                     }
@@ -1794,151 +1857,31 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // ── Offline Map Cache Management ──────────────────────────────
-                Text(
-                    text = "Offline Map Cache",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                val tileDir = remember { org.osmdroid.config.Configuration.getInstance().osmdroidTileCache }
-                val cacheDownloadState by MapCacheHelper.downloadState.collectAsState()
-                var tileCacheSizeMb by remember {
-                    mutableStateOf(
-                        try {
-                            var size = 0L
-                            tileDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
-                            size / (1024 * 1024)
-                        } catch (_: Exception) { 0L }
-                    )
-                }
-
-                LaunchedEffect(cacheDownloadState) {
-                    if (cacheDownloadState is CacheDownloadState.Completed) {
-                        try {
-                            var size = 0L
-                            tileDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
-                            tileCacheSizeMb = size / (1024 * 1024)
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                Text(
-                    text = "Disk cache: ${tileCacheSizeMb} MB / 500 MB maximum limit",
-                    fontSize = 12.sp,
-                    color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                Surface(
+                    color = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Button(
-                        onClick = {
-                            try {
-                                tileDir.deleteRecursively()
-                                tileDir.mkdirs()
-                                tileCacheSizeMb = 0L
-                                android.widget.Toast.makeText(context, "Offline map cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "Clear Cache", modifier = Modifier.size(16.dp), tint = Color(0xFFF87171))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Clear Cache", color = Color(0xFFF87171), fontSize = 13.sp)
-                    }
-                    val isDownloadingTiles = cacheDownloadState is CacheDownloadState.Downloading
-                    Button(
-                        onClick = {
-                            val lat = currentLatLng?.first ?: 50.0647
-                            val lng = currentLatLng?.second ?: 19.9450
-                            MapCacheHelper.startCachingRegion(context, lat, lng)
-                        },
-                        enabled = !isDownloadingTiles,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1E293B),
-                            disabledContainerColor = Color(0xFF1E293B).copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = "Pre-cache", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isDownloadingTiles) "Downloading..." else "Cache Region", color = Color(0xFF38BDF8), fontSize = 13.sp)
-                    }
-                }
-
-                // Download progress & feedback
-                when (val state = cacheDownloadState) {
-                    is CacheDownloadState.Downloading -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF1E293B))
-                                .padding(10.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Downloading tiles: ${state.current} / ${state.total}",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF38BDF8)
-                                )
-                                Text(
-                                    text = "${state.percent}%",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { state.percent / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFF38BDF8),
-                                trackColor = Color(0xFF0F172A)
+                        Icon(Icons.Default.Layers, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Offline Map Cache & Pre-download",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                TextButton(
-                                    onClick = { MapCacheHelper.cancelDownload() },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFF87171))
-                                }
-                            }
+                            Text(
+                                text = "Managed directly on the Map screen via the Layers icon.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
+                            )
                         }
                     }
-                    is CacheDownloadState.Completed -> {
-                        Text(
-                            text = "✅ Cached ${state.totalTiles} tiles (+${String.format(Locale.getDefault(), "%.1f", state.addedMb)} MB)",
-                            fontSize = 12.sp,
-                            color = Color(0xFF10B981),
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                    is CacheDownloadState.Failed -> {
-                        Text(
-                            text = "❌ Cache download failed: ${state.error}",
-                            fontSize = 12.sp,
-                            color = Color(0xFFEF4444),
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                    else -> {}
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -3724,12 +3667,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     android.widget.Toast.makeText(context, "Coordinates copied: $coordsStr", android.widget.Toast.LENGTH_SHORT).show()
                                 },
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Coords", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Copy Coords", fontSize = 12.sp)
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Coords", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Copy Coords", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                             }
 
                             // Open in Google Maps app
@@ -3745,12 +3688,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     showInstantShareDialog = false
                                 },
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Map, contentDescription = "Google Maps", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Open Map", fontSize = 12.sp)
+                                Icon(Icons.Default.Map, contentDescription = "Google Maps", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Open Map", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                             }
                         }
                     } else {
@@ -3983,25 +3926,6 @@ private fun LocalityCard(
                                 )
                             }
                         }
-                        if (liveSession?.isActive == true) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
-                                    .clickable { onShowLiveShare() }
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = if (liveSession.isPaused) "⏸️ $liveTimerText" else "📡 $liveTimerText",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                    softWrap = false
-                                )
-                            }
-                        }
-
                         if (nearbySavedPlace != null) {
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
@@ -4011,25 +3935,40 @@ private fun LocalityCard(
                         }
                     }
 
-                    // Compact Action Icons (Live Share, Maps, Expand)
+                    // Compact Action Icons (Live Share Satellite, Maps, Expand)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        IconButton(
-                            onClick = onShowLiveShare,
-                            modifier = Modifier.size(30.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ShareLocation,
-                                contentDescription = "Live Share Location",
-                                tint = if (liveSession?.isActive == true) {
-                                    if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
-                                } else {
-                                    Color(0xFF38BDF8)
-                                },
-                                modifier = Modifier.size(16.dp)
-                            )
+                        // Live Sharing Satellite Icon (Shown immediately to the left of Google Maps when turned ON)
+                        if (liveSession?.isActive == true) {
+                            Surface(
+                                onClick = onShowLiveShare,
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.SatelliteAlt,
+                                        contentDescription = "Live Sharing Active",
+                                        tint = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    if (liveTimerText.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = liveTimerText,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         // Open in Google Maps
@@ -4197,7 +4136,7 @@ private fun LocalityCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Left side: Saved Place / Live Badge
+                    // Left side: Saved Place (if near saved place)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -4219,44 +4158,42 @@ private fun LocalityCard(
                                 )
                             }
                         }
-                        if (liveSession?.isActive == true) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
-                                    .clickable { onShowLiveShare() }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = if (liveSession.isPaused) "⏸️ PAUSED ($liveTimerText)" else "📡 LIVE ($liveTimerText)",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                    softWrap = false
-                                )
-                            }
-                        }
                     }
 
-                    // Right Utility Icons: Live Share, Google Maps, Collapse
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(
-                            onClick = onShowLiveShare,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1E293B))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ShareLocation,
-                                contentDescription = "Live Share Location",
-                                tint = if (liveSession?.isActive == true) {
-                                    if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
-                                } else {
-                                    Color(0xFF38BDF8)
-                                },
-                                modifier = Modifier.size(18.dp)
-                            )
+                    // Right Utility Icons: Live Share Satellite, Google Maps, Collapse
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Live Sharing Satellite Icon (Shown immediately to the left of Google Maps when turned ON)
+                        if (liveSession?.isActive == true) {
+                            Surface(
+                                onClick = onShowLiveShare,
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.SatelliteAlt,
+                                        contentDescription = "Live Sharing Active",
+                                        tint = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    if (liveTimerText.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = liveTimerText,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         // Open in Google Maps

@@ -288,6 +288,18 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
         _currentSession.value = session
 
+        // Ensure LiveTrackingService foreground service runs for persistent background streaming & notification
+        try {
+            val intent = android.content.Intent(context, LiveTrackingService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to start LiveTrackingService: ${e.message}")
+        }
+
         scope.launch {
             postSessionMeta(session)
         }
