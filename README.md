@@ -43,7 +43,10 @@ WhereIAm/
 │   ├── server.js         # REST telemetry API & session persistence
 │   ├── public/           # Responsive OpenStreetMap Leaflet viewer
 │   └── README.md         # Synology NAS & Docker deployment guide
-├── FEATURES_INVENTORY.md # Authoritative feature register & status matrix
+├── docs/
+│   ├── FEATURES_INVENTORY.md   # Authoritative feature register & status matrix
+│   ├── BACKEND_SYNC_DESIGN.md  # Backend architecture & live sharing design
+│   └── LOCAL_TESTING_GUIDE.md  # Step-by-step local end-to-end USB & Docker testing guide
 └── README.md             # Project overview & quick start
 ```
 
@@ -103,6 +106,8 @@ Start with:
 ```bash
 docker compose up -d
 ```
+
+> **Local End-to-End Testing via USB**: For instructions on testing the Android app and Docker server locally over a USB cable using ADB port forwarding, see the [Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md).
 
 ---
 

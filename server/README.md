@@ -40,6 +40,8 @@ npm start
 Viewer is available at: `http://localhost:3003/live/<session-id>`  
 Health check: `http://localhost:3003/health`
 
+> **Note**: For step-by-step instructions on connecting a physical Android device via USB and testing live sharing end-to-end with this Docker server, see [`../docs/LOCAL_TESTING_GUIDE.md`](../docs/LOCAL_TESTING_GUIDE.md).
+
 ---
 
 ## 2. Docker & Docker Compose

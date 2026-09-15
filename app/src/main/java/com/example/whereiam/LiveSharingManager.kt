@@ -37,10 +37,13 @@ data class LiveSession(
     val createdAt: Long,
     val expiresAt: Long,              // 0 = never / permanent (until manually stopped)
     val isActive: Boolean,
-    val isPaused: Boolean = false,    // Pause / Resume state
+    val isPaused: Boolean = false,    // Overall pause
+    val isPersonalPaused: Boolean = false, // Selective pause for personal static link
+    val isRandomPaused: Boolean = false,   // Selective pause for random session link
     val serverUrl: String,            // e.g. "https://whereami.yourdomain.com" or "http://127.0.0.1:3003"
     val provider: LiveShareProvider,
     val syncIntervalMinutes: Int,     // 1, 2, 5, 10
+    val trailVisible: Boolean = true, // Whether visitors see the full trail or current position only
     val lastSyncTime: Long = 0L,
     val pendingPointsCount: Int = 0
 ) {
@@ -55,7 +58,12 @@ data class LiveSession(
 
     fun getFormattedRemaining(): String {
         val ms = getRemainingTimeMs()
-        if (ms < 0L) return "Until stopped (No limit)"
+        if (ms < 0L) {
+            val elapsed = System.currentTimeMillis() - createdAt
+            val hours = elapsed / (1000 * 3600)
+            val minutes = (elapsed % (1000 * 3600)) / (1000 * 60)
+            return if (hours > 0) "⏱️ ${hours}h ${minutes}m elapsed" else "⏱️ ${minutes}m elapsed"
+        }
         if (ms == 0L) return "Expired"
         val hours = ms / (1000 * 3600)
         val minutes = (ms % (1000 * 3600)) / (1000 * 60)
@@ -102,10 +110,13 @@ class LiveSharingManager private constructor(private val context: Context) {
         private const val KEY_SESSION_EXPIRES = "active_session_expires"
         private const val KEY_SESSION_ACTIVE = "active_session_is_active"
         private const val KEY_SESSION_PAUSED = "active_session_is_paused"
+        private const val KEY_SESSION_PERSONAL_PAUSED = "active_session_personal_paused"
+        private const val KEY_SESSION_RANDOM_PAUSED = "active_session_random_paused"
         private const val KEY_SESSION_SERVER = "active_session_server_url"
         private const val KEY_SESSION_PROVIDER = "active_session_provider"
         private const val KEY_SESSION_INTERVAL = "active_session_interval"
         private const val KEY_SESSION_LAST_SYNC = "active_session_last_sync"
+        private const val KEY_SESSION_TRAIL_VISIBLE = "active_session_trail_visible"
         private const val KEY_STATIC_LIVE_ID = "personal_static_live_id"
         // Dialog UI preference persistence
         const val KEY_PREF_LINK_MODE_STATIC = "pref_link_mode_static"   // Boolean
@@ -146,6 +157,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     private val memoryPointsQueue = mutableListOf<LivePoint>()
     private var lastRecordedLat: Double = 0.0
     private var lastRecordedLng: Double = 0.0
+    private var lastRecordedBearing: Float? = null
 
     init {
         loadSavedSession()
@@ -201,6 +213,9 @@ class LiveSharingManager private constructor(private val context: Context) {
             "https://live.yourdomain.com"
         } else rawSavedUrl
 
+        val isPersonalPaused = prefs.getBoolean(KEY_SESSION_PERSONAL_PAUSED, false)
+        val isRandomPaused = prefs.getBoolean(KEY_SESSION_RANDOM_PAUSED, false)
+
         val session = LiveSession(
             id = id,
             title = prefs.getString(KEY_SESSION_TITLE, "My Live Hike") ?: "My Live Hike",
@@ -208,9 +223,12 @@ class LiveSharingManager private constructor(private val context: Context) {
             expiresAt = expiresAt,
             isActive = isActive,
             isPaused = isPaused,
+            isPersonalPaused = isPersonalPaused,
+            isRandomPaused = isRandomPaused,
             serverUrl = cleanUrl,
             provider = provider,
             syncIntervalMinutes = prefs.getInt(KEY_SESSION_INTERVAL, 5),
+            trailVisible = prefs.getBoolean(KEY_SESSION_TRAIL_VISIBLE, true),
             lastSyncTime = prefs.getLong(KEY_SESSION_LAST_SYNC, 0L),
             pendingPointsCount = memoryPointsQueue.size
         )
@@ -238,9 +256,12 @@ class LiveSharingManager private constructor(private val context: Context) {
             expiresAt = expiresAt,
             isActive = true,
             isPaused = false,
+            isPersonalPaused = false,
+            isRandomPaused = false,
             serverUrl = cleanUrl,
             provider = provider,
             syncIntervalMinutes = syncIntervalMinutes,
+            trailVisible = true,
             lastSyncTime = 0L,
             pendingPointsCount = 0
         )
@@ -252,9 +273,12 @@ class LiveSharingManager private constructor(private val context: Context) {
             .putLong(KEY_SESSION_EXPIRES, session.expiresAt)
             .putBoolean(KEY_SESSION_ACTIVE, true)
             .putBoolean(KEY_SESSION_PAUSED, false)
+            .putBoolean(KEY_SESSION_PERSONAL_PAUSED, false)
+            .putBoolean(KEY_SESSION_RANDOM_PAUSED, false)
             .putString(KEY_SESSION_SERVER, session.serverUrl)
             .putString(KEY_SESSION_PROVIDER, session.provider.name)
             .putInt(KEY_SESSION_INTERVAL, session.syncIntervalMinutes)
+            .putBoolean(KEY_SESSION_TRAIL_VISIBLE, true)
             .putLong(KEY_SESSION_LAST_SYNC, 0L)
             .apply()
 
@@ -283,12 +307,101 @@ class LiveSharingManager private constructor(private val context: Context) {
 
     fun resumeSession() {
         val s = _currentSession.value ?: return
-        val resumed = s.copy(isPaused = false)
-        prefs.edit().putBoolean(KEY_SESSION_PAUSED, false).apply()
+        val resumed = s.copy(isPaused = false, isPersonalPaused = false, isRandomPaused = false)
+        prefs.edit()
+            .putBoolean(KEY_SESSION_PAUSED, false)
+            .putBoolean(KEY_SESSION_PERSONAL_PAUSED, false)
+            .putBoolean(KEY_SESSION_RANDOM_PAUSED, false)
+            .apply()
         _currentSession.value = resumed
 
         scope.launch {
-            postStatusUpdate(s, "active")
+            postStatusUpdate(s, "active", "all")
+        }
+    }
+
+    fun pausePersonalLink() {
+        val s = _currentSession.value ?: return
+        val updated = s.copy(isPersonalPaused = true)
+        prefs.edit().putBoolean(KEY_SESSION_PERSONAL_PAUSED, true).apply()
+        _currentSession.value = updated
+        scope.launch {
+            postStatusUpdate(s, "paused", "personal")
+        }
+    }
+
+    fun resumePersonalLink() {
+        val s = _currentSession.value ?: return
+        val updated = s.copy(isPersonalPaused = false)
+        prefs.edit().putBoolean(KEY_SESSION_PERSONAL_PAUSED, false).apply()
+        _currentSession.value = updated
+        scope.launch {
+            postStatusUpdate(s, "active", "personal")
+        }
+    }
+
+    fun pauseRandomLink() {
+        val s = _currentSession.value ?: return
+        val updated = s.copy(isRandomPaused = true)
+        prefs.edit().putBoolean(KEY_SESSION_RANDOM_PAUSED, true).apply()
+        _currentSession.value = updated
+        scope.launch {
+            postStatusUpdate(s, "paused", "random")
+        }
+    }
+
+    fun resumeRandomLink() {
+        val s = _currentSession.value ?: return
+        val updated = s.copy(isRandomPaused = false)
+        prefs.edit().putBoolean(KEY_SESSION_RANDOM_PAUSED, false).apply()
+        _currentSession.value = updated
+        scope.launch {
+            postStatusUpdate(s, "active", "random")
+        }
+    }
+
+    fun renameSession(newTitle: String) {
+        val s = _currentSession.value ?: return
+        val trimmed = newTitle.trim()
+        if (trimmed.isEmpty()) return
+        val updated = s.copy(title = trimmed)
+        prefs.edit().putString(KEY_SESSION_TITLE, trimmed).apply()
+        _currentSession.value = updated
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/rename"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.doOutput = true
+                val body = JSONObject().apply { put("title", trimmed) }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setSyncInterval(minutes: Int) {
+        val s = _currentSession.value ?: return
+        if (minutes <= 0) return
+        val updated = s.copy(syncIntervalMinutes = minutes)
+        prefs.edit().putInt(KEY_SESSION_INTERVAL, minutes).apply()
+        _currentSession.value = updated
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/interval"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.doOutput = true
+                val body = JSONObject().apply { put("syncIntervalMinutes", minutes) }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            } catch (_: Exception) {}
         }
     }
 
@@ -325,6 +438,28 @@ class LiveSharingManager private constructor(private val context: Context) {
         adjustSession(additionalHours.toDouble())
     }
 
+    fun setTrailVisible(visible: Boolean) {
+        val s = _currentSession.value ?: return
+        val updated = s.copy(trailVisible = visible)
+        prefs.edit().putBoolean(KEY_SESSION_TRAIL_VISIBLE, visible).apply()
+        _currentSession.value = updated
+
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/view-mode"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.doOutput = true
+                val body = JSONObject().apply { put("trailVisible", visible) }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
     fun stopSession() {
         val s = _currentSession.value ?: return
         val stopped = s.copy(isActive = false, isPaused = false)
@@ -357,6 +492,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         lng: Double,
         speedKmh: Float,
         altitude: Double?,
+        bearing: Float? = null,
         placeName: String?,
         trekkingBadge: String?
     ) {
@@ -380,6 +516,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         lastRecordedLat = lat
         lastRecordedLng = lng
+        if (bearing != null) lastRecordedBearing = bearing
 
         val point = LivePoint(
             lat = lat,
@@ -400,7 +537,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
 
         if (shouldSync) {
-            flushPointsToServer(lat, lng, speedKmh, altitude, placeName, trekkingBadge)
+            flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge)
         }
     }
 
@@ -409,13 +546,14 @@ class LiveSharingManager private constructor(private val context: Context) {
         currentLng: Double? = null,
         currentSpeed: Float? = null,
         currentAlt: Double? = null,
+        currentBearing: Float? = null,
         placeName: String? = null,
         trekkingBadge: String? = null
     ) {
         val lat = currentLat ?: lastRecordedLat
         val lng = currentLng ?: lastRecordedLng
         if (lat == 0.0 && lng == 0.0) return
-        flushPointsToServer(lat, lng, currentSpeed ?: 0f, currentAlt, placeName, trekkingBadge)
+        flushPointsToServer(lat, lng, currentSpeed ?: 0f, currentAlt, currentBearing ?: lastRecordedBearing, placeName, trekkingBadge)
     }
 
     private fun flushPointsToServer(
@@ -423,6 +561,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         lng: Double,
         speedKmh: Float,
         altitude: Double?,
+        bearing: Float?,
         placeName: String?,
         trekkingBadge: String?
     ) {
@@ -436,15 +575,12 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         scope.launch {
             val battery = getBatteryPercentage()
-            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, placeName, trekkingBadge, battery)
+            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery)
             if (ok) {
                 val now = System.currentTimeMillis()
+                val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
                 synchronized(memoryPointsQueue) {
-                    if (memoryPointsQueue.size > 3) {
-                        val retain = memoryPointsQueue.takeLast(3)
-                        memoryPointsQueue.clear()
-                        memoryPointsQueue.addAll(retain)
-                    }
+                    memoryPointsQueue.removeAll { it.timestamp in postedTimestamps }
                 }
                 prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
                 _currentSession.value = session.copy(lastSyncTime = now, pendingPointsCount = memoryPointsQueue.size)
@@ -468,19 +604,26 @@ class LiveSharingManager private constructor(private val context: Context) {
                 put("title", session.title)
                 put("createdAt", session.createdAt)
                 put("expiresAt", session.expiresAt)
+                put("trailVisible", session.trailVisible)
+                put("syncIntervalMinutes", session.syncIntervalMinutes)
                 if (targetStaticId.isNotBlank()) {
                     put("staticId", targetStaticId)
                 }
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
-            conn.responseCode in 200..299
-        } catch (_: Exception) {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                TelemetryLogger.log("LIVE_SHARE", "postSessionMeta failed with code $code: $urlStr")
+            }
+            code in 200..299
+        } catch (e: Exception) {
+            TelemetryLogger.log("LIVE_SHARE", "postSessionMeta exception: ${e.message}")
             false
         }
     }
 
-    private suspend fun postStatusUpdate(session: LiveSession, status: String): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun postStatusUpdate(session: LiveSession, status: String, target: String = "all"): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
             val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}/status"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
@@ -489,10 +632,14 @@ class LiveSharingManager private constructor(private val context: Context) {
             conn.connectTimeout = 4000
             conn.readTimeout = 4000
             conn.doOutput = true
-            val body = JSONObject().apply { put("status", status) }
+            val body = JSONObject().apply {
+                put("status", status)
+                put("target", target)
+            }
             OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
             conn.responseCode in 200..299
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            TelemetryLogger.log("LIVE_SHARE", "postStatusUpdate exception: ${e.message}")
             false
         }
     }
@@ -504,6 +651,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         lng: Double,
         speed: Float,
         altitude: Double?,
+        bearing: Float?,
         place: String?,
         trekking: String?,
         battery: Int
@@ -528,13 +676,19 @@ class LiveSharingManager private constructor(private val context: Context) {
                 })
             }
 
+            val targetStaticId = _staticLiveId.value
             val root = JSONObject().apply {
                 put("points", pointsArr)
+                put("isPaused", session.isPaused)
+                if (targetStaticId.isNotBlank()) {
+                    put("staticId", targetStaticId)
+                }
                 put("current", JSONObject().apply {
                     put("lat", lat)
                     put("lng", lng)
                     put("spd", speed)
                     put("alt", altitude ?: JSONObject.NULL)
+                    put("bearing", bearing ?: JSONObject.NULL)
                     put("place", place ?: "")
                     put("trekking", trekking ?: "")
                     put("battery", battery)
@@ -543,8 +697,13 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(root.toString()) }
-            conn.responseCode in 200..299
-        } catch (_: Exception) {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                TelemetryLogger.log("LIVE_SHARE", "postSyncPayload failed with code $code: $urlStr")
+            }
+            code in 200..299
+        } catch (e: Exception) {
+            TelemetryLogger.log("LIVE_SHARE", "postSyncPayload exception: ${e.message}")
             false
         }
     }

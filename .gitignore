@@ -17,6 +17,7 @@ build/
 # Node.js Server
 server/node_modules/
 server/sessions.json
+server/data/
 server/npm-debug.log*
 
 phone_diagnostics/
