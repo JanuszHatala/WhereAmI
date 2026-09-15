@@ -39,6 +39,10 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         private const val COL_SP_LOCALITY = "locality"
         private const val COL_SP_STREET = "street"
         private const val COL_SP_CREATED_AT = "created_at"
+
+        fun cleanPartSuffix(title: String): String {
+            return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -502,8 +506,17 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             dist2 += res[0]
         }
 
+        val baseTitle = if (trip.title.isNotBlank()) {
+            trip.title
+        } else {
+            val firstCity = trip.placesVisited.firstOrNull()?.placeName ?: "Trip"
+            val lastCity = trip.placesVisited.lastOrNull()?.placeName
+            if (lastCity != null && lastCity != firstCity) "$firstCity -> $lastCity" else firstCity
+        }
+        val cleanedTitle = cleanPartSuffix(baseTitle)
+
         val trip1 = trip.copy(
-            title = if (trip.title.isNotBlank()) "${trip.title} (Part 1)" else "Trip Part 1",
+            title = "$cleanedTitle - Part 1",
             endTime = splitTime,
             distanceMeters = dist1,
             points = pointsPart1,
@@ -513,7 +526,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         updateTrip(trip1)
 
         val trip2 = TripRecord(
-            title = if (trip.title.isNotBlank()) "${trip.title} (Part 2)" else "Trip Part 2",
+            title = "$cleanedTitle - Part 2",
             startTime = resumeTime,
             endTime = trip.endTime,
             distanceMeters = dist2,

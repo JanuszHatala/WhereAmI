@@ -13,8 +13,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 2** | Geocoding Stability, Road Names & Boundaries | 7 | 7 | 0 | 0 |
 | **Phase 3** | Map Controls, Overlays & Stationary Bearing | 5 | 5 | 0 | 0 |
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
+| **Round 2** | Field Testing (2026-09-15) Enhancements | 16 | 16 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 4 | 0 | 0 | 4 |
-| **Total** | | **28** | **24** | **0** | **4** |
+| **Total** | | **44** | **40** | **0** | **4** |
 
 ---
 
@@ -70,7 +71,30 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 6. Features Inventory & Future Backlog
+## 6. Round 2: Field Testing (2026-09-15) Feedback & Enhancements
+
+| Item ID | User Feedback / Description | Target Components / Files | Status | Diagnostic Root Cause / Solution & Verification |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT2-01** | Trip polyline gap & lag: red line stopped far behind cursor (Screenshot 150737). | `TripManager.kt` | **Completed** | `deltaDist >= 5.0m` now measured against `points.last()` rather than the previous 1s fix. Low-speed tracks below 18 km/h ($< 5\text{ m/s}$) are smoothly preserved without gaps. |
+| **FT2-02** | Auto-stop did not trigger when stopped at home (Screenshot 160401). | `TripManager.kt` | **Completed** | Removed hardcoded 45m override in lines 114 & 299; now respects user configured `_autoStopMinutes.value` directly. Added displacement tracking for sensitive auto-start ($\ge 25\text{m}$ over 8s). |
+| **FT2-03** | Missing canonical `DK52` road ref (Screenshot 152711) and missing `gmina` in hierarchy. | `LocationManager.kt` | **Completed** | `resolvePlace` enriches Android Geocoder results with canonical road references (`DK52`, `DW946`) and Polish administrative hierarchy (`gmina`, `powiat`) via OSM Nominatim enrichment. |
+| **FT2-04** | Parallel / Side street jump (`Bukietowa` vs `Wyzwolenia`) at slow speeds (Screenshot 150650). | `LocationManager.kt` | **Completed** | Strict street hysteresis: requires BOTH `candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration`. Enforces major road inertia down to 1.2 km/h. |
+| **FT2-05** | Android Auto out of sync with phone app. | `LocationManager.kt`, `AutoMediaService.kt`, `LiveTrackingService.kt`, `MainViewModel.kt`, `AppStateManager.kt` | **Completed** | Converted `LocationManager` to a thread-safe singleton `getInstance(context)`. Shared hysteresis and GPS listeners ensure 100% sync across mobile UI, background services, and Android Auto. |
+| **FT2-06** | Indoor phantom speed (6–14 km/h) & battery drain while resting (Screenshot 155507). | `StationaryDetector.kt`, `LocationManager.kt` | **Completed** | Accelerometer variance fusion ($\sigma^2 < 0.045$). Stationary detector locks speed to 0.0 km/h in `hybridSpeedUpdate` when phone is resting on a desk or nightstand. Covered by `StationaryDetectorTest.kt`. |
+| **FT2-07** | Driving localization slow & lagging. | `OsmMapView.kt` | **Completed** | Removed `LAYER_TYPE_SOFTWARE`, enabling full GPU hardware acceleration for OpenStreetMap canvas rendering and smooth panning. |
+| **FT2-08** | Map auto-centering eagerly snaps back after user scrolls to explore. | `OsmMapView.kt` | **Completed** | Implemented Option B: user panning/zooming pauses auto-centering indefinitely, displays a floating "📍 Recenter" pill at bottom center, and resumes following only upon tap. |
+| **FT2-09** | Live sharing foreground notification missing quick actions on phone. | `AndroidManifest.xml`, `MainActivity.kt` | **Completed** | Added `POST_NOTIFICATIONS` permission declaration in manifest and runtime permission request flow for Android 13+. |
+| **FT2-09b**| Live Sharing settings UI/UX reorganization: separate primary from advanced, full-width sheet. | `MainActivity.kt`, `LiveSharingManager.kt` | **Completed** | Full-width `ModalBottomSheet` with 2-tier layout: Tier 1 offers 1-tap quick action cards for Trip link and Personal link with independent pause/resume and copy/share; Tier 2 provides expandable streaming controls. |
+| **FT2-10** | Remove visitor views counter from live web page; show in host app instead. | `server/public/index.html`, `server/server.js`, `MainActivity.kt`, `LiveSharingManager.kt` | **Completed** | Removed view counter badge from public web page header; added view count chip (`👁️ X views`) to active session card in mobile app. |
+| **FT2-11** | Unify Live Sharing button (satellite icon left of Google Maps) and add compact timer to LocalityCard. | `MainActivity.kt` | **Completed** | Satellite icon button is permanently positioned immediately left of Google Maps button in both Compact and Normal modes (tinted green/amber when active/paused, sky-blue when inactive). Added compact live timer (`📡 LIVE (Xh Ym)` / `⏸️ PAUSED (Xh Ym)`) to badges. |
+| **FT2-12** | Merge "My Location / Recenter" with "Refresh Map" into single button. | `OsmMapView.kt` | **Completed** | Merged into single floating action button: recenters map to current GPS location and flushes tile memory cache. |
+| **FT2-13** | Map Settings Dialog: full-width, review hiking symbology, explain raster tile scaling limits, unify offline cache. | `OsmMapView.kt` | **Completed** | Full-width `ModalBottomSheet` with explanation card regarding raster bitmap label rotation limits in `COURSE_UP` mode and unified disk cache purging. |
+| **FT2-14** | Places & Trips UI fixes: Driving badge wrapping, trip split naming, selection counter on delete, action bar layout. | `MainActivity.kt`, `TripDatabaseHelper.kt`, `MainViewModel.kt` | **Completed** | Fixed Driving badge wrapping with `maxLines = 1, softWrap = false`; split naming retains original title format (`$title - Part 1` / `$title - Part 2`) without repetition; cleared `_selectedTripIds` on delete/split. Covered by `TripSplitTest.kt`. |
+| **FT2-15** | Upside-down labels on rotated topographic map (Screenshot 155119). | `OsmMapView.kt` | **Completed** | Option B implemented: MapSettingsDialog includes clear educational notice explaining raster bitmap label physics and guidance to use North-Up if upright labels are desired. |
+
+---
+
+## 7. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |
@@ -78,3 +102,4 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **BKL-02** | Server data retention policy and TTL cleanup job for expired session breadcrumbs (Item 6). | Server Architecture | Future Sprint |
 | **BKL-03** | Visitor on-demand location refresh request from web page to mobile app (Item 16). | Live Protocol | Future Sprint |
 | **BKL-04** | Historical shared routes catalog portal (Item 21c). | Web Platform | Future Sprint |
+

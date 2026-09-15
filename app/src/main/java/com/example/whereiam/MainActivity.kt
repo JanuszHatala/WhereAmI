@@ -95,18 +95,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkPermissionsAndStart() {
-        if (
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        ) {
+        val permissionsToRequest = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val locationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        val notificationGranted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else true
+
+        if (locationGranted && notificationGranted) {
             viewModel.startTracking()
         } else {
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 }
@@ -1198,7 +1205,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 Text(
                                                     text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
                                                     color = Color(0xFF38BDF8),
-                                                    fontSize = 12.sp
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp)
                                                 )
 
                                                 Box {
@@ -1215,7 +1225,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                 text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
                                                                 fontSize = 11.sp,
                                                                 fontWeight = FontWeight.SemiBold,
-                                                                color = Color(0xFF34D399)
+                                                                color = Color(0xFF34D399),
+                                                                maxLines = 1,
+                                                                softWrap = false
                                                             )
                                                             Icon(
                                                                 Icons.Default.ArrowDropDown,
@@ -2678,125 +2690,143 @@ fun LocationScreen(viewModel: MainViewModel) {
         var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: prefs.getInt("active_session_interval", 5)) }
         var selectedDuration by remember { mutableStateOf(prefs.getInt(LiveSharingManager.KEY_PREF_DURATION, 6)) } // 0 = permanent
         var upcomingSessionId by remember { mutableStateOf(LiveSharingManager.generate10CharSlug()) }
-        var activeShareModeStatic by remember { mutableStateOf(prefs.getBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, false)) }
+        var advancedControlsExpanded by remember { mutableStateOf(false) }
 
-        Dialog(
+        LaunchedEffect(Unit) {
+            liveSharingManager.refreshSessionStatus()
+        }
+
+        ModalBottomSheet(
             onDismissRequest = { showLiveShareDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            containerColor = Color(0xFF0F172A),
+            tonalElevation = 8.dp
         ) {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp, vertical = 8.dp)
+                    .navigationBarsPadding()
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                        .verticalScroll(rememberScrollState())
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("📡", fontSize = 20.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Live Location Sharing",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-                        IconButton(onClick = { showLiveShareDialog = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📡", fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Live Location Sharing",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
                     }
+                    IconButton(onClick = { showLiveShareDialog = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
+                    }
+                }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                    if (liveSession?.isActive == true) {
-                        // ── Active Session View ──
-                        val session = liveSession!!
-                        val viewerUrl = session.getViewerUrl(useStatic = activeShareModeStatic, staticId = staticLiveId)
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                var isEditingTitle by remember { mutableStateOf(false) }
-                                var editingTitleText by remember(session.title) { mutableStateOf(session.title) }
+                if (liveSession?.isActive == true) {
+                    // ── Active Session View (Tier 1 & Tier 2) ──
+                    val session = liveSession!!
+                    val tripViewerUrl = session.getViewerUrl(useStatic = false)
+                    val personalViewerUrl = session.getViewerUrl(useStatic = true, staticId = staticLiveId)
 
-                                if (isEditingTitle) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        OutlinedTextField(
-                                            value = editingTitleText,
-                                            onValueChange = { editingTitleText = it },
-                                            singleLine = true,
-                                            modifier = Modifier.weight(1f),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedTextColor = Color.White,
-                                                unfocusedTextColor = Color.White,
-                                                focusedBorderColor = Color(0xFF38BDF8),
-                                                unfocusedBorderColor = Color(0xFF64748B)
-                                            )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            var isEditingTitle by remember { mutableStateOf(false) }
+                            var editingTitleText by remember(session.title) { mutableStateOf(session.title) }
+
+                            if (isEditingTitle) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = editingTitleText,
+                                        onValueChange = { editingTitleText = it },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = Color(0xFF38BDF8),
+                                            unfocusedBorderColor = Color(0xFF64748B)
                                         )
-                                        IconButton(onClick = {
-                                            if (editingTitleText.isNotBlank()) {
-                                                liveSharingManager.renameSession(editingTitleText)
-                                                isEditingTitle = false
-                                                android.widget.Toast.makeText(context, "Session renamed", android.widget.Toast.LENGTH_SHORT).show()
-                                            }
-                                        }) {
-                                            Icon(Icons.Default.Check, contentDescription = "Save Title", tint = Color(0xFF10B981))
-                                        }
-                                        IconButton(onClick = {
-                                            editingTitleText = session.title
+                                    )
+                                    IconButton(onClick = {
+                                        if (editingTitleText.isNotBlank()) {
+                                            liveSharingManager.renameSession(editingTitleText)
                                             isEditingTitle = false
-                                        }) {
-                                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.LightGray)
+                                            android.widget.Toast.makeText(context, "Session renamed", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }) {
+                                        Icon(Icons.Default.Check, contentDescription = "Save Title", tint = Color(0xFF10B981))
+                                    }
+                                    IconButton(onClick = {
+                                        editingTitleText = session.title
+                                        isEditingTitle = false
+                                    }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.LightGray)
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    ) {
+                                        Text(
+                                            text = session.title,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        IconButton(
+                                            onClick = {
+                                                editingTitleText = session.title
+                                                isEditingTitle = true
+                                            },
+                                            modifier = Modifier.size(28.dp).padding(start = 4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = "Rename Session",
+                                                tint = Color(0xFF38BDF8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
                                     }
-                                } else {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f, fill = false)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF334155))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
                                         ) {
                                             Text(
-                                                text = session.title,
-                                                fontSize = 16.sp,
+                                                text = "👁️ ${session.viewCount} views",
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                color = Color(0xFF38BDF8)
                                             )
-                                            IconButton(
-                                                onClick = {
-                                                    editingTitleText = session.title
-                                                    isEditingTitle = true
-                                                },
-                                                modifier = Modifier.size(28.dp).padding(start = 4.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Edit,
-                                                    contentDescription = "Rename Session",
-                                                    tint = Color(0xFF38BDF8),
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
                                         }
                                         Box(
                                             modifier = Modifier
@@ -2813,179 +2843,302 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         }
                                     }
                                 }
+                            }
 
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = "Trip Slug: ${session.id}",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF38BDF8),
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    if (staticLiveId.isNotBlank()) {
-                                        Text(
-                                            text = "Personal ID: $staticLiveId",
-                                            fontSize = 12.sp,
-                                            color = Color(0xFF10B981),
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.padding(top = 2.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
 
-                                // Live countdown / elapsed ticker (LIV-R02)
-                                var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
-                                LaunchedEffect(Unit) {
-                                    while (true) {
-                                        tickerNow = System.currentTimeMillis()
-                                        kotlinx.coroutines.delay(1000L)
-                                    }
+                            // Live countdown / elapsed ticker
+                            var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
+                            LaunchedEffect(Unit) {
+                                while (true) {
+                                    tickerNow = System.currentTimeMillis()
+                                    kotlinx.coroutines.delay(1000L)
                                 }
-                                val formattedRemaining = remember(tickerNow, session.expiresAt, session.createdAt) {
-                                    if (session.expiresAt <= 0L) {
-                                        val elapsed = maxOf(0L, tickerNow - session.createdAt)
-                                        val hrs = elapsed / 3600000L
-                                        val mins = (elapsed % 3600000L) / 60000L
-                                        val secs = (elapsed % 60000L) / 1000L
-                                        if (hrs > 0) "⏱️ ${hrs}h ${mins}m ${secs}s elapsed (Continuous)" else "⏱️ ${mins}m ${secs}s elapsed (Continuous)"
+                            }
+                            val formattedRemaining = remember(tickerNow, session.expiresAt, session.createdAt) {
+                                if (session.expiresAt <= 0L) {
+                                    val elapsed = maxOf(0L, tickerNow - session.createdAt)
+                                    val hrs = elapsed / 3600000L
+                                    val mins = (elapsed % 3600000L) / 60000L
+                                    val secs = (elapsed % 60000L) / 1000L
+                                    if (hrs > 0) "⏱️ ${hrs}h ${mins}m ${secs}s elapsed (Continuous)" else "⏱️ ${mins}m ${secs}s elapsed (Continuous)"
+                                } else {
+                                    val rem = maxOf(0L, session.expiresAt - tickerNow)
+                                    if (rem <= 0L) {
+                                        "Expired"
                                     } else {
-                                        val rem = maxOf(0L, session.expiresAt - tickerNow)
-                                        if (rem <= 0L) {
-                                            "Expired"
-                                        } else {
-                                            val hrs = rem / 3600000L
-                                            val mins = (rem % 3600000L) / 60000L
-                                            val secs = (rem % 60000L) / 1000L
-                                            if (hrs > 0) "${hrs}h ${mins}m ${secs}s left" else "${mins}m ${secs}s left"
-                                        }
+                                        val hrs = rem / 3600000L
+                                        val mins = (rem % 3600000L) / 60000L
+                                        val secs = (rem % 60000L) / 1000L
+                                        if (hrs > 0) "${hrs}h ${mins}m ${secs}s left" else "${mins}m ${secs}s left"
                                     }
                                 }
+                            }
 
-                                Text("Status / Time: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
-                                Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Status / Time: $formattedRemaining",
+                                fontSize = 12.sp,
+                                color = Color(0xFFFBBF24),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
 
-                                // Link Mode Dropdown: Trip vs Personal Static
-                                Text("Select Link to Share:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                var linkModeDropdownExpanded by remember { mutableStateOf(false) }
-                                Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                                    Surface(
-                                        onClick = { linkModeDropdownExpanded = true },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFF1E293B),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                                        modifier = Modifier.fillMaxWidth()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // ── TIER 1: 1-Tap Quick Action Cards ──
+                    Text("SHARE LINKS (1-TAP ACTION)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Card 1: 🎫 Trip Link (Random)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("🎫", fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Trip Link (Single Use)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                if (session.isRandomPaused) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0x33F59E0B))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = if (activeShareModeStatic) "📡 Personal Link (Static)" else "🎫 Trip Link (Random)",
-                                                color = Color.White,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
-                                        }
-                                    }
-                                    DropdownMenu(
-                                        expanded = linkModeDropdownExpanded,
-                                        onDismissRequest = { linkModeDropdownExpanded = false },
-                                        modifier = Modifier.background(Color(0xFF1E293B))
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("🎫 Trip Link (Random)", color = Color.White, fontSize = 13.sp) },
-                                            onClick = {
-                                                activeShareModeStatic = false
-                                                linkModeDropdownExpanded = false
-                                                prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, false).apply()
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("📡 Personal Link (Static)", color = Color.White, fontSize = 13.sp) },
-                                            onClick = {
-                                                activeShareModeStatic = true
-                                                linkModeDropdownExpanded = false
-                                                prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_LINK_MODE_STATIC, true).apply()
-                                            }
-                                        )
+                                        Text("PAUSED", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
                                     }
                                 }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (activeShareModeStatic) {
-                                        "Permanent link: visitors can bookmark this link to view any live journey."
-                                    } else {
-                                        "Single-trip link: ephemeral link valid only for this session."
+                            }
+                            Text(
+                                text = tripViewerUrl,
+                                fontSize = 11.sp,
+                                color = Color(0xFF38BDF8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(Intent.EXTRA_TEXT, "Follow my live track on WhereAmI: $tripViewerUrl")
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Share Trip Link"))
                                     },
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF38BDF8)
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Share", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("WhereAmI Trip Link", tripViewerUrl))
+                                        android.widget.Toast.makeText(context, "Trip link copied", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Copy", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        if (session.isRandomPaused) {
+                                            liveSharingManager.resumeRandomLink()
+                                            android.widget.Toast.makeText(context, "Trip link resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            liveSharingManager.pauseRandomLink()
+                                            android.widget.Toast.makeText(context, "Trip link paused", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (session.isRandomPaused) Color(0xFF059669) else Color(0xFF475569)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1.1f)
+                                ) {
+                                    Text(if (session.isRandomPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Card 2: 📡 Personal Link (Static)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("📡", fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Personal Link (Permanent)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                if (session.isPersonalPaused) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0x33F59E0B))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("PAUSED", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                                    }
+                                }
+                            }
+                            Text(
+                                text = personalViewerUrl,
+                                fontSize = 11.sp,
+                                color = Color(0xFF10B981),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(Intent.EXTRA_TEXT, "Follow my live journey anytime on WhereAmI: $personalViewerUrl")
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Share Personal Link"))
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Share", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("WhereAmI Personal Link", personalViewerUrl))
+                                        android.widget.Toast.makeText(context, "Personal link copied", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Copy", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        if (session.isPersonalPaused) {
+                                            liveSharingManager.resumePersonalLink()
+                                            android.widget.Toast.makeText(context, "Personal link resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            liveSharingManager.pausePersonalLink()
+                                            android.widget.Toast.makeText(context, "Personal link paused", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (session.isPersonalPaused) Color(0xFF059669) else Color(0xFF475569)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1.1f)
+                                ) {
+                                    Text(if (session.isPersonalPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Master Pause / Resume Both Links
+                    Button(
+                        onClick = {
+                            if (session.isPaused) {
+                                liveSharingManager.resumeSession()
+                                android.widget.Toast.makeText(context, "All links resumed", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                liveSharingManager.pauseSession()
+                                android.widget.Toast.makeText(context, "All links paused", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (session.isPaused) Color(0xFF059669) else Color(0xFFD97706)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (session.isPaused) "▶️ Resume Entire Sharing" else "⏸️ Pause Entire Sharing", fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // ── TIER 2: Expandable Streaming & Session Controls ──
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { advancedControlsExpanded = !advancedControlsExpanded },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "⚙️ Streaming & Session Controls",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFCBD5E1)
                                 )
+                                Icon(
+                                    imageVector = if (advancedControlsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = "Toggle controls",
+                                    tint = Color.LightGray
+                                )
+                            }
 
-                                Surface(
-                                    color = Color(0xFF0F172A),
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                                ) {
-                                    Text(
-                                        text = viewerUrl,
-                                        fontSize = 11.sp,
-                                        color = Color.LightGray,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                                    )
-                                }
+                            if (advancedControlsExpanded) {
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            val shareText = if (activeShareModeStatic) {
-                                                "Follow my live journey anytime on WhereAmI: $viewerUrl"
-                                            } else {
-                                                "Follow my live track on WhereAmI: $viewerUrl"
-                                            }
-                                            val sendIntent = Intent().apply {
-                                                action = Intent.ACTION_SEND
-                                                putExtra(Intent.EXTRA_TEXT, shareText)
-                                                type = "text/plain"
-                                            }
-                                            context.startActivity(Intent.createChooser(sendIntent, "Share Live Track Link"))
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Share", fontSize = 12.sp)
-                                    }
-                                    Button(
-                                        onClick = {
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                            val clip = android.content.ClipData.newPlainText("WhereAmI Live Link", viewerUrl)
-                                            clipboard.setPrimaryClip(clip)
-                                            val label = if (activeShareModeStatic) "Personal Static Link" else "Trip Link"
-                                            android.widget.Toast.makeText(context, "$label copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Copy", fontSize = 12.sp)
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Live Privacy: Full Trail vs Position Only
+                                // Live Privacy
                                 Text("Live Map Privacy (Viewer display):", fontSize = 11.sp, color = Color(0xFF94A3B8))
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -2998,7 +3151,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (session.trailVisible) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                            containerColor = if (session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A)
                                         ),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
@@ -3012,7 +3165,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (!session.trailVisible) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                            containerColor = if (!session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A)
                                         ),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
@@ -3021,9 +3174,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                // Live Update Frequency Selector (LIV-R04)
+                                // Live Update Frequency
                                 Text("Live Update Frequency:", fontSize = 11.sp, color = Color(0xFF94A3B8))
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -3038,7 +3191,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             },
                                             shape = RoundedCornerShape(8.dp),
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                                containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF0F172A)
                                             ),
                                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                                             modifier = Modifier.weight(1f)
@@ -3048,96 +3201,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                // Selective & Master Pause / Resume (LIV-R05)
-                                Text("Pause / Resume Controls:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    // Personal Static Link Pause/Resume
-                                    Button(
-                                        onClick = {
-                                            if (session.isPersonalPaused) {
-                                                liveSharingManager.resumePersonalLink()
-                                                android.widget.Toast.makeText(context, "Personal Link resumed", android.widget.Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                liveSharingManager.pausePersonalLink()
-                                                android.widget.Toast.makeText(context, "Personal Link paused", android.widget.Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (session.isPersonalPaused) Color(0xFF059669) else Color(0xFF334155)
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            if (session.isPersonalPaused) "▶ Resume Static" else "⏸ Pause Static",
-                                            fontSize = 11.sp
-                                        )
-                                    }
-
-                                    // Random Trip Link Pause/Resume
-                                    Button(
-                                        onClick = {
-                                            if (session.isRandomPaused) {
-                                                liveSharingManager.resumeRandomLink()
-                                                android.widget.Toast.makeText(context, "Trip Link resumed", android.widget.Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                liveSharingManager.pauseRandomLink()
-                                                android.widget.Toast.makeText(context, "Trip Link paused", android.widget.Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (session.isRandomPaused) Color(0xFF059669) else Color(0xFF334155)
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            if (session.isRandomPaused) "▶ Resume Trip" else "⏸ Pause Trip",
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-                                // Master Pause / Resume Both Links
-                                Button(
-                                    onClick = {
-                                        if (session.isPaused) {
-                                            liveSharingManager.resumeSession()
-                                            android.widget.Toast.makeText(context, "All links resumed", android.widget.Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            liveSharingManager.pauseSession()
-                                            android.widget.Toast.makeText(context, "All links paused", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (session.isPaused) Color(0xFF059669) else Color(0xFFD97706)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(if (session.isPaused) "▶️ Resume Entire Sharing" else "⏸️ Pause Entire Sharing", fontSize = 13.sp)
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                // Duration Adjustments — only meaningful when session has a time limit
+                                // Duration Adjustments
                                 if (session.expiresAt <= 0L) {
-                                    // Permanent session: offer a button to switch to timed
                                     Button(
                                         onClick = {
-                                            liveSharingManager.adjustSession(6.0) // sets to now+6h
+                                            liveSharingManager.adjustSession(6.0)
                                             android.widget.Toast.makeText(context, "Switched to 6h timed duration", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text("⏱ Switch to Timed Duration (+6h)", fontSize = 12.sp, color = Color(0xFFCBD5E1))
@@ -3154,7 +3228,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 android.widget.Toast.makeText(context, "Reduced session by -1 hour", android.widget.Toast.LENGTH_SHORT).show()
                                             },
                                             shape = RoundedCornerShape(8.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                             modifier = Modifier.weight(1f)
                                         ) { Text("-1h", fontSize = 11.sp) }
@@ -3165,7 +3239,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 android.widget.Toast.makeText(context, "Reduced session by -30 min", android.widget.Toast.LENGTH_SHORT).show()
                                             },
                                             shape = RoundedCornerShape(8.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                             modifier = Modifier.weight(1f)
                                         ) { Text("-30m", fontSize = 11.sp) }
@@ -3176,7 +3250,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
                                             },
                                             shape = RoundedCornerShape(8.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                             modifier = Modifier.weight(1f)
                                         ) { Text("+1h", fontSize = 11.sp) }
@@ -3187,21 +3261,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 android.widget.Toast.makeText(context, "Extended session by +6 hours", android.widget.Toast.LENGTH_SHORT).show()
                                             },
                                             shape = RoundedCornerShape(8.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                             modifier = Modifier.weight(1f)
                                         ) { Text("+6h", fontSize = 11.sp) }
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
                                 Button(
                                     onClick = {
                                         liveSharingManager.syncNow()
                                         android.widget.Toast.makeText(context, "Syncing live telemetry...", android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Icon(Icons.Default.Sync, contentDescription = "Sync Now", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
@@ -3210,313 +3284,312 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Button(
-                            onClick = {
-                                liveSharingManager.stopSession()
-                                android.widget.Toast.makeText(context, "Live sharing stopped", android.widget.Toast.LENGTH_SHORT).show()
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
-                            modifier = Modifier.fillMaxWidth()
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            liveSharingManager.stopSession()
+                            android.widget.Toast.makeText(context, "Live sharing stopped", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Stop Live Sharing")
+                    }
+                } else {
+                    // ── Create New Session View ──
+                    Text("Session Title", fontSize = 13.sp, color = Color(0xFF94A3B8))
+                    OutlinedTextField(
+                        value = inputTitle,
+                        onValueChange = { inputTitle = it },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF0284C7),
+                            unfocusedBorderColor = Color(0xFF334155)
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Upcoming Trip Session ID (with Pre-generation Refresh)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Stop Live Sharing")
-                        }
-                    } else {
-                        // ── Create New Session View ──
-                        Text("Session Title", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                        OutlinedTextField(
-                            value = inputTitle,
-                            onValueChange = { inputTitle = it },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = Color(0xFF0284C7),
-                                unfocusedBorderColor = Color(0xFF334155)
-                            ),
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Upcoming Trip Session ID (with Pre-generation Refresh)
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Trip Session ID (Single Use)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Text(upcomingSessionId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                            }
+                            IconButton(
+                                onClick = {
+                                    upcomingSessionId = LiveSharingManager.generate10CharSlug()
+                                    android.widget.Toast.makeText(context, "New Trip ID generated", android.widget.Toast.LENGTH_SHORT).show()
+                                }
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Trip Session ID (Single Use)", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                    Text(upcomingSessionId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                                Icon(Icons.Default.Refresh, contentDescription = "Regenerate Trip ID", tint = Color(0xFF38BDF8), modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Personal Static Live ID (Permanent)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Personal Static Live ID (Permanent)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Text(staticLiveId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = {
+                                        val newId = liveSharingManager.regenerateStaticLiveId()
+                                        android.widget.Toast.makeText(context, "Regenerated Personal ID: $newId", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Regenerate Static ID", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
                                 }
                                 IconButton(
                                     onClick = {
-                                        upcomingSessionId = LiveSharingManager.generate10CharSlug()
-                                        android.widget.Toast.makeText(context, "New Trip ID generated", android.widget.Toast.LENGTH_SHORT).show()
+                                        val serverUrl = when (selectedProvider) {
+                                            LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+                                            LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
+                                        }
+                                        val dummySession = LiveSession(
+                                            id = staticLiveId,
+                                            title = "",
+                                            createdAt = 0L,
+                                            expiresAt = 0L,
+                                            isActive = false,
+                                            serverUrl = serverUrl,
+                                            provider = selectedProvider,
+                                            syncIntervalMinutes = selectedInterval
+                                        )
+                                        val staticUrl = dummySession.getViewerUrl(useStatic = true, staticId = staticLiveId)
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        val clip = android.content.ClipData.newPlainText("WhereAmI Static Live Link", staticUrl)
+                                        clipboard.setPrimaryClip(clip)
+                                        android.widget.Toast.makeText(context, "Personal link copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Regenerate Trip ID", tint = Color(0xFF38BDF8), modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Static Link", tint = Color.LightGray, modifier = Modifier.size(20.dp))
                                 }
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Share Target / Provider", fontSize = 13.sp, color = Color(0xFF94A3B8))
 
-                        // Personal Static Live ID (Permanent)
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(10.dp),
+                    // Provider Dropdown
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Surface(
+                            onClick = { providerDropdownExpanded = true },
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1E293B),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Personal Static Live ID (Permanent)", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                    Text(staticLiveId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                                val providerLabel = when (selectedProvider) {
+                                    LiveShareProvider.SYNOLOGY -> "🌐 whereami.janush.tech (Public)"
+                                    LiveShareProvider.LOCAL -> "💻 Local Test Server (Port 3003)"
                                 }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(
-                                        onClick = {
-                                            val newId = liveSharingManager.regenerateStaticLiveId()
-                                            android.widget.Toast.makeText(context, "Regenerated Personal ID: $newId", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                    ) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Regenerate Static ID", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            val serverUrl = when (selectedProvider) {
-                                                LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                                LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
-                                            }
-                                            val dummySession = LiveSession(
-                                                id = staticLiveId,
-                                                title = "",
-                                                createdAt = 0L,
-                                                expiresAt = 0L,
-                                                isActive = false,
-                                                serverUrl = serverUrl,
-                                                provider = selectedProvider,
-                                                syncIntervalMinutes = selectedInterval
-                                            )
-                                            val staticUrl = dummySession.getViewerUrl(useStatic = true, staticId = staticLiveId)
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                            val clip = android.content.ClipData.newPlainText("WhereAmI Static Live Link", staticUrl)
-                                            clipboard.setPrimaryClip(clip)
-                                            android.widget.Toast.makeText(context, "Personal link copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy Static Link", tint = Color.LightGray, modifier = Modifier.size(20.dp))
-                                    }
-                                }
+                                Text(providerLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("Share Target / Provider", fontSize = 13.sp, color = Color(0xFF94A3B8))
-
-                        // Provider Dropdown
-                        Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                            Surface(
-                                onClick = { providerDropdownExpanded = true },
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF1E293B),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val providerLabel = when (selectedProvider) {
-                                        LiveShareProvider.SYNOLOGY -> "🌐 whereami.janush.tech (Public)"
-                                        LiveShareProvider.LOCAL -> "💻 Local Test Server (Port 3003)"
-                                    }
-                                    Text(providerLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select", tint = Color(0xFF94A3B8))
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = providerDropdownExpanded,
-                                onDismissRequest = { providerDropdownExpanded = false },
-                                modifier = Modifier.background(Color(0xFF1E293B))
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("🌐 whereami.janush.tech (Public)", color = Color.White, fontSize = 13.sp) },
-                                    onClick = {
-                                        selectedProvider = LiveShareProvider.SYNOLOGY
-                                        providerDropdownExpanded = false
-                                        prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.SYNOLOGY.name).apply()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = if (isUsbConnected) "💻 Local Test Server (Port 3003)" else "💻 Local Test Server (Requires USB)",
-                                            color = if (isUsbConnected) Color.White else Color.Gray,
-                                            fontSize = 13.sp
-                                        )
-                                    },
-                                    onClick = {
-                                        if (isUsbConnected) {
-                                            selectedProvider = LiveShareProvider.LOCAL
-                                            providerDropdownExpanded = false
-                                            prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.LOCAL.name).apply()
-                                        } else {
-                                            android.widget.Toast.makeText(context, "Connect phone via USB cable to use Local Test Server", android.widget.Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = when (selectedProvider) {
-                                LiveShareProvider.SYNOLOGY -> "📤 Shared link: whereami.janush.tech/live/… — accessible to anyone."
-                                LiveShareProvider.LOCAL -> if (isUsbConnected) "🔌 USB Active • Viewer at localhost:3003 (ADB port-forwarded)" else "⚠️ USB Disconnected — connect USB cable or switch to Public server."
-                            },
-                            fontSize = 11.sp,
-                            color = if (selectedProvider == LiveShareProvider.LOCAL && !isUsbConnected) Color(0xFFF87171) else Color(0xFF38BDF8)
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Sync Interval (Battery Optimization)", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        DropdownMenu(
+                            expanded = providerDropdownExpanded,
+                            onDismissRequest = { providerDropdownExpanded = false },
+                            modifier = Modifier.background(Color(0xFF1E293B))
                         ) {
-                            listOf(1 to "1m", 2 to "2m", 5 to "5m", 10 to "10m").forEach { (mins, label) ->
-                                val isSel = selectedInterval == mins
-                                Button(
-                                    onClick = { selectedInterval = mins },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(label, fontSize = 12.sp)
+                            DropdownMenuItem(
+                                text = { Text("🌐 whereami.janush.tech (Public)", color = Color.White, fontSize = 13.sp) },
+                                onClick = {
+                                    selectedProvider = LiveShareProvider.SYNOLOGY
+                                    providerDropdownExpanded = false
+                                    prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.SYNOLOGY.name).apply()
                                 }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Session Lifetime", fontSize = 13.sp, color = Color(0xFF94A3B8))
-
-                        val lifetimeOptions = listOf(
-                            2 to "⏳ 2 hours",
-                            6 to "⏳ 6 hours (Recommended)",
-                            12 to "⏳ 12 hours",
-                            24 to "⏳ 24 hours (Full Day)",
-                            0 to "♾️ Permanent (No limit until stopped)"
-                        )
-
-                        Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                            Surface(
-                                onClick = { durationDropdownExpanded = true },
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF1E293B),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val currentLifetimeLabel = lifetimeOptions.firstOrNull { it.first == selectedDuration }?.second
-                                        ?: "$selectedDuration hours"
-                                    Text(currentLifetimeLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Lifetime", tint = Color(0xFF94A3B8))
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = durationDropdownExpanded,
-                                onDismissRequest = { durationDropdownExpanded = false },
-                                modifier = Modifier.background(Color(0xFF1E293B))
-                            ) {
-                                lifetimeOptions.forEach { (hrs, label) ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = label,
-                                                    color = if (selectedDuration == hrs) Color(0xFF38BDF8) else Color.White,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = if (selectedDuration == hrs) FontWeight.Bold else FontWeight.Normal
-                                                )
-                                                if (selectedDuration == hrs) {
-                                                    Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = "Selected",
-                                                        tint = Color(0xFF38BDF8),
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        onClick = {
-                                            selectedDuration = hrs
-                                            durationDropdownExpanded = false
-                                            prefs.edit().putInt(LiveSharingManager.KEY_PREF_DURATION, hrs).apply()
-                                        }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (isUsbConnected) "💻 Local Test Server (Port 3003)" else "💻 Local Test Server (Requires USB)",
+                                        color = if (isUsbConnected) Color.White else Color.Gray,
+                                        fontSize = 13.sp
                                     )
+                                },
+                                onClick = {
+                                    if (isUsbConnected) {
+                                        selectedProvider = LiveShareProvider.LOCAL
+                                        providerDropdownExpanded = false
+                                        prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.LOCAL.name).apply()
+                                    } else {
+                                        android.widget.Toast.makeText(context, "Connect phone via USB cable to use Local Test Server", android.widget.Toast.LENGTH_LONG).show()
+                                    }
                                 }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = when (selectedProvider) {
+                            LiveShareProvider.SYNOLOGY -> "📤 Shared link: whereami.janush.tech/live/… — accessible to anyone."
+                            LiveShareProvider.LOCAL -> if (isUsbConnected) "🔌 USB Active • Viewer at localhost:3003 (ADB port-forwarded)" else "⚠️ USB Disconnected — connect USB cable or switch to Public server."
+                        },
+                        fontSize = 11.sp,
+                        color = if (selectedProvider == LiveShareProvider.LOCAL && !isUsbConnected) Color(0xFFF87171) else Color(0xFF38BDF8)
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Sync Interval (Battery Optimization)", fontSize = 13.sp, color = Color(0xFF94A3B8))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(1 to "1m", 2 to "2m", 5 to "5m", 10 to "10m").forEach { (mins, label) ->
+                            val isSel = selectedInterval == mins
+                            Button(
+                                onClick = { selectedInterval = mins },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                ),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(label, fontSize = 12.sp)
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-                        Button(
-                            onClick = {
-                                val serverUrl = when (selectedProvider) {
-                                    LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
-                                    LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
-                                }
-                                // Persist all settings so the dialog opens with same config next time
-                                prefs.edit()
-                                    .putString(LiveSharingManager.KEY_PREF_TITLE, inputTitle)
-                                    .putString(LiveSharingManager.KEY_PREF_PROVIDER, selectedProvider.name)
-                                    .putInt(LiveSharingManager.KEY_PREF_DURATION, selectedDuration)
-                                    .putInt("active_session_interval", selectedInterval)
-                                    .apply()
-                                val s = liveSharingManager.startSession(
-                                    title = inputTitle,
-                                    durationHours = selectedDuration,
-                                    serverUrl = serverUrl,
-                                    provider = selectedProvider,
-                                    syncIntervalMinutes = selectedInterval,
-                                    customSlug = upcomingSessionId
-                                )
-                                upcomingSessionId = LiveSharingManager.generate10CharSlug()
-                                android.widget.Toast.makeText(context, "Started Live Share: ${s.id}", android.widget.Toast.LENGTH_SHORT).show()
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Session Lifetime", fontSize = 13.sp, color = Color(0xFF94A3B8))
+
+                    val lifetimeOptions = listOf(
+                        2 to "⏳ 2 hours",
+                        6 to "⏳ 6 hours (Recommended)",
+                        12 to "⏳ 12 hours",
+                        24 to "⏳ 24 hours (Full Day)",
+                        0 to "♾️ Permanent (No limit until stopped)"
+                    )
+
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Surface(
+                            onClick = { durationDropdownExpanded = true },
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1E293B),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Start", modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Start Live Sharing Session", fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val currentLifetimeLabel = lifetimeOptions.firstOrNull { it.first == selectedDuration }?.second
+                                    ?: "$selectedDuration hours"
+                                Text(currentLifetimeLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Lifetime", tint = Color(0xFF94A3B8))
+                            }
                         }
+
+                        DropdownMenu(
+                            expanded = durationDropdownExpanded,
+                            onDismissRequest = { durationDropdownExpanded = false },
+                            modifier = Modifier.background(Color(0xFF1E293B))
+                        ) {
+                            lifetimeOptions.forEach { (hrs, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                color = if (selectedDuration == hrs) Color(0xFF38BDF8) else Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (selectedDuration == hrs) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                            if (selectedDuration == hrs) {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = "Selected",
+                                                    tint = Color(0xFF38BDF8),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedDuration = hrs
+                                        durationDropdownExpanded = false
+                                        prefs.edit().putInt(LiveSharingManager.KEY_PREF_DURATION, hrs).apply()
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Button(
+                        onClick = {
+                            val serverUrl = when (selectedProvider) {
+                                LiveShareProvider.LOCAL -> "http://127.0.0.1:3003"
+                                LiveShareProvider.SYNOLOGY -> "https://whereami.janush.tech"
+                            }
+                            prefs.edit()
+                                .putString(LiveSharingManager.KEY_PREF_TITLE, inputTitle)
+                                .putString(LiveSharingManager.KEY_PREF_PROVIDER, selectedProvider.name)
+                                .putInt(LiveSharingManager.KEY_PREF_DURATION, selectedDuration)
+                                .putInt("active_session_interval", selectedInterval)
+                                .apply()
+                            val s = liveSharingManager.startSession(
+                                title = inputTitle,
+                                durationHours = selectedDuration,
+                                serverUrl = serverUrl,
+                                provider = selectedProvider,
+                                syncIntervalMinutes = selectedInterval,
+                                customSlug = upcomingSessionId
+                            )
+                            upcomingSessionId = LiveSharingManager.generate10CharSlug()
+                            android.widget.Toast.makeText(context, "Started Live Share: ${s.id}", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Start", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Start Live Sharing Session", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -3789,6 +3862,33 @@ private fun LocalityCard(
                 .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(liveSession?.isActive) {
+                if (liveSession?.isActive == true) {
+                    while (true) {
+                        tickerNow = System.currentTimeMillis()
+                        kotlinx.coroutines.delay(5000L)
+                    }
+                }
+            }
+            val liveTimerText = remember(tickerNow, liveSession?.expiresAt, liveSession?.createdAt) {
+                if (liveSession == null) ""
+                else if (liveSession.expiresAt <= 0L) {
+                    val elapsed = maxOf(0L, tickerNow - liveSession.createdAt)
+                    val hrs = elapsed / 3600000L
+                    val mins = (elapsed % 3600000L) / 60000L
+                    if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+                } else {
+                    val rem = maxOf(0L, liveSession.expiresAt - tickerNow)
+                    if (rem <= 0L) "Exp"
+                    else {
+                        val hrs = rem / 3600000L
+                        val mins = (rem % 3600000L) / 60000L
+                        if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+                    }
+                }
+            }
+
             if (locationData.isLoading && primaryPlace == null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -3893,7 +3993,7 @@ private fun LocalityCard(
                                     .padding(horizontal = 4.dp, vertical = 1.dp)
                             ) {
                                 Text(
-                                    text = if (liveSession.isPaused) "⏸️PAUSED" else "📡LIVE",
+                                    text = if (liveSession.isPaused) "⏸️ $liveTimerText" else "📡 $liveTimerText",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
@@ -3911,23 +4011,25 @@ private fun LocalityCard(
                         }
                     }
 
-                    // Compact Action Icons (Live Share, Maps, Expand) - Redundant Share removed
+                    // Compact Action Icons (Live Share, Maps, Expand)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        if (liveSession?.isActive != true) {
-                            IconButton(
-                                onClick = onShowLiveShare,
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ShareLocation,
-                                    contentDescription = "Live Share Location",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                        IconButton(
+                            onClick = onShowLiveShare,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ShareLocation,
+                                contentDescription = "Live Share Location",
+                                tint = if (liveSession?.isActive == true) {
+                                    if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                } else {
+                                    Color(0xFF38BDF8)
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
 
                         // Open in Google Maps
@@ -4126,7 +4228,7 @@ private fun LocalityCard(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (liveSession.isPaused) "⏸️ PAUSED" else "📡 LIVE",
+                                    text = if (liveSession.isPaused) "⏸️ PAUSED ($liveTimerText)" else "📡 LIVE ($liveTimerText)",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
@@ -4136,23 +4238,25 @@ private fun LocalityCard(
                         }
                     }
 
-                    // Right Utility Icons: Live Share shortcut (if inactive), Google Maps, Collapse - Redundant Share removed
+                    // Right Utility Icons: Live Share, Google Maps, Collapse
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (liveSession?.isActive != true) {
-                            IconButton(
-                                onClick = onShowLiveShare,
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ShareLocation,
-                                    contentDescription = "Live Share Location",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                        IconButton(
+                            onClick = onShowLiveShare,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ShareLocation,
+                                contentDescription = "Live Share Location",
+                                tint = if (liveSession?.isActive == true) {
+                                    if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                } else {
+                                    Color(0xFF38BDF8)
+                                },
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
 
                         // Open in Google Maps

@@ -27,7 +27,7 @@ class LiveTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        locationManager = LocationManager(this)
+        locationManager = LocationManager.getInstance(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock").apply {
