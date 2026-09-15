@@ -40,7 +40,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         }
         sessionToken = mediaSession.sessionToken
 
-        locationManager = LocationManager(this)
+        locationManager = LocationManager.getInstance(this)
 
         AppStateManager.getInstance(this).setAutoMediaActive(true)
 

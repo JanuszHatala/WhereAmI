@@ -45,7 +45,8 @@ data class LiveSession(
     val syncIntervalMinutes: Int,     // 1, 2, 5, 10
     val trailVisible: Boolean = true, // Whether visitors see the full trail or current position only
     val lastSyncTime: Long = 0L,
-    val pendingPointsCount: Int = 0
+    val pendingPointsCount: Int = 0,
+    val viewCount: Int = 0
 ) {
     val isExpired: Boolean
         get() = expiresAt > 0L && System.currentTimeMillis() > expiresAt
@@ -438,6 +439,25 @@ class LiveSharingManager private constructor(private val context: Context) {
         adjustSession(additionalHours.toDouble())
     }
 
+    fun refreshSessionStatus() {
+        val s = _currentSession.value ?: return
+        if (!s.isActive) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                if (conn.responseCode in 200..299) {
+                    val resp = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(resp)
+                    val views = json.optInt("viewCount", s.viewCount)
+                    _currentSession.value = _currentSession.value?.copy(viewCount = views)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     fun setTrailVisible(visible: Boolean) {
         val s = _currentSession.value ?: return
         val updated = s.copy(trailVisible = visible)
@@ -698,7 +718,14 @@ class LiveSharingManager private constructor(private val context: Context) {
 
             OutputStreamWriter(conn.outputStream).use { it.write(root.toString()) }
             val code = conn.responseCode
-            if (code !in 200..299) {
+            if (code in 200..299) {
+                try {
+                    val resp = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(resp)
+                    val views = json.optInt("viewCount", session.viewCount)
+                    _currentSession.value = _currentSession.value?.copy(viewCount = views)
+                } catch (_: Exception) {}
+            } else {
                 TelemetryLogger.log("LIVE_SHARE", "postSyncPayload failed with code $code: $urlStr")
             }
             code in 200..299

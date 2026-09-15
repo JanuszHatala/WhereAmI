@@ -59,6 +59,8 @@ class TripManager private constructor(private val context: Context) {
     // Internal state for auto-start / auto-stop
     private var lastMovingTimestamp: Long? = null
     private var movingSinceTimestamp: Long? = null
+    private var autoStartFirstLocation: Location? = null
+    private var autoStartFirstTime: Long = 0L
     private var lastLocation: Location? = null
     private var activePause: TripPause? = null
 
@@ -105,15 +107,15 @@ class TripManager private constructor(private val context: Context) {
         watchdogJob = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(15_000L) // check every 15s
+                // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout
                 val active = _activeTrip.value
                 val mode = _tripMode.value
-                // In AUTO mode, only stop after extended inactivity (default >= 45 min) to prevent fracturing trips on rests
                 if (active != null && mode == TripMode.AUTO && lastMovingTimestamp != null) {
                     val now = System.currentTimeMillis()
                     val stationaryDurationMs = now - lastMovingTimestamp!!
-                    val extendedTimeoutMs = maxOf(_autoStopMinutes.value * 60 * 1000L, 45 * 60 * 1000L)
-                    if (stationaryDurationMs >= extendedTimeoutMs) {
-                        TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${extendedTimeoutMs / 60000}m timeout")
+                    val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
+                    if (stationaryDurationMs >= timeoutMs) {
+                        TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${timeoutMs / 60000}m timeout")
                         stopTrip()
                     }
                 }
@@ -207,6 +209,7 @@ class TripManager private constructor(private val context: Context) {
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
         _activeTrip.value = started
+        autoStartFirstLocation = null
         TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
 
         startLiveTrackingService()
@@ -247,6 +250,7 @@ class TripManager private constructor(private val context: Context) {
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
+        autoStartFirstLocation = null
         pendingCandidate = null
 
         // Stop foreground service if widget live tracking is not explicitly enabled
@@ -275,20 +279,41 @@ class TripManager private constructor(private val context: Context) {
 
         TelemetryLogger.logGps(lat, lng, speedKmh, null, null)
 
+        val newLoc = Location("").apply {
+            latitude = lat
+            longitude = lng
+        }
+
         // ── Auto-Start / Auto-Stop Logic ───────────────────────────────────────
         if (_tripMode.value == TripMode.AUTO) {
             if (_activeTrip.value == null) {
-                // Auto-start check based on current profile
-                if (speedKmh >= currentProfile.autoStartSpeedKmh) {
-                    if (movingSinceTimestamp == null) movingSinceTimestamp = now
-                    else if (now - movingSinceTimestamp!! >= currentProfile.autoStartDurationMs) {
-                        startTrip(isAuto = true)
+                // Sensitive auto-start: triggered by sustained speed OR cumulative displacement >= 25m
+                val candidateSpeed = speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f)
+                if (candidateSpeed) {
+                    if (autoStartFirstLocation == null) {
+                        autoStartFirstLocation = newLoc
+                        autoStartFirstTime = now
+                        movingSinceTimestamp = now
+                    } else {
+                        val elapsed = now - autoStartFirstTime
+                        val distMoved = autoStartFirstLocation!!.distanceTo(newLoc)
+                        if ((speedKmh >= currentProfile.autoStartSpeedKmh && elapsed >= currentProfile.autoStartDurationMs) ||
+                            (distMoved >= 25.0 && elapsed >= 8_000L)
+                        ) {
+                            startTrip(isAuto = true)
+                            autoStartFirstLocation = null
+                            movingSinceTimestamp = null
+                        } else if (elapsed > 45_000L) {
+                            autoStartFirstLocation = newLoc
+                            autoStartFirstTime = now
+                        }
                     }
-                } else {
+                } else if (speedKmh < 1.0f && autoStartFirstLocation != null && (now - autoStartFirstTime) > 15_000L) {
+                    autoStartFirstLocation = null
                     movingSinceTimestamp = null
                 }
             } else {
-                // Auto-stop check: in AUTO mode, only stop after extended timeout (>= 45m)
+                // Auto-stop check: stop when stationary duration exceeds configured auto-stop timeout
                 if (speedKmh >= currentProfile.autoStopSpeedKmh) {
                     lastMovingTimestamp = now
                 } else {
@@ -296,8 +321,8 @@ class TripManager private constructor(private val context: Context) {
                         lastMovingTimestamp = now
                     }
                     val stationaryDurationMs = now - lastMovingTimestamp!!
-                    val extendedTimeoutMs = maxOf(_autoStopMinutes.value * 60 * 1000L, 45 * 60 * 1000L)
-                    if (stationaryDurationMs >= extendedTimeoutMs) {
+                    val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
+                    if (stationaryDurationMs >= timeoutMs) {
                         stopTrip()
                         return
                     }
@@ -342,13 +367,9 @@ class TripManager private constructor(private val context: Context) {
         }
 
         var deltaDist = 0.0
-        val newLoc = Location("").apply {
-            latitude = lat
-            longitude = lng
-        }
         if (lastLocation != null) {
             val d = lastLocation!!.distanceTo(newLoc).toDouble()
-            // Filter GPS jitter if stationary (< 2.5 meters)
+            // Filter GPS jitter if stationary (< 2.5 meters and not moving)
             if (d >= 2.5 || isMoving) {
                 deltaDist = d
             }
@@ -364,10 +385,20 @@ class TripManager private constructor(private val context: Context) {
         val newAvgSpeed = if (totalSpeedSamples > 0) (sumSpeedKmh / totalSpeedSamples).toFloat() else current.avgSpeedKmh
         val newDistance = current.distanceMeters + deltaDist
 
-        // New points list (add if moved > 5 meters or first point)
+        // New points list: measure displacement from LAST COMMITTED POINT (not just 1-sec fix)
+        // to prevent dropping continuous movement at slow speeds (< 18 km/h).
         val newPoints = current.points.toMutableList()
         val newGeoPoint = GeoPoint(lat, lng)
-        if (newPoints.isEmpty() || deltaDist >= 5.0) {
+        val lastCommittedPoint = newPoints.lastOrNull()
+        val distFromLastCommitted = if (lastCommittedPoint != null) {
+            val results = FloatArray(1)
+            Location.distanceBetween(lastCommittedPoint.latitude, lastCommittedPoint.longitude, lat, lng, results)
+            results[0].toDouble()
+        } else {
+            Double.MAX_VALUE
+        }
+
+        if (newPoints.isEmpty() || distFromLastCommitted >= 5.0) {
             newPoints.add(newGeoPoint)
         }
 

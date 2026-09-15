@@ -206,7 +206,7 @@ app.post('/api/sessions/:id/points', (req, res) => {
     if (session.points.length > 4000) session.points = session.points.slice(-4000);
   }
   saveSessions();
-  res.json({ success: true, totalPoints: session.points.length });
+  res.json({ success: true, totalPoints: session.points.length, viewCount: session.viewCount || 0 });
 });
 
 app.get('/api/sessions/:id', (req, res) => {
