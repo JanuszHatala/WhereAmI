@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val locationManager = LocationManager(application)
+    private val locationManager = LocationManager.getInstance(application)
     private val tripManager = TripManager.getInstance(application)
     private val appStateManager = AppStateManager.getInstance(application)
     private val appPrefs = application.getSharedPreferences("where_i_am_ui_prefs", Context.MODE_PRIVATE)
@@ -249,6 +249,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteTrip(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             tripManager.deleteTrip(id)
+            _selectedTripIds.value = _selectedTripIds.value - id
             _savedTrips.value = tripManager.getAllTrips()
         }
     }
@@ -263,6 +264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun splitTripAtPause(tripId: Long, pauseIndex: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             tripManager.splitTripAtPause(tripId, pauseIndex)
+            _selectedTripIds.value = _selectedTripIds.value - tripId
             _savedTrips.value = tripManager.getAllTrips()
         }
     }

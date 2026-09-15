@@ -136,7 +136,7 @@ class AppStateManager private constructor(private val context: Context) {
     }
 
     private fun applyModeToLocationEngine(mode: AppLifecycleMode) {
-        val locManager = LocationManager(context)
+        val locManager = LocationManager.getInstance(context)
         val policy = _powerPolicy.value
         val charging = _isCharging.value
 

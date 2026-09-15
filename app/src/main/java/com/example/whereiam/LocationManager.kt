@@ -67,9 +67,18 @@ private data class OsmPlaceResult(
     val countryCode: String?
 )
 
-class LocationManager(private val context: Context) {
+class LocationManager private constructor(private val context: Context) {
 
     companion object {
+        @Volatile
+        private var INSTANCE: LocationManager? = null
+
+        fun getInstance(context: Context): LocationManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: LocationManager(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
         @Volatile
         private var currentIntervalMs: Long = 1500L
         @Volatile
@@ -143,6 +152,9 @@ class LocationManager(private val context: Context) {
         currentIntervalMs = intervalMs
         currentMinIntervalMs = minIntervalMs
         isGpsStopped = false
+        try {
+            StationaryDetector.getInstance(context).startListening()
+        } catch (_: Exception) {}
         val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
             .setMinUpdateIntervalMillis(minIntervalMs)
             .build()
@@ -157,6 +169,9 @@ class LocationManager(private val context: Context) {
 
     fun stopLocationUpdates() {
         isGpsStopped = true
+        try {
+            StationaryDetector.getInstance(context).stopListening()
+        } catch (_: Exception) {}
         synchronized(activeCallbacks) {
             for (cb in activeCallbacks) {
                 try {
@@ -195,6 +210,18 @@ class LocationManager(private val context: Context) {
         lng: Double = 0.0,
         timestamp: Long = 0L
     ): Float {
+        // Accelerometer-based physical motion check: desk / table / sleep clamp
+        val isPhysicallyStationary = try {
+            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+        } catch (_: Exception) { false }
+
+        if (isPhysicallyStationary) {
+            kalmanSpeed = 0f
+            speedWindow.clear()
+            lastValidSpeedMs = 0f
+            return 0f
+        }
+
         if (rawSpeed == null) {
             // Keep last valid speed rather than dropping to null or 0 (anti-flicker)
             return lastValidSpeedMs
@@ -398,94 +425,67 @@ class LocationManager(private val context: Context) {
         val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase)
         val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
 
-        if (speedKmh > 35f) {
-            // GEO-01 & Item 11: Viaduct / Bridge trajectory inertia at vehicle speed > 35 km/h.
-            // If driving along a major road (DK52, DW946, A4, S7, etc.) and candidate is a cross street (viaduct/bridge),
-            // strictly require 5 consecutive confirmations AND 7.0 seconds of sustained readings before committing a switch.
-            val requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 4
-            val requiredDuration = if (isCommittedMajor && !isCandidateMajor) 7_000L else 5_000L
-
-            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
-                candidateStreetCount++
-            } else {
-                candidateStreetPl = rawStreetPl
-                candidateStreetBase = rawBase
-                candidateStreetCount = 1
-                candidateStreetFirstSeenTime = now
-            }
-
-            val candidateDuration = now - candidateStreetFirstSeenTime
-            if (candidateStreetCount >= requiredCount || candidateDuration >= requiredDuration) {
-                TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h: '$committedStreetPl' -> '$rawStreetPl'")
-                committedStreetPl = candidateStreetPl
-                committedStreetBase = candidateStreetBase
-                candidateStreetPl = null
-                candidateStreetBase = null
-                candidateStreetCount = 0
-                return multiData.copy(
-                    en = multiData.en.copy(street = committedStreetPl),
-                    pl = multiData.pl.copy(street = committedStreetPl),
-                    native = multiData.native.copy(street = committedStreetPl)
-                )
-            } else {
-                // Reject viaduct/overpass flicker: keep current committed street
-                return multiData.copy(
-                    en = multiData.en.copy(street = committedStreetPl),
-                    pl = multiData.pl.copy(street = committedStreetPl),
-                    native = multiData.native.copy(street = committedStreetPl)
-                )
-            }
-        } else if (speedKmh > 15f) {
-            // Moderate city driving / cycling: require 3 readings or 3.5s
-            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
-                candidateStreetCount++
-            } else {
-                candidateStreetPl = rawStreetPl
-                candidateStreetBase = rawBase
-                candidateStreetCount = 1
-                candidateStreetFirstSeenTime = now
-            }
-
-            val candidateDuration = now - candidateStreetFirstSeenTime
-            if (candidateStreetCount >= 3 || candidateDuration >= 3500L) {
-                TelemetryLogger.log("STREET", "Switch committed: '$committedStreetPl' -> '$rawStreetPl'")
-                committedStreetPl = candidateStreetPl
-                committedStreetBase = candidateStreetBase
-                candidateStreetPl = null
-                candidateStreetBase = null
-                candidateStreetCount = 0
-                return multiData.copy(
-                    en = multiData.en.copy(street = committedStreetPl),
-                    pl = multiData.pl.copy(street = committedStreetPl),
-                    native = multiData.native.copy(street = committedStreetPl)
-                )
-            } else {
-                return multiData.copy(
-                    en = multiData.en.copy(street = committedStreetPl),
-                    pl = multiData.pl.copy(street = committedStreetPl),
-                    native = multiData.native.copy(street = committedStreetPl)
-                )
-            }
+        // Track candidate observations
+        if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
+            candidateStreetCount++
         } else {
-            // Walking or slow speed: update after 2 confirmations
-            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
-                candidateStreetCount++
-            } else {
-                candidateStreetBase = rawBase
-                candidateStreetCount = 1
+            candidateStreetPl = rawStreetPl
+            candidateStreetBase = rawBase
+            candidateStreetCount = 1
+            candidateStreetFirstSeenTime = now
+        }
+
+        val candidateDuration = now - candidateStreetFirstSeenTime
+
+        // Compute required confirmations based on speed and road hierarchy
+        val requiredCount: Int
+        val requiredDuration: Long
+
+        when {
+            speedKmh < 1.2f -> {
+                // Stationary (traffic light / stop sign / resting):
+                // Strictly resist changing street name unless confirmed over extended duration
+                requiredCount = if (isCommittedMajor && !isCandidateMajor) 6 else 4
+                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 15_000L else 8_000L
             }
-            if (candidateStreetCount >= 2) {
-                committedStreetPl = rawStreetPl
-                committedStreetBase = rawBase
-                candidateStreetCount = 0
-                return multiData
-            } else {
-                return multiData.copy(
-                    en = multiData.en.copy(street = committedStreetPl),
-                    pl = multiData.pl.copy(street = committedStreetPl),
-                    native = multiData.native.copy(street = committedStreetPl)
-                )
+            speedKmh > 35f -> {
+                // High speed driving (viaduct / bridge inertia):
+                requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 4
+                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 7_000L else 4_500L
             }
+            speedKmh > 15f -> {
+                // Moderate city driving / cycling:
+                requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
+            }
+            else -> {
+                // Slow driving / cycling / walking (1.2 - 15 km/h):
+                // Protect major roads (DK*, DW*, etc.) and main thoroughfares against side-street hopping
+                requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
+            }
+        }
+
+        // Must satisfy BOTH count AND duration to commit a street switch!
+        if (candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration) {
+            TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h: '$committedStreetPl' -> '$rawStreetPl'")
+            committedStreetPl = candidateStreetPl
+            committedStreetBase = candidateStreetBase
+            candidateStreetPl = null
+            candidateStreetBase = null
+            candidateStreetCount = 0
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        } else {
+            // Keep current committed street (filter out momentary cross-street and side-street jitter)
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
         }
     }
 
@@ -769,9 +769,26 @@ class LocationManager(private val context: Context) {
         countryCode: String,
         prefs: SharedPreferences
     ): PlaceInfo {
-        // Tier 1 – Geocoder returned locality
+        // Tier 1 – Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
-            return address.toPlaceInfo(countryCode)
+            val basePlace = address.toPlaceInfo(countryCode)
+            val osm = geocodeWithOsm(lat, lng, osmLang)
+            return if (osm != null) {
+                val canonicalStreet = if (!osm.roadRef.isNullOrBlank()) {
+                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
+                } else {
+                    basePlace.street ?: osm.street
+                }
+                basePlace.copy(
+                    street = canonicalStreet,
+                    roadRef = osm.roadRef ?: basePlace.roadRef,
+                    gmina = osm.municipality ?: basePlace.gmina,
+                    powiat = osm.county ?: basePlace.powiat,
+                    voivodeship = osm.state ?: basePlace.voivodeship
+                )
+            } else {
+                basePlace
+            }
         }
 
         // Tier 2a – Close to last known good

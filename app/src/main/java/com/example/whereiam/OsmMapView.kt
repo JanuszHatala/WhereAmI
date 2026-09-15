@@ -11,13 +11,16 @@ import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
@@ -530,8 +533,6 @@ fun OsmMapView(
                     currentZoom = 16.0
                     // Disable blur-inducing tile upscaling; render crisp 1:1 pixel native tiles
                     isTilesScaledToDpi = false
-                    // Use SOFTWARE layer for reliable vector/path overlay rendering without GPU deadlock
-                    setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
                     zoomController.setVisibility(
                         org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
                     )
@@ -552,9 +553,6 @@ fun OsmMapView(
                         override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
                             isFollowing = false
                             snapHandler.removeCallbacks(snapRunnable)
-                            if (destinationPoint == null) {
-                                snapHandler.postDelayed(snapRunnable, 8_000)
-                            }
                             return false
                         }
                         override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
@@ -714,15 +712,18 @@ fun OsmMapView(
                 }
             }
 
-            // Recenter (MyLocation)
+            // Unified MyLocation & Refresh Button (FT2-12)
             IconButton(
                 onClick = {
                     isFollowing = true
                     snapHandler.removeCallbacks(snapRunnable)
                     onClearDestination?.invoke()
+                    mapView?.tileProvider?.clearTileCache()
+                    hikingProviderRef?.clearTileCache()
                     latLng?.let { pos ->
                         mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
                     }
+                    mapView?.invalidate()
                 },
                 modifier = Modifier
                     .size(42.dp)
@@ -731,32 +732,7 @@ fun OsmMapView(
             ) {
                 Icon(
                     imageVector = Icons.Default.MyLocation,
-                    contentDescription = "Recenter",
-                    tint = ComposeColor.White
-                )
-            }
-
-            // Refresh Map & Recenter (MAP-R05)
-            IconButton(
-                onClick = {
-                    isFollowing = true
-                    snapHandler.removeCallbacks(snapRunnable)
-                    mapView?.tileProvider?.clearTileCache()
-                    hikingProviderRef?.clearTileCache()
-                    latLng?.let { pos ->
-                        mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
-                    }
-                    mapView?.invalidate()
-                    Toast.makeText(context, "Map cache refreshed", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(ComposeColor(0xCC1E293B))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Refresh Map Tiles",
+                    contentDescription = "Recenter & Refresh",
                     tint = ComposeColor.White
                 )
             }
@@ -821,6 +797,43 @@ fun OsmMapView(
                 }
             }
         }
+
+        // Floating "📍 Recenter" Pill when user has panned away (Option B)
+        if (!isFollowing && destinationPoint == null) {
+            Surface(
+                onClick = {
+                    isFollowing = true
+                    latLng?.let { pos ->
+                        mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
+                    }
+                },
+                shape = RoundedCornerShape(20.dp),
+                color = ComposeColor(0xEE0284C7),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 110.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = null,
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Recenter",
+                        color = ComposeColor.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
     }
 
     if (showSettingsDialog) {
@@ -850,6 +863,7 @@ fun OsmMapView(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MapSettingsDialog(
     currentBaseLayer: MapBaseLayer,
@@ -861,171 +875,196 @@ private fun MapSettingsDialog(
     onClearCache: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = ComposeColor(0xFF0F172A),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Layers,
-                    contentDescription = null,
-                    tint = ComposeColor(0xFF38BDF8),
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Map Settings & Layers",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ComposeColor.White
-                )
-            }
-        },
-        text = {
-            Column(
+        tonalElevation = 8.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Base Map Selection
-                Text(
-                    text = "Base Map",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ComposeColor(0xFF94A3B8)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    MapBaseLayer.values().forEach { layer ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onBaseLayerChange(layer) }
-                                .padding(vertical = 4.dp, horizontal = 6.dp)
-                        ) {
-                            RadioButton(
-                                selected = (layer == currentBaseLayer),
-                                onClick = { onBaseLayerChange(layer) },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = ComposeColor(0xFF38BDF8),
-                                    unselectedColor = ComposeColor(0xFF64748B)
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = layer.label,
-                                fontSize = 14.sp,
-                                color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1)
-                            )
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = ComposeColor(0xFF334155))
-
-                // Hiking / Tourist Trails Overlay
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onHikingOverlayToggle(!hikingOverlayEnabled) }
-                        .padding(vertical = 4.dp, horizontal = 6.dp)
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Hiking Trails & Peaks",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = ComposeColor.White
-                        )
-                        Text(
-                            text = "Marked color-coded trails & summits (Waymarked Trails)",
-                            fontSize = 11.sp,
-                            color = ComposeColor(0xFF94A3B8)
-                        )
-                    }
-                    Switch(
-                        checked = hikingOverlayEnabled,
-                        onCheckedChange = { onHikingOverlayToggle(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = ComposeColor.White,
-                            checkedTrackColor = ComposeColor(0xFF10B981),
-                            uncheckedThumbColor = ComposeColor(0xFF94A3B8),
-                            uncheckedTrackColor = ComposeColor(0xFF334155)
-                        )
-                    )
-                }
-
-                HorizontalDivider(color = ComposeColor(0xFF334155))
-
-                // Map Font & Label Scaling
-                Text(
-                    text = "Map Labels Size",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ComposeColor(0xFF94A3B8)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    MapFontScale.values().forEach { scale ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onFontScaleChange(scale) }
-                                .padding(vertical = 4.dp, horizontal = 6.dp)
-                        ) {
-                            RadioButton(
-                                selected = (scale == currentFontScale),
-                                onClick = { onFontScaleChange(scale) },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = ComposeColor(0xFF38BDF8),
-                                    unselectedColor = ComposeColor(0xFF64748B)
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = scale.label,
-                                fontSize = 14.sp,
-                                color = if (scale == currentFontScale) ComposeColor.White else ComposeColor(0xFFCBD5E1)
-                            )
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = ComposeColor(0xFF334155))
-
-                // Tile Cache Purge
-                OutlinedButton(
-                    onClick = onClearCache,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = ComposeColor(0xFFF87171)
-                    )
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Refresh,
+                        imageVector = Icons.Default.Layers,
                         contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Clear Tile Disk Cache", fontSize = 13.sp)
+                    Text(
+                        text = "Map Settings & Layers",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ComposeColor.White
+                    )
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Done", color = ComposeColor(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(
-                    text = "Done",
-                    color = ComposeColor(0xFF38BDF8),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
+
+            // Base Map Selection
+            Text(
+                text = "Base Map",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                MapBaseLayer.values().forEach { layer ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onBaseLayerChange(layer) }
+                            .padding(vertical = 4.dp, horizontal = 6.dp)
+                    ) {
+                        RadioButton(
+                            selected = (layer == currentBaseLayer),
+                            onClick = { onBaseLayerChange(layer) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = ComposeColor(0xFF38BDF8),
+                                unselectedColor = ComposeColor(0xFF64748B)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = layer.label,
+                            fontSize = 14.sp,
+                            color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Hiking / Tourist Trails Overlay
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onHikingOverlayToggle(!hikingOverlayEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Hiking Trails & Peaks",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White
+                    )
+                    Text(
+                        text = "Marked color-coded trails & summits (Waymarked Trails)",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                }
+                Switch(
+                    checked = hikingOverlayEnabled,
+                    onCheckedChange = { onHikingOverlayToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
                 )
             }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Map Font & Label Scaling
+            Text(
+                text = "Map Labels Size",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                MapFontScale.values().forEach { scale ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onFontScaleChange(scale) }
+                            .padding(vertical = 4.dp, horizontal = 6.dp)
+                    ) {
+                        RadioButton(
+                            selected = (scale == currentFontScale),
+                            onClick = { onFontScaleChange(scale) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = ComposeColor(0xFF38BDF8),
+                                unselectedColor = ComposeColor(0xFF64748B)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = scale.label,
+                            fontSize = 14.sp,
+                            color = if (scale == currentFontScale) ComposeColor.White else ComposeColor(0xFFCBD5E1)
+                        )
+                    }
+                }
+            }
+
+            // Raster Tile Limitation Notice (Item FT2-15 & FT2-13)
+            Surface(
+                color = ComposeColor(0xFF1E293B),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Raster map tiles (OpenTopo & OSM) are pre-rendered bitmap images. When rotating map in COURSE_UP (AUTO), text inside the bitmap rotates along with the map. If you prefer upright labels, keep North-Up mode.",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        lineHeight = 15.sp
+                    )
+                }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Tile Cache Purge
+            OutlinedButton(
+                onClick = onClearCache,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = ComposeColor(0xFFF87171)
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Clear Tile Disk Cache", fontSize = 13.sp)
+            }
         }
-    )
+    }
 }
 
 private fun makeDestIcon(context: Context): android.graphics.drawable.BitmapDrawable {
