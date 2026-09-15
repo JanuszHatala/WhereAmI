@@ -9,8 +9,10 @@ import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
@@ -19,10 +21,11 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Whatshot
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,15 +37,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.Toast
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.TilesOverlay
 
 enum class MapOrientationMode {
     NORTH,     // 0° (North at top)
@@ -51,6 +59,52 @@ enum class MapOrientationMode {
     WEST,      // 270° (West at top)
     COURSE_UP  // Auto-rotates with GPS heading
 }
+
+enum class MapFontScale(val label: String, val scaleFactor: Float) {
+    NORMAL("Normal (100%)", 1.0f),
+    LARGE("Large (135%)", 1.35f),
+    EXTRA_LARGE("Extra Large (170%)", 1.70f)
+}
+
+enum class MapBaseLayer(val label: String) {
+    STANDARD("Standard OSM"),
+    TOPO("Topographic (OpenTopo)"),
+    SATELLITE("Satellite (Esri)")
+}
+
+private val OpenTopoMapSource = XYTileSource(
+    "OpenTopoMap",
+    1, 17, 256, ".png",
+    arrayOf(
+        "https://a.tile.opentopomap.org/",
+        "https://b.tile.opentopomap.org/",
+        "https://c.tile.opentopomap.org/"
+    ),
+    "© OpenTopoMap (CC-BY-SA)"
+)
+
+private val EsriSatelliteSource = object : OnlineTileSourceBase(
+    "EsriSatellite",
+    0, 19, 256, ".jpg",
+    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"),
+    "© Esri, Maxar, Earthstar Geographics"
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        val zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
+        val x = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
+        val y = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
+        return getBaseUrl() + "$zoom/$y/$x"
+    }
+}
+
+private val WaymarkedTrailsHikingSource = XYTileSource(
+    "WaymarkedTrailsHiking",
+    1, 18, 256, ".png",
+    arrayOf(
+        "https://tile.waymarkedtrails.org/hiking/"
+    ),
+    "© Waymarked Trails (CC-BY-SA)"
+)
 
 /**
  * Composable OSM map panel with:
@@ -82,6 +136,7 @@ fun OsmMapView(
     isCompact: Boolean = true,
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
+    onInstantShare: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -112,25 +167,95 @@ fun OsmMapView(
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var isFollowing by remember { mutableStateOf(true) }
 
+    val prefs = remember(context) {
+        context.getSharedPreferences("whereiam_map_prefs", Context.MODE_PRIVATE)
+    }
+
+    var baseLayer by remember {
+        val saved = prefs.getString("base_layer", MapBaseLayer.STANDARD.name) ?: MapBaseLayer.STANDARD.name
+        mutableStateOf(try { MapBaseLayer.valueOf(saved) } catch (_: Exception) { MapBaseLayer.STANDARD })
+    }
+
+    var showHikingOverlay by remember {
+        mutableStateOf(prefs.getBoolean("hiking_overlay", false))
+    }
+
+    var fontScale by remember {
+        val saved = prefs.getString("font_scale", MapFontScale.NORMAL.name) ?: MapFontScale.NORMAL.name
+        mutableStateOf(try { MapFontScale.valueOf(saved) } catch (_: Exception) { MapFontScale.NORMAL })
+    }
+
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var hikingOverlayRef by remember { mutableStateOf<TilesOverlay?>(null) }
+    var hikingProviderRef by remember { mutableStateOf<MapTileProviderBasic?>(null) }
+    var lastFrozenBearing by remember { mutableStateOf<Float?>(null) }
+
     val snapHandler = remember { Handler(Looper.getMainLooper()) }
     val snapRunnable = remember { Runnable { isFollowing = true } }
 
-    // Update marker position & auto-rotation
+    // Dynamic Base Layer Switch
+    LaunchedEffect(baseLayer, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        val tileSource = when (baseLayer) {
+            MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
+            MapBaseLayer.TOPO -> OpenTopoMapSource
+            MapBaseLayer.SATELLITE -> EsriSatelliteSource
+        }
+        map.setTileSource(tileSource)
+        prefs.edit().putString("base_layer", baseLayer.name).apply()
+        map.invalidate()
+    }
+
+    // Dynamic Label / Font Scale
+    LaunchedEffect(fontScale, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        map.tilesScaleFactor = fontScale.scaleFactor
+        prefs.edit().putString("font_scale", fontScale.name).apply()
+        map.invalidate()
+    }
+
+    // Dynamic Hiking / Tourist Trail Overlay
+    LaunchedEffect(showHikingOverlay, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        prefs.edit().putBoolean("hiking_overlay", showHikingOverlay).apply()
+        if (showHikingOverlay) {
+            if (hikingOverlayRef == null) {
+                val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
+                val overlay = TilesOverlay(provider, context).apply {
+                    loadingBackgroundColor = Color.TRANSPARENT
+                    loadingLineColor = Color.TRANSPARENT
+                }
+                hikingProviderRef = provider
+                hikingOverlayRef = overlay
+            }
+            hikingOverlayRef?.let {
+                if (!map.overlays.contains(it)) {
+                    val insertIdx = if (map.overlays.size > 1) 1 else 0
+                    map.overlays.add(insertIdx, it)
+                }
+            }
+        } else {
+            hikingOverlayRef?.let {
+                map.overlays.remove(it)
+            }
+        }
+        map.invalidate()
+    }
+
+    // Update marker position & auto-rotation with Stationary Bearing Freeze
     LaunchedEffect(latLng, orientationMode) {
         val pos = latLng ?: return@LaunchedEffect
         val map = mapView ?: return@LaunchedEffect
         val gp = GeoPoint(pos.first, pos.second)
-        val bearing = pos.third
+        val rawBearing = pos.third
+        if (rawBearing != null) {
+            lastFrozenBearing = rawBearing
+        }
+        // Stationary Bearing Freeze (MAP-R03): maintain last valid driving heading when stopped
+        val effectiveBearing = rawBearing ?: lastFrozenBearing
 
-        // In OSMDroid:
-        // mapOrientation is clockwise in degrees.
-        // NORTH: 0° (North up)
-        // EAST: 270° (so 90° East is rotated to top)
-        // SOUTH: 180° (so 180° South is rotated to top)
-        // WEST: 90° (so 270° West is rotated to top)
-        // COURSE_UP: -bearing (so heading is rotated to top)
         val targetMapOrientation = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> if (bearing != null) -bearing else 0f
+            MapOrientationMode.COURSE_UP -> if (effectiveBearing != null) -effectiveBearing else 0f
             MapOrientationMode.NORTH -> 0f
             MapOrientationMode.EAST -> 270f
             MapOrientationMode.SOUTH -> 180f
@@ -155,15 +280,15 @@ fun OsmMapView(
         // In COURSE_UP (AUTO), the map is already rotated to face forward, so cursor points straight UP (0°).
         // In fixed cardinal modes, cursor points in travel direction relative to screen top.
         val topHeading = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> bearing ?: 0f
+            MapOrientationMode.COURSE_UP -> effectiveBearing ?: 0f
             MapOrientationMode.NORTH -> 0f
             MapOrientationMode.EAST -> 90f
             MapOrientationMode.SOUTH -> 180f
             MapOrientationMode.WEST -> 270f
         }
-        val screenAngle = if (bearing != null) (bearing - topHeading + 360f) % 360f else 0f
+        val screenAngle = if (effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
         m.rotation = -screenAngle
-        m.icon = makeMarkerIcon(context, bearing != null)
+        m.icon = makeMarkerIcon(context, effectiveBearing != null)
         m.title = null
 
         if (isFollowing && destinationPoint == null) {
@@ -391,7 +516,13 @@ fun OsmMapView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 MapView(ctx).apply {
-                    setTileSource(TileSourceFactory.MAPNIK)
+                    val initialTileSource = when (baseLayer) {
+                        MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
+                        MapBaseLayer.TOPO -> OpenTopoMapSource
+                        MapBaseLayer.SATELLITE -> EsriSatelliteSource
+                    }
+                    setTileSource(initialTileSource)
+                    tilesScaleFactor = fontScale.scaleFactor
                     setMultiTouchControls(true)
                     minZoomLevel = minZoom
                     maxZoomLevel = maxZoom
@@ -512,7 +643,8 @@ fun OsmMapView(
                         MapOrientationMode.SOUTH -> mapView?.mapOrientation = 180f
                         MapOrientationMode.WEST -> mapView?.mapOrientation = 90f
                         MapOrientationMode.COURSE_UP -> {
-                            latLng?.third?.let { b -> mapView?.mapOrientation = -b }
+                            val b = latLng?.third ?: lastFrozenBearing
+                            b?.let { mapView?.mapOrientation = -it }
                         }
                     }
                     mapView?.invalidate()
@@ -582,7 +714,7 @@ fun OsmMapView(
                 }
             }
 
-            // Recenter
+            // Recenter (MyLocation)
             IconButton(
                 onClick = {
                     isFollowing = true
@@ -602,6 +734,68 @@ fun OsmMapView(
                     contentDescription = "Recenter",
                     tint = ComposeColor.White
                 )
+            }
+
+            // Refresh Map & Recenter (MAP-R05)
+            IconButton(
+                onClick = {
+                    isFollowing = true
+                    snapHandler.removeCallbacks(snapRunnable)
+                    mapView?.tileProvider?.clearTileCache()
+                    hikingProviderRef?.clearTileCache()
+                    latLng?.let { pos ->
+                        mapView?.controller?.animateTo(GeoPoint(pos.first, pos.second))
+                    }
+                    mapView?.invalidate()
+                    Toast.makeText(context, "Map cache refreshed", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(ComposeColor(0xCC1E293B))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Map Tiles",
+                    tint = ComposeColor.White
+                )
+            }
+
+            // Map Layers & Settings (MAP-R01, MAP-R02)
+            IconButton(
+                onClick = { showSettingsDialog = true },
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (showHikingOverlay || baseLayer != MapBaseLayer.STANDARD || fontScale != MapFontScale.NORMAL)
+                            ComposeColor(0xFF0284C7)
+                        else
+                            ComposeColor(0xCC1E293B)
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Layers,
+                    contentDescription = "Map Settings & Layers",
+                    tint = ComposeColor.White
+                )
+            }
+
+            // Instant Share Current Position
+            if (onInstantShare != null && latLng != null) {
+                IconButton(
+                    onClick = { onInstantShare.invoke() },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xCC1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share Current Position",
+                        tint = ComposeColor(0xFF38BDF8)
+                    )
+                }
             }
 
             // Fit Shown Trips (if at least 2 points exist from active recording or selected past trips)
@@ -629,12 +823,209 @@ fun OsmMapView(
         }
     }
 
+    if (showSettingsDialog) {
+        MapSettingsDialog(
+            currentBaseLayer = baseLayer,
+            onBaseLayerChange = { baseLayer = it },
+            hikingOverlayEnabled = showHikingOverlay,
+            onHikingOverlayToggle = { showHikingOverlay = it },
+            currentFontScale = fontScale,
+            onFontScaleChange = { fontScale = it },
+            onClearCache = {
+                mapView?.tileProvider?.clearTileCache()
+                hikingProviderRef?.clearTileCache()
+                mapView?.invalidate()
+                Toast.makeText(context, "Map tile cache cleared", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showSettingsDialog = false }
+        )
+    }
+
     DisposableEffect(Unit) {
         onDispose {
+            hikingProviderRef?.clearTileCache()
             mapView?.onDetach()
             snapHandler.removeCallbacks(snapRunnable)
         }
     }
+}
+
+@Composable
+private fun MapSettingsDialog(
+    currentBaseLayer: MapBaseLayer,
+    onBaseLayerChange: (MapBaseLayer) -> Unit,
+    hikingOverlayEnabled: Boolean,
+    onHikingOverlayToggle: (Boolean) -> Unit,
+    currentFontScale: MapFontScale,
+    onFontScaleChange: (MapFontScale) -> Unit,
+    onClearCache: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ComposeColor(0xFF0F172A),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Layers,
+                    contentDescription = null,
+                    tint = ComposeColor(0xFF38BDF8),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Map Settings & Layers",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ComposeColor.White
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Base Map Selection
+                Text(
+                    text = "Base Map",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MapBaseLayer.values().forEach { layer ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onBaseLayerChange(layer) }
+                                .padding(vertical = 4.dp, horizontal = 6.dp)
+                        ) {
+                            RadioButton(
+                                selected = (layer == currentBaseLayer),
+                                onClick = { onBaseLayerChange(layer) },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = ComposeColor(0xFF38BDF8),
+                                    unselectedColor = ComposeColor(0xFF64748B)
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = layer.label,
+                                fontSize = 14.sp,
+                                color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                // Hiking / Tourist Trails Overlay
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onHikingOverlayToggle(!hikingOverlayEnabled) }
+                        .padding(vertical = 4.dp, horizontal = 6.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Hiking Trails & Peaks",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = ComposeColor.White
+                        )
+                        Text(
+                            text = "Marked color-coded trails & summits (Waymarked Trails)",
+                            fontSize = 11.sp,
+                            color = ComposeColor(0xFF94A3B8)
+                        )
+                    }
+                    Switch(
+                        checked = hikingOverlayEnabled,
+                        onCheckedChange = { onHikingOverlayToggle(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ComposeColor.White,
+                            checkedTrackColor = ComposeColor(0xFF10B981),
+                            uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                            uncheckedTrackColor = ComposeColor(0xFF334155)
+                        )
+                    )
+                }
+
+                HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                // Map Font & Label Scaling
+                Text(
+                    text = "Map Labels Size",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MapFontScale.values().forEach { scale ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onFontScaleChange(scale) }
+                                .padding(vertical = 4.dp, horizontal = 6.dp)
+                        ) {
+                            RadioButton(
+                                selected = (scale == currentFontScale),
+                                onClick = { onFontScaleChange(scale) },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = ComposeColor(0xFF38BDF8),
+                                    unselectedColor = ComposeColor(0xFF64748B)
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = scale.label,
+                                fontSize = 14.sp,
+                                color = if (scale == currentFontScale) ComposeColor.White else ComposeColor(0xFFCBD5E1)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                // Tile Cache Purge
+                OutlinedButton(
+                    onClick = onClearCache,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = ComposeColor(0xFFF87171)
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Clear Tile Disk Cache", fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "Done",
+                    color = ComposeColor(0xFF38BDF8),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
+        }
+    )
 }
 
 private fun makeDestIcon(context: Context): android.graphics.drawable.BitmapDrawable {

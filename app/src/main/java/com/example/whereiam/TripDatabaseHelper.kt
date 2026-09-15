@@ -12,7 +12,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     companion object {
         private const val DATABASE_NAME = "where_i_am_trips.db"
-        private const val DATABASE_VERSION = 4
+        private const val DATABASE_VERSION = 5
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -26,6 +26,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         private const val COL_ACTIVITY_PROFILE = "activity_profile"
         private const val COL_POINTS_JSON = "points_json"
         private const val COL_PLACES_JSON = "places_json"
+        private const val COL_PAUSES_JSON = "pauses_json"
 
         // Saved Places Table
         private const val TABLE_SAVED_PLACES = "saved_places"
@@ -53,7 +54,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 $COL_IS_AUTO INTEGER NOT NULL,
                 $COL_ACTIVITY_PROFILE TEXT DEFAULT 'CAR',
                 $COL_POINTS_JSON TEXT,
-                $COL_PLACES_JSON TEXT
+                $COL_PLACES_JSON TEXT,
+                $COL_PAUSES_JSON TEXT DEFAULT '[]'
             )
         """.trimIndent()
         db.execSQL(createTripsTable)
@@ -94,6 +96,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_ACTIVITY_PROFILE TEXT DEFAULT 'CAR'")
             } catch (_: Exception) {}
         }
+        if (oldVersion < 5) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_PAUSES_JSON TEXT DEFAULT '[]'")
+            } catch (_: Exception) {}
+        }
     }
 
     fun insertTrip(trip: TripRecord): Long {
@@ -109,6 +116,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
             put(COL_POINTS_JSON, pointsToJson(trip.points))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
+            put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
         }
         return db.insert(TABLE_TRIPS, null, values)
     }
@@ -126,6 +134,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
             put(COL_POINTS_JSON, pointsToJson(trip.points))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
+            put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
         }
         db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(trip.id.toString()))
     }
@@ -146,6 +155,43 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
+    private fun cursorToTripRecord(cursor: android.database.Cursor): TripRecord {
+        val id = cursor.getLong(cursor.getColumnIndexOrThrow(COL_ID))
+        val titleColIdx = cursor.getColumnIndex(COL_TITLE)
+        val title = if (titleColIdx >= 0 && !cursor.isNull(titleColIdx)) cursor.getString(titleColIdx) else ""
+        val startTime = cursor.getLong(cursor.getColumnIndexOrThrow(COL_START_TIME))
+        val endTime = if (cursor.isNull(cursor.getColumnIndexOrThrow(COL_END_TIME))) null else cursor.getLong(cursor.getColumnIndexOrThrow(COL_END_TIME))
+        val distance = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISTANCE))
+        val maxSpeed = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_MAX_SPEED))
+        val avgSpeed = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_AVG_SPEED))
+        val isAuto = cursor.getInt(cursor.getColumnIndexOrThrow(COL_IS_AUTO)) == 1
+        val profileColIdx = cursor.getColumnIndex(COL_ACTIVITY_PROFILE)
+        val profile = if (profileColIdx >= 0 && !cursor.isNull(profileColIdx)) {
+            try { ActivityProfile.valueOf(cursor.getString(profileColIdx)) } catch (_: Exception) { ActivityProfile.CAR }
+        } else {
+            ActivityProfile.CAR
+        }
+        val pointsJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
+        val placesJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
+        val pausesColIdx = cursor.getColumnIndex(COL_PAUSES_JSON)
+        val pausesJson = if (pausesColIdx >= 0 && !cursor.isNull(pausesColIdx)) cursor.getString(pausesColIdx) ?: "[]" else "[]"
+
+        return TripRecord(
+            id = id,
+            title = title,
+            startTime = startTime,
+            endTime = endTime,
+            distanceMeters = distance,
+            maxSpeedKmh = maxSpeed,
+            avgSpeedKmh = avgSpeed,
+            isAutoDetected = isAuto,
+            activityProfile = profile,
+            points = jsonToPoints(pointsJson),
+            placesVisited = jsonToPlaces(placesJson),
+            pauses = jsonToPauses(pausesJson)
+        )
+    }
+
     fun getAllTrips(): List<TripRecord> {
         val trips = mutableListOf<TripRecord>()
         val db = readableDatabase
@@ -160,42 +206,30 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         )
         cursor.use {
             while (it.moveToNext()) {
-                val id = it.getLong(it.getColumnIndexOrThrow(COL_ID))
-                val titleColIdx = it.getColumnIndex(COL_TITLE)
-                val title = if (titleColIdx >= 0 && !it.isNull(titleColIdx)) it.getString(titleColIdx) else ""
-                val startTime = it.getLong(it.getColumnIndexOrThrow(COL_START_TIME))
-                val endTime = if (it.isNull(it.getColumnIndexOrThrow(COL_END_TIME))) null else it.getLong(it.getColumnIndexOrThrow(COL_END_TIME))
-                val distance = it.getDouble(it.getColumnIndexOrThrow(COL_DISTANCE))
-                val maxSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_MAX_SPEED))
-                val avgSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_AVG_SPEED))
-                val isAuto = it.getInt(it.getColumnIndexOrThrow(COL_IS_AUTO)) == 1
-                val profileColIdx = it.getColumnIndex(COL_ACTIVITY_PROFILE)
-                val profile = if (profileColIdx >= 0 && !it.isNull(profileColIdx)) {
-                    try { ActivityProfile.valueOf(it.getString(profileColIdx)) } catch (_: Exception) { ActivityProfile.CAR }
-                } else {
-                    ActivityProfile.CAR
-                }
-                val pointsJson = it.getString(it.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
-                val placesJson = it.getString(it.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
-
-                trips.add(
-                    TripRecord(
-                        id = id,
-                        title = title,
-                        startTime = startTime,
-                        endTime = endTime,
-                        distanceMeters = distance,
-                        maxSpeedKmh = maxSpeed,
-                        avgSpeedKmh = avgSpeed,
-                        isAutoDetected = isAuto,
-                        activityProfile = profile,
-                        points = jsonToPoints(pointsJson),
-                        placesVisited = jsonToPlaces(placesJson)
-                    )
-                )
+                trips.add(cursorToTripRecord(it))
             }
         }
         return trips
+    }
+
+    fun getActiveOrUnclosedTrip(): TripRecord? {
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_TRIPS,
+            null,
+            "$COL_END_TIME IS NULL",
+            null,
+            null,
+            null,
+            "$COL_START_TIME DESC",
+            "1"
+        )
+        cursor.use {
+            if (it.moveToFirst()) {
+                return cursorToTripRecord(it)
+            }
+        }
+        return null
     }
 
     fun deleteTrip(id: Long) {
@@ -219,39 +253,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         )
         cursor.use {
             while (it.moveToNext()) {
-                val id = it.getLong(it.getColumnIndexOrThrow(COL_ID))
-                val titleColIdx = it.getColumnIndex(COL_TITLE)
-                val title = if (titleColIdx >= 0 && !it.isNull(titleColIdx)) it.getString(titleColIdx) else ""
-                val startTime = it.getLong(it.getColumnIndexOrThrow(COL_START_TIME))
-                val endTime = if (it.isNull(it.getColumnIndexOrThrow(COL_END_TIME))) null else it.getLong(it.getColumnIndexOrThrow(COL_END_TIME))
-                val distance = it.getDouble(it.getColumnIndexOrThrow(COL_DISTANCE))
-                val maxSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_MAX_SPEED))
-                val avgSpeed = it.getFloat(it.getColumnIndexOrThrow(COL_AVG_SPEED))
-                val isAuto = it.getInt(it.getColumnIndexOrThrow(COL_IS_AUTO)) == 1
-                val profileColIdx = it.getColumnIndex(COL_ACTIVITY_PROFILE)
-                val profile = if (profileColIdx >= 0 && !it.isNull(profileColIdx)) {
-                    try { ActivityProfile.valueOf(it.getString(profileColIdx)) } catch (_: Exception) { ActivityProfile.CAR }
-                } else {
-                    ActivityProfile.CAR
-                }
-                val pointsJson = it.getString(it.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
-                val placesJson = it.getString(it.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
-
-                trips.add(
-                    TripRecord(
-                        id = id,
-                        title = title,
-                        startTime = startTime,
-                        endTime = endTime,
-                        distanceMeters = distance,
-                        maxSpeedKmh = maxSpeed,
-                        avgSpeedKmh = avgSpeed,
-                        isAutoDetected = isAuto,
-                        activityProfile = profile,
-                        points = jsonToPoints(pointsJson),
-                        placesVisited = jsonToPlaces(placesJson)
-                    )
-                )
+                trips.add(cursorToTripRecord(it))
             }
         }
         return trips
@@ -289,7 +291,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         }
 
         val overallAvgSpeed = if (totalDurationSec > 0) (weightedSpeedSum / totalDurationSec).toFloat() else earliest.avgSpeedKmh
-        val mergedTitle = if (earliest.title.isNotBlank()) "${earliest.title} (Merged)" else "Merged Trip (${sorted.size})"
+        val dateStr = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(earliest.startTime))
+        val mergedTitle = if (earliest.title.isNotBlank()) "${earliest.title} (Merged)" else "$dateStr • Merged Trips (${sorted.size})"
 
         val mergedTrip = TripRecord(
             title = mergedTitle,
@@ -456,4 +459,113 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         } catch (_: Exception) {}
         return list
     }
+
+    fun splitTripAtPause(tripId: Long, pauseIndex: Int): Pair<Long, Long>? {
+        val trip = getTripsByIds(listOf(tripId)).firstOrNull() ?: return null
+        if (pauseIndex !in trip.pauses.indices) return null
+        val pause = trip.pauses[pauseIndex]
+        val splitIdx = pause.pointIndex.coerceIn(1, (trip.points.size - 1).coerceAtLeast(1))
+
+        val pointsPart1 = trip.points.take(splitIdx)
+        val pointsPart2 = trip.points.drop(splitIdx)
+
+        if (pointsPart1.isEmpty() || pointsPart2.isEmpty()) return null
+
+        val pausesPart1 = trip.pauses.take(pauseIndex)
+        val pausesPart2 = trip.pauses.drop(pauseIndex + 1).map {
+            it.copy(pointIndex = (it.pointIndex - splitIdx).coerceAtLeast(0))
+        }
+
+        val splitTime = pause.startTime
+        val resumeTime = pause.endTime ?: (pause.startTime + pause.durationMs)
+
+        val placesPart1 = trip.placesVisited.filter { it.timestamp <= splitTime }
+        val placesPart2 = trip.placesVisited.filter { it.timestamp > splitTime }
+
+        // Recalculate distance for Part 1
+        var dist1 = 0.0
+        for (i in 0 until pointsPart1.size - 1) {
+            val p1 = pointsPart1[i]
+            val p2 = pointsPart1[i + 1]
+            val res = FloatArray(1)
+            android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
+            dist1 += res[0]
+        }
+
+        // Recalculate distance for Part 2
+        var dist2 = 0.0
+        for (i in 0 until pointsPart2.size - 1) {
+            val p1 = pointsPart2[i]
+            val p2 = pointsPart2[i + 1]
+            val res = FloatArray(1)
+            android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
+            dist2 += res[0]
+        }
+
+        val trip1 = trip.copy(
+            title = if (trip.title.isNotBlank()) "${trip.title} (Part 1)" else "Trip Part 1",
+            endTime = splitTime,
+            distanceMeters = dist1,
+            points = pointsPart1,
+            placesVisited = placesPart1,
+            pauses = pausesPart1
+        )
+        updateTrip(trip1)
+
+        val trip2 = TripRecord(
+            title = if (trip.title.isNotBlank()) "${trip.title} (Part 2)" else "Trip Part 2",
+            startTime = resumeTime,
+            endTime = trip.endTime,
+            distanceMeters = dist2,
+            maxSpeedKmh = trip.maxSpeedKmh,
+            avgSpeedKmh = trip.avgSpeedKmh,
+            isAutoDetected = trip.isAutoDetected,
+            activityProfile = trip.activityProfile,
+            points = pointsPart2,
+            placesVisited = placesPart2,
+            pauses = pausesPart2
+        )
+        val trip2Id = insertTrip(trip2)
+
+        return Pair(trip.id, trip2Id)
+    }
+
+    private fun pausesToJson(pauses: List<TripPause>): String {
+        val array = JSONArray()
+        for (p in pauses) {
+            val obj = JSONObject().apply {
+                put("start", p.startTime)
+                if (p.endTime != null) put("end", p.endTime)
+                put("lat", p.latitude)
+                put("lng", p.longitude)
+                put("dur", p.durationMs)
+                put("idx", p.pointIndex)
+            }
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
+    private fun jsonToPauses(jsonStr: String): List<TripPause> {
+        val list = mutableListOf<TripPause>()
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val endTime = if (obj.has("end") && !obj.isNull("end")) obj.getLong("end") else null
+                list.add(
+                    TripPause(
+                        startTime = obj.getLong("start"),
+                        endTime = endTime,
+                        latitude = obj.getDouble("lat"),
+                        longitude = obj.getDouble("lng"),
+                        durationMs = obj.optLong("dur", 0L),
+                        pointIndex = obj.optInt("idx", 0)
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
+    }
 }
+

@@ -171,10 +171,10 @@ class AppStateManager private constructor(private val context: Context) {
                 locManager.updateSamplingInterval(interval, minInterval)
             }
             AppLifecycleMode.LIVE_ONLY -> {
-                val session = LiveSharingManager.getInstance(context).currentSession.value
-                val syncMins = session?.syncIntervalMinutes ?: 5
-                val intervalMs = (syncMins * 60 * 1000L).coerceAtLeast(10_000L)
-                locManager.updateSamplingInterval(intervalMs, 5_000L)
+                // Collect breadcrumbs at steady 10s (charging: 6s) so batch upload has complete trail
+                val interval = if (charging) 6_000L else 12_000L
+                val minInterval = if (charging) 3_000L else 6_000L
+                locManager.updateSamplingInterval(interval, minInterval)
             }
             AppLifecycleMode.ANDROID_AUTO -> {
                 locManager.updateSamplingInterval(3000L, 1000L)

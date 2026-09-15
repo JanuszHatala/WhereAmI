@@ -60,6 +60,17 @@ class TripManager private constructor(private val context: Context) {
     private var lastMovingTimestamp: Long? = null
     private var movingSinceTimestamp: Long? = null
     private var lastLocation: Location? = null
+    private var activePause: TripPause? = null
+
+    // Intentional Visit Filter state (Item 9: penetrate > 150m OR stay > 45s)
+    private data class PendingPlaceCandidate(
+        val place: PlaceInfo,
+        val firstSeenTimestamp: Long,
+        val entryLatitude: Double,
+        val entryLongitude: Double,
+        val entryDistanceMeters: Double
+    )
+    private var pendingCandidate: PendingPlaceCandidate? = null
 
     // Speed samples for running average
     private var totalSpeedSamples = 0
@@ -68,22 +79,41 @@ class TripManager private constructor(private val context: Context) {
     private var watchdogJob: kotlinx.coroutines.Job? = null
 
     init {
+        restoreUnclosedTripIfAny()
         startWatchdog()
+    }
+
+    private fun restoreUnclosedTripIfAny() {
+        scope.launch {
+            val unclosed = dbHelper.getActiveOrUnclosedTrip()
+            if (unclosed != null && _activeTrip.value == null) {
+                _activeTrip.value = unclosed
+                lastMovingTimestamp = System.currentTimeMillis()
+                lastLocation = unclosed.points.lastOrNull()?.let {
+                    Location("").apply {
+                        latitude = it.latitude
+                        longitude = it.longitude
+                    }
+                }
+                TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points")
+            }
+        }
     }
 
     private fun startWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = scope.launch {
             while (true) {
-                kotlinx.coroutines.delay(10_000L) // check every 10s
+                kotlinx.coroutines.delay(15_000L) // check every 15s
                 val active = _activeTrip.value
                 val mode = _tripMode.value
+                // In AUTO mode, only stop after extended inactivity (default >= 45 min) to prevent fracturing trips on rests
                 if (active != null && mode == TripMode.AUTO && lastMovingTimestamp != null) {
                     val now = System.currentTimeMillis()
                     val stationaryDurationMs = now - lastMovingTimestamp!!
-                    val timeoutMs = _autoStopMinutes.value * 60 * 1000L
-                    if (stationaryDurationMs >= timeoutMs) {
-                        TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 1000}s >= ${timeoutMs / 1000}s timeout")
+                    val extendedTimeoutMs = maxOf(_autoStopMinutes.value * 60 * 1000L, 45 * 60 * 1000L)
+                    if (stationaryDurationMs >= extendedTimeoutMs) {
+                        TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${extendedTimeoutMs / 60000}m timeout")
                         stopTrip()
                     }
                 }
@@ -131,8 +161,44 @@ class TripManager private constructor(private val context: Context) {
         sumSpeedKmh = 0.0
         lastMovingTimestamp = now
         movingSinceTimestamp = null
+        pendingCandidate = null
 
         val profile = _activityProfile.value
+
+        // In AUTO mode, check if we can reopen/merge with the previous trip if stationary pause was reasonable (< 35 min and < 1500m)
+        if (isAuto) {
+            val lastTrip = dbHelper.getAllTrips().firstOrNull()
+            if (lastTrip != null && lastTrip.endTime != null) {
+                val endedAgoMs = now - lastTrip.endTime
+                val lastPt = lastTrip.points.lastOrNull()
+                val distFromLastPt = if (lastPt != null && lastLocation != null) {
+                    val res = FloatArray(1)
+                    Location.distanceBetween(lastPt.latitude, lastPt.longitude, lastLocation!!.latitude, lastLocation!!.longitude, res)
+                    res[0]
+                } else 0f
+
+                if (endedAgoMs < 35 * 60 * 1000L && distFromLastPt < 1500f) {
+                    val pause = TripPause(
+                        startTime = lastTrip.endTime,
+                        endTime = now,
+                        latitude = lastLocation?.latitude ?: (lastPt?.latitude ?: 0.0),
+                        longitude = lastLocation?.longitude ?: (lastPt?.longitude ?: 0.0),
+                        durationMs = endedAgoMs,
+                        pointIndex = lastTrip.points.size
+                    )
+                    val reopened = lastTrip.copy(
+                        endTime = null,
+                        pauses = lastTrip.pauses + pause
+                    )
+                    dbHelper.updateTrip(reopened)
+                    _activeTrip.value = reopened
+                    TelemetryLogger.logTrip("REOPENED_MERGED", reopened.id, "Reopened trip after ${(endedAgoMs / 60000)}m pause")
+                    startLiveTrackingService()
+                    return
+                }
+            }
+        }
+
         val trip = TripRecord(
             startTime = now,
             isAutoDetected = isAuto,
@@ -143,6 +209,10 @@ class TripManager private constructor(private val context: Context) {
         _activeTrip.value = started
         TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
 
+        startLiveTrackingService()
+    }
+
+    private fun startLiveTrackingService() {
         // Start LiveTrackingService for background foreground notification & wake lock
         try {
             val intent = android.content.Intent(context, LiveTrackingService::class.java)
@@ -159,13 +229,25 @@ class TripManager private constructor(private val context: Context) {
     private fun stopTrip() {
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
-        val finishedTrip = current.copy(endTime = now)
+
+        // Finalize active pause if any
+        val finalPauses = current.pauses.toMutableList()
+        activePause?.let {
+            val finalized = it.copy(endTime = now, durationMs = now - it.startTime)
+            if (finalized.durationMs >= 45_000L) {
+                finalPauses.add(finalized)
+            }
+        }
+        activePause = null
+
+        val finishedTrip = current.copy(endTime = now, pauses = finalPauses)
         dbHelper.updateTrip(finishedTrip)
-        TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}")
+        TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${finalPauses.size}")
         _activeTrip.value = null
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
+        pendingCandidate = null
 
         // Stop foreground service if widget live tracking is not explicitly enabled
         val widgetPrefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
@@ -206,18 +288,16 @@ class TripManager private constructor(private val context: Context) {
                     movingSinceTimestamp = null
                 }
             } else {
-                // Auto-stop check based on profile threshold
+                // Auto-stop check: in AUTO mode, only stop after extended timeout (>= 45m)
                 if (speedKmh >= currentProfile.autoStopSpeedKmh) {
-                    // Actively moving: update last moving timestamp
                     lastMovingTimestamp = now
                 } else {
-                    // Stationary or resting (speed < autoStopSpeedKmh)
                     if (lastMovingTimestamp == null) {
                         lastMovingTimestamp = now
                     }
                     val stationaryDurationMs = now - lastMovingTimestamp!!
-                    val timeoutMs = _autoStopMinutes.value * 60 * 1000L
-                    if (stationaryDurationMs >= timeoutMs) {
+                    val extendedTimeoutMs = maxOf(_autoStopMinutes.value * 60 * 1000L, 45 * 60 * 1000L)
+                    if (stationaryDurationMs >= extendedTimeoutMs) {
                         stopTrip()
                         return
                     }
@@ -228,6 +308,39 @@ class TripManager private constructor(private val context: Context) {
         // ── Active Trip Tracking ───────────────────────────────────────────────
         val current = _activeTrip.value ?: return
 
+        // ── Pause Detection & Tracking ─────────────────────────────────────────
+        val updatedPauses = current.pauses.toMutableList()
+        if (isMoving) {
+            lastMovingTimestamp = now
+            if (activePause != null) {
+                val finalized = activePause!!.copy(
+                    endTime = now,
+                    durationMs = now - activePause!!.startTime
+                )
+                if (finalized.durationMs >= 45_000L) {
+                    updatedPauses.add(finalized)
+                    TelemetryLogger.logTrip("PAUSE_RECORDED", current.id, "Pause recorded: ${finalized.durationMs / 1000}s")
+                }
+                activePause = null
+            }
+        } else {
+            if (lastMovingTimestamp == null) lastMovingTimestamp = now
+            val stationaryMs = now - lastMovingTimestamp!!
+            if (stationaryMs >= 90_000L) {
+                if (activePause == null) {
+                    activePause = TripPause(
+                        startTime = lastMovingTimestamp!!,
+                        latitude = lat,
+                        longitude = lng,
+                        durationMs = stationaryMs,
+                        pointIndex = current.points.size
+                    )
+                } else {
+                    activePause = activePause!!.copy(durationMs = now - activePause!!.startTime)
+                }
+            }
+        }
+
         var deltaDist = 0.0
         val newLoc = Location("").apply {
             latitude = lat
@@ -235,8 +348,8 @@ class TripManager private constructor(private val context: Context) {
         }
         if (lastLocation != null) {
             val d = lastLocation!!.distanceTo(newLoc).toDouble()
-            // Filter GPS jitter if stationary (< 2 meters)
-            if (d >= 2.0 || isMoving) {
+            // Filter GPS jitter if stationary (< 2.5 meters)
+            if (d >= 2.5 || isMoving) {
                 deltaDist = d
             }
         }
@@ -258,22 +371,18 @@ class TripManager private constructor(private val context: Context) {
             newPoints.add(newGeoPoint)
         }
 
-        // Check for newly entered locality (with transit deduplication to prevent border ping-pong)
+        // Check for newly entered locality (with intentional visit filter: penetrate > 150m OR stay > 45s)
         val newPlaces = current.placesVisited.toMutableList()
         if (currentPlace != null && currentPlace.city != "Unknown City" && currentPlace.city != "--") {
             val candidateCity = currentPlace.city
-            // Check if locality was recently visited in this trip
-            val recentMatch = newPlaces.takeLast(4).find { it.placeName.equals(candidateCity, ignoreCase = true) }
             val isImmediateLast = newPlaces.lastOrNull()?.placeName.equals(candidateCity, ignoreCase = true)
 
-            // If recently visited within last 5 minutes or within 2.5 km, do NOT re-add to prevent border oscillation
-            val isRecentPingPong = recentMatch != null && (
-                (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
-                (newDistance - recentMatch.distanceAtEntryMeters < 2500.0)
-            )
-
-            if (!isImmediateLast && !isRecentPingPong) {
-                TelemetryLogger.logTrip("LOCALITY_ENTERED", current.id, "Entered $candidateCity at ${newDistance.toInt()}m")
+            if (isImmediateLast) {
+                // Already inside currently committed place; reset any pending border candidate
+                pendingCandidate = null
+            } else if (newPlaces.isEmpty()) {
+                // First locality of a trip is committed immediately at trip start
+                TelemetryLogger.logTrip("LOCALITY_INITIAL", current.id, "Initial trip start at $candidateCity")
                 newPlaces.add(
                     VisitedPlace(
                         placeName = candidateCity,
@@ -284,6 +393,55 @@ class TripManager private constructor(private val context: Context) {
                         distanceAtEntryMeters = newDistance
                     )
                 )
+                pendingCandidate = null
+            } else {
+                // Check if we are already evaluating this candidate locality
+                val candidate = pendingCandidate
+                if (candidate != null && candidate.place.city.equals(candidateCity, ignoreCase = true)) {
+                    val distResults = FloatArray(1)
+                    Location.distanceBetween(candidate.entryLatitude, candidate.entryLongitude, lat, lng, distResults)
+                    val displacementMeters = distResults[0]
+                    val durationMs = now - candidate.firstSeenTimestamp
+
+                    val isPenetrated = displacementMeters >= 150f
+                    val isSustainedStay = durationMs >= 45_000L
+
+                    val recentMatch = newPlaces.takeLast(4).find { it.placeName.equals(candidateCity, ignoreCase = true) }
+                    val isRecentPingPong = recentMatch != null && (
+                        (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
+                        (newDistance - recentMatch.distanceAtEntryMeters < 2500.0)
+                    )
+
+                    if ((isPenetrated || isSustainedStay) && !isRecentPingPong) {
+                        TelemetryLogger.logTrip(
+                            "LOCALITY_COMMITTED",
+                            current.id,
+                            "Intentional visit to $candidateCity committed: disp=${displacementMeters.toInt()}m, dur=${durationMs / 1000}s"
+                        )
+                        newPlaces.add(
+                            VisitedPlace(
+                                placeName = candidateCity,
+                                hierarchySubtitle = LocationManager.formatHierarchy(candidate.place),
+                                timestamp = candidate.firstSeenTimestamp,
+                                latitude = candidate.entryLatitude,
+                                longitude = candidate.entryLongitude,
+                                distanceAtEntryMeters = candidate.entryDistanceMeters
+                            )
+                        )
+                        pendingCandidate = null
+                    } else if (isRecentPingPong) {
+                        pendingCandidate = null
+                    }
+                } else {
+                    // New candidate locality observed! Begin qualification timer/distance
+                    pendingCandidate = PendingPlaceCandidate(
+                        place = currentPlace,
+                        firstSeenTimestamp = now,
+                        entryLatitude = lat,
+                        entryLongitude = lng,
+                        entryDistanceMeters = newDistance
+                    )
+                }
             }
         }
 
@@ -292,12 +450,13 @@ class TripManager private constructor(private val context: Context) {
             maxSpeedKmh = newMaxSpeed,
             avgSpeedKmh = newAvgSpeed,
             points = newPoints,
-            placesVisited = newPlaces
+            placesVisited = newPlaces,
+            pauses = updatedPauses
         )
         _activeTrip.value = updated
 
-        // Persist progress periodically (every 10 points or place change)
-        if (newPoints.size % 10 == 0 || newPlaces.size != current.placesVisited.size) {
+        // Persist progress periodically (every 10 points, pause recorded, or place change)
+        if (newPoints.size % 10 == 0 || newPlaces.size != current.placesVisited.size || updatedPauses.size != current.pauses.size) {
             scope.launch {
                 dbHelper.updateTrip(updated)
             }
@@ -321,5 +480,16 @@ class TripManager private constructor(private val context: Context) {
 
     fun mergeTrips(tripIds: List<Long>): Long {
         return dbHelper.mergeTrips(tripIds)
+    }
+
+    fun splitTripAtPause(tripId: Long, pauseIndex: Int): Pair<Long, Long>? {
+        val result = dbHelper.splitTripAtPause(tripId, pauseIndex)
+        if (result != null) {
+            val active = _activeTrip.value
+            if (active?.id == tripId) {
+                _activeTrip.value = dbHelper.getTripsByIds(listOf(result.second)).firstOrNull()
+            }
+        }
+        return result
     }
 }

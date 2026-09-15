@@ -30,7 +30,7 @@ class LiveTrackingService : Service() {
         locationManager = LocationManager(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereIAm:LiveTrackingWakeLock").apply {
+        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock").apply {
             acquire(6 * 60 * 60 * 1000L) // 6h max safe timeout
         }
         
@@ -48,11 +48,43 @@ class LiveTrackingService : Service() {
         startTracking()
     }
 
+    companion object {
+        const val ACTION_PAUSE_RESUME = "com.example.whereiam.ACTION_PAUSE_RESUME"
+        const val ACTION_SYNC_NOW = "com.example.whereiam.ACTION_SYNC_NOW"
+        const val ACTION_STOP = "com.example.whereiam.ACTION_STOP"
+    }
+
+    private var lastPlaceName: String = "In Transit"
+    private var lastSpeedKmh: Float = 0f
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP_TRACKING") {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            "STOP_TRACKING", ACTION_STOP -> {
+                LiveSharingManager.getInstance(this).stopSession()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_PAUSE_RESUME -> {
+                val sharingMgr = LiveSharingManager.getInstance(this)
+                val sess = sharingMgr.currentSession.value
+                if (sess != null && sess.isActive) {
+                    if (sess.isPaused) {
+                        sharingMgr.resumeSession()
+                    } else {
+                        sharingMgr.pauseSession()
+                    }
+                }
+                updateNotification()
+                return START_NOT_STICKY
+            }
+            ACTION_SYNC_NOW -> {
+                val sharingMgr = LiveSharingManager.getInstance(this)
+                sharingMgr.syncNow()
+                updateNotification()
+                return START_NOT_STICKY
+            }
         }
+
         // If neither trip nor live sharing is active, avoid running zombie service
         val hasTrip = TripManager.getInstance(this).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
@@ -75,23 +107,103 @@ class LiveTrackingService : Service() {
             manager.createNotificationChannel(channel)
         }
 
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("WhereIAm Active Tracking")
-            .setContentText("Recording trip & background location active")
-            .setSmallIcon(R.drawable.ic_stat_location)
-            .setOngoing(true)
-            .build()
-
+        val notification = buildNotification("WhereAmI Active Tracking", "Recording trip & background location active")
         startForeground(NOTIF_ID, notification)
     }
 
-    private fun updateNotification(text: String) {
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("WhereIAm Active Tracking")
+    private fun buildNotification(title: String, text: String): Notification {
+        val contentIntent = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).apply {
+                this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val isLiveActive = liveSession != null && liveSession.isActive
+        val isPaused = liveSession?.isPaused == true
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_stat_location)
+            .setContentIntent(contentIntent)
             .setOngoing(true)
-            .build()
+            .setOnlyAlertOnce(true)
+
+        if (isLiveActive) {
+            // Pause / Resume Action (LIV-R01)
+            val pauseIntent = android.app.PendingIntent.getService(
+                this,
+                1,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val pauseLabel = if (isPaused) "▶ Resume" else "⏸ Pause"
+            builder.addAction(0, pauseLabel, pauseIntent)
+
+            // Sync Now Action (LIV-R01)
+            val syncIntent = android.app.PendingIntent.getService(
+                this,
+                2,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_SYNC_NOW },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, "🔄 Sync Now", syncIntent)
+
+            // Stop Action (LIV-R01)
+            val stopIntent = android.app.PendingIntent.getService(
+                this,
+                3,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, "⏹ Stop", stopIntent)
+        }
+
+        return builder.build()
+    }
+
+    private fun updateNotification(overrideText: String? = null) {
+        val activeTrip = TripManager.getInstance(this).activeTrip.value
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val isLiveActive = liveSession != null && liveSession.isActive
+
+        val title = if (isLiveActive && !liveSession.title.isNullOrBlank()) {
+            "🔴 ${liveSession.title}"
+        } else {
+            "WhereAmI Active Tracking"
+        }
+
+        val text = if (!overrideText.isNullOrBlank()) {
+            overrideText
+        } else if (activeTrip != null) {
+            val distKm = activeTrip.distanceMeters / 1000.0
+            val statusTag = when {
+                isLiveActive && liveSession.isPaused -> " • [PAUSED]"
+                isLiveActive -> " • [LIVE]"
+                else -> ""
+            }
+            val timeTag = if (isLiveActive) " • ${liveSession.getFormattedRemaining()}" else ""
+            String.format(
+                java.util.Locale.getDefault(),
+                "%s • %.1f km (%.1f km/h)%s%s",
+                lastPlaceName,
+                distKm,
+                lastSpeedKmh,
+                statusTag,
+                timeTag
+            )
+        } else if (isLiveActive) {
+            val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
+            "Live Sharing Active$pauseTag • $lastPlaceName • ${liveSession.getFormattedRemaining()}"
+        } else {
+            "Recording trip & background location active"
+        }
+
+        val notification = buildNotification(title, text)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIF_ID, notification)
     }
@@ -106,15 +218,11 @@ class LiveTrackingService : Service() {
                 val liveSession = LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.value
                 val isLiveActive = liveSession != null && liveSession.isActive
 
-                if (activeTrip != null) {
-                    val distKm = activeTrip.distanceMeters / 1000.0
-                    val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                    val place = locationData.primaryPlace?.city ?: "In Transit"
-                    val statusText = if (isLiveActive) " • [LIVE]" else ""
-                    updateNotification(String.format(java.util.Locale.getDefault(), "%s • %.1f km (%.1f km/h)%s", place, distKm, speedKmh, statusText))
-                } else if (isLiveActive) {
-                    val place = locationData.primaryPlace?.city ?: "In Transit"
-                    updateNotification("Live Sharing Active • $place")
+                lastPlaceName = locationData.primaryPlace?.city ?: "In Transit"
+                lastSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
+
+                if (activeTrip != null || isLiveActive) {
+                    updateNotification()
                 } else {
                     stopSelf()
                 }

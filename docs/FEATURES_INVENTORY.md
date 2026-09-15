@@ -1,6 +1,6 @@
-# WhereIAm - Project Feature Inventory & Status Register
+# WhereAmI - Project Feature Inventory & Status Register
 
-This document is the authoritative project register for all requested, implemented, planned, and modified features from the inception of the **WhereIAm** project. Every modification, addition, or architectural decision must update this file.
+This document is the authoritative project register for all requested, implemented, planned, and modified features from the inception of the **WhereAmI** project. Every modification, addition, or architectural decision must update this file.
 
 ---
 

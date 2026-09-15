@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -178,7 +179,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     }
 
     var showTripsSheet by remember { mutableStateOf(false) }
-    var sheetTab by remember { mutableStateOf(0) } // 0: Saved Places, 1: Trip History
+    var sheetTab by remember { mutableStateOf(0) } // 0: Trip History, 1: Saved Places, 2: Stats
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -199,8 +200,11 @@ fun LocationScreen(viewModel: MainViewModel) {
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
+    val usbConnectionManager = remember { UsbConnectionManager.getInstance(context) }
+    val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
+    var showInstantShareDialog by remember { mutableStateOf(false) }
 
     // Keep Screen On handler
     DisposableEffect(keepScreenOn) {
@@ -214,1014 +218,229 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val primaryPlace = locationData.primaryPlace
+    val secondaryPlace = locationData.secondaryPlace
+    val hierarchySubtitle = remember(primaryPlace) { LocationManager.formatHierarchy(primaryPlace) }
+    val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
+    val heatMapTracks = remember(savedTrips) { savedTrips.map { it.points } }
 
-        // ── 1. Fullscreen Map Background ────────────────────────────────────────
-        val heatMapTracks = remember(savedTrips) { savedTrips.map { it.points } }
-
-        OsmMapView(
-            latLng = currentLatLng,
-            trackPoints = activeTrip?.points ?: emptyList(),
-            selectedTrips = selectedTripsList,
-            savedPlaces = savedPlaces,
-            boundaryPoints = boundaryPoints,
-            heatMapTracks = heatMapTracks,
-            showHeatMap = showHeatMap,
-            onToggleHeatMap = { viewModel.toggleShowHeatMap() },
-            fitTrackTrigger = fitTrackTrigger,
-            fitPlacesTrigger = fitPlacesTrigger,
-            destinationPoint = destinationPoint,
-            onDestinationMarkerClick = { showDestinationDetailsCard = true },
-            onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
-            onClearDestination = { viewModel.setDestination(null) },
-            onMapClick = { gp -> viewModel.selectMapPoint(gp) },
-            activityProfile = activityProfile,
-            isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
-            orientationMode = orientationMode,
-            onOrientationModeChange = { viewModel.setOrientationMode(it) },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // ── 2. Top Priority Location Card ──────────────────────────────────────
-        val primaryPlace = locationData.primaryPlace
-        val secondaryPlace = locationData.secondaryPlace
-        val hierarchySubtitle = remember(primaryPlace) { LocationManager.formatHierarchy(primaryPlace) }
-
-        val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
-
-        if (!showTripsSheet) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        start = if (isCompact) 12.dp else 16.dp,
-                        end = if (isCompact) 12.dp else 16.dp,
-                        top = if (isCompact) 52.dp else 56.dp,
-                        bottom = 8.dp
-                    )
-                    .align(Alignment.TopCenter),
-                shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-            ) {
+    if (isLandscape) {
+        Row(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .weight(0.38f)
+                    .fillMaxHeight()
+                    .background(Color(0xFF0F172A))
+                    .padding(8.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                if (locationData.isLoading && primaryPlace == null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(vertical = if (isCompact) 4.dp else 8.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFF38BDF8),
-                            modifier = Modifier.size(if (isCompact) 16.dp else 20.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Finding your location...", color = Color.LightGray, fontSize = if (isCompact) 13.sp else 15.sp)
-                    }
-                } else if (locationData.error != null && primaryPlace == null) {
-                    Text(
-                        text = "Error: ${locationData.error}",
-                        color = Color(0xFFF87171),
-                        textAlign = TextAlign.Center,
-                        fontSize = if (isCompact) 13.sp else 15.sp
-                    )
-                } else if (isCompact) {
-                    // ══════════════════════════════════════════════════════════════
-                    // TRUE COMPACT MODE (3 Clean Non-Truncating Rows, Full Detail, ~75dp)
-                    // ══════════════════════════════════════════════════════════════
-                    val primaryCity = primaryPlace?.city ?: "Unknown"
-                    val secondaryCity = secondaryPlace?.city
-                    val displayCity = if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
-                        "$primaryCity ($secondaryCity)"
-                    } else primaryCity
-
-                    val streetOrRoad = listOfNotNull(
-                        primaryPlace?.street?.takeIf { it.isNotBlank() },
-                        primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
-                    ).joinToString(" • ")
-
-                    // Check if current location matches any saved place
-                    val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
-                        val lat = currentLatLng?.first ?: return@remember null
-                        val lng = currentLatLng?.second ?: return@remember null
-                        savedPlaces.firstOrNull { sp ->
-                            val results = FloatArray(1)
-                            android.location.Location.distanceBetween(lat, lng, sp.latitude, sp.longitude, results)
-                            results[0] <= sp.radiusMeters
-                        }
-                    }
-
-                    val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                    val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
-                    val paceStr = if (speedKmh > 1.0f) {
-                        val min = (60f / speedKmh).toInt()
-                        val sec = ((60f / speedKmh - min) * 60).toInt()
-                        String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
-                    } else "- min/km"
-
-                    var profileMenuExpanded by remember { mutableStateOf(false) }
-
-                    // ── Row 1: Primary Locality Name + Category Badge on Left, Action Buttons on Right ──
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                modifier = Modifier.clickable(enabled = activeTrip != null) {
-                                    showActiveTripRouteDialog = true
-                                },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = displayCity,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    maxLines = 1
-                                )
-                                if (activeTrip != null) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "🚩" + activeTrip!!.placesVisited.size,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
-                                    )
-                                }
-                            }
-                            if (liveSession?.isActive == true) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0x3310B981))
-                                        .clickable { showLiveShareDialog = true }
-                                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                                ) {
-                                    Text(
-                                        text = "📡LIVE",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF10B981)
-                                    )
-                                }
-                            }
-
-                            if (nearbySavedPlace != null) {
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = nearbySavedPlace.category.iconEmoji,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-
-                        // Compact Action Icons (Live Share, Maps, Share, Expand)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            if (liveSession?.isActive != true) {
-                                IconButton(
-                                    onClick = { showLiveShareDialog = true },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ShareLocation,
-                                        contentDescription = "Live Share Location",
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-
-                            // Open in Google Maps
-                            IconButton(
-                                onClick = {
-                                    val lat = currentLatLng?.first
-                                    val lng = currentLatLng?.second
-                                    if (lat != null && lng != null) {
-                                        openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
-                                    }
-                                },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Map,
-                                    contentDescription = "Open in Google Maps",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = {
-                                    val lat = currentLatLng?.first
-                                    val lng = currentLatLng?.second
-                                    if (lat != null && lng != null) {
-                                        val city = primaryPlace?.city ?: "Current Location"
-                                        val street = primaryPlace?.street ?: ""
-                                        val mapsUrl = "https://maps.google.com/?q=$lat,$lng"
-                                        val text = buildString {
-                                            append("📍 Where Am I: $city")
-                                            if (street.isNotBlank()) append(", $street")
-                                            if (hierarchySubtitle.isNotEmpty()) append(" ($hierarchySubtitle)")
-                                            if (speedKmh >= 1.5f) append("\n⚡ Speed: $speedStr")
-                                            append("\n🗺️ Map: $mapsUrl")
-                                        }
-                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                            putExtra(Intent.EXTRA_TEXT, text)
-                                            type = "text/plain"
-                                        }
-                                        context.startActivity(Intent.createChooser(sendIntent, "Share Location"))
-                                    }
-                                },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Share",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Direct Expand Toggle (switches to Normal mode)
-                            IconButton(
-                                onClick = { viewModel.setLocalityCardStyle(LocalityCardStyle.NORMAL) },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ExpandMore,
-                                    contentDescription = "Expand Locality Card",
-                                    tint = Color(0xFFCBD5E1),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // ── Row 2: Dedicated Full-Width Street Name & Number (NEVER Truncated) ──
-                    if (streetOrRoad.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 1.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "📍 $streetOrRoad",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFFBBF24), // Vivid Amber Gold
-                                maxLines = 2
-                            )
-                        }
-                    }
-
-                    // ── Row 3: Administrative Hierarchy & Country on Left, Profile + Speed Pill on Right ──
-                    val fullHierarchyText = buildString {
-                        if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
-                        val country = primaryPlace?.country
-                        if (!country.isNullOrBlank() && country != "Unknown Country") {
-                            if (isNotEmpty()) append(" • ")
-                            append(country)
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = if (fullHierarchyText.isNotEmpty()) fullHierarchyText else (primaryPlace?.country ?: ""),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = Color(0xFF94A3B8),
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        // Profile & Speed Pill
-                        Box {
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xFF1E293B))
-                                    .clickable { profileMenuExpanded = true }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = activityProfile.iconEmoji,
-                                    fontSize = 11.sp
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                when (activityProfile) {
-                                    ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> {
-                                        Text(
-                                            text = speedStr,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF38BDF8)
-                                        )
-                                    }
-                                    ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
-                                        Text(
-                                            text = paceStr,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF38BDF8)
-                                        )
-                                    }
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = profileMenuExpanded,
-                                onDismissRequest = { profileMenuExpanded = false },
-                                modifier = Modifier.background(Color(0xFF0F172A))
-                            ) {
-                                ActivityProfile.values().forEach { profile ->
-                                    val isSelected = activityProfile == profile
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = "${profile.iconEmoji}  ${profile.displayName}",
-                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                fontSize = 13.sp
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.setActivityProfile(profile)
-                                            profileMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // ══════════════════════════════════════════════════════════════
-                    // NORMAL SPATIOUS MODE
-                    // ══════════════════════════════════════════════════════════════
-                    val primaryCity = primaryPlace?.city ?: "Unknown"
-                    val secondaryCity = secondaryPlace?.city
-
-                    // Check if current location matches any saved place
-                    val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
-                        val lat = currentLatLng?.first ?: return@remember null
-                        val lng = currentLatLng?.second ?: return@remember null
-                        savedPlaces.firstOrNull { sp ->
-                            val results = FloatArray(1)
-                            android.location.Location.distanceBetween(lat, lng, sp.latitude, sp.longitude, results)
-                            results[0] <= sp.radiusMeters
-                        }
-                    }
-
-                    // Top Utilities Row: Country + Badges on Left, Maps/Share/Collapse on Right
-                    val country = primaryPlace?.country?.takeIf { it.isNotBlank() && it != "Unknown Country" } ?: ""
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Left side: Country + Saved Place / Live Badge
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (country.isNotEmpty()) {
-                                Text(
-                                    text = country,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFFCBD5E1)
-                                )
-                            }
-                            if (nearbySavedPlace != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0x3310B981))
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF10B981),
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                            if (liveSession?.isActive == true) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (liveSession?.isPaused == true) Color(0x33F59E0B) else Color(0x3310B981))
-                                        .clickable { showLiveShareDialog = true }
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = if (liveSession?.isPaused == true) "⏸️ PAUSED" else "📡 LIVE",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (liveSession?.isPaused == true) Color(0xFFF59E0B) else Color(0xFF10B981)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Right Utility Icons
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // Live Share Shortcut (when inactive)
-                            if (liveSession?.isActive != true) {
-                                IconButton(
-                                    onClick = { showLiveShareDialog = true },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF1E293B))
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ShareLocation,
-                                        contentDescription = "Live Share Location",
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            // Open in Google Maps
-                            IconButton(
-                                onClick = {
-                                    val lat = currentLatLng?.first
-                                    val lng = currentLatLng?.second
-                                    if (lat != null && lng != null) {
-                                        openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Map,
-                                    contentDescription = "Open in Google Maps",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = {
-                                    val lat = currentLatLng?.first
-                                    val lng = currentLatLng?.second
-                                    if (lat != null && lng != null) {
-                                        val city = primaryPlace?.city ?: "Current Location"
-                                        val street = primaryPlace?.street ?: ""
-                                        val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                                        val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
-                                        val mapsUrl = "https://maps.google.com/?q=$lat,$lng"
-
-                                        val text = buildString {
-                                            append("📍 Where Am I: $city")
-                                            if (street.isNotBlank()) append(", $street")
-                                            if (hierarchySubtitle.isNotEmpty()) append(" ($hierarchySubtitle)")
-                                            if (speedKmh >= 1.5f) {
-                                                append("\n⚡ Speed: $speedStr")
-                                            }
-                                            append("\n🗺️ Map: $mapsUrl")
-                                        }
-
-                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                            putExtra(Intent.EXTRA_TEXT, text)
-                                            type = "text/plain"
-                                        }
-                                        val shareIntent = Intent.createChooser(sendIntent, "Share Location")
-                                        context.startActivity(shareIntent)
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Share Location",
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
-                            // Direct Collapse Toggle (switches to Compact mode)
-                            IconButton(
-                                onClick = { viewModel.setLocalityCardStyle(LocalityCardStyle.COMPACT) },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ExpandLess,
-                                    contentDescription = "Collapse Locality Card",
-                                    tint = Color(0xFFCBD5E1),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(enabled = activeTrip != null) {
-                                showActiveTripRouteDialog = true
-                            }
-                    ) {
-                        Text(
-                            text = primaryCity,
-                            fontSize = 30.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 36.sp
-                        )
-                        if (activeTrip != null) {
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "🚩" + activeTrip!!.placesVisited.size,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
-                            )
-                        }
-                    }
-
-                    if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
-                        Text(
-                            text = "($secondaryCity)",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF94A3B8),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 1.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!showTripsSheet) {
+                        LocalityCard(
+                            locationData = locationData,
+                            activeTrip = activeTrip,
+                            liveSession = liveSession,
+                            savedPlaces = savedPlaces,
+                            localityCardStyle = localityCardStyle,
+                            activityProfile = activityProfile,
+                            primaryPlace = primaryPlace,
+                            secondaryPlace = secondaryPlace,
+                            hierarchySubtitle = hierarchySubtitle,
+                            currentLatLng = currentLatLng,
+                            onShowActiveTripRoute = { showActiveTripRouteDialog = true },
+                            onShowLiveShare = { showLiveShareDialog = true },
+                            onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
+                            onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 
-                    // Street Name & Road Number
-                    val streetOrRoad = listOfNotNull(
-                        primaryPlace?.street?.takeIf { it.isNotBlank() },
-                        primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
-                    ).joinToString(" • ")
-
-                    if (streetOrRoad.isNotEmpty()) {
-                        Text(
-                            text = streetOrRoad,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFFBBF24), // Amber gold for street
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 3.dp)
-                        )
-                    }
-
-                    // Administrative Hierarchy (Gmina, Powiat, Województwo)
-                    if (hierarchySubtitle.isNotEmpty()) {
-                        Text(
-                            text = hierarchySubtitle,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF38BDF8),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-
-                    // Country is shown in the header row (top of card)
-                    // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
-                    val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                    val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
-                    val paceStr = if (speedKmh > 1.0f) {
-                        val min = (60f / speedKmh).toInt()
-                        val sec = ((60f / speedKmh - min) * 60).toInt()
-                        String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
-                    } else "- min/km"
-
-                    var profileMenuExpanded by remember { mutableStateOf(false) }
-
-                    Row(
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF1E293B))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Compact Dropdown Trigger Pill
-                        Box {
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { profileMenuExpanded = true }
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "${activityProfile.iconEmoji} ${activityProfile.displayName.uppercase()}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFBBF24)
-                                )
-                                Spacer(modifier = Modifier.width(2.dp))
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = "Select Activity Profile",
-                                    tint = Color(0xFFFBBF24),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = profileMenuExpanded,
-                                onDismissRequest = { profileMenuExpanded = false },
-                                modifier = Modifier.background(Color(0xFF0F172A))
-                            ) {
-                                ActivityProfile.values().forEach { profile ->
-                                    val isSelected = activityProfile == profile
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = "${profile.iconEmoji}  ${profile.displayName}",
-                                                    color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    fontSize = 14.sp
-                                                )
-                                            }
-                                        },
-                                        onClick = {
-                                            viewModel.setActivityProfile(profile)
-                                            profileMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
-                        when (activityProfile) {
-                            ActivityProfile.CAR -> {
-                                Text(
-                                    text = speedStr,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                            ActivityProfile.CYCLING, ActivityProfile.MTB -> {
-                                Text(
-                                    text = speedStr,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "($paceStr)",
-                                    fontSize = 13.sp,
-                                    color = Color(0xFF94A3B8)
-                                )
-                            }
-                            ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
-                                Text(
-                                    text = paceStr,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "($speedStr)",
-                                    fontSize = 13.sp,
-                                    color = Color(0xFF94A3B8)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        }
-
-        if (!showTripsSheet) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 12.dp, vertical = 20.dp)
-                    .widthIn(max = 440.dp)
-                    .fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-
-                    // 1. Keep Screen On Toggle Button
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (keepScreenOn) Color(0xFF0284C7) else Color(0xFF1E293B))
-                            .clickable { viewModel.toggleKeepScreenOn() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (keepScreenOn) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = "Keep Screen On",
-                            tint = if (keepScreenOn) Color.White else Color(0xFF94A3B8),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // 2. Trip Recording Pill (Start / Stop / REC status)
-                    val isRecording = activeTrip != null
-                    Row(
-                        modifier = Modifier
-                            .height(40.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (isRecording) Color(0x33EF4444) else Color(0xFF1E293B))
-                            .clickable {
-                                if (isRecording) {
-                                    viewModel.stopManualTrip()
-                                } else {
-                                    viewModel.startManualTrip()
-                                }
-                            }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isRecording) Color(0xFFEF4444) else Color(0xFF10B981))
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isRecording) "STOP" else "REC",
-                            color = if (isRecording) Color(0xFFEF4444) else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    // 3. Places & Trips History Dialog Button (Prominent Sky Blue)
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF0284C7))
-                            .clickable { showTripsSheet = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "Places & Trips History",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // 4. Quick Search Button (Emerald Green)
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF10B981))
-                            .clickable { showSearchDialog = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search Location",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // 5. Quick Save Current Location as My Place (Dark Emerald Green)
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF059669))
-                            .clickable {
-                                val lat = currentLatLng?.first
-                                val lng = currentLatLng?.second
-                                if (lat != null && lng != null) {
-                                    val currentPlace = locationData.primaryPlace
-                                    placeToSaveCoords = lat to lng
-                                    placeToSaveLocality = currentPlace?.city ?: ""
-                                    placeToSaveStreet = currentPlace?.street ?: ""
-                                    placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                                    placeToSaveCategory = PlaceCategory.HOME
-                                    showSavePlaceDialog = true
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.BookmarkAdd,
-                            contentDescription = "Save Current Location",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // 6. Settings & Language Dialog Button (Amber Gold / Slate)
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                            .clickable { showSettingsSheet = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color(0xFFFBBF24),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── 3.5 Floating Destination Place Card (When viewing a searched destination or pin) ────
-        if (!showTripsSheet && destinationPoint != null) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
-                    .fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFA0F172A)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(
-                                imageVector = Icons.Default.Place,
-                                contentDescription = "Destination Pin",
-                                tint = Color(0xFFEF4444),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = destinationItem?.title ?: "Searched Location",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                maxLines = 1
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { viewModel.setDestination(null) },
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Exit Destination",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    if (destinationItem?.subtitle?.isNotBlank() == true) {
-                        Text(
-                            text = destinationItem!!.subtitle,
-                            color = Color(0xFF94A3B8),
-                            fontSize = 12.sp,
-                            maxLines = 2,
-                            modifier = Modifier.padding(top = 2.dp, start = 26.dp)
-                        )
-                    }
-
-                    val gp = destinationPoint!!
-                    val item = destinationItem
-
-                    // Row 1: Navigation & Map Actions
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                launchNavigation(context, gp.latitude, gp.longitude)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Navigate To", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        }
-
-                        Button(
-                            onClick = {
-                                openInGoogleMaps(context, gp.latitude, gp.longitude, item?.title ?: "")
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Google Maps", color = Color.White, fontSize = 12.sp)
-                        }
-                    }
-
-                    // Row 2: Save Place & Exit Actions
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                placeToSaveCoords = gp.latitude to gp.longitude
+                    if (!showTripsSheet && destinationPoint != null) {
+                        DestinationPlaceCard(
+                            destinationPoint = destinationPoint!!,
+                            destinationItem = destinationItem,
+                            onClearDestination = { viewModel.setDestination(null) },
+                            onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
+                            onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
+                            onSavePlace = { lat, lng, item ->
+                                placeToSaveCoords = lat to lng
                                 placeToSaveLocality = item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
                                 placeToSaveStreet = item?.title ?: ""
                                 placeToSaveName = item?.title ?: "My Place"
                                 placeToSaveCategory = PlaceCategory.HOME
                                 showSavePlaceDialog = true
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save as My Place", fontSize = 12.sp)
-                        }
-
-                        Button(
-                            onClick = { viewModel.setDestination(null) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Exit Pin", color = Color.LightGray, fontSize = 12.sp)
-                        }
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
+
+                if (!showTripsSheet) {
+                    MainBottomControlsCard(
+                        keepScreenOn = keepScreenOn,
+                        isRecording = activeTrip != null,
+                        onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
+                        onToggleTripRecording = {
+                            if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
+                        },
+                        onShowTripsSheet = { showTripsSheet = true },
+                        onShowSearch = { showSearchDialog = true },
+                        onSaveLocation = {
+                            val lat = currentLatLng?.first
+                            val lng = currentLatLng?.second
+                            if (lat != null && lng != null) {
+                                val currentPlace = locationData.primaryPlace
+                                placeToSaveCoords = lat to lng
+                                placeToSaveLocality = currentPlace?.city ?: ""
+                                placeToSaveStreet = currentPlace?.street ?: ""
+                                placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
+                                placeToSaveCategory = PlaceCategory.HOME
+                                showSavePlaceDialog = true
+                            }
+                        },
+                        onShowSettings = { showSettingsSheet = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    )
+                }
+            }
+
+            Box(modifier = Modifier.weight(0.62f).fillMaxHeight()) {
+                OsmMapView(
+                    latLng = currentLatLng,
+                    trackPoints = activeTrip?.points ?: emptyList(),
+                    selectedTrips = selectedTripsList,
+                    savedPlaces = savedPlaces,
+                    boundaryPoints = boundaryPoints,
+                    heatMapTracks = heatMapTracks,
+                    showHeatMap = showHeatMap,
+                    onToggleHeatMap = { viewModel.toggleShowHeatMap() },
+                    fitTrackTrigger = fitTrackTrigger,
+                    fitPlacesTrigger = fitPlacesTrigger,
+                    destinationPoint = destinationPoint,
+                    onDestinationMarkerClick = { showDestinationDetailsCard = true },
+                    onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
+                    onClearDestination = { viewModel.setDestination(null) },
+                    onMapClick = { gp -> viewModel.selectMapPoint(gp) },
+                    activityProfile = activityProfile,
+                    isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
+                    orientationMode = orientationMode,
+                    onOrientationModeChange = { viewModel.setOrientationMode(it) },
+                    onInstantShare = { showInstantShareDialog = true },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
+            OsmMapView(
+                latLng = currentLatLng,
+                trackPoints = activeTrip?.points ?: emptyList(),
+                selectedTrips = selectedTripsList,
+                savedPlaces = savedPlaces,
+                boundaryPoints = boundaryPoints,
+                heatMapTracks = heatMapTracks,
+                showHeatMap = showHeatMap,
+                onToggleHeatMap = { viewModel.toggleShowHeatMap() },
+                fitTrackTrigger = fitTrackTrigger,
+                fitPlacesTrigger = fitPlacesTrigger,
+                destinationPoint = destinationPoint,
+                onDestinationMarkerClick = { showDestinationDetailsCard = true },
+                onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
+                onClearDestination = { viewModel.setDestination(null) },
+                onMapClick = { gp -> viewModel.selectMapPoint(gp) },
+                activityProfile = activityProfile,
+                isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
+                orientationMode = orientationMode,
+                onOrientationModeChange = { viewModel.setOrientationMode(it) },
+                onInstantShare = { showInstantShareDialog = true },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            if (!showTripsSheet) {
+                LocalityCard(
+                    locationData = locationData,
+                    activeTrip = activeTrip,
+                    liveSession = liveSession,
+                    savedPlaces = savedPlaces,
+                    localityCardStyle = localityCardStyle,
+                    activityProfile = activityProfile,
+                    primaryPlace = primaryPlace,
+                    secondaryPlace = secondaryPlace,
+                    hierarchySubtitle = hierarchySubtitle,
+                    currentLatLng = currentLatLng,
+                    onShowActiveTripRoute = { showActiveTripRouteDialog = true },
+                    onShowLiveShare = { showLiveShareDialog = true },
+                    onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
+                    onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = if (isCompact) 12.dp else 16.dp,
+                            end = if (isCompact) 12.dp else 16.dp,
+                            top = if (isCompact) 52.dp else 56.dp,
+                            bottom = 8.dp
+                        )
+                        .align(Alignment.TopCenter)
+                )
+            }
+
+            if (!showTripsSheet && destinationPoint != null) {
+                DestinationPlaceCard(
+                    destinationPoint = destinationPoint!!,
+                    destinationItem = destinationItem,
+                    onClearDestination = { viewModel.setDestination(null) },
+                    onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
+                    onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
+                    onSavePlace = { lat, lng, item ->
+                        placeToSaveCoords = lat to lng
+                        placeToSaveLocality = item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
+                        placeToSaveStreet = item?.title ?: ""
+                        placeToSaveName = item?.title ?: "My Place"
+                        placeToSaveCategory = PlaceCategory.HOME
+                        showSavePlaceDialog = true
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
+                        .fillMaxWidth()
+                )
+            }
+
+            if (!showTripsSheet) {
+                MainBottomControlsCard(
+                    keepScreenOn = keepScreenOn,
+                    isRecording = activeTrip != null,
+                    onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
+                    onToggleTripRecording = {
+                        if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
+                    },
+                    onShowTripsSheet = { showTripsSheet = true },
+                    onShowSearch = { showSearchDialog = true },
+                    onSaveLocation = {
+                        val lat = currentLatLng?.first
+                        val lng = currentLatLng?.second
+                        if (lat != null && lng != null) {
+                            val currentPlace = locationData.primaryPlace
+                            placeToSaveCoords = lat to lng
+                            placeToSaveLocality = currentPlace?.city ?: ""
+                            placeToSaveStreet = currentPlace?.street ?: ""
+                            placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
+                            placeToSaveCategory = PlaceCategory.HOME
+                            showSavePlaceDialog = true
+                        }
+                    },
+                    onShowSettings = { showSettingsSheet = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 12.dp, vertical = 20.dp)
+                        .widthIn(max = 440.dp)
+                        .fillMaxWidth()
+                )
             }
         }
     }
@@ -1342,9 +561,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                             onClick = { sheetTab = 0 },
                             text = {
                                 Text(
-                                    text = "Places (${savedPlaces.size})",
+                                    text = "Trips (${savedTrips.size})",
                                     fontWeight = if (sheetTab == 0) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (sheetTab == 0) Color(0xFF10B981) else Color.LightGray,
+                                    color = if (sheetTab == 0) Color(0xFF38BDF8) else Color.LightGray,
                                     fontSize = 13.sp,
                                     maxLines = 1
                                 )
@@ -1355,9 +574,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                             onClick = { sheetTab = 1 },
                             text = {
                                 Text(
-                                    text = "Trips (${savedTrips.size})",
+                                    text = "Places (${savedPlaces.size})",
                                     fontWeight = if (sheetTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (sheetTab == 1) Color(0xFF38BDF8) else Color.LightGray,
+                                    color = if (sheetTab == 1) Color(0xFF10B981) else Color.LightGray,
                                     fontSize = 13.sp,
                                     maxLines = 1
                                 )
@@ -1380,8 +599,8 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // ── Tab 0: Saved Places ─────────────────────────────────────
-                    if (sheetTab == 0) {
+                    // ── Tab 1: Saved Places ─────────────────────────────────────
+                    if (sheetTab == 1) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1582,8 +801,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                     }
 
-                    // ── Tab 1: Trip History ─────────────────────────────────────
-                    if (sheetTab == 1) {
+                    // ── Tab 0: Trip History ─────────────────────────────────────
+                    if (sheetTab == 0) {
                         // Active Trip Recording Banner
                         if (activeTrip != null) {
                             Card(
@@ -2040,6 +1259,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                     maxLines = 2,
                                                     modifier = Modifier.padding(top = 4.dp)
                                                 )
+                                            }
+
+                                            // Pauses & Trip Splitting
+                                            if (trip.pauses.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = "⏸️ Rest Pauses (${trip.pauses.size}):",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFFF59E0B)
+                                                )
+                                                trip.pauses.forEachIndexed { pauseIdx, pause ->
+                                                    val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pause.startTime))
+                                                    val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(vertical = 2.dp)
+                                                            .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = "#${pauseIdx + 1} at $pauseTimeStr (${durMin} min rest)",
+                                                            fontSize = 11.sp,
+                                                            color = Color(0xFFE2E8F0)
+                                                        )
+                                                        TextButton(
+                                                            onClick = {
+                                                                viewModel.splitTripAtPause(trip.id, pauseIdx)
+                                                                android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                            modifier = Modifier.height(26.dp)
+                                                        ) {
+                                                            Text("✂️ Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2708,7 +1967,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                             context.startActivity(intent)
                         } catch (e: Exception) {
-                            android.widget.Toast.makeText(context, "Open battery settings manually for WhereIAm", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(context, "Open battery settings manually for WhereAmI", android.widget.Toast.LENGTH_LONG).show()
                         }
                     },
                     modifier = Modifier.padding(top = 4.dp)
@@ -3342,35 +2601,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
                                                 text = place.placeName,
                                                 fontSize = 15.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White
+                                                color = Color.White,
+                                                modifier = Modifier.weight(1f, fill = false),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
+                                            Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = timeStr,
                                                 fontSize = 12.sp,
                                                 color = Color(0xFF38BDF8),
-                                                fontWeight = FontWeight.SemiBold
+                                                fontWeight = FontWeight.SemiBold,
+                                                softWrap = false
                                             )
                                         }
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
                                                 text = place.hierarchySubtitle,
                                                 fontSize = 11.sp,
                                                 color = Color(0xFF94A3B8),
-                                                maxLines = 1
+                                                modifier = Modifier.weight(1f, fill = false),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
+                                            Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = distStr,
                                                 fontSize = 11.sp,
-                                                color = Color(0xFF64748B)
+                                                color = Color(0xFF64748B),
+                                                softWrap = false
                                             )
                                         }
                                     }
@@ -3459,29 +2729,88 @@ fun LocationScreen(viewModel: MainViewModel) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = session.title,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (session.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                var isEditingTitle by remember { mutableStateOf(false) }
+                                var editingTitleText by remember(session.title) { mutableStateOf(session.title) }
+
+                                if (isEditingTitle) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = if (session.isPaused) "PAUSED" else "ACTIVE",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (session.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                        OutlinedTextField(
+                                            value = editingTitleText,
+                                            onValueChange = { editingTitleText = it },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedTextColor = Color.White,
+                                                unfocusedTextColor = Color.White,
+                                                focusedBorderColor = Color(0xFF38BDF8),
+                                                unfocusedBorderColor = Color(0xFF64748B)
+                                            )
                                         )
+                                        IconButton(onClick = {
+                                            if (editingTitleText.isNotBlank()) {
+                                                liveSharingManager.renameSession(editingTitleText)
+                                                isEditingTitle = false
+                                                android.widget.Toast.makeText(context, "Session renamed", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.Check, contentDescription = "Save Title", tint = Color(0xFF10B981))
+                                        }
+                                        IconButton(onClick = {
+                                            editingTitleText = session.title
+                                            isEditingTitle = false
+                                        }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.LightGray)
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        ) {
+                                            Text(
+                                                text = session.title,
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    editingTitleText = session.title
+                                                    isEditingTitle = true
+                                                },
+                                                modifier = Modifier.size(28.dp).padding(start = 4.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Edit,
+                                                    contentDescription = "Rename Session",
+                                                    tint = Color(0xFF38BDF8),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (session.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(
+                                                text = if (session.isPaused) "PAUSED" else "ACTIVE",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (session.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                            )
+                                        }
                                     }
                                 }
 
@@ -3505,21 +2834,23 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
 
-                                // Live countdown ticker
-                                var remainingMillis by remember(session.expiresAt) {
-                                    mutableStateOf(if (session.expiresAt > 0L) maxOf(0L, session.expiresAt - System.currentTimeMillis()) else null)
-                                }
-                                LaunchedEffect(session.expiresAt) {
+                                // Live countdown / elapsed ticker (LIV-R02)
+                                var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
+                                LaunchedEffect(Unit) {
                                     while (true) {
-                                        remainingMillis = if (session.expiresAt > 0L) maxOf(0L, session.expiresAt - System.currentTimeMillis()) else null
+                                        tickerNow = System.currentTimeMillis()
                                         kotlinx.coroutines.delay(1000L)
                                     }
                                 }
-                                val formattedRemaining = remember(remainingMillis, session.expiresAt) {
+                                val formattedRemaining = remember(tickerNow, session.expiresAt, session.createdAt) {
                                     if (session.expiresAt <= 0L) {
-                                        "Permanent (until manually stopped)"
+                                        val elapsed = maxOf(0L, tickerNow - session.createdAt)
+                                        val hrs = elapsed / 3600000L
+                                        val mins = (elapsed % 3600000L) / 60000L
+                                        val secs = (elapsed % 60000L) / 1000L
+                                        if (hrs > 0) "⏱️ ${hrs}h ${mins}m ${secs}s elapsed (Continuous)" else "⏱️ ${mins}m ${secs}s elapsed (Continuous)"
                                     } else {
-                                        val rem = remainingMillis ?: 0L
+                                        val rem = maxOf(0L, session.expiresAt - tickerNow)
                                         if (rem <= 0L) {
                                             "Expired"
                                         } else {
@@ -3531,7 +2862,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
 
-                                Text("Remaining: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
+                                Text("Status / Time: $formattedRemaining", fontSize = 12.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Medium)
                                 Spacer(modifier = Modifier.height(10.dp))
 
                                 // Link Mode Dropdown: Trip vs Personal Static
@@ -3652,17 +2983,138 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
 
-                                // Pause / Resume (Full width)
+                                // Live Privacy: Full Trail vs Position Only
+                                Text("Live Map Privacy (Viewer display):", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            liveSharingManager.setTrailVisible(true)
+                                            android.widget.Toast.makeText(context, "Visitors see full trail", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (session.trailVisible) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("🗺️ Full Trail", fontSize = 11.sp, fontWeight = if (session.trailVisible) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            liveSharingManager.setTrailVisible(false)
+                                            android.widget.Toast.makeText(context, "Visitors see current pin only", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (!session.trailVisible) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("📍 Position Only", fontSize = 11.sp, fontWeight = if (!session.trailVisible) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Live Update Frequency Selector (LIV-R04)
+                                Text("Live Update Frequency:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(1, 2, 5, 10).forEach { mins ->
+                                        val isSel = (session.syncIntervalMinutes == mins)
+                                        Button(
+                                            onClick = {
+                                                liveSharingManager.setSyncInterval(mins)
+                                                android.widget.Toast.makeText(context, "Update interval set to ${mins}m", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("${mins}m", fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Selective & Master Pause / Resume (LIV-R05)
+                                Text("Pause / Resume Controls:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Personal Static Link Pause/Resume
+                                    Button(
+                                        onClick = {
+                                            if (session.isPersonalPaused) {
+                                                liveSharingManager.resumePersonalLink()
+                                                android.widget.Toast.makeText(context, "Personal Link resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                liveSharingManager.pausePersonalLink()
+                                                android.widget.Toast.makeText(context, "Personal Link paused", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (session.isPersonalPaused) Color(0xFF059669) else Color(0xFF334155)
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            if (session.isPersonalPaused) "▶ Resume Static" else "⏸ Pause Static",
+                                            fontSize = 11.sp
+                                        )
+                                    }
+
+                                    // Random Trip Link Pause/Resume
+                                    Button(
+                                        onClick = {
+                                            if (session.isRandomPaused) {
+                                                liveSharingManager.resumeRandomLink()
+                                                android.widget.Toast.makeText(context, "Trip Link resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                liveSharingManager.pauseRandomLink()
+                                                android.widget.Toast.makeText(context, "Trip Link paused", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (session.isRandomPaused) Color(0xFF059669) else Color(0xFF334155)
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            if (session.isRandomPaused) "▶ Resume Trip" else "⏸ Pause Trip",
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                // Master Pause / Resume Both Links
                                 Button(
                                     onClick = {
                                         if (session.isPaused) {
                                             liveSharingManager.resumeSession()
-                                            android.widget.Toast.makeText(context, "Live sharing resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                            android.widget.Toast.makeText(context, "All links resumed", android.widget.Toast.LENGTH_SHORT).show()
                                         } else {
                                             liveSharingManager.pauseSession()
-                                            android.widget.Toast.makeText(context, "Live sharing paused", android.widget.Toast.LENGTH_SHORT).show()
+                                            android.widget.Toast.makeText(context, "All links paused", android.widget.Toast.LENGTH_SHORT).show()
                                         }
                                     },
                                     shape = RoundedCornerShape(8.dp),
@@ -3671,7 +3123,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(if (session.isPaused) "▶️ Resume Live Sharing" else "⏸️ Pause Live Sharing", fontSize = 13.sp)
+                                    Text(if (session.isPaused) "▶️ Resume Entire Sharing" else "⏸️ Pause Entire Sharing", fontSize = 13.sp)
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -3910,11 +3362,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("💻 Local Test Server (Port 3003)", color = Color.White, fontSize = 13.sp) },
+                                    text = {
+                                        Text(
+                                            text = if (isUsbConnected) "💻 Local Test Server (Port 3003)" else "💻 Local Test Server (Requires USB)",
+                                            color = if (isUsbConnected) Color.White else Color.Gray,
+                                            fontSize = 13.sp
+                                        )
+                                    },
                                     onClick = {
-                                        selectedProvider = LiveShareProvider.LOCAL
-                                        providerDropdownExpanded = false
-                                        prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.LOCAL.name).apply()
+                                        if (isUsbConnected) {
+                                            selectedProvider = LiveShareProvider.LOCAL
+                                            providerDropdownExpanded = false
+                                            prefs.edit().putString(LiveSharingManager.KEY_PREF_PROVIDER, LiveShareProvider.LOCAL.name).apply()
+                                        } else {
+                                            android.widget.Toast.makeText(context, "Connect phone via USB cable to use Local Test Server", android.widget.Toast.LENGTH_LONG).show()
+                                        }
                                     }
                                 )
                             }
@@ -3924,10 +3386,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Text(
                             text = when (selectedProvider) {
                                 LiveShareProvider.SYNOLOGY -> "📤 Shared link: whereami.janush.tech/live/… — accessible to anyone."
-                                LiveShareProvider.LOCAL -> "🔒 Viewer at localhost:3003 — dev/testing only, link not shareable."
+                                LiveShareProvider.LOCAL -> if (isUsbConnected) "🔌 USB Active • Viewer at localhost:3003 (ADB port-forwarded)" else "⚠️ USB Disconnected — connect USB cable or switch to Public server."
                             },
                             fontSize = 11.sp,
-                            color = Color(0xFF38BDF8)
+                            color = if (selectedProvider == LiveShareProvider.LOCAL && !isUsbConnected) Color(0xFFF87171) else Color(0xFF38BDF8)
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -4060,6 +3522,176 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+
+    if (showInstantShareDialog) {
+        val lat = currentLatLng?.first
+        val lng = currentLatLng?.second
+        val primaryPlace = locationData.primaryPlace
+        val secondaryPlace = locationData.secondaryPlace
+        val addressLine = remember(primaryPlace, secondaryPlace) {
+            val parts = mutableListOf<String>()
+            val street = secondaryPlace?.street ?: primaryPlace?.street
+            if (!street.isNullOrBlank()) {
+                parts.add(street)
+            }
+            val road = secondaryPlace?.roadRef ?: primaryPlace?.roadRef
+            if (!road.isNullOrBlank() && street != road) {
+                parts.add("[$road]")
+            }
+            primaryPlace?.city?.takeIf { it.isNotBlank() && it != "Unknown City" }?.let { parts.add(it) }
+            primaryPlace?.country?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+            if (parts.isEmpty()) "Unknown Location" else parts.joinToString(", ")
+        }
+        val accuracyM = remember(locationData) {
+            // Check if accuracy is available via LocationManager or raw
+            "High"
+        }
+
+        Dialog(
+            onDismissRequest = { showInstantShareDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 24.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📍", fontSize = 22.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Share Current Position",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        IconButton(onClick = { showInstantShareDialog = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    if (lat != null && lng != null) {
+                        val coordsStr = String.format(Locale.US, "%.5f, %.5f", lat, lng)
+                        val googleMapsUrl = "https://maps.google.com/?q=$coordsStr"
+                        val fullShareText = "My current location:\n$addressLine\nCoordinates: $coordsStr\nMap: $googleMapsUrl"
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text("Address:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Text(
+                                    text = addressLine,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("GPS Coordinates (Filtered):", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Text(
+                                    text = coordsStr,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Native Share Sheet
+                        Button(
+                            onClick = {
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, fullShareText)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Location"))
+                                showInstantShareDialog = false
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Share via App (WhatsApp, SMS, etc.)", fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Copy to Clipboard
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    val clip = android.content.ClipData.newPlainText("Coordinates", coordsStr)
+                                    clipboard.setPrimaryClip(clip)
+                                    android.widget.Toast.makeText(context, "Coordinates copied: $coordsStr", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Coords", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Copy Coords", fontSize = 12.sp)
+                            }
+
+                            // Open in Google Maps app
+                            Button(
+                                onClick = {
+                                    val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng($addressLine)"))
+                                    try {
+                                        context.startActivity(mapIntent)
+                                    } catch (_: Exception) {
+                                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(googleMapsUrl))
+                                        context.startActivity(browserIntent)
+                                    }
+                                    showInstantShareDialog = false
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Map, contentDescription = "Google Maps", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Open Map", fontSize = 12.sp)
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Waiting for valid GPS fix...",
+                            color = Color(0xFFF87171),
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -4122,4 +3754,908 @@ fun computeRealisticVisitCounts(trips: List<TripRecord>): List<Pair<String, Int>
     }
 
     return visitCounts.toList().sortedByDescending { it.second }
+}
+
+@Composable
+private fun LocalityCard(
+    locationData: LocationData,
+    activeTrip: TripRecord?,
+    liveSession: LiveSession?,
+    savedPlaces: List<SavedPlace>,
+    localityCardStyle: LocalityCardStyle,
+    activityProfile: ActivityProfile,
+    primaryPlace: PlaceInfo?,
+    secondaryPlace: PlaceInfo?,
+    hierarchySubtitle: String,
+    currentLatLng: Triple<Double, Double, Float?>?,
+    onShowActiveTripRoute: () -> Unit,
+    onShowLiveShare: () -> Unit,
+    onSetLocalityCardStyle: (LocalityCardStyle) -> Unit,
+    onSetActivityProfile: (ActivityProfile) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (locationData.isLoading && primaryPlace == null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(vertical = if (isCompact) 4.dp else 8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFF38BDF8),
+                        modifier = Modifier.size(if (isCompact) 16.dp else 20.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Finding your location...", color = Color.LightGray, fontSize = if (isCompact) 13.sp else 15.sp)
+                }
+            } else if (locationData.error != null && primaryPlace == null) {
+                Text(
+                    text = "Error: ${locationData.error}",
+                    color = Color(0xFFF87171),
+                    textAlign = TextAlign.Center,
+                    fontSize = if (isCompact) 13.sp else 15.sp
+                )
+            } else if (isCompact) {
+                // ══════════════════════════════════════════════════════════════
+                // TRUE COMPACT MODE (3 Clean Non-Truncating Rows, Full Detail, ~75dp)
+                // ══════════════════════════════════════════════════════════════
+                val primaryCity = primaryPlace?.city ?: "Unknown"
+                val secondaryCity = secondaryPlace?.city
+                val displayCity = if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
+                    "$primaryCity ($secondaryCity)"
+                } else primaryCity
+
+                val streetOrRoad = listOfNotNull(
+                    primaryPlace?.street?.takeIf { it.isNotBlank() },
+                    primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
+                ).joinToString(" • ")
+
+                // Check if current location matches any saved place
+                val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
+                    val lat = currentLatLng?.first ?: return@remember null
+                    val lng = currentLatLng?.second ?: return@remember null
+                    savedPlaces.firstOrNull { sp ->
+                        val results = FloatArray(1)
+                        android.location.Location.distanceBetween(lat, lng, sp.latitude, sp.longitude, results)
+                        results[0] <= sp.radiusMeters
+                    }
+                }
+
+                val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
+                val paceStr = if (speedKmh > 1.0f) {
+                    val min = (60f / speedKmh).toInt()
+                    val sec = ((60f / speedKmh - min) * 60).toInt()
+                    String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
+                } else "- min/km"
+
+                var profileMenuExpanded by remember { mutableStateOf(false) }
+
+                // ── Row 1: Primary Locality Name + Badges on Left, Action Buttons on Right ──
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .clickable(enabled = activeTrip != null) {
+                                    onShowActiveTripRoute()
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = displayCity,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (activeTrip != null) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "🚩" + activeTrip.placesVisited.size,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    softWrap = false
+                                )
+                            }
+                        }
+                        if (liveSession?.isActive == true) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
+                                    .clickable { onShowLiveShare() }
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = if (liveSession.isPaused) "⏸️PAUSED" else "📡LIVE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        if (nearbySavedPlace != null) {
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = nearbySavedPlace.category.iconEmoji,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+
+                    // Compact Action Icons (Live Share, Maps, Expand) - Redundant Share removed
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (liveSession?.isActive != true) {
+                            IconButton(
+                                onClick = onShowLiveShare,
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ShareLocation,
+                                    contentDescription = "Live Share Location",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        // Open in Google Maps
+                        IconButton(
+                            onClick = {
+                                val lat = currentLatLng?.first
+                                val lng = currentLatLng?.second
+                                if (lat != null && lng != null) {
+                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
+                                }
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Open in Google Maps",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Direct Expand Toggle (switches to Normal mode)
+                        IconButton(
+                            onClick = { onSetLocalityCardStyle(LocalityCardStyle.NORMAL) },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExpandMore,
+                                contentDescription = "Expand Locality Card",
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // ── Row 2: Dedicated Full-Width Street Name & Number (NEVER Truncated) ──
+                if (streetOrRoad.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📍 $streetOrRoad",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFFBBF24), // Vivid Amber Gold
+                            maxLines = 2
+                        )
+                    }
+                }
+
+                // ── Row 3: Administrative Hierarchy & Country on Left, Profile + Speed Pill on Right ──
+                val fullHierarchyText = buildString {
+                    if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
+                    val country = primaryPlace?.country
+                    if (!country.isNullOrBlank() && country != "Unknown Country") {
+                        if (isNotEmpty()) append(" • ")
+                        append(country)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (fullHierarchyText.isNotEmpty()) fullHierarchyText else (primaryPlace?.country ?: ""),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF94A3B8),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // Profile & Speed Pill
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF1E293B))
+                                .clickable { profileMenuExpanded = true }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = activityProfile.iconEmoji,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            when (activityProfile) {
+                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> {
+                                    Text(
+                                        text = speedStr,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                }
+                                ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
+                                    Text(
+                                        text = paceStr,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                }
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = profileMenuExpanded,
+                            onDismissRequest = { profileMenuExpanded = false },
+                            modifier = Modifier.background(Color(0xFF0F172A))
+                        ) {
+                            ActivityProfile.values().forEach { profile ->
+                                val isSelected = activityProfile == profile
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "${profile.iconEmoji}  ${profile.displayName}",
+                                            color = if (isSelected) Color(0xFF38BDF8) else Color.White,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        onSetActivityProfile(profile)
+                                        profileMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ══════════════════════════════════════════════════════════════
+                // NORMAL SPATIOUS MODE
+                // ══════════════════════════════════════════════════════════════
+                val primaryCity = primaryPlace?.city ?: "Unknown"
+                val secondaryCity = secondaryPlace?.city
+
+                // Check if current location matches any saved place
+                val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
+                    val lat = currentLatLng?.first ?: return@remember null
+                    val lng = currentLatLng?.second ?: return@remember null
+                    savedPlaces.firstOrNull { sp ->
+                        val results = FloatArray(1)
+                        android.location.Location.distanceBetween(lat, lng, sp.latitude, sp.longitude, results)
+                        results[0] <= sp.radiusMeters
+                    }
+                }
+
+                // Top Utilities Row: Saved Place / Live Badge on Left, Maps/Collapse on Right (Country moved to Hierarchy line)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left side: Saved Place / Live Badge
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (nearbySavedPlace != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0x3310B981))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                        if (liveSession?.isActive == true) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981))
+                                    .clickable { onShowLiveShare() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (liveSession.isPaused) "⏸️ PAUSED" else "📡 LIVE",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+
+                    // Right Utility Icons: Live Share shortcut (if inactive), Google Maps, Collapse - Redundant Share removed
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (liveSession?.isActive != true) {
+                            IconButton(
+                                onClick = onShowLiveShare,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1E293B))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ShareLocation,
+                                    contentDescription = "Live Share Location",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Open in Google Maps
+                        IconButton(
+                            onClick = {
+                                val lat = currentLatLng?.first
+                                val lng = currentLatLng?.second
+                                if (lat != null && lng != null) {
+                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
+                                }
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Open in Google Maps",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Direct Collapse Toggle (switches to Compact mode)
+                        IconButton(
+                            onClick = { onSetLocalityCardStyle(LocalityCardStyle.COMPACT) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExpandLess,
+                                contentDescription = "Collapse Locality Card",
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = activeTrip != null) {
+                            onShowActiveTripRoute()
+                        }
+                ) {
+                    Text(
+                        text = primaryCity,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 36.sp
+                    )
+                    if (activeTrip != null) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "🚩" + activeTrip.placesVisited.size,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                }
+
+                if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
+                    Text(
+                        text = "($secondaryCity)",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF94A3B8),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                }
+
+                // Street Name & Road Number
+                val streetOrRoad = listOfNotNull(
+                    primaryPlace?.street?.takeIf { it.isNotBlank() },
+                    primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
+                ).joinToString(" • ")
+
+                if (streetOrRoad.isNotEmpty()) {
+                    Text(
+                        text = streetOrRoad,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFFBBF24), // Amber gold for street
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+
+                // Administrative Hierarchy (Gmina, Powiat, Województwo, Country)
+                val fullHierarchyNormal = buildString {
+                    if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
+                    val country = primaryPlace?.country?.takeIf { it.isNotBlank() && it != "Unknown Country" }
+                    if (!country.isNullOrBlank()) {
+                        if (isNotEmpty()) append(" • ")
+                        append(country)
+                    }
+                }
+
+                if (fullHierarchyNormal.isNotEmpty()) {
+                    Text(
+                        text = fullHierarchyNormal,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF38BDF8),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
+                val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
+                val paceStr = if (speedKmh > 1.0f) {
+                    val min = (60f / speedKmh).toInt()
+                    val sec = ((60f / speedKmh - min) * 60).toInt()
+                    String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
+                } else "- min/km"
+
+                var profileMenuExpanded by remember { mutableStateOf(false) }
+
+                Row(
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Compact Dropdown Trigger Pill
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { profileMenuExpanded = true }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${activityProfile.iconEmoji} ${activityProfile.displayName.uppercase()}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFBBF24)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Select Activity Profile",
+                                tint = Color(0xFFFBBF24),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = profileMenuExpanded,
+                            onDismissRequest = { profileMenuExpanded = false },
+                            modifier = Modifier.background(Color(0xFF0F172A))
+                        ) {
+                            ActivityProfile.values().forEach { profile ->
+                                val isSelected = activityProfile == profile
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = "${profile.iconEmoji}  ${profile.displayName}",
+                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 14.sp
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        onSetActivityProfile(profile)
+                                        profileMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
+                    when (activityProfile) {
+                        ActivityProfile.CAR -> {
+                            Text(
+                                text = speedStr,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                        ActivityProfile.CYCLING, ActivityProfile.MTB -> {
+                            Text(
+                                text = speedStr,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "($paceStr)",
+                                fontSize = 13.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                        ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
+                            Text(
+                                text = paceStr,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "($speedStr)",
+                                fontSize = 13.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MainBottomControlsCard(
+    keepScreenOn: Boolean,
+    isRecording: Boolean,
+    onToggleKeepScreenOn: () -> Unit,
+    onToggleTripRecording: () -> Unit,
+    onShowTripsSheet: () -> Unit,
+    onShowSearch: () -> Unit,
+    onSaveLocation: () -> Unit,
+    onShowSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // 1. Keep Screen On Toggle Button
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(if (keepScreenOn) Color(0xFF0284C7) else Color(0xFF1E293B))
+                    .clickable { onToggleKeepScreenOn() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (keepScreenOn) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = "Keep Screen On",
+                    tint = if (keepScreenOn) Color.White else Color(0xFF94A3B8),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // 2. Trip Recording Pill (Start / Stop / REC status)
+            Row(
+                modifier = Modifier
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (isRecording) Color(0x33EF4444) else Color(0xFF1E293B))
+                    .clickable { onToggleTripRecording() }
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isRecording) Color(0xFFEF4444) else Color(0xFF10B981))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isRecording) "STOP" else "REC",
+                    color = if (isRecording) Color(0xFFEF4444) else Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+
+            // 3. Places & Trips History Dialog Button (Prominent Sky Blue)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0284C7))
+                    .clickable { onShowTripsSheet() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = "Places & Trips History",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // 4. Quick Search Button (Emerald Green)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF10B981))
+                    .clickable { onShowSearch() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search Location",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // 5. Quick Save Current Location as My Place (Dark Emerald Green)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF059669))
+                    .clickable { onSaveLocation() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.BookmarkAdd,
+                    contentDescription = "Save Current Location",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // 6. Settings & Language Dialog Button (Amber Gold / Slate)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF1E293B))
+                    .clickable { onShowSettings() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    tint = Color(0xFFFBBF24),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationPlaceCard(
+    destinationPoint: org.osmdroid.util.GeoPoint,
+    destinationItem: SearchResultItem?,
+    onClearDestination: () -> Unit,
+    onNavigate: (Double, Double) -> Unit,
+    onGoogleMaps: (Double, Double, String) -> Unit,
+    onSavePlace: (Double, Double, SearchResultItem?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFA0F172A)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = "Destination Pin",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = destinationItem?.title ?: "Searched Location",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1
+                    )
+                }
+
+                IconButton(
+                    onClick = onClearDestination,
+                    modifier = Modifier.size(26.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Exit Destination",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            if (destinationItem?.subtitle?.isNotBlank() == true) {
+                Text(
+                    text = destinationItem.subtitle,
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 2.dp, start = 26.dp)
+                )
+            }
+
+            // Row 1: Navigation & Map Actions
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        onNavigate(destinationPoint.latitude, destinationPoint.longitude)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Navigate To", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Button(
+                    onClick = {
+                        onGoogleMaps(destinationPoint.latitude, destinationPoint.longitude, destinationItem?.title ?: "")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Google Maps", color = Color.White, fontSize = 12.sp)
+                }
+            }
+
+            // Row 2: Save Place & Exit Actions
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        onSavePlace(destinationPoint.latitude, destinationPoint.longitude, destinationItem)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Save as My Place", fontSize = 12.sp)
+                }
+
+                Button(
+                    onClick = onClearDestination,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text("Exit Pin", color = Color.LightGray, fontSize = 12.sp)
+                }
+            }
+        }
+    }
 }
