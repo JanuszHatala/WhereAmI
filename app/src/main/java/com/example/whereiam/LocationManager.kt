@@ -92,8 +92,12 @@ class LocationManager(private val context: Context) {
                     place.country.equals("Poland", ignoreCase = true)
 
             val city = place.city.trim()
-            val gmina = place.gmina?.trim()
-            val powiat = place.powiat?.trim()
+            val rawGmina = place.gmina?.trim()
+            val rawPowiat = place.powiat?.trim()
+            val cleanGmina = rawGmina?.replace("Gmina ", "", ignoreCase = true)
+                ?.replace("gmina ", "", ignoreCase = true)?.trim()
+            val cleanPowiat = rawPowiat?.replace("Powiat ", "", ignoreCase = true)
+                ?.replace("powiat ", "", ignoreCase = true)?.trim()
             val voivodeship = place.voivodeship
                 .replace("województwo ", "", ignoreCase = true)
                 .replace("województwo", "", ignoreCase = true)
@@ -101,14 +105,12 @@ class LocationManager(private val context: Context) {
 
             if (isPoland) {
                 val parts = mutableListOf<String>()
-                if (!gmina.isNullOrEmpty() && !gmina.equals(city, ignoreCase = true)) {
-                    val cleanGmina = gmina.replace("Gmina ", "", ignoreCase = true)
-                        .replace("gmina ", "", ignoreCase = true).trim()
+                // Clean deduplication: omit gm. X if city is X
+                if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
                     parts.add("gm. $cleanGmina")
                 }
-                if (!powiat.isNullOrEmpty() && !powiat.equals(city, ignoreCase = true)) {
-                    val cleanPowiat = powiat.replace("Powiat ", "", ignoreCase = true)
-                        .replace("powiat ", "", ignoreCase = true).trim()
+                // Omit pow. Y if city or gmina is Y
+                if (!cleanPowiat.isNullOrEmpty() && !cleanPowiat.equals(city, ignoreCase = true) && !cleanPowiat.equals(cleanGmina, ignoreCase = true)) {
                     parts.add("pow. $cleanPowiat")
                 }
                 if (voivodeship.isNotEmpty() && !voivodeship.equals("Unknown Region", ignoreCase = true)) {
@@ -118,11 +120,11 @@ class LocationManager(private val context: Context) {
             } else {
                 // International formatting
                 val parts = mutableListOf<String>()
-                if (!gmina.isNullOrEmpty() && !gmina.equals(city, ignoreCase = true)) {
-                    parts.add(gmina)
+                if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
+                    parts.add(cleanGmina)
                 }
-                if (!powiat.isNullOrEmpty() && !powiat.equals(city, ignoreCase = true) && !powiat.equals(gmina, ignoreCase = true)) {
-                    parts.add(powiat)
+                if (!cleanPowiat.isNullOrEmpty() && !cleanPowiat.equals(city, ignoreCase = true) && !cleanPowiat.equals(cleanGmina, ignoreCase = true)) {
+                    parts.add(cleanPowiat)
                 }
                 if (voivodeship.isNotEmpty() && !voivodeship.equals("Unknown Region", ignoreCase = true)) {
                     parts.add(voivodeship)
@@ -170,28 +172,79 @@ class LocationManager(private val context: Context) {
     private val BASE_PROCESS_NOISE = 0.3f
     private val ADAPTIVE_FACTOR = 0.5f
     private val DEFAULT_MEAS_NOISE = 1.44f
-    private val STATIONARY_THRESHOLD = 0.3f // m/s (~1 km/h)
+    private val STATIONARY_THRESHOLD = 0.65f // m/s (~2.34 km/h) — typical indoor GPS Doppler noise floor
 
     // Rolling window for hybrid smoothing
     private val speedWindow = ArrayDeque<Float>()
     private val SPEED_WINDOW_SIZE = 3
     private var lastValidSpeedMs: Float = 0f
 
-    private fun hybridSpeedUpdate(rawSpeed: Float?, gpsAccuracyMps: Float?): Float {
+    // Displacement tracking for zero-motion confirmation
+    private var lastFixLat: Double = 0.0
+    private var lastFixLng: Double = 0.0
+    private var lastFixTimestamp: Long = 0L
+
+    // MAP-R03: Stationary Bearing Freeze (retains driving heading when stopped)
+    @Volatile
+    private var lastValidBearing: Float? = null
+
+    private fun hybridSpeedUpdate(
+        rawSpeed: Float?,
+        gpsAccuracyMps: Float?,
+        lat: Double = 0.0,
+        lng: Double = 0.0,
+        timestamp: Long = 0L
+    ): Float {
         if (rawSpeed == null) {
             // Keep last valid speed rather than dropping to null or 0 (anti-flicker)
             return lastValidSpeedMs
         }
 
+        // Calculate physical displacement delta
+        var isStationaryDisplacement = false
+        if (lat != 0.0 && lng != 0.0 && lastFixLat != 0.0 && lastFixLng != 0.0 && timestamp > 0L && lastFixTimestamp > 0L) {
+            val dist = FloatArray(1)
+            android.location.Location.distanceBetween(lastFixLat, lastFixLng, lat, lng, dist)
+            val dtSec = (timestamp - lastFixTimestamp) / 1000f
+            if (dtSec in 0.5f..45f) {
+                val displacementSpeed = dist[0] / dtSec
+                // If device hasn't displaced more than 3.5m and displacement speed is under 0.6 m/s (~2.1 km/h), it's stationary jitter
+                if (dist[0] < 3.5f && displacementSpeed < 0.6f) {
+                    isStationaryDisplacement = true
+                }
+            }
+        }
+        if (lat != 0.0 && lng != 0.0 && timestamp > 0L) {
+            lastFixLat = lat
+            lastFixLng = lng
+            lastFixTimestamp = timestamp
+        }
+
+        // Check if raw speed falls within stationary noise floor:
+        // 1) Below physical locomotion threshold (< 0.65 m/s or ~2.34 km/h)
+        // 2) Or raw speed is smaller than the GPS speed uncertainty margin (noise floor)
+        // 3) Or physical position displacement over the interval confirms zero motion
+        val isStationaryNoise = rawSpeed < STATIONARY_THRESHOLD ||
+                (gpsAccuracyMps != null && gpsAccuracyMps > 0.8f && rawSpeed <= gpsAccuracyMps && rawSpeed < 1.2f) ||
+                (isStationaryDisplacement && rawSpeed < 1.0f)
+
         // Clamp stationary noise to true 0
-        val cleanRaw = if (rawSpeed < STATIONARY_THRESHOLD) 0f else rawSpeed
+        val cleanRaw = if (isStationaryNoise) 0f else rawSpeed
+
+        if (cleanRaw == 0f) {
+            // Immediate zero-snap: avoid Kalman creeping when stationary
+            kalmanSpeed = 0f
+            speedWindow.clear()
+            lastValidSpeedMs = 0f
+            return 0f
+        }
 
         val measNoise = when {
             gpsAccuracyMps != null && gpsAccuracyMps > 0f -> gpsAccuracyMps * gpsAccuracyMps
             else -> DEFAULT_MEAS_NOISE
         }
 
-        if (kalmanSpeed == null) {
+        if (kalmanSpeed == null || kalmanSpeed == 0f) {
             kalmanSpeed = cleanRaw
             kalmanVariance = measNoise
             lastValidSpeedMs = cleanRaw
@@ -206,14 +259,14 @@ class LocationManager(private val context: Context) {
         kalmanSpeed = kalmanSpeed!! + gain * innovation
         kalmanVariance = (1f - gain) * predictedVariance
 
-        val kSpeed = if (cleanRaw == 0f && kalmanSpeed!! < 0.4f) 0f else kalmanSpeed!!
+        val kSpeed = if (kalmanSpeed!! < 0.35f) 0f else kalmanSpeed!!
 
         // Windowed moving average on top of Kalman for extra smoothness
         if (speedWindow.size >= SPEED_WINDOW_SIZE) speedWindow.removeFirst()
         speedWindow.addLast(kSpeed)
 
         val smoothed = speedWindow.average().toFloat()
-        val finalSpeed = if (smoothed < 0.2f) 0f else smoothed
+        val finalSpeed = if (smoothed < 0.3f) 0f else smoothed
         lastValidSpeedMs = finalSpeed
         return finalSpeed
     }
@@ -295,25 +348,20 @@ class LocationManager(private val context: Context) {
     private var candidateStreetBase: String? = null
     private var candidateStreetCount: Int = 0
     private var candidateStreetFirstSeenTime: Long = 0L
-
-    private fun extractStreetBase(street: String?): String? {
-        if (street.isNullOrBlank()) return null
-        // Strip trailing house numbers (e.g. "Zagłębocze 9" -> "Zagłębocze", "ul. Kościuszki 14A" -> "ul. Kościuszki")
-        return street.replace(Regex("""\s+\d+([a-zA-Z]|/\d+)?$"""), "").trim()
-    }
+    private var lastStreetSeenTimestamp: Long = 0L
 
     private fun applyStreetHysteresis(
         speedMs: Float,
         multiData: MultiLanguagePlaceInfo
     ): MultiLanguagePlaceInfo {
         val rawStreetPl = multiData.pl.street
-        val rawBase = extractStreetBase(rawStreetPl)
+        val rawBase = RoadNameNormalizer.extractBaseStreet(rawStreetPl)
         val now = System.currentTimeMillis()
         val speedKmh = speedMs * 3.6f
 
-        // If no street detected, keep committed street if vehicle is in motion (bridges, short gaps)
+        // GEO-02: 15-second decay grace period when reverse geocoding temporarily returns no street
         if (rawStreetPl.isNullOrBlank()) {
-            if (committedStreetPl != null && speedKmh > 10f && (now - candidateStreetFirstSeenTime) < 10_000L) {
+            if (committedStreetPl != null && (now - lastStreetSeenTimestamp) < 15_000L) {
                 return multiData.copy(
                     en = multiData.en.copy(street = committedStreetPl),
                     pl = multiData.pl.copy(street = committedStreetPl),
@@ -324,6 +372,8 @@ class LocationManager(private val context: Context) {
             committedStreetBase = null
             return multiData
         }
+
+        lastStreetSeenTimestamp = now
 
         // Initial commit
         if (committedStreetPl == null || committedStreetBase == null) {
@@ -344,9 +394,49 @@ class LocationManager(private val context: Context) {
             return multiData
         }
 
-        // Different road detected! Check if vehicle is in motion (driving/cycling)
-        if (speedKmh > 15f) {
-            // Require 3 consecutive readings (or sustained for 3.5s) before switching streets
+        // Different road detected!
+        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase)
+        val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
+
+        if (speedKmh > 35f) {
+            // GEO-01 & Item 11: Viaduct / Bridge trajectory inertia at vehicle speed > 35 km/h.
+            // If driving along a major road (DK52, DW946, A4, S7, etc.) and candidate is a cross street (viaduct/bridge),
+            // strictly require 5 consecutive confirmations AND 7.0 seconds of sustained readings before committing a switch.
+            val requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 4
+            val requiredDuration = if (isCommittedMajor && !isCandidateMajor) 7_000L else 5_000L
+
+            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
+                candidateStreetCount++
+            } else {
+                candidateStreetPl = rawStreetPl
+                candidateStreetBase = rawBase
+                candidateStreetCount = 1
+                candidateStreetFirstSeenTime = now
+            }
+
+            val candidateDuration = now - candidateStreetFirstSeenTime
+            if (candidateStreetCount >= requiredCount || candidateDuration >= requiredDuration) {
+                TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h: '$committedStreetPl' -> '$rawStreetPl'")
+                committedStreetPl = candidateStreetPl
+                committedStreetBase = candidateStreetBase
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return multiData.copy(
+                    en = multiData.en.copy(street = committedStreetPl),
+                    pl = multiData.pl.copy(street = committedStreetPl),
+                    native = multiData.native.copy(street = committedStreetPl)
+                )
+            } else {
+                // Reject viaduct/overpass flicker: keep current committed street
+                return multiData.copy(
+                    en = multiData.en.copy(street = committedStreetPl),
+                    pl = multiData.pl.copy(street = committedStreetPl),
+                    native = multiData.native.copy(street = committedStreetPl)
+                )
+            }
+        } else if (speedKmh > 15f) {
+            // Moderate city driving / cycling: require 3 readings or 3.5s
             if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
                 candidateStreetCount++
             } else {
@@ -370,7 +460,6 @@ class LocationManager(private val context: Context) {
                     native = multiData.native.copy(street = committedStreetPl)
                 )
             } else {
-                // Reject momentary cross-street blip: keep current committed street
                 return multiData.copy(
                     en = multiData.en.copy(street = committedStreetPl),
                     pl = multiData.pl.copy(street = committedStreetPl),
@@ -379,7 +468,7 @@ class LocationManager(private val context: Context) {
             }
         } else {
             // Walking or slow speed: update after 2 confirmations
-            if (candidateStreetBase.equals(rawBase, ignoreCase = true)) {
+            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
                 candidateStreetCount++
             } else {
                 candidateStreetBase = rawBase
@@ -424,15 +513,30 @@ class LocationManager(private val context: Context) {
         val locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 result.lastLocation?.let { location ->
+                    val currentProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
+                        ?: TripManager.getInstance(context).activityProfile.value
+
+                    // Stage 1-4 Filter: drop coarse cellular fallbacks, GPS spikes, and kinematic teleport jumps
+                    if (!GpsFilterEngine.getInstance().filterLocation(location, currentProfile)) {
+                        return
+                    }
+
                     val rawSpeed = if (location.hasSpeed()) location.speed else null
                     val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
                         location.speedAccuracyMetersPerSecond else null
-                    val speed = hybridSpeedUpdate(rawSpeed, accuracy)
+                    val speed = hybridSpeedUpdate(
+                        rawSpeed = rawSpeed,
+                        gpsAccuracyMps = accuracy,
+                        lat = location.latitude,
+                        lng = location.longitude,
+                        timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                    )
 
                     prefs.edit()
                         .putFloat("lat", location.latitude.toFloat())
                         .putFloat("lng", location.longitude.toFloat())
                         .putFloat("speed", speed)
+                        .putFloat("accuracy", if (location.hasAccuracy()) location.accuracy else 0f)
                         .apply()
 
                     // CRITICAL FIX FOR ANR / SYSTEM FREEZE:
@@ -452,17 +556,25 @@ class LocationManager(private val context: Context) {
                             data.primaryPlace
                         )
 
-                        // Notify LiveSharingManager
+                        // Notify LiveSharingManager (including heading)
                         val speedKmh = speed * 3.6f
                         val alt = if (location.hasAltitude()) location.altitude else null
                         val placeName = data.primaryPlace?.let { p ->
                             if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
                         }
+                        val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= 1.2f)) {
+                            lastValidBearing = location.bearing
+                            location.bearing
+                        } else {
+                            lastValidBearing
+                        }
+
                         LiveSharingManager.getInstance(context).onLocationUpdate(
                             lat = location.latitude,
                             lng = location.longitude,
                             speedKmh = speedKmh,
                             altitude = alt,
+                            bearing = currentBearing,
                             placeName = placeName,
                             trekkingBadge = null
                         )
@@ -492,6 +604,7 @@ class LocationManager(private val context: Context) {
 
     /**
      * Lightweight flow for map composable (lat, lng, bearing).
+     * Retains last valid driving bearing when stationary (MAP-R03).
      */
     @SuppressLint("MissingPermission")
     fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> = callbackFlow {
@@ -502,8 +615,12 @@ class LocationManager(private val context: Context) {
         val cb = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 result.lastLocation?.let { loc ->
-                    val bearing = if (loc.hasBearing() && (loc.hasSpeed() && loc.speed >= 1.4f))
-                        loc.bearing else null
+                    val bearing = if (loc.hasBearing() && (loc.hasSpeed() && loc.speed >= 1.2f)) {
+                        lastValidBearing = loc.bearing
+                        loc.bearing
+                    } else {
+                        lastValidBearing
+                    }
                     trySend(Triple(loc.latitude, loc.longitude, bearing))
                 }
             }
@@ -530,7 +647,13 @@ class LocationManager(private val context: Context) {
                             val rawSpeed = if (location.hasSpeed()) location.speed else null
                             val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
                                 location.speedAccuracyMetersPerSecond else null
-                            val speed = hybridSpeedUpdate(rawSpeed, accuracy)
+                            val speed = hybridSpeedUpdate(
+                                rawSpeed = rawSpeed,
+                                gpsAccuracyMps = accuracy,
+                                lat = location.latitude,
+                                lng = location.longitude,
+                                timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                            )
 
                             val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
                             prefs.edit()
@@ -571,9 +694,48 @@ class LocationManager(private val context: Context) {
         }
     }
 
+    // GEO-07: Spatial grid LRU cache (~15m cell resolution, 30 min TTL, up to 300 locations)
+    private data class CachedMultiPlace(
+        val timestamp: Long,
+        val lat: Double,
+        val lng: Double,
+        val data: MultiLanguagePlaceInfo
+    )
+    private val spatialPlaceCache = Collections.synchronizedMap(
+        object : LinkedHashMap<String, CachedMultiPlace>(200, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedMultiPlace>?): Boolean {
+                return size > 300
+            }
+        }
+    )
+
+    // In-memory cache for Nominatim reverse-geocode responses (150 entries, 30 min TTL)
+    private data class CachedOsmResult(
+        val timestamp: Long,
+        val result: OsmPlaceResult
+    )
+    private val osmResponseCache = Collections.synchronizedMap(
+        object : LinkedHashMap<String, CachedOsmResult>(100, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedOsmResult>?): Boolean {
+                return size > 150
+            }
+        }
+    )
+    @Volatile
+    private var lastOsmRequestTime = 0L
+    @Volatile
+    private var osmRateLimitCooldownUntil = 0L
+
     // ── Place resolution ───────────────────────────────────────────────────────
 
     fun resolveMultiLanguageData(lat: Double, lng: Double): MultiLanguagePlaceInfo {
+        val now = System.currentTimeMillis()
+        val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
+        val cached = spatialPlaceCache[gridKey]
+        if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
+            return cached.data
+        }
+
         val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
 
         val baseAddress = geocode(lat, lng, Locale.getDefault())
@@ -592,7 +754,11 @@ class LocationManager(private val context: Context) {
         if (plPlace.city != "Unknown City")     saveLastGood(prefs, "pl",     lat, lng, plPlace)
         if (nativePlace.city != "Unknown City") saveLastGood(prefs, "native", lat, lng, nativePlace)
 
-        return MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
+        val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
+        if (enPlace.city != "Unknown City" || plPlace.city != "Unknown City") {
+            spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
+        }
+        return result
     }
 
     private fun resolvePlace(
@@ -624,7 +790,7 @@ class LocationManager(private val context: Context) {
             if (city != null) {
                 return PlaceInfo(
                     city = city,
-                    street = osm.street ?: address?.thoroughfare,
+                    street = osm.street ?: address?.thoroughfare?.let { RoadNameNormalizer.normalize(it, houseNumber = address.subThoroughfare) },
                     roadRef = osm.roadRef,
                     gmina = osm.municipality,
                     powiat = osm.county,
@@ -644,7 +810,24 @@ class LocationManager(private val context: Context) {
     // ── OSM Nominatim ─────────────────────────────────────────────────────────
 
     private fun geocodeWithOsm(lat: Double, lng: Double, language: String): OsmPlaceResult? {
+        val now = System.currentTimeMillis()
+        val osmKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}_$language"
+        val cachedOsm = osmResponseCache[osmKey]
+        if (cachedOsm != null && (now - cachedOsm.timestamp) < 30 * 60 * 1000L) {
+            return cachedOsm.result
+        }
+
+        if (now < osmRateLimitCooldownUntil) {
+            return null
+        }
+
         return try {
+            val elapsed = now - lastOsmRequestTime
+            if (elapsed < 1000L) {
+                Thread.sleep(1000L - elapsed)
+            }
+            lastOsmRequestTime = System.currentTimeMillis()
+
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
                     "&accept-language=$language&zoom=18&addressdetails=1"
@@ -652,6 +835,12 @@ class LocationManager(private val context: Context) {
             conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
             conn.readTimeout = 6000
+
+            if (conn.responseCode == 429) {
+                osmRateLimitCooldownUntil = System.currentTimeMillis() + 30_000L
+                TelemetryLogger.log("OSM", "Nominatim reverse geocode HTTP 429; 30s cooldown active")
+                return null
+            }
 
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
@@ -662,43 +851,23 @@ class LocationManager(private val context: Context) {
 
                 val rawRoad = str("road") ?: str("street") ?: str("pedestrian") ?: str("footway")
                 val houseNum = str("house_number")
-                var rawRef = str("ref")
+                val rawRef = str("ref")
 
-                // Clean up road references like "Krajowa 52" -> "DK 52", "Wojewódzka 948" -> "DW 948"
-                var cleanedRoad = rawRoad
-                if (cleanedRoad != null) {
-                    if (cleanedRoad.startsWith("Krajowa ", ignoreCase = true)) {
-                        val num = cleanedRoad.substring(8).trim()
-                        cleanedRoad = "DK $num"
-                    } else if (cleanedRoad.startsWith("Droga Krajowa ", ignoreCase = true)) {
-                        val num = cleanedRoad.substring(14).trim()
-                        cleanedRoad = "DK $num"
-                    } else if (cleanedRoad.startsWith("Wojewódzka ", ignoreCase = true)) {
-                        val num = cleanedRoad.substring(11).trim()
-                        cleanedRoad = "DW $num"
-                    }
-                }
+                // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
+                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum)
 
-                // If road is a major numbered highway (e.g. "DK 52"), don't append random adjacent house numbers to highway name
-                val isHighway = cleanedRoad != null && (cleanedRoad.startsWith("DK ") || cleanedRoad.startsWith("DW ") || cleanedRoad.startsWith("A") || cleanedRoad.startsWith("S"))
-
-                val streetName = when {
-                    cleanedRoad != null && houseNum != null && !isHighway -> "$cleanedRoad $houseNum"
-                    cleanedRoad != null -> cleanedRoad
-                    houseNum != null -> houseNum
-                    else -> null
-                }
-
-                OsmPlaceResult(
+                val osmResult = OsmPlaceResult(
                     city = str("city") ?: str("town") ?: str("village") ?: str("hamlet") ?: str("suburb"),
-                    street = streetName,
+                    street = normalizedStreet,
                     roadRef = rawRef,
-                    municipality = str("municipality"),
+                    municipality = str("municipality") ?: str("commune") ?: str("gmina"),
                     county = str("county"),
                     state = str("state"),
                     country = str("country"),
                     countryCode = str("country_code")
                 )
+                osmResponseCache[osmKey] = CachedOsmResult(System.currentTimeMillis(), osmResult)
+                osmResult
             } else null
         } catch (_: Exception) {
             null
@@ -785,12 +954,7 @@ class LocationManager(private val context: Context) {
         val cityName = locality ?: subLocality ?: subAdminArea ?: "Unknown City"
         val thoroughfare = this.thoroughfare
         val houseNum = this.subThoroughfare
-        val streetName = when {
-            !thoroughfare.isNullOrBlank() && !houseNum.isNullOrBlank() -> "$thoroughfare $houseNum"
-            !thoroughfare.isNullOrBlank() -> thoroughfare
-            !houseNum.isNullOrBlank() -> houseNum
-            else -> null
-        }
+        val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum)
         val gminaName = subLocality
         val powiatName = subAdminArea
         val stateName = adminArea ?: "Unknown Region"
