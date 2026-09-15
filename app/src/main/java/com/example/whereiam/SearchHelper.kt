@@ -134,34 +134,34 @@ object SearchHelper {
         }
 
         val hasDigits = trimmed.any { it.isDigit() }
-        val isStreetQuery = trimmed.startsWith("ul", ignoreCase = true) || hasDigits
+        val isExplicitStreet = trimmed.startsWith("ul.", ignoreCase = true) ||
+                trimmed.startsWith("ul ", ignoreCase = true) ||
+                trimmed.startsWith("ulica", ignoreCase = true) ||
+                trimmed.startsWith("aleja", ignoreCase = true) ||
+                trimmed.startsWith("al.", ignoreCase = true) ||
+                trimmed.startsWith("pl.", ignoreCase = true) ||
+                trimmed.startsWith("plac", ignoreCase = true)
+
         val cityAvailable = !currentCity.isNullOrBlank() && !trimmed.contains(currentCity, ignoreCase = true)
 
-        // If the query looks like a street or house number and we have a current locality,
-        // search in the current locality first to avoid resolving "Zielna" to Suwałki instead of Czaniec!
-        if (cityAvailable && (isStreetQuery || trimmed.length <= 15)) {
+        // 1. If user explicitly specified a street prefix and didn't mention a city, prioritize current locality
+        if (cityAvailable && isExplicitStreet) {
             val localAddress = "$trimmed, $currentCity"
             tryGeocoder(localAddress)
-            if (results.isEmpty()) {
-                tryNominatim(localAddress)
-            }
+            tryNominatim(localAddress)
         }
 
-        // Search global query if nothing found locally or if query doesn't match local context
-        if (results.isEmpty()) {
-            tryGeocoder(trimmed)
-            if (results.isEmpty()) {
-                tryNominatim(trimmed)
-            }
+        // 2. Search exact query globally (e.g. other cities "Kraków", "Bielsko-Biała", "Warszawa", or addresses with city)
+        tryGeocoder(trimmed)
+        if (results.size < 5) {
+            tryNominatim(trimmed)
         }
 
-        // Fallback: if user typed something generic and we haven't tried with city yet
-        if (results.isEmpty() && cityAvailable) {
-            val fallbackLocal = "$trimmed, $currentCity"
-            tryGeocoder(fallbackLocal)
-            if (results.isEmpty()) {
-                tryNominatim(fallbackLocal)
-            }
+        // 3. If query contains street digits (e.g. "Zielona 92") and was not found globally, try in current locality
+        if (results.isEmpty() && cityAvailable && hasDigits) {
+            val localAddress = "$trimmed, $currentCity"
+            tryGeocoder(localAddress)
+            tryNominatim(localAddress)
         }
 
         return@withContext results
