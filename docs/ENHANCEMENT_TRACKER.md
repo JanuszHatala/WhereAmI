@@ -13,9 +13,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 2** | Geocoding Stability, Road Names & Boundaries | 7 | 7 | 0 | 0 |
 | **Phase 3** | Map Controls, Overlays & Stationary Bearing | 5 | 5 | 0 | 0 |
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
-| **Round 2** | Field Testing (2026-09-15) Enhancements | 29 | 29 | 0 | 0 |
+| **Round 2** | Field Testing (2026-09-15) Enhancements | 32 | 32 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 4 | 0 | 0 | 4 |
-| **Total** | | **57** | **53** | **0** | **4** |
+| **Total** | | **60** | **56** | **0** | **4** |
 
 ---
 
@@ -105,6 +105,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **FT2-27** | Freemap Outdoor Hi-DPI (@2x) PTTK Trail Layer. | `OsmMapView.kt` | **Completed** | Added `FREEMAP_OUTDOOR` base layer using 512x512 `@2x` tiles from `outdoor.tiles.freemap.sk`. Renders official Polish PTTK colored trail lines (Red, Blue, Green, Yellow, Black) with native shaded relief, elevation contours, and Polish peak labels. Auto-recommended in Hiking profile. |
 | **FT2-28** | Map Label Font scaling calibration (0.90x–1.75x). | `OsmMapView.kt` | **Completed** | Calibrated font scale presets down from blurry 3.4x to realistic, sharp factors (0.90x, 1.0x, 1.25x, 1.50x, 1.75x). Added educational guidance in Map Settings regarding raster vs vector scaling. |
 | **FT2-29** | Live sharing host visitor counter on main screen. | `MainActivity.kt` | **Completed** | Main screen `LocalityCard` active satellite chip displays real-time server-tracked view count (`📡 LIVE (12m • 👁️ 3)` or `⏸️ PAUSED (12m • 👁️ 3)`). |
+| **FT2-30** | Move Stop Live Sharing button above Pause button. | `MainActivity.kt` | **Completed** | Repositioned Master `Stop Live Sharing` button immediately above `Pause Entire Sharing`, placing critical session termination directly within reach without scrolling past advanced controls. |
+| **FT2-31** | Responsive Live Sharing session title row with 40-char limit & permanent Edit button. | `MainActivity.kt`, `LiveSharingManager.kt` | **Completed** | Title text is assigned `weight(1f)` with ellipsis; Edit pen button is fixed 36x36 dp with slate background, guaranteed visible and clickable regardless of title length. Enforced 40-character limit with `${len}/40` counter in both edit and create views. |
+| **FT2-32** | Combine Status, Views counter, and Time/Ticker into a unified responsive row. | `MainActivity.kt` | **Completed** | Rearranged header: `[ACTIVE]`/`[PAUSED]` chip and `[👥 X views]` chip paired alongside live countdown/elapsed ticker on a single responsive row, eliminating redundant label text and preventing horizontal clipping. |
 
 ---
 
