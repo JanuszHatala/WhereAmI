@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Where Am I</string>
+    <string name="freemap_outdoor_description">Kolory szlaków PTTK (czerwony, niebieski, zielony, żółty, czarny), cieniowanie rzeźby terenu, poziomice i schroniska górskie (Europa Środkowa) • Hi-DPI 512px</string>
+</resources>

@@ -167,7 +167,7 @@ app.post('/api/sessions/:id/points', (req, res) => {
   if (!session) {
     session = {
       id,
-      title: 'Live Track',
+      title: req.body.title || 'Live Session',
       createdAt: Date.now(),
       expiresAt: 0,
       trailVisible: true,
@@ -178,6 +178,11 @@ app.post('/api/sessions/:id/points', (req, res) => {
       points: []
     };
     sessions.set(id, session);
+  }
+
+  // Update title if provided (keeps server in sync with app renames via periodic sync)
+  if (req.body.title && typeof req.body.title === 'string' && req.body.title.trim()) {
+    session.title = req.body.title.trim();
   }
 
   if (staticId) {

@@ -5,10 +5,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.whereiam"
+    namespace = "janush.tech.whereami"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.whereiam"
+        applicationId = "janush.tech.whereami"
         minSdk = 24
         targetSdk = 36
         versionCode = 37
