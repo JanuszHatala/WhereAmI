@@ -20,4 +20,4 @@ server/sessions.json
 server/data/
 server/npm-debug.log*
 
-phone_diagnostics/
+phone_diagnostics*/

@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="pref_show_borders" value="true" />
+    <boolean name="pref_keep_screen_on" value="true" />
+    <string name="pref_locality_card_style">NORMAL</string>
+    <boolean name="pref_show_heat_map" value="false" />
+    <string name="pref_map_orientation_mode">COURSE_UP</string>
+</map>
