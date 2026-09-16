@@ -8,7 +8,7 @@ This document establishes the mandatory architectural standards, development wor
 
 - **Project Name**: WhereAmI
 - **Android Root Directory**: `WhereIAm`
-- **Android Application ID / Package**: `com.example.whereiam`
+- **Android Application ID / Package**: `janush.tech.whereami`
 - **Companion Web/Sync Backend**: Node.js / Express in `server/`
 
 ### The Core Value Proposition (Non-Negotiable)

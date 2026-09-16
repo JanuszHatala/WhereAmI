@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="city_pl">Czaniec</string>
+    <string name="country">Polska</string>
+    <string name="last_good_gmina_en">gmina Porąbka</string>
+    <string name="state_en">Województwo śląskie</string>
+    <string name="last_good_roadref_pl"></string>
+    <string name="last_good_country_pl">Polska</string>
+    <float name="accuracy" value="6.777" />
+    <string name="country_native">Poland</string>
+    <string name="last_good_powiat_native">powiat bielski</string>
+    <string name="loc_gmina_czaniec">gmina Porąbka</string>
+    <string name="loc_gmina_chocznia">gmina Andrychów</string>
+    <string name="loc_gmina_wadowice">gmina Wadowice</string>
+    <string name="state">Województwo śląskie</string>
+    <float name="lat" value="49.850803" />
+    <string name="country_pl">Polska</string>
+    <string name="last_good_city_native">Czaniec</string>
+    <float name="lng" value="19.285105" />
+    <long name="update_trigger" value="1785601929201" />
+    <float name="last_good_lat" value="49.850803" />
+    <string name="country_en">Poland</string>
+    <string name="last_good_powiat_pl">powiat bielski</string>
+    <string name="loc_gmina_roczyny">gmina Andrychów</string>
+    <string name="city_en">Czaniec</string>
+    <float name="last_good_lng" value="19.285114" />
+    <string name="last_good_city_en">Czaniec</string>
+    <string name="loc_gmina_bielsko-biała">gmina Porąbka</string>
+    <string name="loc_gmina_andrychów">gmina Andrychów</string>
+    <string name="last_good_street_en">Zielona 92</string>
+    <string name="loc_gmina_inwałd">gmina Andrychów</string>
+    <string name="display_language">NATIVE</string>
+    <string name="loc_gmina_kobiernice">gmina Porąbka</string>
+    <string name="city">Czaniec</string>
+    <boolean name="is_tracking" value="false" />
+    <string name="state_native">Województwo śląskie</string>
+    <string name="last_good_state_en">województwo śląskie</string>
+    <float name="speed" value="0.0" />
+    <string name="last_good_gmina_pl">gmina Porąbka</string>
+    <string name="last_good_country_native">Poland</string>
+    <string name="last_good_gmina_native">gmina Porąbka</string>
+    <string name="hierarchy_en">pow. bielski • woj. śląskie</string>
+    <string name="city_native">Czaniec</string>
+    <string name="last_good_cc_pl">PL</string>
+    <string name="last_good_country_en">Poland</string>
+    <string name="loc_gmina_bulowice">gmina Kęty</string>
+    <string name="last_good_city_pl">Czaniec</string>
+    <string name="hierarchy_pl">pow. bielski • woj. śląskie</string>
+    <string name="last_good_roadref_native"></string>
+    <string name="last_good_roadref_en"></string>
+    <string name="last_good_state_native">województwo śląskie</string>
+    <string name="last_good_street_pl">Zielona 92</string>
+    <string name="last_good_cc_en">PL</string>
+    <string name="hierarchy_native">pow. bielski • woj. śląskie</string>
+    <string name="loc_gmina_wieprz">gmina Wieprz</string>
+    <string name="state_pl">Województwo śląskie</string>
+    <string name="last_good_street_native">Zielona 92</string>
+    <string name="time">08:47</string>
+    <string name="last_good_state_pl">województwo śląskie</string>
+    <string name="last_good_powiat_en">powiat bielski</string>
+    <string name="last_good_cc_native">PL</string>
+</map>

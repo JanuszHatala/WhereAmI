@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="font_scale">MAXIMUM</string>
+    <boolean name="hiking_overlay" value="false" />
+    <string name="base_layer">STANDARD</string>
+</map>
