@@ -66,17 +66,32 @@ enum class MapOrientationMode {
 }
 
 enum class MapFontScale(val label: String, val scaleFactor: Float) {
-    COMPACT("Compact (100%)", 1.0f),
-    NORMAL("Normal (170%)", 1.70f),
-    LARGE("Large (220%)", 2.20f),
-    EXTRA_LARGE("Extra Large (280%)", 2.80f),
-    MAXIMUM("Huge (340%)", 3.40f)
+    COMPACT("Compact (90%)", 0.90f),
+    NORMAL("Standard (100% - Sharpest)", 1.0f),
+    LARGE("Medium (125%)", 1.25f),
+    EXTRA_LARGE("Large (150%)", 1.50f),
+    MAXIMUM("Extra Large (175%)", 1.75f)
 }
 
 enum class MapBaseLayer(val label: String) {
     STANDARD("Standard OSM"),
+    FREEMAP_OUTDOOR("Freemap Outdoor (PTTK Szlaki & Hi-DPI)"),
     TOPO("Topographic (OpenTopo)"),
     SATELLITE("Satellite (Esri)")
+}
+
+private val FreemapOutdoorSource = object : OnlineTileSourceBase(
+    "FreemapOutdoor2x",
+    0, 19, 512, ".jpeg",
+    arrayOf("https://outdoor.tiles.freemap.sk/"),
+    "© Freemap Slovakia, OpenStreetMap contributors"
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        val zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
+        val x = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
+        val y = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
+        return "${getBaseUrl()}$zoom/$x/$y@2x"
+    }
 }
 
 private val OpenTopoMapSource = XYTileSource(
@@ -205,12 +220,20 @@ fun OsmMapView(
         val map = mapView ?: return@LaunchedEffect
         val tileSource = when (baseLayer) {
             MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
+            MapBaseLayer.FREEMAP_OUTDOOR -> FreemapOutdoorSource
             MapBaseLayer.TOPO -> OpenTopoMapSource
             MapBaseLayer.SATELLITE -> EsriSatelliteSource
         }
         map.setTileSource(tileSource)
         prefs.edit().putString("base_layer", baseLayer.name).apply()
         map.invalidate()
+    }
+
+    // Auto-recommend Freemap Outdoor when switching to Hiking profile if base layer is still STANDARD
+    LaunchedEffect(activityProfile) {
+        if (activityProfile == ActivityProfile.HIKING && baseLayer == MapBaseLayer.STANDARD) {
+            baseLayer = MapBaseLayer.FREEMAP_OUTDOOR
+        }
     }
 
     // Dynamic Label / Font Scale
@@ -525,6 +548,7 @@ fun OsmMapView(
                 MapView(ctx).apply {
                     val initialTileSource = when (baseLayer) {
                         MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
+                        MapBaseLayer.FREEMAP_OUTDOOR -> FreemapOutdoorSource
                         MapBaseLayer.TOPO -> OpenTopoMapSource
                         MapBaseLayer.SATELLITE -> EsriSatelliteSource
                     }
@@ -967,11 +991,21 @@ private fun MapSettingsDialog(
                             )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = layer.label,
-                            fontSize = 14.sp,
-                            color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1)
-                        )
+                        Column {
+                            Text(
+                                text = layer.label,
+                                fontSize = 14.sp,
+                                color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1),
+                                fontWeight = if (layer == currentBaseLayer) FontWeight.Bold else FontWeight.Normal
+                            )
+                            if (layer == MapBaseLayer.FREEMAP_OUTDOOR) {
+                                Text(
+                                    text = "Kolory szlaków PTTK (czerwony, niebieski, zielony, żółty, czarny) • Hi-DPI 512px",
+                                    fontSize = 11.sp,
+                                    color = ComposeColor(0xFF10B981)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1065,7 +1099,7 @@ private fun MapSettingsDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Raster map tiles (OpenTopo & OSM) are pre-rendered bitmap images. When rotating map in COURSE_UP (AUTO), text inside the bitmap rotates along with the map. If you prefer upright labels, keep North-Up mode.",
+                        text = "Map tiles are pre-rendered bitmap images. Scaling above Standard stretches raster pixels. For razor-sharp labels and official PTTK trail colors, select 'Freemap Outdoor (PTTK Szlaki & Hi-DPI)'. In COURSE_UP mode, bitmap labels rotate with the map; use North-Up for upright labels.",
                         fontSize = 11.sp,
                         color = ComposeColor(0xFF94A3B8),
                         lineHeight = 15.sp
