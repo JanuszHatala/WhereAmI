@@ -641,7 +641,10 @@ class LiveSharingManager private constructor(private val context: Context) {
                     memoryPointsQueue.removeAll { it.timestamp in postedTimestamps }
                 }
                 prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
-                _currentSession.value = session.copy(lastSyncTime = now, pendingPointsCount = memoryPointsQueue.size)
+                _currentSession.value = _currentSession.value?.copy(
+                    lastSyncTime = now, 
+                    pendingPointsCount = memoryPointsQueue.size
+                )
             }
         }
     }
