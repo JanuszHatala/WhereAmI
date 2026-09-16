@@ -3940,7 +3940,7 @@ private fun LocalityCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Live Sharing Satellite Icon (Shown immediately to the left of Google Maps when turned ON)
+                        // Live Sharing Satellite Icon (Permanently visible immediately to the left of Google Maps)
                         if (liveSession?.isActive == true) {
                             Surface(
                                 onClick = onShowLiveShare,
@@ -3960,14 +3960,28 @@ private fun LocalityCard(
                                     )
                                     if (liveTimerText.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(3.dp))
+                                        val viewsSuffix = if (liveSession.viewCount > 0) " • 👁️ ${liveSession.viewCount}" else ""
                                         Text(
-                                            text = liveTimerText,
+                                            text = "$liveTimerText$viewsSuffix",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
                                         )
                                     }
                                 }
+                            }
+                        } else {
+                            // Permanent Satellite Icon when stopped / inactive (1-tap to start)
+                            IconButton(
+                                onClick = onShowLiveShare,
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SatelliteAlt,
+                                    contentDescription = "Start Live Sharing",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
 
@@ -4165,7 +4179,7 @@ private fun LocalityCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Live Sharing Satellite Icon (Shown immediately to the left of Google Maps when turned ON)
+                        // Live Sharing Satellite Icon (Permanently visible immediately to the left of Google Maps)
                         if (liveSession?.isActive == true) {
                             Surface(
                                 onClick = onShowLiveShare,
@@ -4185,14 +4199,31 @@ private fun LocalityCard(
                                     )
                                     if (liveTimerText.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(5.dp))
+                                        val viewsSuffix = if (liveSession.viewCount > 0) " • 👁️ ${liveSession.viewCount}" else ""
                                         Text(
-                                            text = liveTimerText,
+                                            text = "$liveTimerText$viewsSuffix",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
                                         )
                                     }
                                 }
+                            }
+                        } else {
+                            // Permanent Satellite Icon when stopped / inactive (1-tap to start)
+                            IconButton(
+                                onClick = onShowLiveShare,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1E293B))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SatelliteAlt,
+                                    contentDescription = "Start Live Sharing",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
 
