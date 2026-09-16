@@ -13,9 +13,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 2** | Geocoding Stability, Road Names & Boundaries | 7 | 7 | 0 | 0 |
 | **Phase 3** | Map Controls, Overlays & Stationary Bearing | 5 | 5 | 0 | 0 |
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
-| **Round 2** | Field Testing (2026-09-15) Enhancements | 25 | 25 | 0 | 0 |
+| **Round 2** | Field Testing (2026-09-15) Enhancements | 29 | 29 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 4 | 0 | 0 | 4 |
-| **Total** | | **53** | **49** | **0** | **4** |
+| **Total** | | **57** | **53** | **0** | **4** |
 
 ---
 
@@ -101,6 +101,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **FT2-23** | Stats tab UI polish: mismatched card heights and frequency bars. | `MainActivity.kt` | **Completed** | Equalized summary card heights using `IntrinsicSize.Min` + `fillMaxHeight()`, and added visual frequency progress bars for visited localities. |
 | **FT2-24** | Places & Trips UI polish: crowded multi-select action bar and duplicate header. | `MainActivity.kt` | **Completed** | Removed redundant `Trips (21)` subheader; redesigned multi-select bar with `[N selected ✕]`, `[Merge]`, `[Fit Map]`, and `[Select All / Deselect All]`. |
 | **FT2-25** | Tourist trail marker coloring on OSM map. | `OsmMapView.kt` | **Completed** | Waymarked Trails Hiking transparent overlay renders official tourist trail colors (red, blue, green, yellow, black) with peak, pass, and route markers directly over any base map layer. |
+| **FT2-26** | Permanent Satellite Live Share icon on LocalityCard. | `MainActivity.kt` | **Completed** | Satellite icon is permanently visible immediately to the left of Google Maps button in both Compact and Normal modes. When stopped, displays cyan icon button to start sharing; when active, displays expanded live timer + view count chip. |
+| **FT2-27** | Freemap Outdoor Hi-DPI (@2x) PTTK Trail Layer. | `OsmMapView.kt` | **Completed** | Added `FREEMAP_OUTDOOR` base layer using 512x512 `@2x` tiles from `outdoor.tiles.freemap.sk`. Renders official Polish PTTK colored trail lines (Red, Blue, Green, Yellow, Black) with native shaded relief, elevation contours, and Polish peak labels. Auto-recommended in Hiking profile. |
+| **FT2-28** | Map Label Font scaling calibration (0.90x–1.75x). | `OsmMapView.kt` | **Completed** | Calibrated font scale presets down from blurry 3.4x to realistic, sharp factors (0.90x, 1.0x, 1.25x, 1.50x, 1.75x). Added educational guidance in Map Settings regarding raster vs vector scaling. |
+| **FT2-29** | Live sharing host visitor counter on main screen. | `MainActivity.kt` | **Completed** | Main screen `LocalityCard` active satellite chip displays real-time server-tracked view count (`📡 LIVE (12m • 👁️ 3)` or `⏸️ PAUSED (12m • 👁️ 3)`). |
 
 ---
 
