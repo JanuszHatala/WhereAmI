@@ -468,7 +468,7 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Render Pinned Locality Boundary Polygon (Point 8: Cyan dashed styling)
+    // Render Pinned Locality Boundary Polygon (Red-ish dashed styling, distinct from sky-blue GPS boundary)
     LaunchedEffect(pinnedBoundaryPoints) {
         val map = mapView ?: return@LaunchedEffect
         pinnedBoundaryPolygon?.let { map.overlays.remove(it) }
@@ -476,10 +476,10 @@ fun OsmMapView(
 
         if (pinnedBoundaryPoints != null && pinnedBoundaryPoints.size >= 3) {
             val poly = org.osmdroid.views.overlay.Polygon(map).apply {
-                outlinePaint.color = Color.parseColor("#06B6D4") // Cyan border
+                outlinePaint.color = Color.parseColor("#EF4444") // Coral/Crimson Red border
                 outlinePaint.strokeWidth = 6f
                 outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
-                fillPaint.color = Color.parseColor("#1A06B6D4")  // Subtle cyan tint
+                fillPaint.color = Color.parseColor("#20EF4444")  // Subtle red tint
                 points = pinnedBoundaryPoints
             }
             map.overlays.add(0, poly)
