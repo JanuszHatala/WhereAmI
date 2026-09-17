@@ -204,6 +204,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // Selected Saved Place Details Modal State
     var selectedSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
+    var editingSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
@@ -485,6 +486,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             var tripSearchQuery by remember { mutableStateOf("") }
             var selectedActivityFilter by remember { mutableStateOf<ActivityProfile?>(null) }
             var selectedDateFilter by remember { mutableStateOf("ALL") } // ALL, TODAY, WEEK, MONTH
+            var tripGroupBy by remember { mutableStateOf(TripGroupBy.DATE) }
+            var collapsedGroupIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+            var expandedPauseTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
             // Calendar-accurate timestamp boundaries for local time filters
             val (startOfTodayMs, startOfWeekMs, startOfMonthMs) = remember {
@@ -536,6 +540,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             }
 
+            val tripGroups = remember(filteredTrips, tripGroupBy) {
+                TripGroupingHelper.groupTrips(filteredTrips, tripGroupBy)
+            }
+
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = Color(0xFF0F172A)
@@ -555,7 +563,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Places & Trips",
+                            text = "Trips & Places",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -812,6 +820,20 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 }
                                                 Spacer(modifier = Modifier.width(4.dp))
 
+                                                // Edit
+                                                IconButton(
+                                                    onClick = { editingSavedPlace = place },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit Saved Place",
+                                                        tint = Color(0xFFFBBF24),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(4.dp))
+
                                                 // Delete
                                                 IconButton(
                                                     onClick = { viewModel.deleteSavedPlace(place.id) },
@@ -1035,7 +1057,43 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Group By Chips Row (None, Date, Activity)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Group by:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            listOf(
+                                TripGroupBy.DATE to "Date",
+                                TripGroupBy.ACTIVITY to "Activity",
+                                TripGroupBy.NONE to "None"
+                            ).forEach { (mode, label) ->
+                                val selected = tripGroupBy == mode
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { tripGroupBy = mode },
+                                    label = { Text(label, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFF8B5CF6),
+                                        selectedLabelColor = Color.White,
+                                        containerColor = Color(0xFF1E293B),
+                                        labelColor = Color.LightGray
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         // Multi-Select Action Bar (Fit Map, Merge, Select All / Deselect All)
                         val allFilteredSelected = filteredTrips.isNotEmpty() && filteredTrips.all { selectedTripIds.contains(it.id) }
@@ -1106,14 +1164,39 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
                             } else {
-                                if (filteredTrips.size != savedTrips.size) {
-                                    Text(
-                                        text = "Filtered: ${filteredTrips.size} of ${savedTrips.size}",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF94A3B8)
-                                    )
-                                } else {
-                                    Spacer(modifier = Modifier.width(1.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (filteredTrips.size != savedTrips.size) {
+                                        Text(
+                                            text = "Filtered: ${filteredTrips.size} of ${savedTrips.size}",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF94A3B8)
+                                        )
+                                    }
+                                    val filteredTripsWithPauses = filteredTrips.filter { it.pauses.isNotEmpty() }
+                                    if (filteredTripsWithPauses.isNotEmpty()) {
+                                        val allPausesExpanded = filteredTripsWithPauses.all { expandedPauseTripIds.contains(it.id) }
+                                        TextButton(
+                                            onClick = {
+                                                expandedPauseTripIds = if (allPausesExpanded) {
+                                                    emptySet()
+                                                } else {
+                                                    filteredTripsWithPauses.map { it.id }.toSet()
+                                                }
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(26.dp)
+                                        ) {
+                                            Text(
+                                                text = if (allPausesExpanded) "Collapse Pauses" else "Expand Pauses",
+                                                color = Color(0xFFF59E0B),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
@@ -1159,210 +1242,275 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     .weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(filteredTrips) { trip ->
-                                    val isSelected = selectedTripIds.contains(trip.id)
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { viewModel.toggleTripSelection(trip.id) },
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) Color(0xFF1E3A5F) else Color(0xFF1E293B)
-                                        ),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                tripGroups.forEach { group ->
+                                    if (tripGroupBy != TripGroupBy.NONE) {
+                                        item(key = "header_${group.id}") {
+                                            val isCollapsed = collapsedGroupIds.contains(group.id)
+                                            Surface(
+                                                onClick = {
+                                                    collapsedGroupIds = if (isCollapsed) {
+                                                        collapsedGroupIds - group.id
+                                                    } else {
+                                                        collapsedGroupIds + group.id
+                                                    }
+                                                },
+                                                color = Color(0xFF0F172A),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp, bottom = 2.dp)
                                             ) {
-                                                val dateStr = DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
-                                                val timeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(trip.startTime))
-                                                val defaultTitle = "$dateStr, $timeStr"
-                                                val displayTitle = if (trip.title.isNotBlank()) trip.title else defaultTitle
-
-                                                Checkbox(
-                                                    checked = isSelected,
-                                                    onCheckedChange = { viewModel.toggleTripSelection(trip.id) },
-                                                    colors = CheckboxDefaults.colors(
-                                                        checkedColor = Color(0xFF38BDF8),
-                                                        uncheckedColor = Color.LightGray
-                                                    )
-                                                )
-
-                                                Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
                                                     Text(
-                                                        text = displayTitle,
-                                                        color = Color.White,
+                                                        text = "${if (isCollapsed) "▶" else "▼"} ${group.title.uppercase(Locale.getDefault())} (${group.count})",
+                                                        fontSize = 12.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        fontSize = 14.sp
+                                                        color = Color(0xFF38BDF8)
                                                     )
-                                                    if (trip.title.isNotBlank()) {
-                                                        Text(
-                                                            text = defaultTitle,
-                                                            color = Color(0xFF64748B),
-                                                            fontSize = 11.sp
-                                                        )
-                                                    }
-                                                }
-
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    IconButton(
-                                                        onClick = {
-                                                            GpxExporter.shareGpx(context, trip)
-                                                        },
-                                                        modifier = Modifier.size(28.dp)
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Default.Share,
-                                                            contentDescription = "Export GPX",
-                                                            tint = Color(0xFF10B981),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    IconButton(
-                                                        onClick = {
-                                                            tripToRename = trip
-                                                            renameInputText = if (trip.title.isNotBlank()) trip.title else defaultTitle
-                                                        },
-                                                        modifier = Modifier.size(28.dp)
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Default.Edit,
-                                                            contentDescription = "Rename",
-                                                            tint = Color(0xFF38BDF8),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    IconButton(
-                                                        onClick = { viewModel.deleteTrip(trip.id) },
-                                                        modifier = Modifier.size(28.dp)
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Default.Delete,
-                                                            contentDescription = "Delete",
-                                                            tint = Color(0xFFF87171),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
+                                                    Text(
+                                                        text = if (isCollapsed) "Tap to expand" else "Tap to collapse",
+                                                        fontSize = 10.sp,
+                                                        color = Color(0xFF64748B)
+                                                    )
                                                 }
                                             }
+                                        }
+                                    }
 
-                                            var showProfileMenu by remember { mutableStateOf(false) }
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                    val isGroupCollapsed = tripGroupBy != TripGroupBy.NONE && collapsedGroupIds.contains(group.id)
+                                    if (!isGroupCollapsed) {
+                                        items(group.trips, key = { it.id }) { trip ->
+                                            val isSelected = selectedTripIds.contains(trip.id)
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { viewModel.toggleTripSelection(trip.id) },
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (isSelected) Color(0xFF1E3A5F) else Color(0xFF1E293B)
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
                                             ) {
-                                                val distKm = trip.distanceMeters / 1000.0
-                                                Text(
-                                                    text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
-                                                    color = Color(0xFF38BDF8),
-                                                    fontSize = 12.sp,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp)
-                                                )
-
-                                                Box {
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = Color(0xFF0F172A),
-                                                        modifier = Modifier.clickable { showProfileMenu = true }
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            Text(
-                                                                text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
-                                                                fontSize = 11.sp,
-                                                                fontWeight = FontWeight.SemiBold,
-                                                                color = Color(0xFF34D399),
-                                                                maxLines = 1,
-                                                                softWrap = false
-                                                            )
-                                                            Icon(
-                                                                Icons.Default.ArrowDropDown,
-                                                                contentDescription = "Change profile",
-                                                                tint = Color(0xFF94A3B8),
-                                                                modifier = Modifier.size(16.dp)
-                                                            )
-                                                        }
-                                                    }
-
-                                                    DropdownMenu(
-                                                        expanded = showProfileMenu,
-                                                        onDismissRequest = { showProfileMenu = false },
-                                                        modifier = Modifier.background(Color(0xFF1E293B))
-                                                    ) {
-                                                        ActivityProfile.values().forEach { profile ->
-                                                            DropdownMenuItem(
-                                                                text = {
-                                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                                        Text(profile.iconEmoji, fontSize = 14.sp)
-                                                                        Spacer(modifier = Modifier.width(8.dp))
-                                                                        Text(profile.displayName, color = Color.White, fontSize = 13.sp)
-                                                                    }
-                                                                },
-                                                                onClick = {
-                                                                    showProfileMenu = false
-                                                                    viewModel.updateTripActivityProfile(trip.id, profile)
-                                                                }
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            if (trip.placesVisited.isNotEmpty()) {
-                                                val placesSummary = trip.placesVisited.joinToString(" → ") { it.placeName }
-                                                Text(
-                                                    text = "Route: $placesSummary",
-                                                    color = Color(0xFFCBD5E1),
-                                                    fontSize = 11.sp,
-                                                    maxLines = 2,
-                                                    modifier = Modifier.padding(top = 4.dp)
-                                                )
-                                            }
-
-                                            // Pauses & Trip Splitting
-                                            if (trip.pauses.isNotEmpty()) {
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                Text(
-                                                    text = "⏸️ Rest Pauses (${trip.pauses.size}):",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = Color(0xFFF59E0B)
-                                                )
-                                                trip.pauses.forEachIndexed { pauseIdx, pause ->
-                                                    val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pause.startTime))
-                                                    val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                                Column(modifier = Modifier.padding(12.dp)) {
                                                     Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(vertical = 2.dp)
-                                                            .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
-                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        modifier = Modifier.fillMaxWidth(),
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Text(
-                                                            text = "#${pauseIdx + 1} at $pauseTimeStr (${durMin} min rest)",
-                                                            fontSize = 11.sp,
-                                                            color = Color(0xFFE2E8F0)
+                                                        val dateStr = DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
+                                                        val timeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(trip.startTime))
+                                                        val defaultTitle = "$dateStr, $timeStr"
+                                                        val displayTitle = if (trip.title.isNotBlank()) trip.title else defaultTitle
+
+                                                        Checkbox(
+                                                            checked = isSelected,
+                                                            onCheckedChange = { viewModel.toggleTripSelection(trip.id) },
+                                                            colors = CheckboxDefaults.colors(
+                                                                checkedColor = Color(0xFF38BDF8),
+                                                                uncheckedColor = Color.LightGray
+                                                            )
                                                         )
-                                                        TextButton(
+
+                                                        Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                                                            Text(
+                                                                text = displayTitle,
+                                                                color = Color.White,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 14.sp
+                                                            )
+                                                            if (trip.title.isNotBlank()) {
+                                                                Text(
+                                                                    text = defaultTitle,
+                                                                    color = Color(0xFF64748B),
+                                                                    fontSize = 11.sp
+                                                                )
+                                                            }
+                                                        }
+
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            IconButton(
+                                                                onClick = {
+                                                                    GpxExporter.shareGpx(context, trip)
+                                                                },
+                                                                modifier = Modifier.size(28.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.Share,
+                                                                    contentDescription = "Export GPX",
+                                                                    tint = Color(0xFF10B981),
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            IconButton(
+                                                                onClick = {
+                                                                    tripToRename = trip
+                                                                    renameInputText = if (trip.title.isNotBlank()) trip.title else defaultTitle
+                                                                },
+                                                                modifier = Modifier.size(28.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.Edit,
+                                                                    contentDescription = "Rename",
+                                                                    tint = Color(0xFF38BDF8),
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            IconButton(
+                                                                onClick = { viewModel.deleteTrip(trip.id) },
+                                                                modifier = Modifier.size(28.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.Delete,
+                                                                    contentDescription = "Delete",
+                                                                    tint = Color(0xFFF87171),
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+
+                                                    var showProfileMenu by remember { mutableStateOf(false) }
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        val distKm = trip.distanceMeters / 1000.0
+                                                        Text(
+                                                            text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
+                                                            color = Color(0xFF38BDF8),
+                                                            fontSize = 12.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp)
+                                                        )
+
+                                                        Box {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(8.dp),
+                                                                color = Color(0xFF0F172A),
+                                                                modifier = Modifier.clickable { showProfileMenu = true }
+                                                            ) {
+                                                                Row(
+                                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Text(
+                                                                        text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                        color = Color(0xFF34D399),
+                                                                        maxLines = 1,
+                                                                        softWrap = false
+                                                                    )
+                                                                    Icon(
+                                                                        Icons.Default.ArrowDropDown,
+                                                                        contentDescription = "Change profile",
+                                                                        tint = Color(0xFF94A3B8),
+                                                                        modifier = Modifier.size(16.dp)
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            DropdownMenu(
+                                                                expanded = showProfileMenu,
+                                                                onDismissRequest = { showProfileMenu = false },
+                                                                modifier = Modifier.background(Color(0xFF1E293B))
+                                                            ) {
+                                                                ActivityProfile.values().forEach { profile ->
+                                                                    DropdownMenuItem(
+                                                                        text = {
+                                                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                                Text(profile.iconEmoji, fontSize = 14.sp)
+                                                                                Spacer(modifier = Modifier.width(8.dp))
+                                                                                Text(profile.displayName, color = Color.White, fontSize = 13.sp)
+                                                                            }
+                                                                        },
+                                                                        onClick = {
+                                                                            showProfileMenu = false
+                                                                            viewModel.updateTripActivityProfile(trip.id, profile)
+                                                                        }
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (trip.placesVisited.isNotEmpty()) {
+                                                        val placesSummary = trip.placesVisited.joinToString(" → ") { it.placeName }
+                                                        Text(
+                                                            text = "Route: $placesSummary",
+                                                            color = Color(0xFFCBD5E1),
+                                                            fontSize = 11.sp,
+                                                            modifier = Modifier.padding(top = 4.dp)
+                                                        )
+                                                    }
+
+                                                    // Pauses & Trip Splitting
+                                                    if (trip.pauses.isNotEmpty()) {
+                                                        Spacer(modifier = Modifier.height(6.dp))
+                                                        val isPausesExpanded = expandedPauseTripIds.contains(trip.id)
+                                                        Surface(
                                                             onClick = {
-                                                                viewModel.splitTripAtPause(trip.id, pauseIdx)
-                                                                android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                                                                expandedPauseTripIds = if (isPausesExpanded) {
+                                                                    expandedPauseTripIds - trip.id
+                                                                } else {
+                                                                    expandedPauseTripIds + trip.id
+                                                                }
                                                             },
-                                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                                            modifier = Modifier.height(26.dp)
+                                                            color = Color.Transparent,
+                                                            shape = RoundedCornerShape(4.dp)
                                                         ) {
-                                                            Text("✂️ Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.padding(vertical = 2.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = if (isPausesExpanded) "▼ ⏸️ Rest Pauses (${trip.pauses.size})" else "▶ ⏸️ Rest Pauses (${trip.pauses.size})",
+                                                                    fontSize = 11.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = Color(0xFFF59E0B)
+                                                                )
+                                                            }
+                                                        }
+
+                                                        if (isPausesExpanded) {
+                                                            trip.pauses.forEachIndexed { pauseIdx, pause ->
+                                                                val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pause.startTime))
+                                                                val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                                                Row(
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .padding(vertical = 2.dp)
+                                                                        .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
+                                                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Text(
+                                                                        text = "#${pauseIdx + 1} at $pauseTimeStr (${durMin} min rest)",
+                                                                        fontSize = 11.sp,
+                                                                        color = Color(0xFFE2E8F0)
+                                                                    )
+                                                                    TextButton(
+                                                                        onClick = {
+                                                                            viewModel.splitTripAtPause(trip.id, pauseIdx)
+                                                                            android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                                                                        },
+                                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                                        modifier = Modifier.height(26.dp)
+                                                                    ) {
+                                                                        Text("✂️ Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -2276,6 +2424,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             PlaceCategory.HOME,
                             PlaceCategory.WORK,
                             PlaceCategory.FAMILY,
+                            PlaceCategory.SCHOOL,
                             PlaceCategory.FAVORITE,
                             PlaceCategory.CUSTOM
                         ).forEach { cat ->
@@ -2454,6 +2603,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Maps", color = Color.White, fontSize = 12.sp)
                         }
+
+                        Button(
+                            onClick = {
+                                editingSavedPlace = sp
+                                selectedSavedPlace = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Edit", color = Color.White, fontSize = 12.sp)
+                        }
                     }
                 }
             },
@@ -2471,6 +2635,189 @@ fun LocationScreen(viewModel: MainViewModel) {
             dismissButton = {
                 TextButton(onClick = { selectedSavedPlace = null }) {
                     Text("Close", color = Color.LightGray)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // ── 8b. Edit Saved Place Dialog ─────────────────────────────────────────
+    if (editingSavedPlace != null) {
+        val placeToEdit = editingSavedPlace!!
+        var editName by remember(placeToEdit.id) { mutableStateOf(placeToEdit.name) }
+        var editCategory by remember(placeToEdit.id) { mutableStateOf(placeToEdit.category) }
+        var editStreet by remember(placeToEdit.id) { mutableStateOf(placeToEdit.street) }
+        var editLocality by remember(placeToEdit.id) { mutableStateOf(placeToEdit.locality) }
+        var editRadius by remember(placeToEdit.id) { mutableFloatStateOf(placeToEdit.radiusMeters) }
+
+        AlertDialog(
+            onDismissRequest = { editingSavedPlace = null },
+            title = {
+                Text("Edit Saved Place", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "Category",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    // Category Selector Pills
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            PlaceCategory.HOME,
+                            PlaceCategory.WORK,
+                            PlaceCategory.FAMILY,
+                            PlaceCategory.SCHOOL,
+                            PlaceCategory.FAVORITE,
+                            PlaceCategory.CUSTOM
+                        ).forEach { cat ->
+                            val isSelected = editCategory == cat
+                            Surface(
+                                onClick = { editCategory = cat },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (isSelected) Color(0xFF10B981) else Color(0xFF1E293B),
+                                border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(cat.iconEmoji, fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = cat.displayName,
+                                        color = if (isSelected) Color.White else Color.LightGray,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("Place Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF10B981),
+                            unfocusedBorderColor = Color(0xFF64748B)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OutlinedTextField(
+                        value = editStreet,
+                        onValueChange = { editStreet = it },
+                        label = { Text("Street & Number") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF10B981),
+                            unfocusedBorderColor = Color(0xFF64748B)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OutlinedTextField(
+                        value = editLocality,
+                        onValueChange = { editLocality = it },
+                        label = { Text("Locality / City") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF10B981),
+                            unfocusedBorderColor = Color(0xFF64748B)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Arrival Geofence Radius: ${editRadius.toInt()} m",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(50f, 100f, 200f, 500f).forEach { r ->
+                            val isRadSelected = editRadius == r
+                            Surface(
+                                onClick = { editRadius = r },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isRadSelected) Color(0xFF0284C7) else Color(0xFF0F172A),
+                                modifier = Modifier.weight(1f).height(30.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "${r.toInt()}m",
+                                        fontSize = 11.sp,
+                                        color = if (isRadSelected) Color.White else Color.LightGray,
+                                        fontWeight = if (isRadSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = String.format(Locale.US, "Coordinates: %.5f, %.5f", placeToEdit.latitude, placeToEdit.longitude),
+                        color = Color(0xFF64748B),
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val updated = placeToEdit.copy(
+                            name = editName.ifBlank { editCategory.displayName },
+                            category = editCategory,
+                            street = editStreet.trim(),
+                            locality = editLocality.trim(),
+                            radiusMeters = editRadius
+                        )
+                        viewModel.updateSavedPlace(updated)
+                        editingSavedPlace = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                ) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingSavedPlace = null }) {
+                    Text("Cancel", color = Color.LightGray)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -4634,7 +4981,7 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 3. Places & Trips History Dialog Button (Prominent Sky Blue)
+            // 3. Trips & Places History Dialog Button (Prominent Sky Blue)
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -4645,7 +4992,7 @@ private fun MainBottomControlsCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.History,
-                    contentDescription = "Places & Trips History",
+                    contentDescription = "Trips & Places History",
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
