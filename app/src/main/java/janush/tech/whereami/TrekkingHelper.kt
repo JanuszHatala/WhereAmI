@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +52,7 @@ object TrekkingHelper {
         try {
             val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=" + lat + "&lon=" + lng + "&zoom=16&extratags=1&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.3 (trekking)")
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.3 (trekking)")
             conn.connectTimeout = 4000
             conn.readTimeout = 4000
 
