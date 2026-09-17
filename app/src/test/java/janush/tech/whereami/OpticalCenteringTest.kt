@@ -105,8 +105,40 @@ class OpticalCenteringTest {
             val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
             val dist = rEarth * c
 
-            assertEquals("Displacement distance must equal projected ground distance for angle ",
+            assertEquals("Displacement distance must equal projected ground distance for angle $angle",
                 expectedDistMeters, dist, 0.1)
         }
+    }
+
+    @Test
+    fun testNegativeOffsetShiftsOppositeDirection() {
+        val positiveResult = calculateOpticalCenter(
+            lat = targetLat,
+            lon = targetLon,
+            zoom = zoom,
+            mapOrientation = 0f,
+            offsetPixelsY = offsetPixelsY
+        )
+        val negativeResult = calculateOpticalCenter(
+            lat = targetLat,
+            lon = targetLon,
+            zoom = zoom,
+            mapOrientation = 0f,
+            offsetPixelsY = -offsetPixelsY
+        )
+        // Positive offset moves camera North (latitude increases) so target appears lower on screen
+        assertTrue("Positive offset camera must be north of target", positiveResult.latitude > targetLat)
+        // Negative offset moves camera South (latitude decreases) so target appears higher on screen
+        assertTrue("Negative offset camera must be south of target", negativeResult.latitude < targetLat)
+        assertEquals("Target longitude unchanged for north/south shifts", targetLon, positiveResult.longitude, 0.00001)
+        assertEquals("Target longitude unchanged for north/south shifts", targetLon, negativeResult.longitude, 0.00001)
+    }
+
+    @Test
+    fun testPlaceCategoryFavoriteIsFirst() {
+        assertEquals("Favorite must be the first PlaceCategory entry",
+            PlaceCategory.FAVORITE, PlaceCategory.values().first())
+        assertEquals("Favorite", PlaceCategory.FAVORITE.displayName)
+        assertEquals("⭐", PlaceCategory.FAVORITE.iconEmoji)
     }
 }
