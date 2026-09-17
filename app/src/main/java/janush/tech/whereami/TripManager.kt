@@ -500,6 +500,15 @@ class TripManager private constructor(private val context: Context) {
         return dbHelper.getAllTrips()
     }
 
+    fun queryTrips(
+        searchQuery: String? = null,
+        startTimeMin: Long? = null,
+        startTimeMax: Long? = null,
+        activityProfile: ActivityProfile? = null
+    ): List<TripRecord> {
+        return dbHelper.queryTrips(searchQuery, startTimeMin, startTimeMax, activityProfile)
+    }
+
     fun deleteTrip(id: Long) {
         dbHelper.deleteTrip(id)
     }
