@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -42,7 +42,7 @@ class LiveTrackingService : Service() {
             return
         }
         
-        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         prefs.edit().putBoolean("is_tracking", true).apply()
 
         startTracking()
@@ -209,7 +209,7 @@ class LiveTrackingService : Service() {
     }
 
     private fun startTracking() {
-        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
         val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
         serviceScope.launch {
@@ -239,7 +239,7 @@ class LiveTrackingService : Service() {
             }
         } catch (_: Exception) {}
         
-        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         prefs.edit().putBoolean("is_tracking", false).apply()
     }
 

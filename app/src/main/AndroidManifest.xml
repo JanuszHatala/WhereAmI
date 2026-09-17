@@ -17,7 +17,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:windowSoftInputMode="adjustResize"
-        android:theme="@style/Theme.WhereIAm">
+        android:theme="@style/Theme.WhereAmI">
         <activity
             android:name=".MainActivity"
             android:exported="true">

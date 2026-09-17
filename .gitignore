@@ -21,3 +21,4 @@ server/data/
 server/npm-debug.log*
 
 phone_diagnostics*/
+device_dump_*/
