@@ -196,6 +196,13 @@ fun LocationScreen(viewModel: MainViewModel) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
     }
 
+    val allDisplayPauses = remember(activeTrip, selectedTripsList) {
+        val list = mutableListOf<TripPause>()
+        activeTrip?.pauses?.let { list.addAll(it) }
+        selectedTripsList.forEach { list.addAll(it.pauses) }
+        list
+    }
+
     var showTripsSheet by remember { mutableStateOf(false) }
     var sheetTab by remember { mutableStateOf(0) } // 0: Trip History, 1: Saved Places, 2: Stats
     var showSettingsSheet by remember { mutableStateOf(false) }
@@ -216,10 +223,21 @@ fun LocationScreen(viewModel: MainViewModel) {
     var topCardBottomPx by remember { mutableStateOf(0) }
     var bottomControlsTopPx by remember { mutableStateOf(0) }
     var rootScreenHeightPx by remember { mutableStateOf(0) }
-    val measuredOpticalOffsetY = remember(topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx) {
-        if (topCardBottomPx > 0 && bottomControlsTopPx > 0 && rootScreenHeightPx > 0) {
-            val apertureCenter = (topCardBottomPx + bottomControlsTopPx) / 2
-            apertureCenter - (rootScreenHeightPx / 2)
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val measuredOpticalOffsetY = remember(topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx, destinationPoint, density) {
+        if (topCardBottomPx > 0 && rootScreenHeightPx > 0) {
+            // Bottom clearance accounts for bottom controls + floating action buttons column (~200dp, or ~300dp with destination card)
+            val bottomClearanceDp = if (destinationPoint != null) 300f else 200f
+            val maxBottomAllowedPx = rootScreenHeightPx - (bottomClearanceDp * density).toInt()
+            val effectiveBottomPx = if (bottomControlsTopPx > 0) {
+                minOf(bottomControlsTopPx, maxBottomAllowedPx)
+            } else {
+                maxBottomAllowedPx
+            }
+            val apertureCenter = (topCardBottomPx + effectiveBottomPx) / 2
+            // Upward optical bias of 24dp so cursor sits comfortably in upper half of clear aperture
+            val upwardBiasPx = (24f * density).toInt()
+            (apertureCenter - (rootScreenHeightPx / 2)) - upwardBiasPx
         } else {
             null
         }
@@ -407,7 +425,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     activityProfile = activityProfile,
                     isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
                     isRecording = activeTrip != null,
-                    pauses = activeTrip?.pauses ?: emptyList(),
+                    pauses = allDisplayPauses,
                     orientationMode = orientationMode,
                     onOrientationModeChange = { viewModel.setOrientationMode(it) },
                     onInstantShare = shareCurrentLocation,
@@ -442,7 +460,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
                 opticalOffsetY = measuredOpticalOffsetY,
                 isRecording = activeTrip != null,
-                pauses = activeTrip?.pauses ?: emptyList(),
+                pauses = allDisplayPauses,
                 orientationMode = orientationMode,
                 onOrientationModeChange = { viewModel.setOrientationMode(it) },
                 onInstantShare = shareCurrentLocation,

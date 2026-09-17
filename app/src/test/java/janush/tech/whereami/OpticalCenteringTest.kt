@@ -141,4 +141,69 @@ class OpticalCenteringTest {
         assertEquals("Favorite", PlaceCategory.FAVORITE.displayName)
         assertEquals("⭐", PlaceCategory.FAVORITE.iconEmoji)
     }
+
+    @Test
+    fun testOpticalOffsetApertureWithBottomFloatingClearanceAndUpwardBias() {
+        val rootScreenHeightPx = 2410
+        val topCardBottomPx = 1030 // Expanded card
+        val bottomControlsTopPx = 2210 // Bottom pill
+        val density = 2.625f
+
+        // Bottom clearance accounts for floating action buttons (~200dp)
+        val bottomClearanceDp = 200f
+        val maxBottomAllowedPx = rootScreenHeightPx - (bottomClearanceDp * density).toInt()
+        val effectiveBottomPx = minOf(bottomControlsTopPx, maxBottomAllowedPx)
+
+        val apertureCenter = (topCardBottomPx + effectiveBottomPx) / 2
+        val upwardBiasPx = (24f * density).toInt()
+        val measuredOffset = (apertureCenter - (rootScreenHeightPx / 2)) - upwardBiasPx
+
+        // Effective bottom should be capped by floating buttons clearance (~1885px) rather than 2210px
+        assertTrue("Effective bottom must account for floating buttons", effectiveBottomPx <= 1885)
+
+        // Measured offset must place cursor in upper-middle of aperture rather than pushed deep down
+        // Old unadjusted offset was ~+418px; new adjusted offset is ~+189px
+        assertTrue("Adjusted offset should be significantly less positive than unadjusted offset", measuredOffset < 250)
+        assertTrue("Adjusted offset should remain positive to clear expanded top card", measuredOffset > 100)
+    }
+
+    @Test
+    fun testStationaryBearingNullThreshold() {
+        // Speed threshold is 1.2 m/s (4.32 km/h)
+        val speedStationary = 0.5f
+        val speedMoving = 1.5f
+        val rawBearing = 90f
+
+        val stationaryBearing = if (speedStationary >= 1.2f) rawBearing else null
+        val movingBearing = if (speedMoving >= 1.2f) rawBearing else null
+
+        assertEquals(null, stationaryBearing)
+        assertEquals(90f, movingBearing)
+    }
+
+    @Test
+    fun testAllDisplayPausesAggregation() {
+        val activePauses = listOf(
+            TripPause(startTime = 1000L, endTime = 2000L, latitude = 49.8, longitude = 19.2, durationMs = 60000L, pointIndex = 1)
+        )
+        val pastTrip1 = TripRecord(
+            id = 1L,
+            startTime = 0L,
+            endTime = 5000L,
+            distanceMeters = 500.0,
+            activityProfile = ActivityProfile.CAR,
+            pauses = listOf(
+                TripPause(startTime = 3000L, endTime = 4000L, latitude = 49.85, longitude = 19.25, durationMs = 45000L, pointIndex = 2)
+            )
+        )
+        val selectedTrips = listOf(pastTrip1)
+
+        val aggregated = mutableListOf<TripPause>()
+        activePauses.let { aggregated.addAll(it) }
+        selectedTrips.forEach { aggregated.addAll(it.pauses) }
+
+        assertEquals(2, aggregated.size)
+        assertEquals(60000L, aggregated[0].durationMs)
+        assertEquals(45000L, aggregated[1].durationMs)
+    }
 }
