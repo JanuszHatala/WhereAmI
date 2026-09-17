@@ -259,8 +259,8 @@ fun OsmMapView(
         if (isLandscape) 0
         else opticalOffsetY ?: run {
             val topObstructionDp = if (isCompact) 150f else 280f
-            val bottomObstructionDp = 90f
-            val offsetDp = (topObstructionDp - bottomObstructionDp) / 2f
+            val bottomObstructionDp = 200f
+            val offsetDp = ((topObstructionDp - bottomObstructionDp) / 2f) - 24f
             (offsetDp * density).toInt()
         }
     }
@@ -808,10 +808,23 @@ fun OsmMapView(
                     onClearDestination?.invoke()
                     mapView?.tileProvider?.clearTileCache()
                     hikingProviderRef?.clearTileCache()
+
+                    val targetMapOrientation = when (orientationMode) {
+                        MapOrientationMode.COURSE_UP -> {
+                            val b = latLng?.third ?: lastFrozenBearing
+                            if (b != null) -b else 0f
+                        }
+                        MapOrientationMode.NORTH -> 0f
+                        MapOrientationMode.EAST -> 270f
+                        MapOrientationMode.SOUTH -> 180f
+                        MapOrientationMode.WEST -> 90f
+                    }
+                    mapView?.mapOrientation = targetMapOrientation
+
                     latLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
                         val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
-                        mapView?.controller?.setCenter(centerGp)
+                        mapView?.controller?.animateTo(centerGp)
                     }
                     mapView?.invalidate()
                 },
