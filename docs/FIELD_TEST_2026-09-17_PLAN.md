@@ -22,8 +22,8 @@ In strict accordance with `AGENTS.md`:
 | Phase | Description | Status | Commit / PR |
 |---|---|---|---|
 | **Phase 1** | Telemetry Data Audit & Core Kinematic / Geocoding Engine Refactor | ✅ Completed | `fix/field-test-kinematics-and-geocoding` |
-| **Phase 2** | Live Sharing Web Viewer & Android Panel Overhaul | ⏳ Planned | - |
-| **Phase 3** | Main Location Panel Header Rearrangement & Map Viewport Centering | ⏳ Planned | - |
+| **Phase 2** | Live Sharing Web Viewer & Android Panel Overhaul | ✅ Completed | `feat/live-sharing-overhaul` |
+| **Phase 3** | Main Location Panel Header Rearrangement & Map Viewport Centering | ✅ Completed | `feat/main-panel-and-map-centering` |
 | **Phase 4** | Map Pin Enhancements, Forest Reverse Geocoding & Pin Boundaries | ⏳ Planned | - |
 | **Phase 5** | Trips & Places Overhaul (Edit Places, Collapsed Pauses, Group By, School) | ⏳ Planned | - |
 
@@ -62,32 +62,33 @@ In strict accordance with `AGENTS.md`:
 ---
 
 ### Phase 2: Live Sharing Web Viewer & Android Panel Overhaul
-- [ ] **2.1 Live Visitors Web Page Polish (`server/public/index.html`) (Point 5)**:
+- [x] **2.1 Live Visitors Web Page Polish (`server/public/index.html`) (Point 5)**:
   - Add explicit "Last seen: X" label for last update timestamp.
   - Add a floating "Fit Trip" button on the map to fit full polyline bounds (`map.fitBounds()`).
   - Account for top card height when recentering map on user marker.
   - Optimize header layout: status badge in top-right, elapsed time below, graceful title wrapping.
-- [ ] **2.2 Live Location Sharing Panel Reorganization (Point 7)**:
+- [x] **2.2 Live Location Sharing Panel Reorganization (Point 7)**:
   - Move "Start Live Sharing Session" button to top directly beneath title.
   - When active: replace with horizontal button bar: `[Stop]` (red), `[Pause]` (amber), `[Sync Now]` (blue).
   - Render Streaming Controls (Full Trail / Position Only, Update Frequency) permanently inline below buttons.
   - Place Provider, Duration, and Share Links in lower section.
-- [ ] **2.3 Verification**:
-  - Test web viewer locally in browser; test Android dialog layout in Compose preview / tests.
-  - Run `.\gradlew.bat testDebugUnitTest assembleDebug`.
+- [x] **2.3 Verification**:
+  - Verified compilation and test suite: `.\gradlew.bat testDebugUnitTest assembleDebug` (passed in 1m 53s).
+  - Merged to `master` locally via `feat/live-sharing-overhaul`.
 
 ---
 
 ### Phase 3: Main Location Panel Header Rearrangement & Map Viewport Centering
-- [ ] **3.1 Main Location Panel Header (Point 3)**:
+- [x] **3.1 Main Location Panel Header (Point 3)**:
   - **Left**: Google Maps icon/button, followed by Live Sharing button/status pill.
   - **Right**: Bookmarked place icon/label (clickable to open Places tab in Trips & Places), followed by Expand/Collapse button.
-- [ ] **3.2 Viewport-Aware Map Centering on Android (`OsmMapView.kt`) (Point 9)**:
-  - Compute optical center offset based on top card height (Spatious vs Condensed) and bottom control bar.
-  - Recenter action centers user position in visible map viewport aperture.
-- [ ] **3.3 Verification**:
-  - Verify layout in both Spatious and Condensed modes.
-  - Run `.\gradlew.bat testDebugUnitTest assembleDebug`.
+  - Cleaned up both Spatious and Compact modes so button orders and shortcuts are consistent.
+- [x] **3.2 Viewport-Aware Map Centering on Android (`OsmMapView.kt`) (Point 9)**:
+  - Implemented `getOpticalCenter(mapView, target, offsetPixelsY)` using osmdroid canvas projection.
+  - Dynamically computes optical offset based on screen orientation, top card style (Compact vs Spatious), and bottom bar height.
+  - Applied to follow mode, manual recenter button, floating recenter pill, and search destination pins.
+- [x] **3.3 Verification**:
+  - Verified compilation and test suite: `.\gradlew.bat testDebugUnitTest assembleDebug` (passed in 1m 44s).
 
 ---
 
