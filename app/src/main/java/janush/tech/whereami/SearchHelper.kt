@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import android.location.Address
@@ -84,7 +84,7 @@ object SearchHelper {
                 val encodedQuery = URLEncoder.encode(q.trim(), "UTF-8")
                 val urlStr = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&addressdetails=1&limit=5"
                 val conn = URL(urlStr).openConnection() as HttpURLConnection
-                conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.1 (android)")
+                conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
                 conn.connectTimeout = 6000
                 conn.readTimeout = 6000
 
@@ -203,7 +203,7 @@ object SearchHelper {
         try {
             val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoPoint.latitude}&lon=${geoPoint.longitude}&zoom=18&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.1")
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1")
             conn.connectTimeout = 3000
             conn.readTimeout = 3000
             if (conn.responseCode == 200) {

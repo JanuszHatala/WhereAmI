@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -74,7 +74,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
     }
 
     private fun startTracking() {
-        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
         val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
         serviceScope.launch {
@@ -230,7 +230,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         parentId: String,
         result: Result<MutableList<MediaBrowserCompat.MediaItem>>
     ) {
-        val prefs = getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val lat = prefs.getFloat("lat", 0f).toDouble()
         val lng = prefs.getFloat("lng", 0f).toDouble()
         val lastPlace = locationManager.resolveMultiLanguageData(lat, lng).pl

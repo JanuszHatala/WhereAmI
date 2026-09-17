@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -11,9 +11,14 @@ import android.os.Looper
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -57,6 +62,41 @@ data class LocationData(
     val isLoading: Boolean = false
 )
 
+/** Unified location snapshot broadcast to all consumers (Single Source of Truth). */
+data class MultiLocationSnapshot(
+    val multiPlace: MultiLanguagePlaceInfo?,
+    val speedMs: Float,
+    val speedKmh: Float,
+    val lat: Double,
+    val lng: Double,
+    val altitude: Double?,
+    val bearing: Float?,
+    val accuracy: Float?,
+    val timestamp: Long,
+    val error: String? = null,
+    val isLoading: Boolean = false
+) {
+    fun toLocationData(displayLanguage: DisplayLanguage): LocationData {
+        val place = when (displayLanguage) {
+            DisplayLanguage.PL -> multiPlace?.pl
+            DisplayLanguage.EN -> multiPlace?.en
+            DisplayLanguage.NATIVE -> multiPlace?.native
+        }
+        val secPlace = when (displayLanguage) {
+            DisplayLanguage.PL -> multiPlace?.en
+            DisplayLanguage.EN -> multiPlace?.pl
+            DisplayLanguage.NATIVE -> multiPlace?.en
+        }
+        return LocationData(
+            primaryPlace = place,
+            secondaryPlace = secPlace,
+            speedMs = speedMs,
+            error = error,
+            isLoading = isLoading
+        )
+    }
+}
+
 /** Small data class for OSM Nominatim reverse-geocode results. */
 private data class OsmPlaceResult(
     val city: String?,         // city / town / village / hamlet
@@ -77,7 +117,10 @@ class LocationManager private constructor(private val context: Context) {
 
         fun getInstance(context: Context): LocationManager {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: LocationManager(context.applicationContext).also { INSTANCE = it }
+                INSTANCE ?: LocationManager(context.applicationContext).also {
+                    StorageMigrationHelper.migratePreferencesIfNeeded(it.context)
+                    INSTANCE = it
+                }
             }
         }
 
@@ -89,6 +132,26 @@ class LocationManager private constructor(private val context: Context) {
         private var isGpsStopped: Boolean = false
 
         private val activeCallbacks = Collections.synchronizedSet(mutableSetOf<LocationCallback>())
+
+        /**
+         * Set of Polish cities with county rights (miasta na prawach powiatu).
+         * These localities constitute an autonomous urban county with no rural gmina.
+         */
+        val POLISH_COUNTY_CITIES = setOf(
+            "bielsko-biała", "białystok", "bydgoszcz", "bytom", "chełm", "chorzów",
+            "częstochowa", "dąbrowa górnicza", "elbląg", "gdańsk", "gdynia", "gliwice",
+            "głogów", "gniezno", "gorzów wielkopolski", "grudziądz", "inowrocław",
+            "jastrzębie-zdrój", "jaworzno", "jelenia góra", "kalisz", "katowice",
+            "kędzierzyn-koźle", "kielce", "konin", "koszalin", "kraków", "krosno",
+            "legnica", "leszno", "lubin", "lublin", "łomża", "łódź", "mysłowice",
+            "nowy sącz", "olsztyn", "opole", "ostrołęka", "ostrowiec świętokrzyski",
+            "pabianice", "piekary śląskie", "piotrków trybunalski", "płock", "poznań",
+            "przemyśl", "radom", "ruda śląska", "rybnik", "rzeszów", "siedlce",
+            "siemianowice śląskie", "słupsk", "sopot", "sosnowiec", "stalowa wola",
+            "stargard", "suwałki", "szczecin", "świętochłowice", "tarnobrzeg", "tarnów",
+            "tomaszów mazowiecki", "toruń", "tychy", "warszawa", "włocławek", "wrocław",
+            "zabrze", "zamość", "zielona góra", "żory"
+        )
 
         /**
          * Country-aware hierarchy formatter:
@@ -114,15 +177,23 @@ class LocationManager private constructor(private val context: Context) {
                 .replace("województwo", "", ignoreCase = true)
                 .trim()
 
+            val cityLower = city.lowercase(Locale.ROOT)
+            val isCountyCity = POLISH_COUNTY_CITIES.contains(cityLower) ||
+                    (cleanPowiat != null && cleanPowiat.equals(city, ignoreCase = true))
+
             if (isPoland) {
                 val parts = mutableListOf<String>()
-                // Clean deduplication: omit gm. X if city is X
-                if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
-                    parts.add("gm. $cleanGmina")
-                }
-                // Omit pow. Y if city or gmina is Y
-                if (!cleanPowiat.isNullOrEmpty() && !cleanPowiat.equals(city, ignoreCase = true) && !cleanPowiat.equals(cleanGmina, ignoreCase = true)) {
-                    parts.add("pow. $cleanPowiat")
+                // Cities with county rights (miasta na prawach powiatu) are self-governing counties:
+                // They have NO separate rural gmina. Suppress "gm." and "pow." entirely.
+                if (!isCountyCity) {
+                    // Clean deduplication: omit gm. X if city is X
+                    if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
+                        parts.add("gm. $cleanGmina")
+                    }
+                    // Omit pow. Y if city or gmina is Y
+                    if (!cleanPowiat.isNullOrEmpty() && !cleanPowiat.equals(city, ignoreCase = true) && !cleanPowiat.equals(cleanGmina, ignoreCase = true)) {
+                        parts.add("pow. $cleanPowiat")
+                    }
                 }
                 if (voivodeship.isNotEmpty() && !voivodeship.equals("Unknown Region", ignoreCase = true)) {
                     parts.add("woj. $voivodeship")
@@ -183,17 +254,16 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    // ── Hybrid Speed Smoothing (Kalman + Moving Average) ──────────────────────
+    // ── Adaptive Velocity Kalman Filter (Industry Standard Speedometer) ─────
     private var kalmanSpeed: Float? = null
-    private var kalmanVariance = 4f
-    private val BASE_PROCESS_NOISE = 0.3f
-    private val ADAPTIVE_FACTOR = 0.5f
-    private val DEFAULT_MEAS_NOISE = 1.44f
-    private val STATIONARY_THRESHOLD = 0.65f // m/s (~2.34 km/h) — typical indoor GPS Doppler noise floor
+    private var kalmanVariance = 0.25f
+    private val BASE_PROCESS_NOISE = 0.08f
+    private val ADAPTIVE_FACTOR = 0.35f
+    private val DEFAULT_MEAS_NOISE = 0.25f // typical GNSS Doppler speed variance (sigma ~ 0.5 m/s)
+    private val STATIONARY_THRESHOLD = 0.5f // m/s (~1.8 km/h) — typical indoor GPS Doppler noise floor
+    private val ZERO_SNAP_THRESHOLD = 0.4f // m/s (~1.44 km/h) — instant snap to 0 km/h
 
-    // Rolling window for hybrid smoothing
-    private val speedWindow = ArrayDeque<Float>()
-    private val SPEED_WINDOW_SIZE = 3
+    @Volatile
     private var lastValidSpeedMs: Float = 0f
 
     // Displacement tracking for zero-motion confirmation
@@ -212,33 +282,18 @@ class LocationManager private constructor(private val context: Context) {
         lng: Double = 0.0,
         timestamp: Long = 0L
     ): Float {
-        // Accelerometer-based physical motion check: desk / table / sleep clamp
-        val isPhysicallyStationary = try {
-            StationaryDetector.getInstance(context).isPhysicallyStationary.value
-        } catch (_: Exception) { false }
-
-        if (isPhysicallyStationary) {
-            kalmanSpeed = 0f
-            speedWindow.clear()
-            lastValidSpeedMs = 0f
-            return 0f
-        }
-
-        if (rawSpeed == null) {
-            // Keep last valid speed rather than dropping to null or 0 (anti-flicker)
-            return lastValidSpeedMs
-        }
-
         // Calculate physical displacement delta
         var isStationaryDisplacement = false
+        var distMoved = 0f
         if (lat != 0.0 && lng != 0.0 && lastFixLat != 0.0 && lastFixLng != 0.0 && timestamp > 0L && lastFixTimestamp > 0L) {
             val dist = FloatArray(1)
             android.location.Location.distanceBetween(lastFixLat, lastFixLng, lat, lng, dist)
+            distMoved = dist[0]
             val dtSec = (timestamp - lastFixTimestamp) / 1000f
             if (dtSec in 0.5f..45f) {
-                val displacementSpeed = dist[0] / dtSec
-                // If device hasn't displaced more than 3.5m and displacement speed is under 0.6 m/s (~2.1 km/h), it's stationary jitter
-                if (dist[0] < 3.5f && displacementSpeed < 0.6f) {
+                val displacementSpeed = distMoved / dtSec
+                // If device hasn't displaced more than 3.0m and displacement speed is under 0.5 m/s, it's stationary jitter
+                if (distMoved < 3.0f && displacementSpeed < 0.5f) {
                     isStationaryDisplacement = true
                 }
             }
@@ -249,27 +304,48 @@ class LocationManager private constructor(private val context: Context) {
             lastFixTimestamp = timestamp
         }
 
+        // Accelerometer-based physical motion check:
+        // Strictly for indoor desk / resting clamp.
+        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s or ~4.3 km/h) or displacement > 3.0m!
+        // Newton's 1st Law: uniform highway cruising has zero acceleration variance by physical definition.
+        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f
+        if (!isMoving) {
+            val isPhysicallyStationary = try {
+                StationaryDetector.getInstance(context).isPhysicallyStationary.value
+            } catch (_: Exception) { false }
+
+            if (isPhysicallyStationary) {
+                kalmanSpeed = 0f
+                lastValidSpeedMs = 0f
+                return 0f
+            }
+        }
+
+        if (rawSpeed == null) {
+            // Keep last valid speed rather than dropping to null or 0 (anti-flicker)
+            return lastValidSpeedMs
+        }
+
         // Check if raw speed falls within stationary noise floor:
-        // 1) Below physical locomotion threshold (< 0.65 m/s or ~2.34 km/h)
+        // 1) Below physical locomotion threshold (< 0.5 m/s or ~1.8 km/h)
         // 2) Or raw speed is smaller than the GPS speed uncertainty margin (noise floor)
         // 3) Or physical position displacement over the interval confirms zero motion
         val isStationaryNoise = rawSpeed < STATIONARY_THRESHOLD ||
-                (gpsAccuracyMps != null && gpsAccuracyMps > 0.8f && rawSpeed <= gpsAccuracyMps && rawSpeed < 1.2f) ||
-                (isStationaryDisplacement && rawSpeed < 1.0f)
+                (gpsAccuracyMps != null && gpsAccuracyMps > 0.8f && rawSpeed <= gpsAccuracyMps && rawSpeed < 1.0f) ||
+                (isStationaryDisplacement && rawSpeed < 0.8f)
 
         // Clamp stationary noise to true 0
         val cleanRaw = if (isStationaryNoise) 0f else rawSpeed
 
-        if (cleanRaw == 0f) {
-            // Immediate zero-snap: avoid Kalman creeping when stationary
+        // Instant Zero-Snap (Anti-Creep): when stopped or below snap threshold, snap directly to 0
+        if (cleanRaw < ZERO_SNAP_THRESHOLD) {
             kalmanSpeed = 0f
-            speedWindow.clear()
             lastValidSpeedMs = 0f
             return 0f
         }
 
         val measNoise = when {
-            gpsAccuracyMps != null && gpsAccuracyMps > 0f -> gpsAccuracyMps * gpsAccuracyMps
+            gpsAccuracyMps != null && gpsAccuracyMps > 0f -> (gpsAccuracyMps * gpsAccuracyMps).coerceIn(0.04f, 1.5f)
             else -> DEFAULT_MEAS_NOISE
         }
 
@@ -280,7 +356,9 @@ class LocationManager private constructor(private val context: Context) {
             return cleanRaw
         }
 
-        // Kalman step
+        // Adaptive 1D Velocity Kalman Filter step:
+        // Accelerating or braking: innovation is high -> expand process noise -> gain -> 1 (zero lag)
+        // Steady cruising: innovation is low -> process noise contracts -> gain is small (rock-solid filtering)
         val innovation = cleanRaw - kalmanSpeed!!
         val adaptiveProcessNoise = BASE_PROCESS_NOISE + ADAPTIVE_FACTOR * innovation * innovation
         val predictedVariance = kalmanVariance + adaptiveProcessNoise
@@ -288,16 +366,9 @@ class LocationManager private constructor(private val context: Context) {
         kalmanSpeed = kalmanSpeed!! + gain * innovation
         kalmanVariance = (1f - gain) * predictedVariance
 
-        val kSpeed = if (kalmanSpeed!! < 0.35f) 0f else kalmanSpeed!!
-
-        // Windowed moving average on top of Kalman for extra smoothness
-        if (speedWindow.size >= SPEED_WINDOW_SIZE) speedWindow.removeFirst()
-        speedWindow.addLast(kSpeed)
-
-        val smoothed = speedWindow.average().toFloat()
-        val finalSpeed = if (smoothed < 0.3f) 0f else smoothed
-        lastValidSpeedMs = finalSpeed
-        return finalSpeed
+        val kSpeed = if (kalmanSpeed!! < ZERO_SNAP_THRESHOLD) 0f else kalmanSpeed!!
+        lastValidSpeedMs = kSpeed
+        return kSpeed
     }
 
     // ── Border Debounce / Hysteresis Engine ─────────────────────────────────────
@@ -453,8 +524,16 @@ class LocationManager private constructor(private val context: Context) {
             speedKmh > 35f -> {
                 // High speed driving (viaduct / bridge / corridor inertia):
                 // Never abandon DK/DW/A/S for a parallel or side street unless sustained for 10s and 7 fixes
-                requiredCount = if (isCommittedMajor && !isCandidateMajor) 7 else 4
-                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 10_000L else 4_500L
+                requiredCount = when {
+                    isCommittedMajor && !isCandidateMajor -> 7
+                    !isCommittedMajor && isCandidateMajor -> 2 // Snap onto highway corridor quickly
+                    else -> 4
+                }
+                requiredDuration = when {
+                    isCommittedMajor && !isCandidateMajor -> 10_000L
+                    !isCommittedMajor && isCandidateMajor -> 2_000L
+                    else -> 4_500L
+                }
             }
             speedKmh > 15f -> {
                 // Moderate city driving / cycling:
@@ -492,165 +571,216 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    // ── Continuous location flow ───────────────────────────────────────────────
-    @SuppressLint("MissingPermission")
-    fun getLocationUpdates(displayLanguage: DisplayLanguage): Flow<LocationData> = callbackFlow {
-        val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
-        // Initial state holding last known data if available
-        val initialSpeed = if (prefs.contains("speed")) prefs.getFloat("speed", 0f) else 0f
-        val initialCoords = if (prefs.contains("lat") && prefs.contains("lng")) {
-            Pair(prefs.getFloat("lat", 0f).toDouble(), prefs.getFloat("lng", 0f).toDouble())
-        } else null
+    // ── Single Source of Truth (SSOT) Master Location Pipeline ────────────────
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-        if (initialCoords != null) {
-            val cachedData = resolveLocationData(initialCoords.first, initialCoords.second, initialSpeed, displayLanguage)
-            trySend(cachedData)
-        } else {
-            trySend(LocationData(null, null, initialSpeed, null, true))
-        }
+    @Volatile
+    private var lastLocationSnapshot: MultiLocationSnapshot? = null
 
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, currentIntervalMs)
-            .setMinUpdateIntervalMillis(currentMinIntervalMs)
-            .build()
+    private val masterLocationFlow: SharedFlow<MultiLocationSnapshot> by lazy {
+        callbackFlow {
+            val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+            val initialSpeed = if (prefs.contains("speed")) prefs.getFloat("speed", 0f) else 0f
+            val initialCoords = if (prefs.contains("lat") && prefs.contains("lng")) {
+                Pair(prefs.getFloat("lat", 0f).toDouble(), prefs.getFloat("lng", 0f).toDouble())
+            } else null
 
-        val locationCallback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { location ->
-                    val currentProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
-                        ?: TripManager.getInstance(context).activityProfile.value
+            if (initialCoords != null) {
+                val cachedMulti = resolveMultiLanguageData(initialCoords.first, initialCoords.second)
+                committedPlace = cachedMulti
+                val initialSnap = MultiLocationSnapshot(
+                    multiPlace = cachedMulti,
+                    speedMs = initialSpeed,
+                    speedKmh = initialSpeed * 3.6f,
+                    lat = initialCoords.first,
+                    lng = initialCoords.second,
+                    altitude = null,
+                    bearing = null,
+                    accuracy = null,
+                    timestamp = System.currentTimeMillis()
+                )
+                lastLocationSnapshot = initialSnap
+                trySend(initialSnap)
+            } else {
+                val emptySnap = MultiLocationSnapshot(
+                    multiPlace = null,
+                    speedMs = initialSpeed,
+                    speedKmh = initialSpeed * 3.6f,
+                    lat = 0.0,
+                    lng = 0.0,
+                    altitude = null,
+                    bearing = null,
+                    accuracy = null,
+                    timestamp = System.currentTimeMillis(),
+                    isLoading = true
+                )
+                trySend(emptySnap)
+            }
 
-                    // Stage 1-4 Filter: drop coarse cellular fallbacks, GPS spikes, and kinematic teleport jumps
-                    if (!GpsFilterEngine.getInstance().filterLocation(location, currentProfile)) {
-                        return
-                    }
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, currentIntervalMs)
+                .setMinUpdateIntervalMillis(currentMinIntervalMs)
+                .build()
 
-                    val rawSpeed = if (location.hasSpeed()) location.speed else null
-                    val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
-                        location.speedAccuracyMetersPerSecond else null
-                    val speed = hybridSpeedUpdate(
-                        rawSpeed = rawSpeed,
-                        gpsAccuracyMps = accuracy,
-                        lat = location.latitude,
-                        lng = location.longitude,
-                        timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
-                    )
+            val locationCallback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    result.lastLocation?.let { location ->
+                        val currentProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
+                            ?: TripManager.getInstance(context).activityProfile.value
 
-                    prefs.edit()
-                        .putFloat("lat", location.latitude.toFloat())
-                        .putFloat("lng", location.longitude.toFloat())
-                        .putFloat("speed", speed)
-                        .putFloat("accuracy", if (location.hasAccuracy()) location.accuracy else 0f)
-                    // KINEMATIC DECOUPLING:
-                    // Dispatch raw kinematics (speed, bearing, altitude, coords) immediately to UI, TripManager, and LiveSharing!
-                    // Do NOT wait for network geocoding (Nominatim/OSM) before updating speedometer or trip tracking!
-                    val speedKmh = speed * 3.6f
-                    val alt = if (location.hasAltitude()) location.altitude else null
-                    val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= 1.2f)) {
-                        lastValidBearing = location.bearing
-                        location.bearing
-                    } else {
-                        lastValidBearing
-                    }
+                        // Stage 1-4 Filter: drop coarse cellular fallbacks, GPS spikes, and kinematic teleport jumps
+                        if (!GpsFilterEngine.getInstance().filterLocation(location, currentProfile)) {
+                            return
+                        }
 
-                    // 1. Immediate TripManager kinematic notification
-                    TripManager.getInstance(context).onLocationUpdate(
-                        location.latitude,
-                        location.longitude,
-                        speed,
-                        committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en }
-                    )
+                        val rawSpeed = if (location.hasSpeed()) location.speed else null
+                        val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
+                            location.speedAccuracyMetersPerSecond else null
+                        val speed = hybridSpeedUpdate(
+                            rawSpeed = rawSpeed,
+                            gpsAccuracyMps = accuracy,
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                        )
 
-                    // 2. Immediate LiveSharing telemetry notification
-                    val immediatePlaceName = committedPlace?.let {
-                        val p = it.pl.takeIf { pl -> pl.isValid() } ?: it.en
-                        if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
-                    }
-                    LiveSharingManager.getInstance(context).onLocationUpdate(
-                        lat = location.latitude,
-                        lng = location.longitude,
-                        speedKmh = speedKmh,
-                        altitude = alt,
-                        bearing = currentBearing,
-                        placeName = immediatePlaceName,
-                        trekkingBadge = null
-                    )
+                        prefs.edit()
+                            .putFloat("lat", location.latitude.toFloat())
+                            .putFloat("lng", location.longitude.toFloat())
+                            .putFloat("speed", speed)
+                            .putFloat("accuracy", if (location.hasAccuracy()) location.accuracy else 0f)
+                            .apply()
 
-                    // 3. Immediate UI emission with latest kinematics & cached locality
-                    committedPlace?.let { cached ->
-                        trySend(buildLocationData(cached, speed, displayLanguage))
-                    }
+                        val speedKmh = speed * 3.6f
+                        val alt = if (location.hasAltitude()) location.altitude else null
+                        val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= 1.2f)) {
+                            lastValidBearing = location.bearing
+                            location.bearing
+                        } else {
+                            lastValidBearing
+                        }
 
-                    // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
-                    ioScope.launch {
-                        val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
-                        val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
-                        val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized)
-
-                        val data = buildLocationData(stabilizedMultiData, speed, displayLanguage)
-
-                        // Update TripManager with verified locality hierarchy
+                        // 1. Immediate TripManager kinematic notification
                         TripManager.getInstance(context).onLocationUpdate(
                             location.latitude,
                             location.longitude,
                             speed,
-                            data.primaryPlace
+                            committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en }
                         )
 
-                        trySend(data)
+                        // 2. Immediate LiveSharing telemetry notification
+                        val immediatePlaceName = committedPlace?.let {
+                            val p = it.pl.takeIf { pl -> pl.isValid() } ?: it.en
+                            if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
+                        }
+                        LiveSharingManager.getInstance(context).onLocationUpdate(
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            speedKmh = speedKmh,
+                            altitude = alt,
+                            bearing = currentBearing,
+                            placeName = immediatePlaceName,
+                            trekkingBadge = null
+                        )
+
+                        // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
+                        val fastSnapshot = MultiLocationSnapshot(
+                            multiPlace = committedPlace,
+                            speedMs = speed,
+                            speedKmh = speedKmh,
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            altitude = alt,
+                            bearing = currentBearing,
+                            accuracy = if (location.hasAccuracy()) location.accuracy else null,
+                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                        )
+                        lastLocationSnapshot = fastSnapshot
+                        trySend(fastSnapshot)
+
+                        // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
+                        ioScope.launch {
+                            val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
+                            val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
+                            val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized)
+
+                            // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
+                            committedPlace = stabilizedMultiData
+
+                            // Update TripManager with verified locality hierarchy
+                            TripManager.getInstance(context).onLocationUpdate(
+                                location.latitude,
+                                location.longitude,
+                                speed,
+                                stabilizedMultiData.pl
+                            )
+
+                            val enrichedSnapshot = MultiLocationSnapshot(
+                                multiPlace = stabilizedMultiData,
+                                speedMs = speed,
+                                speedKmh = speedKmh,
+                                lat = location.latitude,
+                                lng = location.longitude,
+                                altitude = alt,
+                                bearing = currentBearing,
+                                accuracy = if (location.hasAccuracy()) location.accuracy else null,
+                                timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                            )
+                            lastLocationSnapshot = enrichedSnapshot
+                            trySend(enrichedSnapshot)
+                        }
                     }
                 }
             }
-        }
 
-        activeCallbacks.add(locationCallback)
-        if (!isGpsStopped) {
-            fusedLocationClient.requestLocationUpdates(
-                locationRequest,
-                locationCallback,
-                Looper.getMainLooper()
-            ).addOnFailureListener { e ->
-                trySend(LocationData(null, null, lastValidSpeedMs, e.message ?: "Failed to get location", false))
+            activeCallbacks.add(locationCallback)
+            if (!isGpsStopped) {
+                fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    locationCallback,
+                    Looper.getMainLooper()
+                ).addOnFailureListener { e ->
+                    trySend(
+                        MultiLocationSnapshot(
+                            multiPlace = committedPlace,
+                            speedMs = lastValidSpeedMs,
+                            speedKmh = lastValidSpeedMs * 3.6f,
+                            lat = 0.0,
+                            lng = 0.0,
+                            altitude = null,
+                            bearing = null,
+                            accuracy = null,
+                            timestamp = System.currentTimeMillis(),
+                            error = e.message ?: "Failed to get location"
+                        )
+                    )
+                }
             }
-        }
 
-        awaitClose {
-            activeCallbacks.remove(locationCallback)
-            fusedLocationClient.removeLocationUpdates(locationCallback)
-        }
+            awaitClose {
+                activeCallbacks.remove(locationCallback)
+                fusedLocationClient.removeLocationUpdates(locationCallback)
+            }
+        }.shareIn(
+            scope = managerScope,
+            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5000),
+            replay = 1
+        )
+    }
+
+    /**
+     * Continuous location flow mapped to the requested display language.
+     * Consumes the single shared master location pipeline (SSOT).
+     */
+    fun getLocationUpdates(displayLanguage: DisplayLanguage): Flow<LocationData> {
+        return masterLocationFlow.map { it.toLocationData(displayLanguage) }
     }
 
     /**
      * Lightweight flow for map composable (lat, lng, bearing).
-     * Retains last valid driving bearing when stationary (MAP-R03).
+     * Reuses the single shared master location pipeline without duplicate callbacks.
      */
-    @SuppressLint("MissingPermission")
-    fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> = callbackFlow {
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000)
-            .setMinUpdateIntervalMillis(500)
-            .build()
-
-        val cb = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { loc ->
-                    val bearing = if (loc.hasBearing() && (loc.hasSpeed() && loc.speed >= 1.2f)) {
-                        lastValidBearing = loc.bearing
-                        loc.bearing
-                    } else {
-                        lastValidBearing
-                    }
-                    trySend(Triple(loc.latitude, loc.longitude, bearing))
-                }
-            }
-        }
-
-        activeCallbacks.add(cb)
-        if (!isGpsStopped) {
-            fusedLocationClient.requestLocationUpdates(locationRequest, cb, Looper.getMainLooper())
-        }
-        awaitClose {
-            activeCallbacks.remove(cb)
-            fusedLocationClient.removeLocationUpdates(cb)
-        }
+    fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> {
+        return masterLocationFlow.map { Triple(it.lat, it.lng, it.bearing) }
     }
 
     // ── One-shot location ────────────────────────────────
@@ -672,7 +802,7 @@ class LocationManager private constructor(private val context: Context) {
                                 timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
                             )
 
-                            val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+                            val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
                             prefs.edit()
                                 .putFloat("lat", location.latitude.toFloat())
                                 .putFloat("lng", location.longitude.toFloat())
@@ -700,7 +830,7 @@ class LocationManager private constructor(private val context: Context) {
         displayLanguage: DisplayLanguage,
         errorMsg: String? = null
     ) {
-        val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val lat = if (prefs.contains("lat")) prefs.getFloat("lat", 0f).toDouble() else null
         val lng = if (prefs.contains("lng")) prefs.getFloat("lng", 0f).toDouble() else null
         val lastSpeed = if (prefs.contains("speed")) prefs.getFloat("speed", 0f) else lastValidSpeedMs
@@ -753,7 +883,7 @@ class LocationManager private constructor(private val context: Context) {
             return cached.data
         }
 
-        val prefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
 
         val baseAddress = geocode(lat, lng, Locale.getDefault())
         val countryCode = baseAddress?.countryCode?.uppercase() ?: ""
@@ -810,13 +940,16 @@ class LocationManager private constructor(private val context: Context) {
 
             // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
             val localityKey = basePlace.city.lowercase(Locale.ROOT)
-            val candidateGmina = osm?.municipality ?: basePlace.gmina
-            val effectiveGmina = if (!candidateGmina.isNullOrBlank()) {
+            val isCountyCity = POLISH_COUNTY_CITIES.contains(localityKey)
+            val candidateGmina = if (isCountyCity) null else (osm?.municipality ?: basePlace.gmina)
+            val effectiveGmina = if (isCountyCity) {
+                null
+            } else if (!candidateGmina.isNullOrBlank()) {
                 prefs.edit().putString("loc_gmina_$localityKey", candidateGmina).apply()
                 candidateGmina
             } else {
                 prefs.getString("loc_gmina_$localityKey", null)
-                    ?: if (lastGood?.city.equals(basePlace.city, ignoreCase = true) || distToLastGood < 1500f) lastGood?.gmina else null
+                    ?: if (lastGood?.city.equals(basePlace.city, ignoreCase = true)) lastGood?.gmina else null
             }
 
             val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
@@ -841,12 +974,15 @@ class LocationManager private constructor(private val context: Context) {
             val city = osm.city ?: osm.municipality ?: osm.county
             if (city != null) {
                 val localityKey = city.lowercase(Locale.ROOT)
-                val effectiveGmina = if (!osm.municipality.isNullOrBlank()) {
+                val isCountyCity = POLISH_COUNTY_CITIES.contains(localityKey)
+                val effectiveGmina = if (isCountyCity) {
+                    null
+                } else if (!osm.municipality.isNullOrBlank()) {
                     prefs.edit().putString("loc_gmina_$localityKey", osm.municipality).apply()
                     osm.municipality
                 } else {
                     prefs.getString("loc_gmina_$localityKey", null)
-                        ?: if (lastGood?.city.equals(city, ignoreCase = true) || distToLastGood < 1500f) lastGood?.gmina else null
+                        ?: if (lastGood?.city.equals(city, ignoreCase = true)) lastGood?.gmina else null
                 }
 
                 return PlaceInfo(
@@ -894,7 +1030,7 @@ class LocationManager private constructor(private val context: Context) {
                     "?format=json&lat=$lat&lon=$lng" +
                     "&accept-language=$language&zoom=18&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.1 (android)")
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
             conn.readTimeout = 6000
 

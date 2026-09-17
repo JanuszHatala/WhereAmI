@@ -104,7 +104,7 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
         }
 
-        private const val PREFS_NAME = "where_i_am_live_share_prefs"
+        private const val PREFS_NAME = "where_am_i_live_share_prefs"
         private const val KEY_SESSION_ID = "active_session_id"
         private const val KEY_SESSION_TITLE = "active_session_title"
         private const val KEY_SESSION_CREATED = "active_session_created"

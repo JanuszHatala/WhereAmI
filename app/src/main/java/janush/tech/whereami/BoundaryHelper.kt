@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
@@ -92,7 +92,7 @@ object BoundaryHelper {
             val q = URLEncoder.encode("$cityName, $countryPart", "UTF-8")
             val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereIAmPersonalApp/1.1 (android)")
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
             conn.readTimeout = 6000
 
