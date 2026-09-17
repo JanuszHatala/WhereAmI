@@ -221,6 +221,59 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return trips
     }
 
+    fun queryTrips(
+        searchQuery: String? = null,
+        startTimeMin: Long? = null,
+        startTimeMax: Long? = null,
+        activityProfile: ActivityProfile? = null
+    ): List<TripRecord> {
+        val selectionParts = mutableListOf<String>()
+        val selectionArgs = mutableListOf<String>()
+
+        if (!searchQuery.isNullOrBlank()) {
+            selectionParts.add("($COL_TITLE LIKE ? OR $COL_PLACES_JSON LIKE ?)")
+            val wild = "%${searchQuery.trim()}%"
+            selectionArgs.add(wild)
+            selectionArgs.add(wild)
+        }
+
+        if (startTimeMin != null) {
+            selectionParts.add("$COL_START_TIME >= ?")
+            selectionArgs.add(startTimeMin.toString())
+        }
+
+        if (startTimeMax != null) {
+            selectionParts.add("$COL_START_TIME < ?")
+            selectionArgs.add(startTimeMax.toString())
+        }
+
+        if (activityProfile != null) {
+            selectionParts.add("$COL_ACTIVITY_PROFILE = ?")
+            selectionArgs.add(activityProfile.name)
+        }
+
+        val selection = if (selectionParts.isNotEmpty()) selectionParts.joinToString(" AND ") else null
+        val args = if (selectionArgs.isNotEmpty()) selectionArgs.toTypedArray() else null
+
+        val trips = mutableListOf<TripRecord>()
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_TRIPS,
+            null,
+            selection,
+            args,
+            null,
+            null,
+            "$COL_START_TIME DESC"
+        )
+        cursor.use {
+            while (it.moveToNext()) {
+                trips.add(cursorToTripRecord(it))
+            }
+        }
+        return trips
+    }
+
     fun getActiveOrUnclosedTrip(): TripRecord? {
         val db = readableDatabase
         val cursor = db.query(
