@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import android.content.Intent
@@ -78,7 +78,7 @@ object TelemetryLogger {
 
     fun exportTelemetry(context: Context): File {
         val dir = File(context.cacheDir, "telemetry_exports").apply { mkdirs() }
-        val file = File(dir, "where_i_am_telemetry_${System.currentTimeMillis()}.json")
+        val file = File(dir, "where_am_i_telemetry_${System.currentTimeMillis()}.json")
         val array = JSONArray()
         eventQueue.forEach { array.put(it) }
         val root = JSONObject().apply {
@@ -98,7 +98,7 @@ object TelemetryLogger {
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/json"
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "WhereIAm Telemetry Log")
+                    putExtra(Intent.EXTRA_SUBJECT, "WhereAmI Telemetry Log")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 val chooser = Intent.createChooser(intent, "Share Telemetry Log").apply {
