@@ -1,7 +1,7 @@
 # Field Testing (2026-09-17) Multi-Step Implementation Plan
 
 **Date**: 2026-09-17  
-**Status**: DRAFT / Awaiting User Feedback & Approval  
+**Status**: COMPLETED (All Phases 1–5 Merged & Verified)  
 **Architecture Reference**: [AGENTS.md](../AGENTS.md) | [FIELD_TEST_2026-09-17_ANALYSIS.md](FIELD_TEST_2026-09-17_ANALYSIS.md)
 
 ---
@@ -24,8 +24,8 @@ In strict accordance with `AGENTS.md`:
 | **Phase 1** | Telemetry Data Audit & Core Kinematic / Geocoding Engine Refactor | ✅ Completed | `fix/field-test-kinematics-and-geocoding` |
 | **Phase 2** | Live Sharing Web Viewer & Android Panel Overhaul | ✅ Completed | `feat/live-sharing-overhaul` |
 | **Phase 3** | Main Location Panel Header Rearrangement & Map Viewport Centering | ✅ Completed | `feat/main-panel-and-map-centering` |
-| **Phase 4** | Map Pin Enhancements, Forest Reverse Geocoding & Pin Boundaries | ⏳ Planned | - |
-| **Phase 5** | Trips & Places Overhaul (Edit Places, Collapsed Pauses, Group By, School) | ⏳ Planned | - |
+| **Phase 4** | Map Pin Enhancements, Forest Reverse Geocoding & Pin Boundaries | ✅ Completed | `feat/map-pin-and-boundaries` |
+| **Phase 5** | Trips & Places Overhaul (Edit Places, Collapsed Pauses, Group By, School) | ✅ Completed | `feat/trips-and-places-overhaul` |
 
 ---
 
