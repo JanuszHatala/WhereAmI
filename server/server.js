@@ -162,7 +162,7 @@ app.post('/api/sessions/:id/view-mode', (req, res) => {
 
 app.post('/api/sessions/:id/points', (req, res) => {
   const { id } = req.params;
-  const { points, current, staticId } = req.body;
+  const { points, current, staticId, pauses } = req.body;
   let session = sessions.get(id);
   if (!session) {
     session = {
@@ -175,7 +175,8 @@ app.post('/api/sessions/:id/points', (req, res) => {
       ended: false,
       paused: false,
       current: null,
-      points: []
+      points: [],
+      pauses: []
     };
     sessions.set(id, session);
   }
@@ -199,6 +200,9 @@ app.post('/api/sessions/:id/points', (req, res) => {
 
   if (req.body.isPaused !== undefined) session.paused = Boolean(req.body.isPaused);
   if (current) session.current = current;
+  if (Array.isArray(pauses)) {
+    session.pauses = pauses;
+  }
   if (Array.isArray(points) && points.length > 0) {
     const existingTimestamps = new Set(session.points.map(p => p.t));
     for (const p of points) {

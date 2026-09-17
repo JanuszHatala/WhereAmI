@@ -738,8 +738,21 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
 
             val targetStaticId = _staticLiveId.value
+            val pausesArr = JSONArray()
+            val activePauses = TripManager.getInstance(context).activeTrip.value?.pauses ?: emptyList()
+            activePauses.filter { it.durationMs >= 30_000L }.forEach { p ->
+                pausesArr.put(JSONObject().apply {
+                    put("lat", p.latitude)
+                    put("lng", p.longitude)
+                    put("startTime", p.startTime)
+                    put("endTime", p.endTime ?: JSONObject.NULL)
+                    put("durationMs", p.durationMs)
+                })
+            }
+
             val root = JSONObject().apply {
                 put("points", pointsArr)
+                put("pauses", pausesArr)
                 put("isPaused", session.isPaused)
                 put("title", session.title)
                 if (targetStaticId.isNotBlank()) {
