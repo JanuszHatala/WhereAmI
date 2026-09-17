@@ -7,6 +7,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.background
@@ -61,6 +64,7 @@ import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 
 enum class MapOrientationMode {
     NORTH,     // 0° (North at top)
@@ -172,22 +176,26 @@ fun calculateOpticalCenter(
 
     // Ground resolution in meters per pixel at latitude and current zoom level
     val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
-    val distMeters = offsetPixelsY * metersPerPixel
+    val absOffset = kotlin.math.abs(offsetPixelsY)
+    val distMeters = absOffset * metersPerPixel
     if (distMeters <= 0.1) {
         return GeoPoint(lat, lon)
     }
 
     // In OSMDroid, mapOrientation rotates the canvas clockwise around the screen center.
-    // Therefore, Screen UP corresponds to geographic bearing (360 - mapOrientation) % 360.
+    // Screen UP corresponds to geographic bearing (360 - mapOrientation) % 360.
     val rawOrientation = mapOrientation.toDouble()
     val bearingScreenUp = ((360.0 - (rawOrientation % 360.0)) + 360.0) % 360.0
+    // If offsetPixelsY > 0, project camera UP (bearingScreenUp) so target appears LOWER on screen.
+    // If offsetPixelsY < 0, project camera DOWN so target appears HIGHER on screen.
+    val projectionBearing = if (offsetPixelsY > 0) bearingScreenUp else ((bearingScreenUp + 180.0) % 360.0)
 
-    // Geodesic destination point projection along bearingScreenUp
+    // Geodesic destination point projection along projectionBearing
     val rEarth = 6378137.0 // WGS84 equatorial radius in meters
     val delta = distMeters / rEarth
     val phi1 = Math.toRadians(lat)
     val lambda1 = Math.toRadians(lon)
-    val theta = Math.toRadians(bearingScreenUp)
+    val theta = Math.toRadians(projectionBearing)
 
     val sinPhi2 = kotlin.math.sin(phi1) * kotlin.math.cos(delta) +
             kotlin.math.cos(phi1) * kotlin.math.sin(delta) * kotlin.math.cos(theta)
@@ -228,6 +236,9 @@ fun OsmMapView(
     onMapClick: ((GeoPoint) -> Unit)? = null,
     activityProfile: ActivityProfile = ActivityProfile.CAR,
     isCompact: Boolean = true,
+    opticalOffsetY: Int? = null,
+    isRecording: Boolean = false,
+    pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
     onInstantShare: (() -> Unit)? = null,
@@ -242,11 +253,11 @@ fun OsmMapView(
     val density = androidx.compose.ui.platform.LocalDensity.current.density
 
     // Viewport-aware optical vertical offset:
-    // In portrait, the top LocalityCard (~150dp compact, ~280dp normal) and bottom controls (~90dp)
-    // obscure the map. Optical offset centers the user marker in the visible aperture between them.
-    val opticalOffsetY = remember(isLandscape, isCompact, density) {
+    // When measured positions are available from parent layout, use exact pixel aperture offset.
+    // Otherwise fallback to profile estimations. In landscape, offset is strictly 0.
+    val effectiveOpticalOffsetY = remember(opticalOffsetY, isLandscape, isCompact, density) {
         if (isLandscape) 0
-        else {
+        else opticalOffsetY ?: run {
             val topObstructionDp = if (isCompact) 150f else 280f
             val bottomObstructionDp = 90f
             val offsetDp = (topObstructionDp - bottomObstructionDp) / 2f
@@ -363,7 +374,7 @@ fun OsmMapView(
     }
 
     // Update marker position & auto-rotation with Stationary Bearing Freeze
-    LaunchedEffect(latLng, orientationMode) {
+    LaunchedEffect(latLng, orientationMode, isRecording) {
         val pos = latLng ?: return@LaunchedEffect
         val map = mapView ?: return@LaunchedEffect
         val gp = GeoPoint(pos.first, pos.second)
@@ -374,15 +385,23 @@ fun OsmMapView(
         // Stationary Bearing Freeze (MAP-R03): maintain last valid driving heading when stopped
         val effectiveBearing = rawBearing ?: lastFrozenBearing
 
-        val targetMapOrientation = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> if (effectiveBearing != null) -effectiveBearing else 0f
+        val isMoving = rawBearing != null
+        val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
+
+        val targetMapOrientation: Float? = when (orientationMode) {
+            MapOrientationMode.COURSE_UP -> {
+                // When not recording and stationary, do NOT auto-rotate map; allow free manual gesture rotation
+                if (!isRecording && !isMoving) null
+                else if (effectiveBearing != null) -effectiveBearing
+                else 0f
+            }
             MapOrientationMode.NORTH -> 0f
             MapOrientationMode.EAST -> 270f
             MapOrientationMode.SOUTH -> 180f
             MapOrientationMode.WEST -> 90f
         }
 
-        if (map.mapOrientation != targetMapOrientation) {
+        if (targetMapOrientation != null && map.mapOrientation != targetMapOrientation) {
             map.mapOrientation = targetMapOrientation
         }
 
@@ -400,19 +419,19 @@ fun OsmMapView(
         // In COURSE_UP (AUTO), the map is already rotated to face forward, so cursor points straight UP (0°).
         // In fixed cardinal modes, cursor points in travel direction relative to screen top.
         val topHeading = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> effectiveBearing ?: 0f
+            MapOrientationMode.COURSE_UP -> if (hasHeading) (effectiveBearing ?: 0f) else -map.mapOrientation
             MapOrientationMode.NORTH -> 0f
             MapOrientationMode.EAST -> 90f
             MapOrientationMode.SOUTH -> 180f
             MapOrientationMode.WEST -> 270f
         }
-        val screenAngle = if (effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
+        val screenAngle = if (hasHeading && effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
         m.rotation = -screenAngle
-        m.icon = makeMarkerIcon(context, effectiveBearing != null)
+        m.icon = makeMarkerIcon(context, hasHeading)
         m.title = null
 
         if (isFollowing && destinationPoint == null) {
-            val centerGp = getOpticalCenter(map, gp, opticalOffsetY)
+            val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY)
             map.controller.animateTo(centerGp)
         }
         map.invalidate()
@@ -445,7 +464,7 @@ fun OsmMapView(
             true // Consumed! No blank popup bubble
         }
 
-        val centerGp = getOpticalCenter(map, destinationPoint, opticalOffsetY)
+        val centerGp = getOpticalCenter(map, destinationPoint, effectiveOpticalOffsetY)
         map.controller.animateTo(centerGp)
         map.invalidate()
     }
@@ -454,18 +473,24 @@ fun OsmMapView(
     var savedPlaceMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
     LaunchedEffect(savedPlaces) {
         val map = mapView ?: return@LaunchedEffect
+        // Remove existing custom place markers
         savedPlaceMarkers.forEach { map.overlays.remove(it) }
 
         val newMarkers = mutableListOf<Marker>()
         savedPlaces.forEach { place ->
             val spm = Marker(map).apply {
                 position = place.geoPoint
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 icon = makeSavedPlaceIcon(context, place.category)
+                title = "${place.category.iconEmoji} ${place.name}"
+                snippet = listOfNotNull(
+                    place.street.takeIf { it.isNotBlank() },
+                    place.locality.takeIf { it.isNotBlank() }
+                ).joinToString(", ")
                 infoWindow = null
                 setOnMarkerClickListener { _, _ ->
                     onSavedPlaceClick?.invoke(place)
-                    true
+                    true // Consumed! No blank OSM popup
                 }
             }
             map.overlays.add(spm)
@@ -495,6 +520,38 @@ fun OsmMapView(
         }
 
         line.setPoints(trackPoints)
+        map.invalidate()
+    }
+
+    // Render Rest Stops / Pauses along polyline
+    var pauseMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    LaunchedEffect(pauses) {
+        val map = mapView ?: return@LaunchedEffect
+        pauseMarkers.forEach { map.overlays.remove(it) }
+        pauseMarkers = emptyList()
+
+        if (pauses.isEmpty()) {
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        val newPauseMarkers = mutableListOf<Marker>()
+        pauses.filter { it.durationMs >= 30_000L }.forEach { p ->
+            val pm = Marker(map).apply {
+                position = GeoPoint(p.latitude, p.longitude)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                val durText = when {
+                    p.durationMs < 60_000L -> "${p.durationMs / 1000}s"
+                    p.durationMs < 3600_000L -> "${p.durationMs / 60000}m"
+                    else -> "${p.durationMs / 3600000}h ${(p.durationMs % 3600000) / 60000}m"
+                }
+                icon = makePauseIcon(context, durText)
+                infoWindow = null
+            }
+            map.overlays.add(pm)
+            newPauseMarkers.add(pm)
+        }
+        pauseMarkers = newPauseMarkers
         map.invalidate()
     }
 
@@ -667,6 +724,10 @@ fun OsmMapView(
                     setTileSource(initialTileSource)
                     tilesScaleFactor = fontScale.scaleFactor
                     setMultiTouchControls(true)
+                    val rotationGestureOverlay = RotationGestureOverlay(this).apply {
+                        isEnabled = true
+                    }
+                    overlays.add(rotationGestureOverlay)
                     minZoomLevel = minZoom
                     maxZoomLevel = maxZoom
                     controller.setZoom(16.0)
@@ -749,20 +810,21 @@ fun OsmMapView(
                     hikingProviderRef?.clearTileCache()
                     latLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
-                        val centerGp = getOpticalCenter(mapView, gp, opticalOffsetY)
+                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
                         mapView?.controller?.setCenter(centerGp)
                     }
                     mapView?.invalidate()
                 },
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(if (isFollowing && destinationPoint == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
             ) {
                 Icon(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "Recenter & Refresh",
-                    tint = ComposeColor.White
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -770,7 +832,7 @@ fun OsmMapView(
             IconButton(
                 onClick = { showSettingsDialog = true },
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(
                         if (showHikingOverlay || baseLayer != MapBaseLayer.STANDARD || fontScale != MapFontScale.NORMAL)
@@ -782,7 +844,8 @@ fun OsmMapView(
                 Icon(
                     imageVector = Icons.Default.Layers,
                     contentDescription = "Map Settings & Layers",
-                    tint = ComposeColor.White
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -791,14 +854,15 @@ fun OsmMapView(
                 IconButton(
                     onClick = { onInstantShare.invoke() },
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
                 ) {
                     Icon(
                         imageVector = Icons.Default.Share,
                         contentDescription = "Share Current Position",
-                        tint = ComposeColor(0xFF38BDF8)
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -814,14 +878,15 @@ fun OsmMapView(
                         map.zoomToBoundingBox(box, true, 100)
                     },
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
                 ) {
                     Icon(
                         imageVector = Icons.Default.CropFree,
                         contentDescription = "Fit Shown Trips",
-                        tint = ComposeColor(0xFF38BDF8)
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -834,7 +899,7 @@ fun OsmMapView(
                     isFollowing = true
                     latLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
-                        val centerGp = getOpticalCenter(mapView, gp, opticalOffsetY)
+                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
                         mapView?.controller?.setCenter(centerGp)
                     }
                     mapView?.invalidate()
@@ -1493,6 +1558,46 @@ private fun makeSavedPlaceIcon(context: Context, category: PlaceCategory): andro
     }
     val yPos = cy - (textPaint.descent() + textPaint.ascent()) / 2
     canvas.drawText(category.iconEmoji, cx, yPos, textPaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+}
+
+private fun makePauseIcon(context: Context, durText: String): android.graphics.drawable.BitmapDrawable {
+    val density = context.resources.displayMetrics.density
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 10f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    val fullText = "⏸ $durText"
+    val textBounds = Rect()
+    textPaint.getTextBounds(fullText, 0, fullText.length, textBounds)
+
+    val padH = (8f * density).toInt()
+    val width = textBounds.width() + padH * 2
+    val height = (20f * density).toInt()
+
+    val bmp = Bitmap.createBitmap(maxOf(width, (36f * density).toInt()), height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F59E0B") // Amber
+        style = Paint.Style.FILL
+    }
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f * density
+    }
+
+    val rect = RectF(1f * density, 1f * density, bmp.width - 1f * density, height - 1f * density)
+    val cornerRadius = height / 2f
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)
+
+    val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
+    canvas.drawText(fullText, bmp.width / 2f, textY, textPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }

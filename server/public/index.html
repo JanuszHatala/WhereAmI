@@ -304,10 +304,45 @@
 
     let userMarker = null;
     let trackPolyline = L.polyline([], { color: '#0284c7', weight: 5, opacity: 0.85 }).addTo(map);
+    let pauseMarkers = [];
     let autoFollow = true;
     let lastCoords = null;
+    let currentSessionMeta = null;
 
     map.on('dragstart', () => { autoFollow = false; });
+
+    function renderPauses(pauses) {
+      pauseMarkers.forEach(m => map.removeLayer(m));
+      pauseMarkers = [];
+
+      if (!Array.isArray(pauses) || pauses.length === 0) return;
+
+      pauses.forEach(p => {
+        if (!p.lat || !p.lng) return;
+        const durMs = p.durationMs || (p.endTime && p.startTime ? p.endTime - p.startTime : 0);
+        if (durMs < 30000) return;
+
+        let durText = '';
+        if (durMs < 60000) {
+          durText = Math.round(durMs / 1000) + 's';
+        } else if (durMs < 3600000) {
+          durText = Math.floor(durMs / 60000) + 'm';
+        } else {
+          const h = Math.floor(durMs / 3600000);
+          const m = Math.floor((durMs % 3600000) / 60000);
+          durText = `${h}h ${m}m`;
+        }
+
+        const icon = L.divIcon({
+          className: 'pause-marker-pill',
+          html: `<div style="background:#f59e0b;color:#fff;border:2px solid #fff;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,0.4);white-space:nowrap;display:inline-flex;align-items:center;gap:3px;">⏸️ ${durText}</div>`,
+          iconAnchor: [24, 12]
+        });
+
+        const marker = L.marker([p.lat, p.lng], { icon, zIndexOffset: 500 }).addTo(map);
+        pauseMarkers.push(marker);
+      });
+    }
 
     function getOffsetCenter(coords, zoom) {
       const topCard = document.querySelector('.top-card');
@@ -364,6 +399,18 @@
       return hrs > 0 ? `⏳ ${hrs}h ${mins}m left` : `⏳ ${mins}m left`;
     }
 
+    function updateTimerTicker() {
+      if (!currentSessionMeta) return;
+      const chip = document.getElementById('countdownChip');
+      if (chip && currentSessionMeta.createdAt) {
+        chip.textContent = formatTimeDisplay(currentSessionMeta.expiresAt, currentSessionMeta.createdAt);
+        if (chip.style.display === 'none') {
+          chip.style.display = 'inline-block';
+        }
+      }
+    }
+    setInterval(updateTimerTicker, 1000);
+
     async function fetchTrack() {
       try {
         const res = await fetch('/api/sessions/' + sessionId, { cache: 'no-store' });
@@ -379,8 +426,11 @@
         }
         const data = await res.json();
         
+        currentSessionMeta = { expiresAt: data.expiresAt, createdAt: data.createdAt };
         document.getElementById('sessionTitle').textContent = data.title || 'Live Location';
-        document.getElementById('countdownChip').textContent = formatTimeDisplay(data.expiresAt, data.createdAt);
+        const countdownChip = document.getElementById('countdownChip');
+        countdownChip.style.display = 'inline-block';
+        countdownChip.textContent = formatTimeDisplay(data.expiresAt, data.createdAt);
 
         const alertBox = document.getElementById('statusAlert');
         const badge = document.getElementById('liveBadge');
@@ -499,6 +549,8 @@
         } else {
           trackPolyline.setLatLngs([]);
         }
+
+        renderPauses(data.pauses);
       } catch (err) {
         console.error('Fetch error:', err);
       }
