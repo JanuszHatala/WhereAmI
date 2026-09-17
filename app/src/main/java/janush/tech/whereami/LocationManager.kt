@@ -783,9 +783,13 @@ class LocationManager private constructor(private val context: Context) {
     /**
      * Lightweight flow for map composable (lat, lng, bearing).
      * Reuses the single shared master location pipeline without duplicate callbacks.
+     * Bearing is only non-null when moving (speed >= 1.2 m/s / 4.3 km/h).
      */
     fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> {
-        return masterLocationFlow.map { Triple(it.lat, it.lng, it.bearing) }
+        return masterLocationFlow.map {
+            val movingBearing = if (it.speedMs >= 1.2f) it.bearing else null
+            Triple(it.lat, it.lng, movingBearing)
+        }
     }
 
     // ── One-shot location ────────────────────────────────
