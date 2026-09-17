@@ -149,4 +149,28 @@ class MapPinReverseGeocodingTest {
         val dist100m = SearchHelper.computeDistanceMeters(50.0, 19.0, 50.0009, 19.0)
         assertTrue(dist100m in 95f..105f)
     }
+
+    @Test
+    fun testParseGeoJsonPolygonExtractsCoordinates() {
+        val geoJsonStr = """
+            {
+              "type": "Polygon",
+              "coordinates": [
+                [
+                  [19.20, 49.80],
+                  [19.25, 49.80],
+                  [19.25, 49.85],
+                  [19.20, 49.85],
+                  [19.20, 49.80]
+                ]
+              ]
+            }
+        """.trimIndent()
+        val json = org.json.JSONObject(geoJsonStr)
+        val poly = BoundaryHelper.parseGeoJsonPolygon(json)
+        org.junit.Assert.assertNotNull(poly)
+        assertEquals(5, poly!!.size)
+        assertEquals(49.80, poly[0].latitude, 0.0001)
+        assertEquals(19.20, poly[0].longitude, 0.0001)
+    }
 }
