@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -32,7 +32,7 @@ class AppStateManager private constructor(private val context: Context) {
             }
         }
 
-        private const val PREFS_NAME = "where_i_am_power_prefs"
+        private const val PREFS_NAME = "where_am_i_power_prefs"
         private const val KEY_POWER_POLICY = "power_policy"
     }
 

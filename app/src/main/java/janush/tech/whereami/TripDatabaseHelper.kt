@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.ContentValues
 import android.content.Context
@@ -8,10 +8,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
 
-class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
+    context.also { StorageMigrationHelper.migrateDatabaseIfNeeded(it) },
+    DATABASE_NAME,
+    null,
+    DATABASE_VERSION
+) {
 
     companion object {
-        private const val DATABASE_NAME = "where_i_am_trips.db"
+        const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
         private const val DATABASE_VERSION = 5
 
         private const val TABLE_TRIPS = "trips"

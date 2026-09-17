@@ -2599,7 +2599,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // ── Live Location Sharing Management Dialog ─────────────────────────────
     if (showLiveShareDialog) {
-        val prefs = context.getSharedPreferences("where_i_am_live_share_prefs", android.content.Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("where_am_i_live_share_prefs", android.content.Context.MODE_PRIVATE)
         var inputTitle by remember {
             mutableStateOf(liveSession?.title ?: prefs.getString(LiveSharingManager.KEY_PREF_TITLE, "My Live Hike") ?: "My Live Hike")
         }

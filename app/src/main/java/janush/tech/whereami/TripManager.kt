@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import android.location.Location
@@ -22,7 +22,7 @@ class TripManager private constructor(private val context: Context) {
             }
         }
 
-        private const val PREFS_NAME = "where_i_am_trip_prefs"
+        private const val PREFS_NAME = "where_am_i_trip_prefs"
         private const val KEY_TRIP_MODE = "pref_trip_mode"
         private const val KEY_ACTIVITY_PROFILE = "pref_activity_profile"
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
@@ -254,7 +254,7 @@ class TripManager private constructor(private val context: Context) {
         pendingCandidate = null
 
         // Stop foreground service if widget live tracking is not explicitly enabled
-        val widgetPrefs = context.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+        val widgetPrefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val isWidgetTracking = widgetPrefs.getBoolean("is_tracking", false)
         if (!isWidgetTracking) {
             try {
