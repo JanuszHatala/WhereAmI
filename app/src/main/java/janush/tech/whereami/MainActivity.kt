@@ -318,7 +318,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onTogglePinBorders = {
                                 val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName)
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
                             },
                             isPinBorderVisible = pinnedBoundaryPoints != null,
                             onShare = {
@@ -473,7 +473,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onTogglePinBorders = {
                         val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName)
+                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
                     },
                     isPinBorderVisible = pinnedBoundaryPoints != null,
                     onShare = {
