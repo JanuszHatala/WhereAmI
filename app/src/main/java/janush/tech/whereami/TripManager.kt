@@ -398,6 +398,13 @@ class TripManager private constructor(private val context: Context) {
             Double.MAX_VALUE
         }
 
+        // Prevent duplicate points or micro-oscillations
+        if (lastCommittedPoint != null && 
+            lastCommittedPoint.latitude == lat && 
+            lastCommittedPoint.longitude == lng) {
+            return
+        }
+
         // Suppress stationary polyline jitter: do not commit 5m jitter points when vehicle/hiker is stopped
         val isLocallyMoving = isMoving || distFromLastCommitted >= 25.0
         if (newPoints.isEmpty() || (distFromLastCommitted >= 5.0 && isLocallyMoving)) {
@@ -406,77 +413,15 @@ class TripManager private constructor(private val context: Context) {
 
         // Check for newly entered locality (with intentional visit filter: penetrate > 150m OR stay > 45s)
         val newPlaces = current.placesVisited.toMutableList()
-        if (currentPlace != null && currentPlace.city != "Unknown City" && currentPlace.city != "--") {
-            val candidateCity = currentPlace.city
-            val isImmediateLast = newPlaces.lastOrNull()?.placeName.equals(candidateCity, ignoreCase = true)
-
-            if (isImmediateLast) {
-                // Already inside currently committed place; reset any pending border candidate
-                pendingCandidate = null
-            } else if (newPlaces.isEmpty()) {
-                // First locality of a trip is committed immediately at trip start
-                TelemetryLogger.logTrip("LOCALITY_INITIAL", current.id, "Initial trip start at $candidateCity")
-                newPlaces.add(
-                    VisitedPlace(
-                        placeName = candidateCity,
-                        hierarchySubtitle = LocationManager.formatHierarchy(currentPlace),
-                        timestamp = now,
-                        latitude = lat,
-                        longitude = lng,
-                        distanceAtEntryMeters = newDistance
-                    )
-                )
-                pendingCandidate = null
-            } else {
-                // Check if we are already evaluating this candidate locality
-                val candidate = pendingCandidate
-                if (candidate != null && candidate.place.city.equals(candidateCity, ignoreCase = true)) {
-                    val distResults = FloatArray(1)
-                    Location.distanceBetween(candidate.entryLatitude, candidate.entryLongitude, lat, lng, distResults)
-                    val displacementMeters = distResults[0]
-                    val durationMs = now - candidate.firstSeenTimestamp
-
-                    val isPenetrated = displacementMeters >= 150f
-                    val isSustainedStay = durationMs >= 45_000L
-
-                    val recentMatch = newPlaces.takeLast(4).find { it.placeName.equals(candidateCity, ignoreCase = true) }
-                    val isRecentPingPong = recentMatch != null && (
-                        (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
-                        (newDistance - recentMatch.distanceAtEntryMeters < 2500.0)
-                    )
-
-                    if ((isPenetrated || isSustainedStay) && !isRecentPingPong) {
-                        TelemetryLogger.logTrip(
-                            "LOCALITY_COMMITTED",
-                            current.id,
-                            "Intentional visit to $candidateCity committed: disp=${displacementMeters.toInt()}m, dur=${durationMs / 1000}s"
-                        )
-                        newPlaces.add(
-                            VisitedPlace(
-                                placeName = candidateCity,
-                                hierarchySubtitle = LocationManager.formatHierarchy(candidate.place),
-                                timestamp = candidate.firstSeenTimestamp,
-                                latitude = candidate.entryLatitude,
-                                longitude = candidate.entryLongitude,
-                                distanceAtEntryMeters = candidate.entryDistanceMeters
-                            )
-                        )
-                        pendingCandidate = null
-                    } else if (isRecentPingPong) {
-                        pendingCandidate = null
-                    }
-                } else {
-                    // New candidate locality observed! Begin qualification timer/distance
-                    pendingCandidate = PendingPlaceCandidate(
-                        place = currentPlace,
-                        firstSeenTimestamp = now,
-                        entryLatitude = lat,
-                        entryLongitude = lng,
-                        entryDistanceMeters = newDistance
-                    )
-                }
-            }
-        }
+        updateVisitedPlaces(
+            lat = lat,
+            lng = lng,
+            currentDistance = newDistance,
+            currentPlace = currentPlace,
+            placesList = newPlaces,
+            tripId = current.id,
+            now = now
+        )
 
         val updated = current.copy(
             distanceMeters = newDistance,
@@ -511,6 +456,112 @@ class TripManager private constructor(private val context: Context) {
 
     fun deleteTrip(id: Long) {
         dbHelper.deleteTrip(id)
+    }
+
+    fun onLocalityEnriched(currentPlace: PlaceInfo?) {
+        val current = _activeTrip.value ?: return
+        val lastLoc = lastLocation ?: return
+        val now = System.currentTimeMillis()
+        val placesList = current.placesVisited.toMutableList()
+        val changed = updateVisitedPlaces(
+            lat = lastLoc.latitude,
+            lng = lastLoc.longitude,
+            currentDistance = current.distanceMeters,
+            currentPlace = currentPlace,
+            placesList = placesList,
+            tripId = current.id,
+            now = now
+        )
+        if (changed) {
+            val updated = current.copy(placesVisited = placesList)
+            _activeTrip.value = updated
+            scope.launch {
+                dbHelper.updateTrip(updated)
+            }
+        }
+    }
+
+    private fun updateVisitedPlaces(
+        lat: Double,
+        lng: Double,
+        currentDistance: Double,
+        currentPlace: PlaceInfo?,
+        placesList: MutableList<VisitedPlace>,
+        tripId: Long,
+        now: Long
+    ): Boolean {
+        if (currentPlace == null || currentPlace.city == "Unknown City" || currentPlace.city == "--") return false
+        val candidateCity = currentPlace.city
+        val isImmediateLast = placesList.lastOrNull()?.placeName.equals(candidateCity, ignoreCase = true)
+
+        if (isImmediateLast) {
+            pendingCandidate = null
+            return false
+        }
+        if (placesList.isEmpty()) {
+            TelemetryLogger.logTrip("LOCALITY_INITIAL", tripId, "Initial trip start at $candidateCity")
+            placesList.add(
+                VisitedPlace(
+                    placeName = candidateCity,
+                    hierarchySubtitle = LocationManager.formatHierarchy(currentPlace),
+                    timestamp = now,
+                    latitude = lat,
+                    longitude = lng,
+                    distanceAtEntryMeters = currentDistance
+                )
+            )
+            pendingCandidate = null
+            return true
+        }
+
+        val candidate = pendingCandidate
+        if (candidate != null && candidate.place.city.equals(candidateCity, ignoreCase = true)) {
+            val distResults = FloatArray(1)
+            Location.distanceBetween(candidate.entryLatitude, candidate.entryLongitude, lat, lng, distResults)
+            val displacementMeters = distResults[0]
+            val durationMs = now - candidate.firstSeenTimestamp
+
+            val isPenetrated = displacementMeters >= 150f
+            val isSustainedStay = durationMs >= 45_000L
+
+            val recentMatch = placesList.takeLast(4).find { it.placeName.equals(candidateCity, ignoreCase = true) }
+            val isRecentPingPong = recentMatch != null && (
+                (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
+                (currentDistance - recentMatch.distanceAtEntryMeters < 2500.0)
+            )
+
+            if ((isPenetrated || isSustainedStay) && !isRecentPingPong) {
+                TelemetryLogger.logTrip(
+                    "LOCALITY_COMMITTED",
+                    tripId,
+                    "Intentional visit to $candidateCity committed: disp=${displacementMeters.toInt()}m, dur=${durationMs / 1000}s"
+                )
+                placesList.add(
+                    VisitedPlace(
+                        placeName = candidateCity,
+                        hierarchySubtitle = LocationManager.formatHierarchy(candidate.place),
+                        timestamp = candidate.firstSeenTimestamp,
+                        latitude = candidate.entryLatitude,
+                        longitude = candidate.entryLongitude,
+                        distanceAtEntryMeters = candidate.entryDistanceMeters
+                    )
+                )
+                pendingCandidate = null
+                return true
+            } else if (isRecentPingPong) {
+                pendingCandidate = null
+                return false
+            }
+        } else {
+            pendingCandidate = PendingPlaceCandidate(
+                place = currentPlace,
+                firstSeenTimestamp = now,
+                entryLatitude = lat,
+                entryLongitude = lng,
+                entryDistanceMeters = currentDistance
+            )
+        }
+        return false
     }
 
     fun renameTrip(id: Long, newTitle: String) {
