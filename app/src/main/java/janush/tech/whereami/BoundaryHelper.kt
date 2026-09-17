@@ -37,7 +37,8 @@ object BoundaryHelper {
     suspend fun getLocalityBoundary(
         context: Context,
         cityName: String,
-        countryCode: String
+        countryCode: String,
+        fallbackMunicipality: String? = null
     ): List<GeoPoint>? = withContext(Dispatchers.IO) {
         if (cityName.isBlank() || cityName == "Unknown City" || cityName == "--") return@withContext null
 
@@ -76,6 +77,20 @@ object BoundaryHelper {
                 fetched = fetchFromNetwork(cityName, "Polska")
             }
 
+            // If village/hamlet doesn't have an OSM boundary polygon, fallback to municipality/gmina
+            if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cityName, ignoreCase = true)) {
+                val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
+                    .replace("gmina ", "", ignoreCase = true)
+                    .replace("gm. ", "", ignoreCase = true).trim()
+                if (cleanMun.isNotBlank() && !cleanMun.equals(cityName, ignoreCase = true)) {
+                    val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
+                    fetched = fetchFromNetwork(munQuery, countryCode)
+                    if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+                        fetched = fetchFromNetwork(cleanMun, "Polska")
+                    }
+                }
+            }
+
             if (fetched != null && fetched.isNotEmpty()) {
                 val simplified = subsamplePoints(fetched, 120)
                 memoryCache[cleanKey] = simplified
@@ -90,7 +105,7 @@ object BoundaryHelper {
     private fun fetchFromNetwork(cityName: String, countryPart: String): List<GeoPoint>? {
         return try {
             val q = URLEncoder.encode("$cityName, $countryPart", "UTF-8")
-            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=1"
+            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=5"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -106,17 +121,18 @@ object BoundaryHelper {
             if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
                 val array = JSONArray(body)
-                if (array.length() > 0) {
-                    val obj = array.getJSONObject(0)
-                    val geojson = obj.optJSONObject("geojson") ?: return null
+                // Search all returned items to find the first valid Polygon or MultiPolygon
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val geojson = obj.optJSONObject("geojson") ?: continue
                     val type = geojson.optString("type")
-                    val coords = geojson.optJSONArray("coordinates") ?: return null
+                    val coords = geojson.optJSONArray("coordinates") ?: continue
 
                     val result = mutableListOf<GeoPoint>()
                     if (type.equals("Polygon", ignoreCase = true)) {
-                        val outerRing = coords.getJSONArray(0)
-                        for (i in 0 until outerRing.length()) {
-                            val coordPair = outerRing.getJSONArray(i)
+                        val outerRing = coords.optJSONArray(0) ?: continue
+                        for (k in 0 until outerRing.length()) {
+                            val coordPair = outerRing.optJSONArray(k) ?: continue
                             val lon = coordPair.getDouble(0)
                             val lat = coordPair.getDouble(1)
                             result.add(GeoPoint(lat, lon))
@@ -124,14 +140,16 @@ object BoundaryHelper {
                     } else if (type.equals("MultiPolygon", ignoreCase = true)) {
                         // Take largest outer ring
                         if (coords.length() > 0) {
-                            val firstPoly = coords.getJSONArray(0)
-                            if (firstPoly.length() > 0) {
-                                val outerRing = firstPoly.getJSONArray(0)
-                                for (i in 0 until outerRing.length()) {
-                                    val coordPair = outerRing.getJSONArray(i)
-                                    val lon = coordPair.getDouble(0)
-                                    val lat = coordPair.getDouble(1)
-                                    result.add(GeoPoint(lat, lon))
+                            val firstPoly = coords.optJSONArray(0)
+                            if (firstPoly != null && firstPoly.length() > 0) {
+                                val outerRing = firstPoly.optJSONArray(0)
+                                if (outerRing != null) {
+                                    for (k in 0 until outerRing.length()) {
+                                        val coordPair = outerRing.optJSONArray(k) ?: continue
+                                        val lon = coordPair.getDouble(0)
+                                        val lat = coordPair.getDouble(1)
+                                        result.add(GeoPoint(lat, lon))
+                                    }
                                 }
                             }
                         }
