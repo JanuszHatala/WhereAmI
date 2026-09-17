@@ -166,6 +166,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val selectedTripIds by viewModel.selectedTripIds.collectAsState()
     val showBorders by viewModel.showBorders.collectAsState()
     val boundaryPoints by viewModel.boundaryPoints.collectAsState()
+    val pinnedBoundaryPoints by viewModel.pinnedBoundaryPoints.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
     val fitPlacesTrigger by viewModel.fitPlacesTrigger.collectAsState()
     val destinationPoint by viewModel.destinationPoint.collectAsState()
@@ -278,12 +279,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                             onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
                             onSavePlace = { lat, lng, item ->
                                 placeToSaveCoords = lat to lng
-                                placeToSaveLocality = item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
+                                placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
                                 placeToSaveStreet = item?.title ?: ""
                                 placeToSaveName = item?.title ?: "My Place"
                                 placeToSaveCategory = PlaceCategory.HOME
                                 showSavePlaceDialog = true
                             },
+                            onTogglePinBorders = {
+                                val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl")
+                            },
+                            isPinBorderVisible = pinnedBoundaryPoints != null,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -327,6 +333,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     selectedTrips = selectedTripsList,
                     savedPlaces = savedPlaces,
                     boundaryPoints = boundaryPoints,
+                    pinnedBoundaryPoints = pinnedBoundaryPoints,
                     heatMapTracks = heatMapTracks,
                     showHeatMap = showHeatMap,
                     onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -354,6 +361,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 selectedTrips = selectedTripsList,
                 savedPlaces = savedPlaces,
                 boundaryPoints = boundaryPoints,
+                pinnedBoundaryPoints = pinnedBoundaryPoints,
                 heatMapTracks = heatMapTracks,
                 showHeatMap = showHeatMap,
                 onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -413,12 +421,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
                     onSavePlace = { lat, lng, item ->
                         placeToSaveCoords = lat to lng
-                        placeToSaveLocality = item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
+                        placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
                         placeToSaveStreet = item?.title ?: ""
                         placeToSaveName = item?.title ?: "My Place"
                         placeToSaveCategory = PlaceCategory.HOME
                         showSavePlaceDialog = true
                     },
+                    onTogglePinBorders = {
+                        val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
+                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl")
+                    },
+                    isPinBorderVisible = pinnedBoundaryPoints != null,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
@@ -4700,6 +4713,8 @@ private fun DestinationPlaceCard(
     onNavigate: (Double, Double) -> Unit,
     onGoogleMaps: (Double, Double, String) -> Unit,
     onSavePlace: (Double, Double, SearchResultItem?) -> Unit,
+    onTogglePinBorders: () -> Unit,
+    isPinBorderVisible: Boolean,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -4790,7 +4805,7 @@ private fun DestinationPlaceCard(
                 }
             }
 
-            // Row 2: Save Place & Exit Actions
+            // Row 2: Save Place & Show Borders Actions (Point 8)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -4812,12 +4827,27 @@ private fun DestinationPlaceCard(
                 }
 
                 Button(
-                    onClick = onClearDestination,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                    onClick = onTogglePinBorders,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isPinBorderVisible) Color(0xFF06B6D4) else Color(0xFF1E293B)
+                    ),
                     shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Text("Exit Pin", color = Color.LightGray, fontSize = 12.sp)
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = null,
+                        tint = if (isPinBorderVisible) Color.White else Color(0xFF06B6D4),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isPinBorderVisible) "Hide Borders" else "Show Borders",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }

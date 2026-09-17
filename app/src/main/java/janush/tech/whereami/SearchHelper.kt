@@ -15,7 +15,9 @@ import java.util.Locale
 data class SearchResultItem(
     val title: String,
     val subtitle: String,
-    val geoPoint: GeoPoint
+    val geoPoint: GeoPoint,
+    val localityName: String? = null,
+    val countryCode: String? = null
 )
 
 object SearchHelper {
@@ -171,6 +173,8 @@ object SearchHelper {
         context: Context,
         geoPoint: GeoPoint
     ): SearchResultItem = withContext(Dispatchers.IO) {
+        val coordsStr = String.format(Locale.US, "%.5f, %.5f", geoPoint.latitude, geoPoint.longitude)
+
         // 1. Try Android Geocoder
         try {
             val geocoder = Geocoder(context, Locale.getDefault())
@@ -180,21 +184,62 @@ object SearchHelper {
                 val addr = addresses[0]
                 val street = addr.thoroughfare
                 val houseNum = addr.subThoroughfare
-                val locality = addr.locality ?: addr.subLocality ?: addr.subAdminArea ?: "Point on Map"
+                val locality = addr.locality ?: addr.subLocality ?: addr.subAdminArea
+                val countryCode = addr.countryCode?.lowercase(Locale.ROOT) ?: "pl"
+
+                var isOffRoad = false
+                if (addr.hasLatitude() && addr.hasLongitude()) {
+                    val dist = computeDistanceMeters(
+                        geoPoint.latitude, geoPoint.longitude,
+                        addr.latitude, addr.longitude
+                    )
+                    if (dist > 150f) {
+                        isOffRoad = true
+                    }
+                }
+
                 val title = when {
+                    isOffRoad -> coordsStr
                     !street.isNullOrBlank() && !houseNum.isNullOrBlank() -> "$street $houseNum"
                     !street.isNullOrBlank() -> street
-                    else -> locality
+                    else -> locality ?: coordsStr
                 }
-                val subtitle = listOfNotNull(
-                    locality.takeIf { it != title },
-                    addr.adminArea,
-                    addr.countryName
-                ).distinct().joinToString(", ")
+
+                val cleanSubAdmin = addr.subAdminArea?.replace("Powiat ", "", ignoreCase = true)
+                    ?.replace("powiat ", "", ignoreCase = true)
+                    ?.replace("pow. ", "", ignoreCase = true)?.trim()
+                val cleanAdmin = addr.adminArea?.replace("województwo ", "", ignoreCase = true)
+                    ?.replace("województwo", "", ignoreCase = true)
+                    ?.replace("woj. ", "", ignoreCase = true)?.trim()
+
+                val isPl = addr.countryCode?.equals("pl", ignoreCase = true) == true ||
+                        addr.countryName?.equals("Polska", ignoreCase = true) == true ||
+                        addr.countryName?.equals("Poland", ignoreCase = true) == true
+
+                val hierarchyParts = if (isPl) {
+                    listOfNotNull(
+                        locality?.takeIf { it != title },
+                        cleanSubAdmin?.let { "pow. $it" },
+                        cleanAdmin?.let { "woj. $it" },
+                        addr.countryName
+                    ).distinct()
+                } else {
+                    listOfNotNull(
+                        locality?.takeIf { it != title },
+                        cleanSubAdmin,
+                        cleanAdmin,
+                        addr.countryName
+                    ).distinct()
+                }
+
+                val subtitle = if (hierarchyParts.isNotEmpty()) hierarchyParts.joinToString(", ") else coordsStr
+
                 return@withContext SearchResultItem(
                     title = title,
                     subtitle = subtitle,
-                    geoPoint = geoPoint
+                    geoPoint = geoPoint,
+                    localityName = locality,
+                    countryCode = countryCode
                 )
             }
         } catch (_: Exception) {}
@@ -203,41 +248,125 @@ object SearchHelper {
         try {
             val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoPoint.latitude}&lon=${geoPoint.longitude}&zoom=18&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1")
-            conn.connectTimeout = 3000
-            conn.readTimeout = 3000
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 3500
+            conn.readTimeout = 3500
             if (conn.responseCode == 200) {
                 val responseText = conn.inputStream.bufferedReader().readText()
-                val json = org.json.JSONObject(responseText)
-                val addressObj = json.optJSONObject("address")
-                val road = addressObj?.optString("road")?.takeIf { it.isNotBlank() }
-                val houseNum = addressObj?.optString("house_number")?.takeIf { it.isNotBlank() }
-                val city = addressObj?.optString("city")?.takeIf { it.isNotBlank() }
-                    ?: addressObj?.optString("town")?.takeIf { it.isNotBlank() }
-                    ?: addressObj?.optString("village")?.takeIf { it.isNotBlank() }
-                    ?: addressObj?.optString("municipality")?.takeIf { it.isNotBlank() }
-                    ?: "Point on Map"
-                val title = when {
-                    road != null && houseNum != null -> "$road $houseNum"
-                    road != null -> road
-                    else -> city
-                }
-                val subtitle = listOfNotNull(
-                    city.takeIf { it != title },
-                    addressObj?.optString("county")?.takeIf { it.isNotBlank() },
-                    addressObj?.optString("state")?.takeIf { it.isNotBlank() },
-                    addressObj?.optString("country")?.takeIf { it.isNotBlank() }
-                ).distinct().joinToString(", ")
-                return@withContext SearchResultItem(
-                    title = title,
-                    subtitle = subtitle,
-                    geoPoint = geoPoint
-                )
+                return@withContext parseNominatimReverse(responseText, geoPoint.latitude, geoPoint.longitude)
             }
         } catch (_: Exception) {}
 
-        val coordsTitle = String.format(Locale.US, "Location (%.5f, %.5f)", geoPoint.latitude, geoPoint.longitude)
-        return@withContext SearchResultItem(title = coordsTitle, subtitle = "", geoPoint = geoPoint)
+        return@withContext SearchResultItem(
+            title = coordsStr,
+            subtitle = "",
+            geoPoint = geoPoint
+        )
+    }
+
+    /**
+     * Pure parser for Nominatim reverse geocoding JSON responses.
+     * Enforces the 150m off-road threshold and natural terrain awareness so distant
+     * street names are not assigned to forest/mountain/rural coordinates.
+     */
+    fun parseNominatimReverse(
+        jsonStr: String,
+        queryLat: Double,
+        queryLon: Double
+    ): SearchResultItem {
+        val coordsStr = String.format(Locale.US, "%.5f, %.5f", queryLat, queryLon)
+        val json = org.json.JSONObject(jsonStr)
+        val osmClass = json.optString("class", "")
+        val osmType = json.optString("type", "")
+        val snappedLat = json.optDouble("lat", Double.NaN)
+        val snappedLon = json.optDouble("lon", Double.NaN)
+
+        val addressObj = json.optJSONObject("address")
+        val road = addressObj?.optString("road")?.takeIf { it.isNotBlank() }
+        val houseNum = addressObj?.optString("house_number")?.takeIf { it.isNotBlank() }
+        val city = addressObj?.optString("city")?.takeIf { it.isNotBlank() }
+            ?: addressObj?.optString("town")?.takeIf { it.isNotBlank() }
+            ?: addressObj?.optString("village")?.takeIf { it.isNotBlank() }
+            ?: addressObj?.optString("municipality")?.takeIf { it.isNotBlank() }
+        val municipality = addressObj?.optString("municipality")?.takeIf { it.isNotBlank() && it != city }
+        val county = addressObj?.optString("county")?.takeIf { it.isNotBlank() }
+        val state = addressObj?.optString("state")?.takeIf { it.isNotBlank() }
+        val country = addressObj?.optString("country")?.takeIf { it.isNotBlank() }
+        val countryCode = addressObj?.optString("country_code", "pl")?.lowercase(Locale.ROOT) ?: "pl"
+
+        val isNaturalTerrain = osmClass in listOf("natural", "landuse", "leisure", "waterway") ||
+                osmType in listOf("forest", "wood", "peak", "scrub", "heath", "grass", "meadow", "fell", "wetland")
+
+        var isOffRoad = isNaturalTerrain
+        if (!snappedLat.isNaN() && !snappedLon.isNaN()) {
+            val dist = computeDistanceMeters(
+                queryLat, queryLon,
+                snappedLat, snappedLon
+            )
+            if (dist > 150f) {
+                isOffRoad = true
+            }
+        }
+
+        val title = when {
+            isOffRoad -> coordsStr
+            road != null && houseNum != null -> "$road $houseNum"
+            road != null -> road
+            else -> city ?: coordsStr
+        }
+
+        val cleanMunicipality = municipality?.replace("Gmina ", "", ignoreCase = true)
+            ?.replace("gmina ", "", ignoreCase = true)
+            ?.replace("gm. ", "", ignoreCase = true)?.trim()
+        val cleanCounty = county?.replace("Powiat ", "", ignoreCase = true)
+            ?.replace("powiat ", "", ignoreCase = true)
+            ?.replace("pow. ", "", ignoreCase = true)?.trim()
+        val cleanState = state?.replace("województwo ", "", ignoreCase = true)
+            ?.replace("województwo", "", ignoreCase = true)
+            ?.replace("woj. ", "", ignoreCase = true)?.trim()
+
+        val isPoland = countryCode == "pl" || (country != null && (country.equals("Polska", ignoreCase = true) || country.equals("Poland", ignoreCase = true)))
+
+        val subtitleParts = if (isPoland) {
+            listOfNotNull(
+                city?.takeIf { it != title },
+                cleanMunicipality?.let { "gm. $it" },
+                cleanCounty?.let { "pow. $it" },
+                cleanState?.let { "woj. $it" },
+                country
+            ).distinct()
+        } else {
+            listOfNotNull(
+                city?.takeIf { it != title },
+                cleanMunicipality,
+                cleanCounty,
+                cleanState,
+                country
+            ).distinct()
+        }
+
+        val subtitle = if (subtitleParts.isNotEmpty()) subtitleParts.joinToString(", ") else coordsStr
+
+        return SearchResultItem(
+            title = title,
+            subtitle = subtitle,
+            geoPoint = GeoPoint(queryLat, queryLon),
+            localityName = city,
+            countryCode = countryCode
+        )
+    }
+
+    /**
+     * Pure haversine calculation in meters (independent of Android framework).
+     */
+    fun computeDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return (6371000.0 * c).toFloat()
     }
 }
 
