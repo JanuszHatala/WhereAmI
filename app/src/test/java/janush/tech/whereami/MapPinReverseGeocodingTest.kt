@@ -33,6 +33,7 @@ class MapPinReverseGeocodingTest {
 
         assertEquals("ul. Kościelna 12", result.title)
         assertEquals("Wilkowice", result.localityName)
+        assertEquals("Wilkowice", result.municipalityName)
         assertEquals("pl", result.countryCode)
         assertTrue(result.subtitle.contains("Wilkowice"))
         assertTrue(result.subtitle.contains("pow. bielski"))
@@ -72,12 +73,39 @@ class MapPinReverseGeocodingTest {
 
         // Subtitle must preserve the full administrative hierarchy
         assertEquals("Wilkowice", result.localityName)
+        assertEquals("Wilkowice", result.municipalityName)
         assertEquals("pl", result.countryCode)
         assertTrue(result.subtitle.contains("Wilkowice"))
         assertTrue(result.subtitle.contains("gm. Wilkowice"))
         assertTrue(result.subtitle.contains("pow. bielski"))
         assertTrue(result.subtitle.contains("woj. śląskie"))
         assertTrue(result.subtitle.contains("Polska"))
+    }
+
+    @Test
+    fun testHamletWithSeparateMunicipalityPopulatesFallbackMunicipality() {
+        val json = """
+            {
+              "lat": "49.81675",
+              "lon": "19.24328",
+              "class": "place",
+              "type": "village",
+              "address": {
+                "village": "Kozubnik",
+                "municipality": "gmina Porąbka",
+                "county": "powiat bielski",
+                "state": "województwo śląskie",
+                "country": "Polska",
+                "country_code": "pl"
+              }
+            }
+        """.trimIndent()
+
+        val result = SearchHelper.parseNominatimReverse(json, 49.81675, 19.24328)
+        assertEquals("Kozubnik", result.localityName)
+        assertEquals("Porąbka", result.municipalityName)
+        assertEquals("pl", result.countryCode)
+        assertTrue(result.subtitle.contains("gm. Porąbka"))
     }
 
     @Test

@@ -17,7 +17,8 @@ data class SearchResultItem(
     val subtitle: String,
     val geoPoint: GeoPoint,
     val localityName: String? = null,
-    val countryCode: String? = null
+    val countryCode: String? = null,
+    val municipalityName: String? = null
 )
 
 object SearchHelper {
@@ -239,7 +240,8 @@ object SearchHelper {
                     subtitle = subtitle,
                     geoPoint = geoPoint,
                     localityName = locality,
-                    countryCode = countryCode
+                    countryCode = countryCode,
+                    municipalityName = cleanSubAdmin
                 )
             }
         } catch (_: Exception) {}
@@ -352,7 +354,8 @@ object SearchHelper {
             subtitle = subtitle,
             geoPoint = GeoPoint(queryLat, queryLon),
             localityName = city,
-            countryCode = countryCode
+            countryCode = countryCode,
+            municipalityName = cleanMunicipality
         )
     }
 
