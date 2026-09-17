@@ -24,6 +24,10 @@ object BoundaryHelper {
     // In-memory cache for fast UI access
     private val memoryCache = ConcurrentHashMap<String, List<GeoPoint>>()
 
+    fun clearMemoryCache() {
+        memoryCache.clear()
+    }
+
     // Concurrency & Rate Limiting (Nominatim policy: max 1 req/sec)
     private val requestMutex = Mutex()
     @Volatile
@@ -144,13 +148,7 @@ object BoundaryHelper {
             if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
                 val array = JSONArray(body)
-                // Search all returned items to find the first valid Polygon or MultiPolygon
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val geojson = obj.optJSONObject("geojson") ?: continue
-                    val poly = parseGeoJsonPolygon(geojson)
-                    if (poly != null && poly.isNotEmpty()) return poly
-                }
+                return selectBestBoundaryPolygon(array)
             }
             null
         } catch (e: Exception) {
@@ -268,13 +266,59 @@ object BoundaryHelper {
      */
     private fun subsamplePoints(pts: List<GeoPoint>, maxPts: Int): List<GeoPoint> {
         if (pts.size <= maxPts) return pts
-        val step = (pts.size - 1).toDouble() / (maxPts - 1).toDouble()
         val res = ArrayList<GeoPoint>(maxPts)
+        val step = (pts.size - 1).toDouble() / (maxPts - 1).toDouble()
         for (i in 0 until maxPts - 1) {
             val idx = Math.round(i * step).toInt().coerceIn(0, pts.size - 1)
             res.add(pts[idx])
         }
         res.add(pts.last())
         return res
+    }
+
+    /**
+     * Evaluates all returned items from Nominatim and selects the best administrative boundary polygon,
+     * strongly deprioritizing non-administrative features like airfields (aeroway), buildings, and landuse.
+     */
+    fun selectBestBoundaryPolygon(jsonArray: JSONArray): List<GeoPoint>? {
+        var bestPolygon: List<GeoPoint>? = null
+        var bestScore = -1000
+
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val geojson = obj.optJSONObject("geojson") ?: continue
+            val poly = parseGeoJsonPolygon(geojson) ?: continue
+            if (poly.isEmpty()) continue
+
+            val osmClass = obj.optString("class", "").lowercase()
+            val osmType = obj.optString("type", "").lowercase()
+            val entityType = obj.optString("osm_type", "").lowercase()
+
+            var score = 10
+            if (osmClass == "boundary" && osmType == "administrative") {
+                score += 100
+            } else if (osmClass == "place") {
+                score += 50
+            } else if (osmClass in listOf("aeroway", "landuse", "building", "leisure", "amenity", "highway", "natural")) {
+                score -= 100
+            }
+
+            if (entityType == "relation") {
+                score += 50
+            } else if (entityType == "way") {
+                score += 10
+            }
+
+            // Prefer relations with comprehensive vertex sets
+            if (poly.size >= 80) {
+                score += 20
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                bestPolygon = poly
+            }
+        }
+        return bestPolygon
     }
 }

@@ -222,6 +222,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
+    var showCacheManagerDialog by remember { mutableStateOf(false) }
 
     // Keep Screen On handler
     DisposableEffect(keepScreenOn) {
@@ -2281,6 +2282,39 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Storage & Offline Data Management
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            text = "Storage & Offline Caches",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Manage map tiles, boundaries, spatial cache, and battery-safe pre-fetching",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                    Button(
+                        onClick = { showCacheManagerDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Manage", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -2293,6 +2327,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             }
         }
+    }
+
+    if (showCacheManagerDialog) {
+        CacheManagerDialog(
+            onDismissRequest = { showCacheManagerDialog = false }
+        )
     }
 
     // ── 6. Search Dialog Overlay (City / Street / Place) ────────────────────────

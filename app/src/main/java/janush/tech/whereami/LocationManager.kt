@@ -449,6 +449,7 @@ class LocationManager private constructor(private val context: Context) {
     private var candidateStreetCount: Int = 0
     private var candidateStreetFirstSeenTime: Long = 0L
     private var lastStreetSeenTimestamp: Long = 0L
+    private var lastCommittedStreetLocality: String? = null
 
     private fun applyStreetHysteresis(
         speedMs: Float,
@@ -508,28 +509,31 @@ class LocationManager private constructor(private val context: Context) {
             candidateStreetFirstSeenTime = now
         }
 
-        val candidateDuration = now - candidateStreetFirstSeenTime
+        val isLocalityTransition = lastCommittedStreetLocality != null &&
+                !multiData.pl.city.isNullOrBlank() &&
+                !multiData.pl.city.equals("Unknown City", ignoreCase = true) &&
+                !multiData.pl.city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
         // Compute required confirmations based on speed and road hierarchy
-        val requiredCount: Int
-        val requiredDuration: Long
+        val rawRequiredCount: Int
+        val rawRequiredDuration: Long
 
         when {
             speedKmh < 1.2f -> {
                 // Stationary (traffic light / stop sign / resting):
                 // Strictly resist changing street name unless confirmed over extended duration
-                requiredCount = if (isCommittedMajor && !isCandidateMajor) 6 else 4
-                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 15_000L else 8_000L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 6 else 4
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 15_000L else 8_000L
             }
             speedKmh > 35f -> {
                 // High speed driving (viaduct / bridge / corridor inertia):
                 // Never abandon DK/DW/A/S for a parallel or side street unless sustained for 10s and 7 fixes
-                requiredCount = when {
+                rawRequiredCount = when {
                     isCommittedMajor && !isCandidateMajor -> 7
                     !isCommittedMajor && isCandidateMajor -> 2 // Snap onto highway corridor quickly
                     else -> 4
                 }
-                requiredDuration = when {
+                rawRequiredDuration = when {
                     isCommittedMajor && !isCandidateMajor -> 10_000L
                     !isCommittedMajor && isCandidateMajor -> 2_000L
                     else -> 4_500L
@@ -537,22 +541,28 @@ class LocationManager private constructor(private val context: Context) {
             }
             speedKmh > 15f -> {
                 // Moderate city driving / cycling:
-                requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
-                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
             }
             else -> {
                 // Slow driving / cycling / walking (1.2 - 15 km/h):
                 // Protect major roads (DK*, DW*, etc.) and main thoroughfares against side-street hopping
-                requiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
-                requiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
             }
         }
+
+        // When crossing into a confirmed new locality, relax threshold to adopt the new town's street promptly
+        val requiredCount = if (isLocalityTransition) minOf(rawRequiredCount, 2) else rawRequiredCount
+        val requiredDuration = if (isLocalityTransition) minOf(rawRequiredDuration, 2_000L) else rawRequiredDuration
+        val candidateDuration = now - candidateStreetFirstSeenTime
 
         // Must satisfy BOTH count AND duration to commit a street switch!
         if (candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration) {
             TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h: '$committedStreetPl' -> '$rawStreetPl'")
             committedStreetPl = candidateStreetPl
             committedStreetBase = candidateStreetBase
+            lastCommittedStreetLocality = multiData.pl.city
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
@@ -706,13 +716,8 @@ class LocationManager private constructor(private val context: Context) {
                             // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
                             committedPlace = stabilizedMultiData
 
-                            // Update TripManager with verified locality hierarchy
-                            TripManager.getInstance(context).onLocationUpdate(
-                                location.latitude,
-                                location.longitude,
-                                speed,
-                                stabilizedMultiData.pl
-                            )
+                            // Update TripManager with verified locality hierarchy without injecting duplicate points
+                            TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
 
                             val enrichedSnapshot = MultiLocationSnapshot(
                                 multiPlace = stabilizedMultiData,
@@ -883,6 +888,15 @@ class LocationManager private constructor(private val context: Context) {
             return cached.data
         }
 
+        // Check persistent SQLite spatial cache for instant offline hits
+        try {
+            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng)
+            if (diskCached != null) {
+                spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
+                return diskCached
+            }
+        } catch (_: Exception) {}
+
         val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
 
         val baseAddress = geocode(lat, lng, Locale.getDefault())
@@ -907,6 +921,9 @@ class LocationManager private constructor(private val context: Context) {
         val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
         if (enPlace.city != "Unknown City" || plPlace.city != "Unknown City") {
             spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
+            try {
+                SpatialCacheHelper.getInstance(context).put(lat, lng, result)
+            } catch (_: Exception) {}
         }
         return result
     }
