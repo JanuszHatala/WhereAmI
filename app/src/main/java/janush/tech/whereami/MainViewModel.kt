@@ -105,6 +105,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _boundaryPoints = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
     val boundaryPoints: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _boundaryPoints.asStateFlow()
 
+    // Pinned Locality Borders Layer (Point 8)
+    private val _pinnedBoundaryPoints = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
+    val pinnedBoundaryPoints: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _pinnedBoundaryPoints.asStateFlow()
+
     // Search Results State
     private val _searchResults = MutableStateFlow<List<SearchResultItem>>(emptyList())
     val searchResults: StateFlow<List<SearchResultItem>> = _searchResults.asStateFlow()
@@ -140,10 +144,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDestination(item: SearchResultItem?) {
         _destinationItem.value = item
         _destinationPoint.value = item?.geoPoint
+        _pinnedBoundaryPoints.value = null
     }
 
     fun setDestinationPoint(point: org.osmdroid.util.GeoPoint?) {
         _destinationPoint.value = point
+        _pinnedBoundaryPoints.value = null
         if (point == null) {
             _destinationItem.value = null
         }
@@ -151,6 +157,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectMapPoint(point: org.osmdroid.util.GeoPoint) {
         _destinationPoint.value = point
+        _pinnedBoundaryPoints.value = null
         _destinationItem.value = SearchResultItem(
             title = "Resolving Address...",
             subtitle = String.format(java.util.Locale.US, "%.5f, %.5f", point.latitude, point.longitude),
@@ -163,6 +170,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _destinationItem.value = resolved
             }
         }
+    }
+
+    fun togglePinnedBorders(locality: String?, countryCode: String? = "pl") {
+        if (_pinnedBoundaryPoints.value != null) {
+            _pinnedBoundaryPoints.value = null
+        } else {
+            if (locality.isNullOrBlank()) return
+            viewModelScope.launch {
+                val poly = BoundaryHelper.getLocalityBoundary(getApplication(), locality, countryCode ?: "pl")
+                _pinnedBoundaryPoints.value = poly
+            }
+        }
+    }
+
+    fun clearPinnedBorders() {
+        _pinnedBoundaryPoints.value = null
     }
 
     fun loadSavedPlaces() {
