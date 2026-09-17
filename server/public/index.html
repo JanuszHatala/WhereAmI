@@ -29,7 +29,32 @@
       z-index: 1000;
       box-shadow: 0 10px 25px rgba(0,0,0,0.5);
     }
-    .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+      gap: 12px;
+    }
+    .header-left {
+      flex: 1;
+      min-width: 0;
+    }
+    .session-title {
+      font-weight: 700;
+      font-size: 16px;
+      color: #38bdf8;
+      letter-spacing: 0.01em;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .header-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 5px;
+      flex-shrink: 0;
+    }
     .status-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     
     .live-badge {
@@ -113,11 +138,42 @@
       cursor: pointer;
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
       z-index: 1000;
+      transition: transform 0.15s ease, background 0.2s ease;
+    }
+    .recenter-btn:hover {
+      transform: scale(1.06);
+      background: #0369a1;
+    }
+
+    .fit-trip-btn {
+      position: absolute;
+      bottom: 80px;
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.92);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #38bdf8;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+      transition: transform 0.15s ease, background 0.2s ease;
+    }
+    .fit-trip-btn:hover {
+      transform: scale(1.06);
+      background: rgba(30, 41, 59, 0.98);
+      color: #fff;
     }
 
     .compass-widget {
       position: absolute;
-      bottom: 84px;
+      bottom: 136px;
       right: 20px;
       width: 48px;
       height: 48px;
@@ -193,10 +249,12 @@
 <body>
   <div class="top-card">
     <div class="header-row">
-      <span id="sessionTitle" style="font-weight: 700; font-size: 16px; color: #38bdf8; letter-spacing: 0.01em;">Live Location</span>
-      <div class="status-badges">
-        <span id="countdownChip" class="countdown-chip">Connecting...</span>
+      <div class="header-left">
+        <div id="sessionTitle" class="session-title">Live Location</div>
+      </div>
+      <div class="header-right">
         <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div> ONLINE</div>
+        <span id="countdownChip" class="countdown-chip">Connecting...</span>
       </div>
     </div>
     
@@ -208,7 +266,7 @@
       <div class="stat-item">Speed: <b id="speedVal">--</b></div>
       <div class="stat-item">Alt: <b id="altVal">--</b></div>
       <div class="stat-item">Battery: <b id="batteryVal">--</b></div>
-      <div class="stat-item"><span id="updatedVal">Waiting...</span></div>
+      <div class="stat-item">Last seen: <b id="updatedVal">Waiting...</b></div>
     </div>
 
     <div class="actions-row">
@@ -227,6 +285,7 @@
     </div>
     <div class="compass-heading-text" id="compassHeadingText">N</div>
   </div>
+  <button class="fit-trip-btn" onclick="fitTripBounds()" title="Fit Entire Trip to Viewport">📐</button>
   <button class="recenter-btn" onclick="recenterMap()" title="Recenter to Host">🎯</button>
 
   <script>
@@ -250,10 +309,36 @@
 
     map.on('dragstart', () => { autoFollow = false; });
 
-    function recenterMap() {
+    function getOffsetCenter(coords, zoom) {
+      const topCard = document.querySelector('.top-card');
+      const cardHeight = topCard ? topCard.offsetHeight : 160;
+      const point = map.project(coords, zoom);
+      const targetPoint = point.subtract([0, cardHeight / 2]);
+      return map.unproject(targetPoint, zoom);
+    }
+
+    function recenterMap(zoom) {
       if (lastCoords) {
-        map.setView(lastCoords, 16);
+        const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
+        const offsetCenter = getOffsetCenter(lastCoords, targetZoom);
+        map.setView(offsetCenter, targetZoom);
         autoFollow = true;
+      }
+    }
+
+    function fitTripBounds() {
+      const latlngs = trackPolyline.getLatLngs();
+      if (latlngs && latlngs.length > 1) {
+        const topCard = document.querySelector('.top-card');
+        const topOffset = topCard ? (topCard.offsetHeight + 20) : 180;
+        map.fitBounds(trackPolyline.getBounds(), {
+          paddingTopLeft: [24, topOffset],
+          paddingBottomRight: [24, 80],
+          maxZoom: 16
+        });
+        autoFollow = false;
+      } else if (lastCoords) {
+        recenterMap(15);
       }
     }
 
@@ -396,10 +481,14 @@
           if (!userMarker) {
             const icon = L.divIcon({ className: 'live-user-marker', iconSize: [22, 22], iconAnchor: [11, 11] });
             userMarker = L.marker([lat, lng], { icon }).addTo(map);
-            map.setView([lat, lng], 15);
+            recenterMap(15);
           } else {
             userMarker.setLatLng([lat, lng]);
-            if (autoFollow) map.setView([lat, lng]);
+            if (autoFollow) {
+              const currentZoom = map.getZoom() || 15;
+              const offsetCenter = getOffsetCenter([lat, lng], currentZoom);
+              map.panTo(offsetCenter);
+            }
           }
         }
 
