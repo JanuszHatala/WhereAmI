@@ -172,13 +172,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun togglePinnedBorders(locality: String?, countryCode: String? = "pl", fallbackMunicipality: String? = null) {
+    fun togglePinnedBorders(
+        locality: String?,
+        countryCode: String? = "pl",
+        fallbackMunicipality: String? = null,
+        geoPoint: org.osmdroid.util.GeoPoint? = null
+    ) {
         if (_pinnedBoundaryPoints.value != null) {
             _pinnedBoundaryPoints.value = null
         } else {
-            if (locality.isNullOrBlank()) return
+            if (locality.isNullOrBlank() && fallbackMunicipality.isNullOrBlank() && geoPoint == null) return
             viewModelScope.launch {
-                val poly = BoundaryHelper.getLocalityBoundary(getApplication(), locality, countryCode ?: "pl", fallbackMunicipality)
+                val poly = BoundaryHelper.getLocalityBoundary(
+                    context = getApplication(),
+                    cityName = locality,
+                    countryCode = countryCode ?: "pl",
+                    fallbackMunicipality = fallbackMunicipality,
+                    geoPoint = geoPoint
+                )
                 _pinnedBoundaryPoints.value = poly
             }
         }
@@ -373,8 +384,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val place = _locationData.value.primaryPlace ?: return
         if (place.city == "Unknown City" || place.city.isBlank()) return
 
+        val curLat = _currentLatLng.value?.first
+        val curLng = _currentLatLng.value?.second
+        val curGeoPoint = if (curLat != null && curLng != null) org.osmdroid.util.GeoPoint(curLat, curLng) else null
+
         viewModelScope.launch {
-            val poly = BoundaryHelper.getLocalityBoundary(getApplication(), place.city, place.countryCode, place.gmina)
+            val poly = BoundaryHelper.getLocalityBoundary(
+                context = getApplication(),
+                cityName = place.city,
+                countryCode = place.countryCode,
+                fallbackMunicipality = place.gmina,
+                geoPoint = curGeoPoint
+            )
             _boundaryPoints.value = poly
         }
     }
