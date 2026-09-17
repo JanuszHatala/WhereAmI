@@ -222,6 +222,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateSavedPlace(place: SavedPlace) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dbHelper.updateSavedPlace(place)
+            loadSavedPlaces()
+        }
+    }
+
     fun search(query: String) {
         if (query.trim().length < 2) {
             _searchResults.value = emptyList()
