@@ -148,6 +148,14 @@ fun openInGoogleMaps(context: android.content.Context, lat: Double, lng: Double,
     }
 }
 
+data class LocationShareTarget(
+    val title: String,
+    val placeName: String,
+    val addressOrCoords: String,
+    val latitude: Double,
+    val longitude: Double
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocationScreen(viewModel: MainViewModel) {
@@ -213,7 +221,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
-    var showInstantShareDialog by remember { mutableStateOf(false) }
+    var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
 
     // Keep Screen On handler
     DisposableEffect(keepScreenOn) {
@@ -232,6 +240,28 @@ fun LocationScreen(viewModel: MainViewModel) {
     val primaryPlace = locationData.primaryPlace
     val secondaryPlace = locationData.secondaryPlace
     val hierarchySubtitle = remember(primaryPlace) { LocationManager.formatHierarchy(primaryPlace) }
+
+    val shareCurrentLocation = remember(currentLatLng, primaryPlace, secondaryPlace) {
+        {
+            val lat = currentLatLng?.first ?: 0.0
+            val lng = currentLatLng?.second ?: 0.0
+            val parts = mutableListOf<String>()
+            val street = secondaryPlace?.street ?: primaryPlace?.street
+            if (!street.isNullOrBlank()) parts.add(street)
+            val road = secondaryPlace?.roadRef ?: primaryPlace?.roadRef
+            if (!road.isNullOrBlank() && street != road) parts.add("[$road]")
+            primaryPlace?.city?.takeIf { it.isNotBlank() && it != "Unknown City" }?.let { parts.add(it) }
+            primaryPlace?.country?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+            val address = if (parts.isEmpty()) "Current Location" else parts.joinToString(", ")
+            activeLocationShareTarget = LocationShareTarget(
+                title = "Share Current Position",
+                placeName = primaryPlace?.city?.takeIf { it.isNotBlank() && it != "Unknown City" } ?: "Current Location",
+                addressOrCoords = address,
+                latitude = lat,
+                longitude = lng
+            )
+        }
+    }
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
     val heatMapTracks = remember(savedTrips) { savedTrips.map { it.points } }
 
@@ -288,9 +318,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onTogglePinBorders = {
                                 val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl")
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName)
                             },
                             isPinBorderVisible = pinnedBoundaryPoints != null,
+                            onShare = {
+                                val destPt = destinationPoint!!
+                                val title = destinationItem?.title ?: "Pinned Location"
+                                val subtitle = destinationItem?.subtitle ?: ""
+                                val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
+                                activeLocationShareTarget = LocationShareTarget(
+                                    title = "Share Pinned Location",
+                                    placeName = title,
+                                    addressOrCoords = addressLine,
+                                    latitude = destPt.latitude,
+                                    longitude = destPt.longitude
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -349,7 +392,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
                     orientationMode = orientationMode,
                     onOrientationModeChange = { viewModel.setOrientationMode(it) },
-                    onInstantShare = { showInstantShareDialog = true },
+                    onInstantShare = shareCurrentLocation,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -377,7 +420,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
                 orientationMode = orientationMode,
                 onOrientationModeChange = { viewModel.setOrientationMode(it) },
-                onInstantShare = { showInstantShareDialog = true },
+                onInstantShare = shareCurrentLocation,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -430,9 +473,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onTogglePinBorders = {
                         val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl")
+                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName)
                     },
                     isPinBorderVisible = pinnedBoundaryPoints != null,
+                    onShare = {
+                        val destPt = destinationPoint!!
+                        val title = destinationItem?.title ?: "Pinned Location"
+                        val subtitle = destinationItem?.subtitle ?: ""
+                        val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
+                        activeLocationShareTarget = LocationShareTarget(
+                            title = "Share Pinned Location",
+                            placeName = title,
+                            addressOrCoords = addressLine,
+                            latitude = destPt.latitude,
+                            longitude = destPt.longitude
+                        )
+                    },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
@@ -2571,10 +2627,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         modifier = Modifier.padding(top = 4.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Button(
                             onClick = {
@@ -2582,12 +2638,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
                         ) {
-                            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Navigate", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                         }
 
                         Button(
@@ -2596,12 +2652,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
                         ) {
-                            Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Maps", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Maps", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
                         }
 
                         Button(
@@ -2611,12 +2667,32 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Edit", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Edit", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                        }
+
+                        Button(
+                            onClick = {
+                                activeLocationShareTarget = LocationShareTarget(
+                                    title = "Share Saved Place",
+                                    placeName = sp.name,
+                                    addressOrCoords = addr.ifBlank { String.format(Locale.US, "%.5f, %.5f", sp.latitude, sp.longitude) },
+                                    latitude = sp.latitude,
+                                    longitude = sp.longitude
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Share", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -3942,176 +4018,176 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    if (showInstantShareDialog) {
-        val lat = currentLatLng?.first
-        val lng = currentLatLng?.second
-        val primaryPlace = locationData.primaryPlace
-        val secondaryPlace = locationData.secondaryPlace
-        val addressLine = remember(primaryPlace, secondaryPlace) {
-            val parts = mutableListOf<String>()
-            val street = secondaryPlace?.street ?: primaryPlace?.street
-            if (!street.isNullOrBlank()) {
-                parts.add(street)
-            }
-            val road = secondaryPlace?.roadRef ?: primaryPlace?.roadRef
-            if (!road.isNullOrBlank() && street != road) {
-                parts.add("[$road]")
-            }
-            primaryPlace?.city?.takeIf { it.isNotBlank() && it != "Unknown City" }?.let { parts.add(it) }
-            primaryPlace?.country?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
-            if (parts.isEmpty()) "Unknown Location" else parts.joinToString(", ")
-        }
-        val accuracyM = remember(locationData) {
-            // Check if accuracy is available via LocationManager or raw
-            "High"
-        }
+    if (activeLocationShareTarget != null) {
+        LocationShareDialog(
+            target = activeLocationShareTarget!!,
+            onDismiss = { activeLocationShareTarget = null }
+        )
+    }
+}
 
-        Dialog(
-            onDismissRequest = { showInstantShareDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+@Composable
+fun LocationShareDialog(
+    target: LocationShareTarget,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val coordsStr = remember(target.latitude, target.longitude) {
+        String.format(Locale.US, "%.5f, %.5f", target.latitude, target.longitude)
+    }
+    val googleMapsUrl = remember(coordsStr) { "https://maps.google.com/?q=$coordsStr" }
+    val fullShareText = remember(target, coordsStr, googleMapsUrl) {
+        val placeInfo = if (target.placeName.isNotBlank() && target.placeName != target.addressOrCoords) {
+            "${target.placeName}\n${target.addressOrCoords}"
+        } else {
+            target.addressOrCoords
+        }
+        "${target.title}:\n$placeInfo\nCoordinates: $coordsStr\nMap: $googleMapsUrl"
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 24.dp)
         ) {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 24.dp)
+                    .padding(18.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📍", fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = target.title,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("📍", fontSize = 22.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        if (target.placeName.isNotBlank()) {
+                            Text("Location Name:", fontSize = 11.sp, color = Color(0xFF94A3B8))
                             Text(
-                                text = "Share Current Position",
-                                fontSize = 18.sp,
+                                text = target.placeName,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
-                        IconButton(
-                            onClick = { showInstantShareDialog = false },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1E293B))
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+                        if (target.addressOrCoords.isNotBlank() && target.addressOrCoords != target.placeName) {
+                            Text("Address / Hierarchy:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                            Text(
+                                text = target.addressOrCoords,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = Color(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
+                        Text("GPS Coordinates:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                        Text(
+                            text = coordsStr,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Native Share Sheet
+                Button(
+                    onClick = {
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, fullShareText)
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, target.title))
+                        onDismiss()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Share via App (WhatsApp, SMS, etc.)", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Copy to Clipboard and Open in Maps
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("Coordinates", coordsStr)
+                            clipboard.setPrimaryClip(clip)
+                            android.widget.Toast.makeText(context, "Coordinates copied: $coordsStr", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy Coords", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Copy Coords", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    if (lat != null && lng != null) {
-                        val coordsStr = String.format(Locale.US, "%.5f, %.5f", lat, lng)
-                        val googleMapsUrl = "https://maps.google.com/?q=$coordsStr"
-                        val fullShareText = "My current location:\n$addressLine\nCoordinates: $coordsStr\nMap: $googleMapsUrl"
-
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Text("Address:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                Text(
-                                    text = addressLine,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("GPS Coordinates (Filtered):", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                Text(
-                                    text = coordsStr,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
-                                )
+                    Button(
+                        onClick = {
+                            val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:${target.latitude},${target.longitude}?q=${target.latitude},${target.longitude}(${Uri.encode(target.placeName)})"))
+                            try {
+                                context.startActivity(mapIntent)
+                            } catch (_: Exception) {
+                                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(googleMapsUrl))
+                                context.startActivity(browserIntent)
                             }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Native Share Sheet
-                        Button(
-                            onClick = {
-                                val sendIntent = Intent().apply {
-                                    action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, fullShareText)
-                                    type = "text/plain"
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "Share Location"))
-                                showInstantShareDialog = false
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Share via App (WhatsApp, SMS, etc.)", fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Copy to Clipboard
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                    val clip = android.content.ClipData.newPlainText("Coordinates", coordsStr)
-                                    clipboard.setPrimaryClip(clip)
-                                    android.widget.Toast.makeText(context, "Coordinates copied: $coordsStr", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Coords", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Copy Coords", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-
-                            // Open in Google Maps app
-                            Button(
-                                onClick = {
-                                    val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng($addressLine)"))
-                                    try {
-                                        context.startActivity(mapIntent)
-                                    } catch (_: Exception) {
-                                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(googleMapsUrl))
-                                        context.startActivity(browserIntent)
-                                    }
-                                    showInstantShareDialog = false
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Map, contentDescription = "Google Maps", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Open Map", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = "Waiting for valid GPS fix...",
-                            color = Color(0xFFF87171),
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Map, contentDescription = "Open Map", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Open Map", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                     }
                 }
             }
@@ -5062,6 +5138,7 @@ private fun DestinationPlaceCard(
     onSavePlace: (Double, Double, SearchResultItem?) -> Unit,
     onTogglePinBorders: () -> Unit,
     isPinBorderVisible: Boolean,
+    onShare: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -5085,7 +5162,7 @@ private fun DestinationPlaceCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = destinationItem?.title ?: "Searched Location",
+                        text = destinationItem?.title ?: "Selected Location",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
@@ -5093,16 +5170,36 @@ private fun DestinationPlaceCard(
                     )
                 }
 
-                IconButton(
-                    onClick = onClearDestination,
-                    modifier = Modifier.size(26.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Exit Destination",
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(18.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onShare,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share Location",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = onClearDestination,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Exit Destination",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -5116,25 +5213,25 @@ private fun DestinationPlaceCard(
                 )
             }
 
-            // Row 1: Navigation & Map Actions
+            // Row 1: Navigation, Map, & Share Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
                     onClick = {
                         onNavigate(destinationPoint.latitude, destinationPoint.longitude)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f)
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Navigate To", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
 
                 Button(
@@ -5142,58 +5239,72 @@ private fun DestinationPlaceCard(
                         onGoogleMaps(destinationPoint.latitude, destinationPoint.longitude, destinationItem?.title ?: "")
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f)
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Google Maps", color = Color.White, fontSize = 12.sp)
+                    Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Maps", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                }
+
+                Button(
+                    onClick = onShare,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Share", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
                 }
             }
 
-            // Row 2: Save Place & Show Borders Actions (Point 8)
+            // Row 2: Save Place & Show/Hide Borders Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
                     onClick = {
                         onSavePlace(destinationPoint.latitude, destinationPoint.longitude, destinationItem)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f)
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Save as My Place", fontSize = 12.sp)
+                    Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Save Place", fontSize = 11.sp, maxLines = 1, softWrap = false)
                 }
 
                 Button(
                     onClick = onTogglePinBorders,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPinBorderVisible) Color(0xFF06B6D4) else Color(0xFF1E293B)
+                        containerColor = if (isPinBorderVisible) Color(0xFFDC2626) else Color(0xFF1E293B)
                     ),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f)
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Layers,
+                        imageVector = if (isPinBorderVisible) Icons.Default.LayersClear else Icons.Default.Layers,
                         contentDescription = null,
-                        tint = if (isPinBorderVisible) Color.White else Color(0xFF06B6D4),
-                        modifier = Modifier.size(16.dp)
+                        tint = if (isPinBorderVisible) Color.White else Color(0xFFEF4444),
+                        modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = if (isPinBorderVisible) "Hide Borders" else "Show Borders",
                         color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = 11.sp,
+                        fontWeight = if (isPinBorderVisible) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
