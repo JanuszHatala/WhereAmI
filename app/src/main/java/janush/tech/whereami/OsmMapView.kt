@@ -166,6 +166,7 @@ fun OsmMapView(
     selectedTrips: List<TripRecord> = emptyList(),
     savedPlaces: List<SavedPlace> = emptyList(),
     boundaryPoints: List<GeoPoint>? = null,
+    pinnedBoundaryPoints: List<GeoPoint>? = null,
     heatMapTracks: List<List<GeoPoint>> = emptyList(),
     showHeatMap: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
@@ -224,6 +225,7 @@ fun OsmMapView(
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     var polyline by remember { mutableStateOf<Polyline?>(null) }
     var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
+    var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var isFollowing by remember { mutableStateOf(true) }
@@ -462,6 +464,26 @@ fun OsmMapView(
             }
             map.overlays.add(0, poly)
             boundaryPolygon = poly
+        }
+        map.invalidate()
+    }
+
+    // Render Pinned Locality Boundary Polygon (Point 8: Cyan dashed styling)
+    LaunchedEffect(pinnedBoundaryPoints) {
+        val map = mapView ?: return@LaunchedEffect
+        pinnedBoundaryPolygon?.let { map.overlays.remove(it) }
+        pinnedBoundaryPolygon = null
+
+        if (pinnedBoundaryPoints != null && pinnedBoundaryPoints.size >= 3) {
+            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                outlinePaint.color = Color.parseColor("#06B6D4") // Cyan border
+                outlinePaint.strokeWidth = 6f
+                outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
+                fillPaint.color = Color.parseColor("#1A06B6D4")  // Subtle cyan tint
+                points = pinnedBoundaryPoints
+            }
+            map.overlays.add(0, poly)
+            pinnedBoundaryPolygon = poly
         }
         map.invalidate()
     }
