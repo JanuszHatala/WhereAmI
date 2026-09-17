@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Point
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.background
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.Toast
+import org.osmdroid.api.IGeoPoint
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.MapTileProviderBasic
@@ -131,6 +133,24 @@ private val WaymarkedTrailsHikingSource = XYTileSource(
 )
 
 /**
+ * Calculates the map center GeoPoint required so that the given target marker
+ * appears at the optical center of the visible map aperture (offset from screen center
+ * to account for top locality card and bottom navigation bar overlays).
+ */
+private fun getOpticalCenter(mapView: MapView?, target: IGeoPoint, offsetPixelsY: Int): GeoPoint {
+    if (mapView == null || offsetPixelsY == 0 || mapView.width == 0 || mapView.height == 0) {
+        return GeoPoint(target.latitude, target.longitude)
+    }
+    val proj = mapView.projection ?: return GeoPoint(target.latitude, target.longitude)
+    val pt = Point()
+    proj.toPixels(target, pt)
+    val centerPtX = pt.x
+    val centerPtY = pt.y - offsetPixelsY
+    val igp = proj.fromPixels(centerPtX, centerPtY) ?: return GeoPoint(target.latitude, target.longitude)
+    return GeoPoint(igp.latitude, igp.longitude)
+}
+
+/**
  * Composable OSM map panel with:
  * - Position dot / heading arrow.
  * - Red live trip polyline drawing (#EF4444).
@@ -166,6 +186,23 @@ fun OsmMapView(
     val context = LocalContext.current
     val currentOnMapClick by rememberUpdatedState(onMapClick)
     val currentOnOrientationChange by rememberUpdatedState(onOrientationModeChange)
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+
+    // Viewport-aware optical vertical offset:
+    // In portrait, the top LocalityCard (~150dp compact, ~280dp normal) and bottom controls (~90dp)
+    // obscure the map. Optical offset centers the user marker in the visible aperture between them.
+    val opticalOffsetY = remember(isLandscape, isCompact, density) {
+        if (isLandscape) 0
+        else {
+            val topObstructionDp = if (isCompact) 150f else 280f
+            val bottomObstructionDp = 90f
+            val offsetDp = (topObstructionDp - bottomObstructionDp) / 2f
+            (offsetDp * density).toInt()
+        }
+    }
 
     LaunchedEffect(Unit) {
         Configuration.getInstance().apply {
@@ -324,7 +361,8 @@ fun OsmMapView(
         m.title = null
 
         if (isFollowing && destinationPoint == null) {
-            map.controller.animateTo(gp)
+            val centerGp = getOpticalCenter(map, gp, opticalOffsetY)
+            map.controller.animateTo(centerGp)
         }
         map.invalidate()
     }
@@ -356,7 +394,8 @@ fun OsmMapView(
             true // Consumed! No blank popup bubble
         }
 
-        map.controller.animateTo(destinationPoint)
+        val centerGp = getOpticalCenter(map, destinationPoint, opticalOffsetY)
+        map.controller.animateTo(centerGp)
         map.invalidate()
     }
 
@@ -638,7 +677,9 @@ fun OsmMapView(
                     mapView?.tileProvider?.clearTileCache()
                     hikingProviderRef?.clearTileCache()
                     latLng?.let { pos ->
-                        mapView?.controller?.setCenter(GeoPoint(pos.first, pos.second))
+                        val gp = GeoPoint(pos.first, pos.second)
+                        val centerGp = getOpticalCenter(mapView, gp, opticalOffsetY)
+                        mapView?.controller?.setCenter(centerGp)
                     }
                     mapView?.invalidate()
                 },
@@ -721,7 +762,9 @@ fun OsmMapView(
                 onClick = {
                     isFollowing = true
                     latLng?.let { pos ->
-                        mapView?.controller?.setCenter(GeoPoint(pos.first, pos.second))
+                        val gp = GeoPoint(pos.first, pos.second)
+                        val centerGp = getOpticalCenter(mapView, gp, opticalOffsetY)
+                        mapView?.controller?.setCenter(centerGp)
                     }
                     mapView?.invalidate()
                 },

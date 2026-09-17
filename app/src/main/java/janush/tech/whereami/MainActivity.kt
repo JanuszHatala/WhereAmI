@@ -259,6 +259,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                             currentLatLng = currentLatLng,
                             onShowActiveTripRoute = { showActiveTripRouteDialog = true },
                             onShowLiveShare = { showLiveShareDialog = true },
+                            onOpenSavedPlaces = {
+                                sheetTab = 1
+                                showTripsSheet = true
+                            },
                             onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                             onSetActivityProfile = { viewModel.setActivityProfile(it) },
                             modifier = Modifier.fillMaxWidth()
@@ -382,6 +386,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                     currentLatLng = currentLatLng,
                     onShowActiveTripRoute = { showActiveTripRouteDialog = true },
                     onShowLiveShare = { showLiveShareDialog = true },
+                    onOpenSavedPlaces = {
+                        sheetTab = 1
+                        showTripsSheet = true
+                    },
                     onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                     onSetActivityProfile = { viewModel.setActivityProfile(it) },
                     modifier = Modifier
@@ -3827,6 +3835,7 @@ private fun LocalityCard(
     currentLatLng: Triple<Double, Double, Float?>?,
     onShowActiveTripRoute: () -> Unit,
     onShowLiveShare: () -> Unit,
+    onOpenSavedPlaces: () -> Unit = {},
     onSetLocalityCardStyle: (LocalityCardStyle) -> Unit,
     onSetActivityProfile: (ActivityProfile) -> Unit,
     modifier: Modifier = Modifier
@@ -3967,22 +3976,34 @@ private fun LocalityCard(
                                 )
                             }
                         }
-                        if (nearbySavedPlace != null) {
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = nearbySavedPlace.category.iconEmoji,
-                                fontSize = 14.sp
-                            )
-                        }
                     }
 
-                    // Compact Action Icons (Live Share Satellite, Maps, Expand)
+                    // Compact Action Icons: Google Maps, Live Sharing, Saved Place, Expand
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Live Sharing Satellite Icon (Permanently visible immediately to the left of Google Maps)
-                            if (liveSession?.isActive == true) {
+                        // Open in Google Maps
+                        IconButton(
+                            onClick = {
+                                val lat = currentLatLng?.first
+                                val lng = currentLatLng?.second
+                                if (lat != null && lng != null) {
+                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
+                                }
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Open in Google Maps",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Live Sharing Satellite Icon / Pill
+                        if (liveSession?.isActive == true) {
                             Surface(
                                 onClick = onShowLiveShare,
                                 shape = RoundedCornerShape(12.dp),
@@ -4031,23 +4052,26 @@ private fun LocalityCard(
                             }
                         }
 
-                        // Open in Google Maps
-                        IconButton(
-                            onClick = {
-                                val lat = currentLatLng?.first
-                                val lng = currentLatLng?.second
-                                if (lat != null && lng != null) {
-                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
+                        // Saved Place Indicator (Clickable to open Places tab)
+                        if (nearbySavedPlace != null) {
+                            Surface(
+                                onClick = onOpenSavedPlaces,
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0x3310B981),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 6.dp)
+                                ) {
+                                    Text(
+                                        text = nearbySavedPlace.category.iconEmoji,
+                                        fontSize = 14.sp
+                                    )
                                 }
-                            },
-                            modifier = Modifier.size(30.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Map,
-                                contentDescription = "Open in Google Maps",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(16.dp)
-                            )
+                            }
                         }
 
                         // Direct Expand Toggle (switches to Normal mode)
@@ -4190,42 +4214,40 @@ private fun LocalityCard(
                     }
                 }
 
-                // Top Utilities Row: Saved Place / Live Badge on Left, Maps/Collapse on Right (Country moved to Hierarchy line)
+                // Top Utilities Row: Maps & Live Badge on Left, Saved Place / Collapse on Right
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Left side: Saved Place (if near saved place)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (nearbySavedPlace != null) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0x3310B981))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-                    }
-
-                    // Right Utility Icons: Live Share Satellite, Google Maps, Collapse
+                    // ── Left Utility Icons: Google Maps, Live Share Satellite / Pill ──
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Live Sharing Satellite Icon (Permanently visible immediately to the left of Google Maps)
+                        // Open in Google Maps
+                        IconButton(
+                            onClick = {
+                                val lat = currentLatLng?.first
+                                val lng = currentLatLng?.second
+                                if (lat != null && lng != null) {
+                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
+                                }
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Open in Google Maps",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Live Sharing Satellite Icon / Pill
                         if (liveSession?.isActive == true) {
                             Surface(
                                 onClick = onShowLiveShare,
@@ -4277,27 +4299,46 @@ private fun LocalityCard(
                                 )
                             }
                         }
+                    }
 
-                        // Open in Google Maps
-                        IconButton(
-                            onClick = {
-                                val lat = currentLatLng?.first
-                                val lng = currentLatLng?.second
-                                if (lat != null && lng != null) {
-                                    openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
-                                }
-                            },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1E293B))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Map,
-                                contentDescription = "Open in Google Maps",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(18.dp)
-                            )
+                    // ── Right Utility Icons: Bookmarked Place (Clickable to open Places tab), Collapse ──
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (nearbySavedPlace != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0x3310B981))
+                                    .clickable { onOpenSavedPlaces() }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        } else {
+                            // Quick Access Bookmark Icon Button
+                            IconButton(
+                                onClick = onOpenSavedPlaces,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1E293B))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BookmarkBorder,
+                                    contentDescription = "Saved Places",
+                                    tint = Color(0xFF10B981),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
                         // Direct Collapse Toggle (switches to Compact mode)
