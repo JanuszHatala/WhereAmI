@@ -176,7 +176,23 @@ object SearchHelper {
     ): SearchResultItem = withContext(Dispatchers.IO) {
         val coordsStr = String.format(Locale.US, "%.5f, %.5f", geoPoint.latitude, geoPoint.longitude)
 
-        // 1. Try Android Geocoder
+        // 1. Try Nominatim reverse geocoding first (provides exact OSM place classification, gmina, and natural terrain tags)
+        try {
+            val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoPoint.latitude}&lon=${geoPoint.longitude}&zoom=18&addressdetails=1"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            if (conn.responseCode == 200) {
+                val responseText = conn.inputStream.bufferedReader().readText()
+                val parsed = parseNominatimReverse(responseText, geoPoint.latitude, geoPoint.longitude)
+                if (parsed.localityName != null || parsed.title != coordsStr) {
+                    return@withContext parsed
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback to Android Geocoder (offline or when Nominatim fails)
         try {
             val geocoder = Geocoder(context, Locale.getDefault())
             @Suppress("DEPRECATION")
@@ -235,27 +251,17 @@ object SearchHelper {
 
                 val subtitle = if (hierarchyParts.isNotEmpty()) hierarchyParts.joinToString(", ") else coordsStr
 
+                val resolvedLocality = if (!addr.subLocality.isNullOrBlank()) addr.subLocality else locality
+                val resolvedMunicipality = if (!addr.subLocality.isNullOrBlank() && !addr.locality.isNullOrBlank()) addr.locality else null
+
                 return@withContext SearchResultItem(
                     title = title,
                     subtitle = subtitle,
                     geoPoint = geoPoint,
-                    localityName = locality,
+                    localityName = resolvedLocality,
                     countryCode = countryCode,
-                    municipalityName = cleanSubAdmin
+                    municipalityName = resolvedMunicipality
                 )
-            }
-        } catch (_: Exception) {}
-
-        // 2. Try Nominatim reverse geocoding fallback
-        try {
-            val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoPoint.latitude}&lon=${geoPoint.longitude}&zoom=18&addressdetails=1"
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
-            conn.connectTimeout = 3500
-            conn.readTimeout = 3500
-            if (conn.responseCode == 200) {
-                val responseText = conn.inputStream.bufferedReader().readText()
-                return@withContext parseNominatimReverse(responseText, geoPoint.latitude, geoPoint.longitude)
             }
         } catch (_: Exception) {}
 
@@ -289,8 +295,11 @@ object SearchHelper {
         val city = addressObj?.optString("city")?.takeIf { it.isNotBlank() }
             ?: addressObj?.optString("town")?.takeIf { it.isNotBlank() }
             ?: addressObj?.optString("village")?.takeIf { it.isNotBlank() }
+            ?: addressObj?.optString("hamlet")?.takeIf { it.isNotBlank() }
+            ?: addressObj?.optString("isolated_dwelling")?.takeIf { it.isNotBlank() }
             ?: addressObj?.optString("municipality")?.takeIf { it.isNotBlank() }
         val municipality = addressObj?.optString("municipality")?.takeIf { it.isNotBlank() && it != city }
+            ?: addressObj?.optString("commune")?.takeIf { it.isNotBlank() && it != city }
         val county = addressObj?.optString("county")?.takeIf { it.isNotBlank() }
         val state = addressObj?.optString("state")?.takeIf { it.isNotBlank() }
         val country = addressObj?.optString("country")?.takeIf { it.isNotBlank() }

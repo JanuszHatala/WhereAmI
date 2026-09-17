@@ -36,14 +36,24 @@ object BoundaryHelper {
 
     suspend fun getLocalityBoundary(
         context: Context,
-        cityName: String,
-        countryCode: String,
-        fallbackMunicipality: String? = null
+        cityName: String?,
+        countryCode: String = "pl",
+        fallbackMunicipality: String? = null,
+        geoPoint: GeoPoint? = null
     ): List<GeoPoint>? = withContext(Dispatchers.IO) {
-        if (cityName.isBlank() || cityName == "Unknown City" || cityName == "--") return@withContext null
+        val cleanCity = cityName?.trim()?.takeIf {
+            it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
+        }
+        val cleanKey = if (cleanCity != null) {
+            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+        } else if (!fallbackMunicipality.isNullOrBlank()) {
+            sanitizeKey("${fallbackMunicipality.trim().lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+        } else if (geoPoint != null) {
+            String.format(Locale.US, "coord_%.3f_%.3f", geoPoint.latitude, geoPoint.longitude)
+        } else {
+            return@withContext null
+        }
 
-        val cleanKey = sanitizeKey("${cityName.trim().lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
-        
         // Tier 1: In-memory cache
         memoryCache[cleanKey]?.let { return@withContext it }
 
@@ -57,7 +67,7 @@ object BoundaryHelper {
         // Tier 3: Network fetch from OSM Nominatim with rate limiting & 429 resilience
         val now = System.currentTimeMillis()
         if (now < coolDownUntil) {
-            TelemetryLogger.log("BOUNDARY", "Skipping network fetch for $cityName: in 429 cooldown for ${(coolDownUntil - now) / 1000}s")
+            TelemetryLogger.log("BOUNDARY", "Skipping network fetch for $cleanCity: in 429 cooldown for ${(coolDownUntil - now) / 1000}s")
             return@withContext null
         }
 
@@ -71,23 +81,36 @@ object BoundaryHelper {
             }
             lastRequestTime = System.currentTimeMillis()
 
-            var fetched = fetchFromNetwork(cityName, countryCode)
-            if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
-                // Polish fallback query
-                fetched = fetchFromNetwork(cityName, "Polska")
+            var fetched: List<GeoPoint>? = null
+
+            // 1. When pin has resolved address, take the place from the address (village/town/city)
+            // and find the boundary for that exact place first:
+            if (cleanCity != null) {
+                fetched = fetchFromNetwork(cleanCity, countryCode)
+                if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+                    fetched = fetchFromNetwork(cleanCity, "Polska")
+                }
             }
 
-            // If village/hamlet doesn't have an OSM boundary polygon, fallback to municipality/gmina
-            if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cityName, ignoreCase = true)) {
+            // 2. Point organizational structure fallback (e.g. gmina / municipality when village is an OSM node without polygon):
+            if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cleanCity, ignoreCase = true)) {
                 val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
                     .replace("gmina ", "", ignoreCase = true)
                     .replace("gm. ", "", ignoreCase = true).trim()
-                if (cleanMun.isNotBlank() && !cleanMun.equals(cityName, ignoreCase = true)) {
+                if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                     val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
                     fetched = fetchFromNetwork(munQuery, countryCode)
                     if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
                         fetched = fetchFromNetwork(cleanMun, "Polska")
                     }
+                }
+            }
+
+            // 3. Coordinate-based enclosing boundary fallback (when pin is not resolved to specify village/town/city or place node has no polygon):
+            if (fetched == null && geoPoint != null) {
+                fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 12)
+                if (fetched == null) {
+                    fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 10)
                 }
             }
 
@@ -125,36 +148,8 @@ object BoundaryHelper {
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
                     val geojson = obj.optJSONObject("geojson") ?: continue
-                    val type = geojson.optString("type")
-                    val coords = geojson.optJSONArray("coordinates") ?: continue
-
-                    val result = mutableListOf<GeoPoint>()
-                    if (type.equals("Polygon", ignoreCase = true)) {
-                        val outerRing = coords.optJSONArray(0) ?: continue
-                        for (k in 0 until outerRing.length()) {
-                            val coordPair = outerRing.optJSONArray(k) ?: continue
-                            val lon = coordPair.getDouble(0)
-                            val lat = coordPair.getDouble(1)
-                            result.add(GeoPoint(lat, lon))
-                        }
-                    } else if (type.equals("MultiPolygon", ignoreCase = true)) {
-                        // Take largest outer ring
-                        if (coords.length() > 0) {
-                            val firstPoly = coords.optJSONArray(0)
-                            if (firstPoly != null && firstPoly.length() > 0) {
-                                val outerRing = firstPoly.optJSONArray(0)
-                                if (outerRing != null) {
-                                    for (k in 0 until outerRing.length()) {
-                                        val coordPair = outerRing.optJSONArray(k) ?: continue
-                                        val lon = coordPair.getDouble(0)
-                                        val lat = coordPair.getDouble(1)
-                                        result.add(GeoPoint(lat, lon))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (result.isNotEmpty()) return result
+                    val poly = parseGeoJsonPolygon(geojson)
+                    if (poly != null && poly.isNotEmpty()) return poly
                 }
             }
             null
@@ -162,6 +157,67 @@ object BoundaryHelper {
             TelemetryLogger.log("BOUNDARY", "Network fetch error for $cityName: ${e.message}")
             null
         }
+    }
+
+    private fun fetchReverseBoundary(lat: Double, lon: Double, zoom: Int): List<GeoPoint>? {
+        return try {
+            val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=$zoom&polygon_geojson=1"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+
+            val code = conn.responseCode
+            if (code == 429) {
+                coolDownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                TelemetryLogger.log("BOUNDARY", "Nominatim HTTP 429 received. Backing off for 30s")
+                return null
+            }
+
+            if (code == 200) {
+                val body = conn.inputStream.bufferedReader().readText()
+                val obj = JSONObject(body)
+                val geojson = obj.optJSONObject("geojson") ?: return null
+                return parseGeoJsonPolygon(geojson)
+            }
+            null
+        } catch (e: Exception) {
+            TelemetryLogger.log("BOUNDARY", "Reverse boundary error at ($lat, $lon, zoom=$zoom): ${e.message}")
+            null
+        }
+    }
+
+    fun parseGeoJsonPolygon(geojson: JSONObject): List<GeoPoint>? {
+        val type = geojson.optString("type")
+        val coords = geojson.optJSONArray("coordinates") ?: return null
+
+        val result = mutableListOf<GeoPoint>()
+        if (type.equals("Polygon", ignoreCase = true)) {
+            val outerRing = coords.optJSONArray(0) ?: return null
+            for (k in 0 until outerRing.length()) {
+                val coordPair = outerRing.optJSONArray(k) ?: continue
+                val lon = coordPair.getDouble(0)
+                val lat = coordPair.getDouble(1)
+                result.add(GeoPoint(lat, lon))
+            }
+        } else if (type.equals("MultiPolygon", ignoreCase = true)) {
+            // Take largest outer ring
+            if (coords.length() > 0) {
+                val firstPoly = coords.optJSONArray(0)
+                if (firstPoly != null && firstPoly.length() > 0) {
+                    val outerRing = firstPoly.optJSONArray(0)
+                    if (outerRing != null) {
+                        for (k in 0 until outerRing.length()) {
+                            val coordPair = outerRing.optJSONArray(k) ?: continue
+                            val lon = coordPair.getDouble(0)
+                            val lat = coordPair.getDouble(1)
+                            result.add(GeoPoint(lat, lon))
+                        }
+                    }
+                }
+            }
+        }
+        return if (result.isNotEmpty()) result else null
     }
 
     private fun sanitizeKey(key: String): String {
