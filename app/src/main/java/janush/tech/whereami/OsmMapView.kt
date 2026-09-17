@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -137,17 +138,65 @@ private val WaymarkedTrailsHikingSource = XYTileSource(
  * appears at the optical center of the visible map aperture (offset from screen center
  * to account for top locality card and bottom navigation bar overlays).
  */
-private fun getOpticalCenter(mapView: MapView?, target: IGeoPoint, offsetPixelsY: Int): GeoPoint {
-    if (mapView == null || offsetPixelsY == 0 || mapView.width == 0 || mapView.height == 0) {
-        return GeoPoint(target.latitude, target.longitude)
+/**
+ * Calculates the map camera center so that [target] appears optically centered
+ * in the visible aperture between the top LocalityCard and bottom toolbar.
+ *
+ * CRUCIAL: To guarantee zero horizontal drift (X strictly centered) and invariant
+ * vertical positioning under ANY map orientation (North-Up, Course-Up, manual rotate):
+ * 1. Screen UP corresponds to geographic bearing: (360° - mapOrientation) % 360°.
+ * 2. The camera center is projected along this bearing by (offsetPixelsY * metersPerPixel).
+ * 3. In landscape mode or when offsetPixelsY == 0, camera center is exactly target.
+ */
+fun getOpticalCenter(mapView: MapView?, target: IGeoPoint, offsetPixelsY: Int): GeoPoint {
+    if (mapView == null) return GeoPoint(target.latitude, target.longitude)
+    return calculateOpticalCenter(
+        lat = target.latitude,
+        lon = target.longitude,
+        zoom = mapView.zoomLevelDouble,
+        mapOrientation = mapView.mapOrientation,
+        offsetPixelsY = offsetPixelsY
+    )
+}
+
+fun calculateOpticalCenter(
+    lat: Double,
+    lon: Double,
+    zoom: Double,
+    mapOrientation: Float,
+    offsetPixelsY: Int
+): GeoPoint {
+    if (offsetPixelsY == 0) {
+        return GeoPoint(lat, lon)
     }
-    val proj = mapView.projection ?: return GeoPoint(target.latitude, target.longitude)
-    val pt = Point()
-    proj.toPixels(target, pt)
-    val centerPtX = pt.x
-    val centerPtY = pt.y - offsetPixelsY
-    val igp = proj.fromPixels(centerPtX, centerPtY) ?: return GeoPoint(target.latitude, target.longitude)
-    return GeoPoint(igp.latitude, igp.longitude)
+
+    // Ground resolution in meters per pixel at latitude and current zoom level
+    val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
+    val distMeters = offsetPixelsY * metersPerPixel
+    if (distMeters <= 0.1) {
+        return GeoPoint(lat, lon)
+    }
+
+    // In OSMDroid, mapOrientation rotates the canvas clockwise around the screen center.
+    // Therefore, Screen UP corresponds to geographic bearing (360 - mapOrientation) % 360.
+    val rawOrientation = mapOrientation.toDouble()
+    val bearingScreenUp = ((360.0 - (rawOrientation % 360.0)) + 360.0) % 360.0
+
+    // Geodesic destination point projection along bearingScreenUp
+    val rEarth = 6378137.0 // WGS84 equatorial radius in meters
+    val delta = distMeters / rEarth
+    val phi1 = Math.toRadians(lat)
+    val lambda1 = Math.toRadians(lon)
+    val theta = Math.toRadians(bearingScreenUp)
+
+    val sinPhi2 = kotlin.math.sin(phi1) * kotlin.math.cos(delta) +
+            kotlin.math.cos(phi1) * kotlin.math.sin(delta) * kotlin.math.cos(theta)
+    val phi2 = kotlin.math.asin(sinPhi2)
+    val y = kotlin.math.sin(theta) * kotlin.math.sin(delta) * kotlin.math.cos(phi1)
+    val x = kotlin.math.cos(delta) - kotlin.math.sin(phi1) * sinPhi2
+    val lambda2 = lambda1 + kotlin.math.atan2(y, x)
+
+    return GeoPoint(Math.toDegrees(phi2), Math.toDegrees(lambda2))
 }
 
 /**
@@ -819,6 +868,14 @@ fun OsmMapView(
         }
     }
 
+    var showCacheManagerDialog by remember { mutableStateOf(false) }
+
+    if (showCacheManagerDialog) {
+        CacheManagerDialog(
+            onDismissRequest = { showCacheManagerDialog = false }
+        )
+    }
+
     if (showSettingsDialog) {
         MapSettingsDialog(
             currentBaseLayer = baseLayer,
@@ -849,6 +906,7 @@ fun OsmMapView(
                 mapView?.invalidate()
                 Toast.makeText(context, "Map tile cache cleared", Toast.LENGTH_SHORT).show()
             },
+            onOpenCacheManager = { showCacheManagerDialog = true },
             onDismiss = { showSettingsDialog = false }
         )
     }
@@ -875,6 +933,7 @@ private fun MapSettingsDialog(
     onOrientationModeChange: (MapOrientationMode) -> Unit,
     currentLatLng: Triple<Double, Double, Float?>? = null,
     onClearCache: () -> Unit,
+    onOpenCacheManager: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1299,6 +1358,19 @@ private fun MapSettingsDialog(
                     )
                 }
                 else -> {}
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = onOpenCacheManager,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF0284C7)),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Manage Storage, Boundaries & Pre-fetch", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(modifier = Modifier.height(36.dp))
