@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.window.Dialog
@@ -208,7 +210,20 @@ fun LocationScreen(viewModel: MainViewModel) {
     var placeToSaveLocality by remember { mutableStateOf("") }
     var placeToSaveStreet by remember { mutableStateOf("") }
     var placeToSaveName by remember { mutableStateOf("") }
-    var placeToSaveCategory by remember { mutableStateOf(PlaceCategory.HOME) }
+    var placeToSaveCategory by remember { mutableStateOf(PlaceCategory.FAVORITE) }
+
+    // Measured Layout Positions for Exact Optical Viewport Centering
+    var topCardBottomPx by remember { mutableStateOf(0) }
+    var bottomControlsTopPx by remember { mutableStateOf(0) }
+    var rootScreenHeightPx by remember { mutableStateOf(0) }
+    val measuredOpticalOffsetY = remember(topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx) {
+        if (topCardBottomPx > 0 && bottomControlsTopPx > 0 && rootScreenHeightPx > 0) {
+            val apertureCenter = (topCardBottomPx + bottomControlsTopPx) / 2
+            apertureCenter - (rootScreenHeightPx / 2)
+        } else {
+            null
+        }
+    }
 
     // Selected Saved Place Details Modal State
     var selectedSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
@@ -314,7 +329,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
                                 placeToSaveStreet = item?.title ?: ""
                                 placeToSaveName = item?.title ?: "My Place"
-                                placeToSaveCategory = PlaceCategory.HOME
+                                placeToSaveCategory = PlaceCategory.FAVORITE
                                 showSavePlaceDialog = true
                             },
                             onTogglePinBorders = {
@@ -359,7 +374,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 placeToSaveLocality = currentPlace?.city ?: ""
                                 placeToSaveStreet = currentPlace?.street ?: ""
                                 placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                                placeToSaveCategory = PlaceCategory.HOME
+                                placeToSaveCategory = PlaceCategory.FAVORITE
                                 showSavePlaceDialog = true
                             }
                         },
@@ -391,6 +406,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onMapClick = { gp -> viewModel.selectMapPoint(gp) },
                     activityProfile = activityProfile,
                     isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
+                    isRecording = activeTrip != null,
+                    pauses = activeTrip?.pauses ?: emptyList(),
                     orientationMode = orientationMode,
                     onOrientationModeChange = { viewModel.setOrientationMode(it) },
                     onInstantShare = shareCurrentLocation,
@@ -399,7 +416,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     } else {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { rootScreenHeightPx = it.size.height }
+        ) {
             OsmMapView(
                 latLng = currentLatLng,
                 trackPoints = activeTrip?.points ?: emptyList(),
@@ -419,6 +440,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onMapClick = { gp -> viewModel.selectMapPoint(gp) },
                 activityProfile = activityProfile,
                 isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
+                opticalOffsetY = measuredOpticalOffsetY,
+                isRecording = activeTrip != null,
+                pauses = activeTrip?.pauses ?: emptyList(),
                 orientationMode = orientationMode,
                 onOrientationModeChange = { viewModel.setOrientationMode(it) },
                 onInstantShare = shareCurrentLocation,
@@ -453,6 +477,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                             top = if (isCompact) 52.dp else 56.dp,
                             bottom = 8.dp
                         )
+                        .onGloballyPositioned {
+                            topCardBottomPx = (it.positionInRoot().y + it.size.height).toInt()
+                        }
                         .align(Alignment.TopCenter)
                 )
             }
@@ -469,7 +496,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
                         placeToSaveStreet = item?.title ?: ""
                         placeToSaveName = item?.title ?: "My Place"
-                        placeToSaveCategory = PlaceCategory.HOME
+                        placeToSaveCategory = PlaceCategory.FAVORITE
                         showSavePlaceDialog = true
                     },
                     onTogglePinBorders = {
@@ -494,6 +521,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .align(Alignment.BottomCenter)
                         .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
                         .fillMaxWidth()
+                        .onGloballyPositioned {
+                            bottomControlsTopPx = it.positionInRoot().y.toInt()
+                        }
                 )
             }
 
@@ -516,7 +546,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             placeToSaveLocality = currentPlace?.city ?: ""
                             placeToSaveStreet = currentPlace?.street ?: ""
                             placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                            placeToSaveCategory = PlaceCategory.HOME
+                            placeToSaveCategory = PlaceCategory.FAVORITE
                             showSavePlaceDialog = true
                         }
                     },
@@ -526,6 +556,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .padding(horizontal = 12.dp, vertical = 20.dp)
                         .widthIn(max = 440.dp)
                         .fillMaxWidth()
+                        .onGloballyPositioned {
+                            bottomControlsTopPx = it.positionInRoot().y.toInt()
+                        }
                 )
             }
         }
@@ -736,7 +769,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             placeToSaveLocality = currentPlace?.city ?: ""
                                             placeToSaveStreet = currentPlace?.street ?: ""
                                             placeToSaveName = currentPlace?.city ?: "My Place"
-                                            placeToSaveCategory = PlaceCategory.HOME
+                                            placeToSaveCategory = PlaceCategory.FAVORITE
                                             showSavePlaceDialog = true
                                         }
                                     },
@@ -808,12 +841,18 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 Text(place.category.iconEmoji, fontSize = 24.sp)
                                                 Spacer(modifier = Modifier.width(10.dp))
                                                 Column {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
                                                         Text(
-                                                            place.name,
+                                                            text = place.name,
                                                             color = Color.White,
                                                             fontWeight = FontWeight.Bold,
-                                                            fontSize = 15.sp
+                                                            fontSize = 15.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f, fill = false)
                                                         )
                                                         Spacer(modifier = Modifier.width(6.dp))
                                                         Surface(
@@ -825,6 +864,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                 color = Color(0xFF10B981),
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.SemiBold,
+                                                                maxLines = 1,
+                                                                softWrap = false,
                                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                             )
                                                         }
@@ -2516,14 +2557,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf(
-                            PlaceCategory.HOME,
-                            PlaceCategory.WORK,
-                            PlaceCategory.FAMILY,
-                            PlaceCategory.SCHOOL,
-                            PlaceCategory.FAVORITE,
-                            PlaceCategory.CUSTOM
-                        ).forEach { cat ->
+                        PlaceCategory.values().forEach { cat ->
                             val isSelected = placeToSaveCategory == cat
                             Surface(
                                 onClick = {
@@ -2558,8 +2592,17 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     OutlinedTextField(
                         value = placeToSaveName,
-                        onValueChange = { placeToSaveName = it },
+                        onValueChange = { if (it.length <= 20) placeToSaveName = it },
                         label = { Text("Place Name") },
+                        supportingText = {
+                            Text(
+                                text = "${placeToSaveName.length}/20",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2792,14 +2835,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf(
-                            PlaceCategory.HOME,
-                            PlaceCategory.WORK,
-                            PlaceCategory.FAMILY,
-                            PlaceCategory.SCHOOL,
-                            PlaceCategory.FAVORITE,
-                            PlaceCategory.CUSTOM
-                        ).forEach { cat ->
+                        PlaceCategory.values().forEach { cat ->
                             val isSelected = editCategory == cat
                             Surface(
                                 onClick = { editCategory = cat },
@@ -2829,8 +2865,17 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     OutlinedTextField(
                         value = editName,
-                        onValueChange = { editName = it },
+                        onValueChange = { if (it.length <= 20) editName = it },
                         label = { Text("Place Name") },
+                        supportingText = {
+                            Text(
+                                text = "${editName.length}/20",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -4468,7 +4513,7 @@ private fun LocalityCard(
                                     openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
                                 }
                             },
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Map,
@@ -4517,7 +4562,7 @@ private fun LocalityCard(
                             // Permanent Live Sharing Transmission Icon when stopped / inactive (1-tap to start)
                             IconButton(
                                 onClick = onShowLiveShare,
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Sensors,
@@ -4553,7 +4598,7 @@ private fun LocalityCard(
                         // Direct Expand Toggle (switches to Normal mode)
                         IconButton(
                             onClick = { onSetLocalityCardStyle(LocalityCardStyle.NORMAL) },
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ExpandMore,
@@ -4783,21 +4828,27 @@ private fun LocalityCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (nearbySavedPlace != null) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0x3310B981))
-                                    .clickable { onOpenSavedPlaces() }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            Surface(
+                                onClick = onOpenSavedPlaces,
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0x3310B981),
+                                modifier = Modifier.height(36.dp)
                             ) {
-                                Text(
-                                    text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF10B981),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
                             }
                         } else {
                             // Quick Access Bookmark Icon Button
