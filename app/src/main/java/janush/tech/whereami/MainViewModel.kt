@@ -172,13 +172,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun togglePinnedBorders(locality: String?, countryCode: String? = "pl") {
+    fun togglePinnedBorders(locality: String?, countryCode: String? = "pl", fallbackMunicipality: String? = null) {
         if (_pinnedBoundaryPoints.value != null) {
             _pinnedBoundaryPoints.value = null
         } else {
             if (locality.isNullOrBlank()) return
             viewModelScope.launch {
-                val poly = BoundaryHelper.getLocalityBoundary(getApplication(), locality, countryCode ?: "pl")
+                val poly = BoundaryHelper.getLocalityBoundary(getApplication(), locality, countryCode ?: "pl", fallbackMunicipality)
                 _pinnedBoundaryPoints.value = poly
             }
         }
@@ -374,7 +374,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (place.city == "Unknown City" || place.city.isBlank()) return
 
         viewModelScope.launch {
-            val poly = BoundaryHelper.getLocalityBoundary(getApplication(), place.city, place.countryCode)
+            val poly = BoundaryHelper.getLocalityBoundary(getApplication(), place.city, place.countryCode, place.gmina)
             _boundaryPoints.value = poly
         }
     }
