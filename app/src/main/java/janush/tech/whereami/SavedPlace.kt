@@ -1,13 +1,13 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import org.osmdroid.util.GeoPoint
 
 enum class PlaceCategory(val displayName: String, val iconEmoji: String) {
+    FAVORITE("Favorite", "⭐"),
     HOME("Home", "🏠"),
     WORK("Work", "💼"),
     FAMILY("Family", "👨‍👩‍👧"),
     SCHOOL("School", "🏫"),
-    FAVORITE("Favorite", "⭐"),
     CUSTOM("Custom", "📍")
 }
 
