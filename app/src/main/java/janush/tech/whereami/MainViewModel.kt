@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.app.Application
 import android.content.Context
@@ -15,12 +15,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val locationManager = LocationManager.getInstance(application)
     private val tripManager = TripManager.getInstance(application)
     private val appStateManager = AppStateManager.getInstance(application)
-    private val appPrefs = application.getSharedPreferences("where_i_am_ui_prefs", Context.MODE_PRIVATE)
+    private val appPrefs = application.getSharedPreferences("where_am_i_ui_prefs", Context.MODE_PRIVATE)
 
     private val _locationData = MutableStateFlow(LocationData(null, null, null, null, false))
     val locationData: StateFlow<LocationData> = _locationData.asStateFlow()
 
-    private val locPrefs = application.getSharedPreferences("where_i_am_prefs", Context.MODE_PRIVATE)
+    private val locPrefs = application.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
     private val initialLang = try {
         DisplayLanguage.valueOf(locPrefs.getString("display_language", DisplayLanguage.EN.name) ?: DisplayLanguage.EN.name)
     } catch (_: Exception) { DisplayLanguage.EN }

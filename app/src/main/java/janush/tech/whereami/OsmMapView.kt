@@ -192,7 +192,7 @@ fun OsmMapView(
     var isFollowing by remember { mutableStateOf(true) }
 
     val prefs = remember(context) {
-        context.getSharedPreferences("whereiam_map_prefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
     }
 
     var baseLayer by remember {

@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami.theme
+package janush.tech.whereami.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -30,7 +30,7 @@ private val LightColorScheme =
   )
 
 @Composable
-fun WhereIAmTheme(
+fun WhereAmITheme(
   darkTheme: Boolean = isSystemInDarkTheme(),
   // Dynamic color is available on Android 12+
   dynamicColor: Boolean = true,
@@ -48,3 +48,11 @@ fun WhereIAmTheme(
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
+
+@Composable
+fun WhereIAmTheme(
+  darkTheme: Boolean = isSystemInDarkTheme(),
+  dynamicColor: Boolean = true,
+  content: @Composable () -> Unit,
+) = WhereAmITheme(darkTheme, dynamicColor, content)
+
