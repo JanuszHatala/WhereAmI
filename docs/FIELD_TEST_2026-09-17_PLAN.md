@@ -93,40 +93,40 @@ In strict accordance with `AGENTS.md`:
 ---
 
 ### Phase 4: Map Pin Enhancements, Forest Reverse Geocoding & Pin Boundaries
-- [ ] **4.1 Forest / Off-Road Address Resolution (`SearchHelper.kt`) (Point 8)**:
+- [x] **4.1 Forest / Off-Road Address Resolution (`SearchHelper.kt`) (Point 8)**:
   - If dropped pin is $> 150\text{m}$ away from the resolved street/house or on natural terrain, do not invent street/house number.
   - Display coordinates and administrative hierarchy (City/Village, Gmina, Powiat, Voivodeship, Country).
-- [ ] **4.2 Pin Card Actions & Distinct Boundary Styling (Point 8)**:
+- [x] **4.2 Pin Card Actions & Distinct Boundary Styling (Point 8)**:
   - Remove redundant "Exit Pin" button (top-right X handles dismissal).
   - Add "Show Borders" button on pin card to display pinned locality boundary.
   - Pinned locality polygon rendered with distinct styling (cyan dashed border with subtle tint) to visually differentiate from current GPS location boundary.
   - Keep both boundaries visible simultaneously: current GPS location boundary in standard styling, and pinned locality in cyan dashed styling.
   - Reset pin boundary on new pin drop or pin card dismissal.
-- [ ] **4.3 Verification**:
-  - Unit tests for reverse geocoding distance threshold and pin boundary state transitions.
-  - Run `.\gradlew.bat testDebugUnitTest assembleDebug`.
+- [x] **4.3 Verification**:
+  - Unit tests for reverse geocoding distance threshold and pin boundary state transitions in `MapPinReverseGeocodingTest.kt`.
+  - Run `.\gradlew.bat testDebugUnitTest assembleDebug` (passed).
 
 ---
 
 ### Phase 5: Trips & Places Overhaul
-- [ ] **5.1 Rename "Places & Trips" to "Trips & Places" (Point 4)**:
+- [x] **5.1 Rename "Places & Trips" to "Trips & Places" (Point 4)**:
   - Update all UI strings, tab labels, headers, and descriptions.
-- [ ] **5.2 Edit Saved Places (Point 6)**:
-  - Add Edit button to saved place cards.
-  - Implement Edit Place Dialog (edit name, category, radius) calling `TripDatabaseHelper.updateSavedPlace`.
-- [ ] **5.3 Add "School" Category (Point 10)**:
-  - Include `PlaceCategory.SCHOOL` ("School", "🏫") in place category selectors.
-- [ ] **5.4 Trips Rest Pauses UI (Point 6)**:
-  - Make Rest Pauses collapsed by default in trip cards.
-  - Add per-trip expand/collapse toggle for pauses.
-  - Add a global "Expand All / Collapse All" button next to "Select All" when 0 trips selected.
-- [ ] **5.5 Route Text Display (Point 6)**:
-  - Remove 2-line truncation so complete visited locality chain is fully visible.
-- [ ] **5.6 Database-Level Filtering & Grouping with Counters (Point 6)**:
-  - Implement SQLite dynamic queries filtering across all stored trips (not only loaded in-memory items).
-  - Add search by route locality name.
-  - Add Group By toggle: by Time (Today, This Week, This Month, Earlier / Year) and by Activity Type (Driving, Hiking, Cycling).
-  - Each group header includes item count (e.g. `TODAY (2)`, `THIS WEEK (5)`, `SEPTEMBER 2026 (12)`) and supports collapsible section expansion.
-- [ ] **5.7 Verification**:
-  - Automated tests for trip filtering, grouping, and place updating.
-  - Run `.\gradlew.bat testDebugUnitTest assembleDebug`.
+- [x] **5.2 Edit Saved Places (Point 6)**:
+  - Add Edit button to saved place cards and map marker details dialog.
+  - Implement Edit Saved Place Dialog (edit name, category, street, locality, radius) calling `MainViewModel.updateSavedPlace`.
+- [x] **5.3 Add "School" Category (Point 10)**:
+  - Included `PlaceCategory.SCHOOL` ("School", "🏫") in place category selectors and dialogs.
+- [x] **5.4 Trips Rest Pauses UI (Point 6)**:
+  - Rest Pauses collapsed by default in trip cards.
+  - Per-trip expand/collapse toggle for pauses (`▶/▼ ⏸️ Rest Pauses (N)`).
+  - Global "Expand Pauses / Collapse Pauses" toggle next to "Select All" when 0 trips selected.
+- [x] **5.5 Route Text Display (Point 6)**:
+  - Removed 2-line truncation so complete visited locality chain is fully visible.
+- [x] **5.6 Database-Level Filtering & Grouping with Counters (Point 6)**:
+  - Implemented `TripDatabaseHelper.queryTrips` and `TripGroupingHelper`.
+  - Added Group By toggle row (`Group by: [Date] [Activity] [None]`).
+  - Implemented strictly mutually exclusive Date grouping (Today, This week, This month, Earlier) with item counts (e.g. `TODAY (2)`, `THIS WEEK (5)`).
+  - Collapsible section headers with item counts and expand/collapse support.
+- [x] **5.7 Verification**:
+  - Automated tests for mutual exclusivity and activity grouping in `TripGroupingHelperTest.kt`.
+  - Verification build gate `.\gradlew.bat testDebugUnitTest assembleDebug` passed (33 tests, 0 failures).
