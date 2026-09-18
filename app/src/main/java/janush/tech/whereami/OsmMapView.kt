@@ -152,14 +152,20 @@ private val WaymarkedTrailsHikingSource = XYTileSource(
  * 2. The camera center is projected along this bearing by (offsetPixelsY * metersPerPixel).
  * 3. In landscape mode or when offsetPixelsY == 0, camera center is exactly target.
  */
-fun getOpticalCenter(mapView: MapView?, target: IGeoPoint, offsetPixelsY: Int): GeoPoint {
+fun getOpticalCenter(
+    mapView: MapView?,
+    target: IGeoPoint,
+    offsetPixelsY: Int,
+    offsetPixelsX: Int = 0
+): GeoPoint {
     if (mapView == null) return GeoPoint(target.latitude, target.longitude)
     return calculateOpticalCenter(
         lat = target.latitude,
         lon = target.longitude,
         zoom = mapView.zoomLevelDouble,
         mapOrientation = mapView.mapOrientation,
-        offsetPixelsY = offsetPixelsY
+        offsetPixelsY = offsetPixelsY,
+        offsetPixelsX = offsetPixelsX
     )
 }
 
@@ -168,16 +174,18 @@ fun calculateOpticalCenter(
     lon: Double,
     zoom: Double,
     mapOrientation: Float,
-    offsetPixelsY: Int
+    offsetPixelsY: Int,
+    offsetPixelsX: Int = 0
 ): GeoPoint {
-    if (offsetPixelsY == 0) {
+    if (offsetPixelsX == 0 && offsetPixelsY == 0) {
         return GeoPoint(lat, lon)
     }
 
     // Ground resolution in meters per pixel at latitude and current zoom level
     val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
-    val absOffset = kotlin.math.abs(offsetPixelsY)
-    val distMeters = absOffset * metersPerPixel
+    val dxMeters = offsetPixelsX * metersPerPixel
+    val dyMeters = offsetPixelsY * metersPerPixel
+    val distMeters = kotlin.math.sqrt(dxMeters * dxMeters + dyMeters * dyMeters)
     if (distMeters <= 0.1) {
         return GeoPoint(lat, lon)
     }
@@ -186,9 +194,13 @@ fun calculateOpticalCenter(
     // Screen UP corresponds to geographic bearing (360 - mapOrientation) % 360.
     val rawOrientation = mapOrientation.toDouble()
     val bearingScreenUp = ((360.0 - (rawOrientation % 360.0)) + 360.0) % 360.0
-    // If offsetPixelsY > 0, project camera UP (bearingScreenUp) so target appears LOWER on screen.
-    // If offsetPixelsY < 0, project camera DOWN so target appears HIGHER on screen.
-    val projectionBearing = if (offsetPixelsY > 0) bearingScreenUp else ((bearingScreenUp + 180.0) % 360.0)
+
+    // Angle of camera displacement on screen relative to screen UP (clockwise):
+    // dx > 0 (target right on screen) requires camera center moving left (-dx)
+    // dy > 0 (target down on screen) requires camera center moving up (+dy)
+    val angleOnScreenRad = kotlin.math.atan2(-dxMeters, dyMeters)
+    val angleOnScreenDeg = Math.toDegrees(angleOnScreenRad)
+    val projectionBearing = ((bearingScreenUp + angleOnScreenDeg) % 360.0 + 360.0) % 360.0
 
     // Geodesic destination point projection along projectionBearing
     val rEarth = 6378137.0 // WGS84 equatorial radius in meters
@@ -237,6 +249,7 @@ fun OsmMapView(
     activityProfile: ActivityProfile = ActivityProfile.CAR,
     isCompact: Boolean = true,
     opticalOffsetY: Int? = null,
+    opticalOffsetX: Int? = null,
     isRecording: Boolean = false,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
@@ -252,16 +265,20 @@ fun OsmMapView(
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val density = androidx.compose.ui.platform.LocalDensity.current.density
 
-    // Viewport-aware optical vertical offset:
-    // When measured positions are available from parent layout, use exact pixel aperture offset.
-    // Otherwise fallback to profile estimations. In landscape, offset is strictly 0.
+    // Viewport-aware optical offsets (supporting both vertical and horizontal camera centering)
+    val effectiveOpticalOffsetX = remember(opticalOffsetX, isLandscape) {
+        if (!isLandscape) 0
+        else opticalOffsetX ?: 0
+    }
     val effectiveOpticalOffsetY = remember(opticalOffsetY, isLandscape, isCompact, density) {
-        if (isLandscape) 0
-        else opticalOffsetY ?: run {
-            val topObstructionDp = if (isCompact) 150f else 280f
-            val bottomObstructionDp = 200f
-            val offsetDp = ((topObstructionDp - bottomObstructionDp) / 2f) - 24f
-            (offsetDp * density).toInt()
+        opticalOffsetY ?: run {
+            if (isLandscape) 0
+            else {
+                val topObstructionDp = if (isCompact) 150f else 280f
+                val bottomObstructionDp = 200f
+                val offsetDp = ((topObstructionDp - bottomObstructionDp) / 2f) - 24f
+                (offsetDp * density).toInt()
+            }
         }
     }
 
@@ -373,6 +390,13 @@ fun OsmMapView(
         map.invalidate()
     }
 
+    var orientationAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
+    DisposableEffect(Unit) {
+        onDispose {
+            orientationAnimator?.cancel()
+        }
+    }
+
     // Update marker position & auto-rotation with Stationary Bearing Freeze
     LaunchedEffect(latLng, orientationMode, isRecording) {
         val pos = latLng ?: return@LaunchedEffect
@@ -401,8 +425,24 @@ fun OsmMapView(
             MapOrientationMode.WEST -> 90f
         }
 
-        if (targetMapOrientation != null && map.mapOrientation != targetMapOrientation) {
-            map.mapOrientation = targetMapOrientation
+        if (targetMapOrientation != null) {
+            val currentRot = map.mapOrientation
+            val diff = (targetMapOrientation - currentRot + 540f) % 360f - 180f
+            // 1.5° deadband rejects satellite bearing micro-jitter on straight roads
+            if (kotlin.math.abs(diff) >= 1.5f) {
+                orientationAnimator?.cancel()
+                orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 400L
+                    interpolator = android.view.animation.DecelerateInterpolator()
+                    addUpdateListener { anim ->
+                        val frac = anim.animatedFraction
+                        val stepRot = (currentRot + diff * frac) % 360f
+                        map.mapOrientation = (stepRot + 360f) % 360f
+                        map.invalidate()
+                    }
+                    start()
+                }
+            }
         }
 
         val m = marker ?: Marker(map).also {
@@ -431,8 +471,8 @@ fun OsmMapView(
         m.title = null
 
         if (isFollowing && destinationPoint == null) {
-            val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY)
-            map.controller.animateTo(centerGp)
+            val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+            map.controller.animateTo(centerGp, null, 400L)
         }
         map.invalidate()
     }
@@ -823,8 +863,8 @@ fun OsmMapView(
 
                     latLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
-                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
-                        mapView?.controller?.animateTo(centerGp)
+                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                        mapView?.controller?.animateTo(centerGp, null, 400L)
                     }
                     mapView?.invalidate()
                 },
