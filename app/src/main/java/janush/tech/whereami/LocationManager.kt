@@ -450,15 +450,34 @@ class LocationManager private constructor(private val context: Context) {
     private var candidateStreetFirstSeenTime: Long = 0L
     private var lastStreetSeenTimestamp: Long = 0L
     private var lastCommittedStreetLocality: String? = null
+    private var lastSustainedBearing: Float? = null
+    private var lastTurnTimestamp: Long = 0L
 
     private fun applyStreetHysteresis(
         speedMs: Float,
-        multiData: MultiLanguagePlaceInfo
+        multiData: MultiLanguagePlaceInfo,
+        bearing: Float? = null
     ): MultiLanguagePlaceInfo {
         val rawStreetPl = multiData.pl.street
         val rawBase = RoadNameNormalizer.extractBaseStreet(rawStreetPl)
         val now = System.currentTimeMillis()
         val speedKmh = speedMs * 3.6f
+
+        // Kinematic turn tracking: if vehicle turns (heading change >= 35 deg at speed > 10 km/h),
+        // record turn timestamp so we promptly switch to the new street.
+        if (bearing != null && speedKmh > 10f) {
+            val prev = lastSustainedBearing
+            if (prev != null) {
+                val delta = kotlin.math.abs(((bearing - prev + 540) % 360) - 180)
+                if (delta >= 35f) {
+                    lastTurnTimestamp = now
+                    TelemetryLogger.log("STREET", "Kinematic turn detected: Δbearing=${delta.toInt()}°, heading=$prev -> $bearing")
+                    lastSustainedBearing = bearing
+                }
+            } else {
+                lastSustainedBearing = bearing
+            }
+        }
 
         // GEO-02: 15-second decay grace period when reverse geocoding temporarily returns no street
         if (rawStreetPl.isNullOrBlank()) {
@@ -514,6 +533,8 @@ class LocationManager private constructor(private val context: Context) {
                 !multiData.pl.city.equals("Unknown City", ignoreCase = true) &&
                 !multiData.pl.city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
+        val isRecentTurn = (now - lastTurnTimestamp) < 14_000L
+
         // Compute required confirmations based on speed and road hierarchy
         val rawRequiredCount: Int
         val rawRequiredDuration: Long
@@ -552,14 +573,21 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // When crossing into a confirmed new locality, relax threshold to adopt the new town's street promptly
-        val requiredCount = if (isLocalityTransition) minOf(rawRequiredCount, 2) else rawRequiredCount
-        val requiredDuration = if (isLocalityTransition) minOf(rawRequiredDuration, 2_000L) else rawRequiredDuration
+        // When crossing into a confirmed new locality or after making a physical turn,
+        // relax threshold to adopt the new street promptly (2 confirmations / 2 seconds)
+        val requiredCount = when {
+            isLocalityTransition || isRecentTurn -> minOf(rawRequiredCount, 2)
+            else -> rawRequiredCount
+        }
+        val requiredDuration = when {
+            isLocalityTransition || isRecentTurn -> minOf(rawRequiredDuration, 2_000L)
+            else -> rawRequiredDuration
+        }
         val candidateDuration = now - candidateStreetFirstSeenTime
 
         // Must satisfy BOTH count AND duration to commit a street switch!
         if (candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration) {
-            TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h: '$committedStreetPl' -> '$rawStreetPl'")
+            TelemetryLogger.log("STREET", "Switch committed at ${speedKmh.toInt()} km/h (turn=$isRecentTurn): '$committedStreetPl' -> '$rawStreetPl'")
             committedStreetPl = candidateStreetPl
             committedStreetBase = candidateStreetBase
             lastCommittedStreetLocality = multiData.pl.city
@@ -585,7 +613,8 @@ class LocationManager private constructor(private val context: Context) {
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
-    private var lastLocationSnapshot: MultiLocationSnapshot? = null
+    var lastLocationSnapshot: MultiLocationSnapshot? = null
+        private set
 
     private val masterLocationFlow: SharedFlow<MultiLocationSnapshot> by lazy {
         callbackFlow {
@@ -711,7 +740,7 @@ class LocationManager private constructor(private val context: Context) {
                         ioScope.launch {
                             val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
                             val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
-                            val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized)
+                            val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, currentBearing)
 
                             // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
                             committedPlace = stabilizedMultiData

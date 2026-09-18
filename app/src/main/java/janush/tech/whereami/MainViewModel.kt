@@ -450,4 +450,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun resetAllSettingsToDefaults() {
+        appPrefs.edit().clear().apply()
+        locPrefs.edit().remove("display_language").apply()
+        val mapPrefs = getApplication<Application>().getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
+        mapPrefs.edit().clear().apply()
+
+        _keepScreenOn.value = false
+        _localityCardStyle.value = LocalityCardStyle.NORMAL
+        _orientationMode.value = MapOrientationMode.NORTH
+        _showHeatMap.value = false
+        _showBorders.value = false
+        _boundaryPoints.value = null
+        _displayLanguage.value = DisplayLanguage.EN
+
+        tripManager.setActivityProfile(ActivityProfile.CAR)
+        tripManager.setAutoStopMinutes(5)
+        tripManager.setTripMode(TripMode.AUTO)
+        appStateManager.setPowerPolicy(BatteryPowerPolicy.SMART_AUTO)
+
+        TelemetryLogger.log("SETTINGS", "All settings reset to canonical defaults")
+    }
 }
