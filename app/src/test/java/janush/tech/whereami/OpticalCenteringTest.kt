@@ -206,4 +206,52 @@ class OpticalCenteringTest {
         assertEquals(60000L, aggregated[0].durationMs)
         assertEquals(45000L, aggregated[1].durationMs)
     }
+
+    @Test
+    fun testOpticalCenterWith2DOffsetsXAndY() {
+        // In North-Up (mapOrientation = 0), screen UP is North, screen RIGHT is East.
+        // A positive offsetPixelsX (+200) places target to the RIGHT of screen center.
+        // To achieve this, the camera must shift WEST (longitude decreases).
+        val resultX = calculateOpticalCenter(
+            lat = targetLat,
+            lon = targetLon,
+            zoom = zoom,
+            mapOrientation = 0f,
+            offsetPixelsX = 200,
+            offsetPixelsY = 0
+        )
+        assertTrue("Camera longitude must be west of target for positive X offset in North-Up", resultX.longitude < targetLon)
+        assertEquals("Latitude must remain unchanged for pure West shift", targetLat, resultX.latitude, 0.00001)
+
+        // With both X and Y offsets in North-Up (+200, +200)
+        // Camera shifts North (target appears down) and West (target appears right)
+        val resultXY = calculateOpticalCenter(
+            lat = targetLat,
+            lon = targetLon,
+            zoom = zoom,
+            mapOrientation = 0f,
+            offsetPixelsX = 200,
+            offsetPixelsY = 200
+        )
+        assertTrue("Camera latitude must be north of target", resultXY.latitude > targetLat)
+        assertTrue("Camera longitude must be west of target", resultXY.longitude < targetLon)
+    }
+
+    @Test
+    fun testShortestAngularDeltaMath() {
+        fun shortestDelta(current: Float, target: Float): Float {
+            return ((target - current + 540f) % 360f) - 180f
+        }
+
+        // Turning from 350 to 10 degrees is +20 (not -340)
+        assertEquals(20f, shortestDelta(350f, 10f), 0.01f)
+        // Turning from 10 to 350 degrees is -20 (not +340)
+        assertEquals(-20f, shortestDelta(10f, 350f), 0.01f)
+        // Turning from 90 to 120 is +30
+        assertEquals(30f, shortestDelta(90f, 120f), 0.01f)
+        // Turning from 120 to 90 is -30
+        assertEquals(-30f, shortestDelta(120f, 90f), 0.01f)
+        // Small change within 1.5 degree deadband
+        assertTrue(abs(shortestDelta(90f, 91.2f)) < 1.5f)
+    }
 }
