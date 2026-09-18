@@ -242,6 +242,7 @@ fun OsmMapView(
     fitTrackTrigger: Long = 0L,
     fitPlacesTrigger: Long = 0L,
     destinationPoint: GeoPoint? = null,
+    selectedSavedPlace: SavedPlace? = null,
     onDestinationMarkerClick: (() -> Unit)? = null,
     onSavedPlaceClick: ((SavedPlace) -> Unit)? = null,
     onClearDestination: (() -> Unit)? = null,
@@ -448,9 +449,13 @@ fun OsmMapView(
         val m = marker ?: Marker(map).also {
             it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             it.isFlat = false
+            it.infoWindow = null
+            it.setOnMarkerClickListener { _, _ -> true }
             map.overlays.add(it)
             marker = it
         }
+        m.infoWindow = null
+        m.setOnMarkerClickListener { _, _ -> true }
 
         m.position = gp
         m.isFlat = false
@@ -470,7 +475,7 @@ fun OsmMapView(
         m.icon = makeMarkerIcon(context, hasHeading)
         m.title = null
 
-        if (isFollowing && destinationPoint == null) {
+        if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
             val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
             map.controller.animateTo(centerGp, null, 400L)
         }
@@ -509,6 +514,16 @@ fun OsmMapView(
         map.invalidate()
     }
 
+    // Center camera on Selected Saved Place
+    LaunchedEffect(selectedSavedPlace) {
+        val map = mapView ?: return@LaunchedEffect
+        val sp = selectedSavedPlace ?: return@LaunchedEffect
+        isFollowing = false
+        snapHandler.removeCallbacks(snapRunnable)
+        val centerGp = getOpticalCenter(map, sp.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+        map.controller.animateTo(centerGp)
+    }
+
     // Saved Places Custom Pins
     var savedPlaceMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
     LaunchedEffect(savedPlaces) {
@@ -529,6 +544,8 @@ fun OsmMapView(
                 ).joinToString(", ")
                 infoWindow = null
                 setOnMarkerClickListener { _, _ ->
+                    val centerGp = getOpticalCenter(map, place.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                    map.controller.animateTo(centerGp)
                     onSavedPlaceClick?.invoke(place)
                     true // Consumed! No blank OSM popup
                 }
@@ -835,7 +852,7 @@ fun OsmMapView(
                 .align(Alignment.BottomEnd)
                 .padding(
                     end = 12.dp,
-                    bottom = if (destinationPoint != null) 230.dp else 105.dp
+                    bottom = if (destinationPoint != null || selectedSavedPlace != null) 230.dp else 105.dp
                 ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -871,7 +888,7 @@ fun OsmMapView(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isFollowing && destinationPoint == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
+                    .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
             ) {
                 Icon(
                     imageVector = Icons.Default.MyLocation,
@@ -946,7 +963,7 @@ fun OsmMapView(
         }
 
         // Floating "📍 Recenter" Pill when user has panned away (Option B)
-        if (!isFollowing && destinationPoint == null) {
+        if (!isFollowing && destinationPoint == null && selectedSavedPlace == null) {
             Surface(
                 onClick = {
                     isFollowing = true
