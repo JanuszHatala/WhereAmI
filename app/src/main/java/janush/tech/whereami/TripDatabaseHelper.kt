@@ -112,6 +112,61 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        cleanUpTrailingDestinationPauses(db)
+    }
+
+    private fun cleanUpTrailingDestinationPauses(db: SQLiteDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                "SELECT $COL_ID, $COL_END_TIME, $COL_POINTS_JSON, $COL_PAUSES_JSON FROM $TABLE_TRIPS WHERE $COL_PAUSES_JSON IS NOT NULL AND $COL_PAUSES_JSON != '[]'",
+                null
+            )
+            cursor.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(COL_ID)
+                val endIdx = c.getColumnIndexOrThrow(COL_END_TIME)
+                val ptsIdx = c.getColumnIndexOrThrow(COL_POINTS_JSON)
+                val pausesIdx = c.getColumnIndexOrThrow(COL_PAUSES_JSON)
+
+                while (c.moveToNext()) {
+                    val tripId = c.getLong(idIdx)
+                    val endTime = if (!c.isNull(endIdx)) c.getLong(endIdx) else null
+                    val pointsJson = c.getString(ptsIdx) ?: "[]"
+                    val pausesJson = c.getString(pausesIdx) ?: "[]"
+
+                    val pauses = jsonToPauses(pausesJson)
+                    if (pauses.isEmpty()) continue
+
+                    val last = pauses.last()
+                    val totalPoints = countPointsFromJson(pointsJson)
+                    val isAtEnd = last.pointIndex >= (totalPoints - 2).coerceAtLeast(0)
+                    val endsNearTripEnd = endTime != null && ((endTime - (last.endTime ?: last.startTime)) <= 45_000L || (last.endTime ?: 0L) >= endTime)
+
+                    if (isAtEnd || endsNearTripEnd) {
+                        val sanitized = pauses.dropLast(1)
+                        val updatedJson = pausesToJson(sanitized)
+                        val cv = ContentValues().apply {
+                            put(COL_PAUSES_JSON, updatedJson)
+                        }
+                        db.update(TABLE_TRIPS, cv, "$COL_ID = ?", arrayOf(tripId.toString()))
+                        TelemetryLogger.log("DB_MIGRATION", "Trimmed trailing arrival pause from Trip $tripId: dur=${last.durationMs / 1000}s, idx=${last.pointIndex}/$totalPoints")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("DB_MIGRATION", "Error during cleanUpTrailingDestinationPauses: ${e.message}")
+        }
+    }
+
+    private fun countPointsFromJson(jsonStr: String): Int {
+        return try {
+            JSONArray(jsonStr).length()
+        } catch (_: Exception) {
+            0
+        }
+    }
+
     fun insertTrip(trip: TripRecord): Long {
         val db = writableDatabase
         val values = ContentValues().apply {

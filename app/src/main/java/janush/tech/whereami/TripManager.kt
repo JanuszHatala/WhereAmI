@@ -233,19 +233,15 @@ class TripManager private constructor(private val context: Context) {
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
 
-        // Finalize active pause if any
-        val finalPauses = current.pauses.toMutableList()
-        activePause?.let {
-            val finalized = it.copy(endTime = now, durationMs = now - it.startTime)
-            if (finalized.durationMs >= 45_000L) {
-                finalPauses.add(finalized)
-            }
-        }
+        // Auto-stop waiting or stopping at destination is NOT a rest pause: discard active pause
         activePause = null
 
-        val finishedTrip = current.copy(endTime = now, pauses = finalPauses)
+        // Also sanitize any trailing pause that occurred at the trip destination
+        val sanitizedPauses = sanitizeTrailingPauses(current.pauses, current.points.size, now)
+
+        val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
         dbHelper.updateTrip(finishedTrip)
-        TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${finalPauses.size}")
+        TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
         _activeTrip.value = null
         lastLocation = null
         lastMovingTimestamp = null
@@ -264,6 +260,19 @@ class TripManager private constructor(private val context: Context) {
                 context.startService(intent)
             } catch (_: Exception) {}
         }
+    }
+
+    private fun sanitizeTrailingPauses(pauses: List<TripPause>, tripPointsCount: Int, tripEndTime: Long): List<TripPause> {
+        if (pauses.isEmpty()) return pauses
+        val result = pauses.toMutableList()
+        val last = result.last()
+        val isAtEnd = last.pointIndex >= (tripPointsCount - 2).coerceAtLeast(0)
+        val endsNearTripEnd = (tripEndTime - (last.endTime ?: last.startTime)) <= 45_000L || (last.endTime ?: 0L) >= tripEndTime
+        if (isAtEnd || endsNearTripEnd) {
+            TelemetryLogger.logTrip("PAUSE_TRIMMED", 0L, "Discarded trailing arrival pause at trip destination: dur=${last.durationMs / 1000}s, idx=${last.pointIndex}/$tripPointsCount")
+            result.removeAt(result.size - 1)
+        }
+        return result
     }
 
     fun onLocationUpdate(
