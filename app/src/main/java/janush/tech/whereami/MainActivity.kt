@@ -229,6 +229,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // Selected Saved Place Details Modal State
     var selectedSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
+    var placeToDelete by remember { mutableStateOf<SavedPlace?>(null) }
     var editingSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
@@ -294,13 +295,14 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    val measuredOpticalOffsetY = remember(isLandscape, topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx, destinationPoint, density) {
+    val measuredOpticalOffsetY = remember(isLandscape, topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx, destinationPoint, selectedSavedPlace, density) {
         if (isLandscape) {
             // In landscape, slight upward bias (-16dp) so vehicle cursor sits clear above the bottom controls
             -(16f * density).toInt()
         } else if (topCardBottomPx > 0 && rootScreenHeightPx > 0) {
-            // Bottom clearance accounts for bottom controls + floating action buttons column (~200dp, or ~300dp with destination card)
-            val bottomClearanceDp = if (destinationPoint != null) 300f else 200f
+            // Bottom clearance accounts for bottom controls + floating action buttons column (~200dp, or ~300dp with destination/saved card)
+            val hasActiveTarget = destinationPoint != null || selectedSavedPlace != null
+            val bottomClearanceDp = if (hasActiveTarget) 300f else 200f
             val maxBottomAllowedPx = rootScreenHeightPx - (bottomClearanceDp * density).toInt()
             val effectiveBottomPx = if (bottomControlsTopPx > 0) {
                 minOf(bottomControlsTopPx, maxBottomAllowedPx)
@@ -338,10 +340,21 @@ fun LocationScreen(viewModel: MainViewModel) {
             fitTrackTrigger = fitTrackTrigger,
             fitPlacesTrigger = fitPlacesTrigger,
             destinationPoint = destinationPoint,
+            selectedSavedPlace = selectedSavedPlace,
             onDestinationMarkerClick = { showDestinationDetailsCard = true },
-            onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
-            onClearDestination = { viewModel.setDestination(null) },
-            onMapClick = { gp -> viewModel.selectMapPoint(gp) },
+            onSavedPlaceClick = { sp ->
+                selectedSavedPlace = sp
+                viewModel.setDestination(null)
+            },
+            onClearDestination = {
+                selectedSavedPlace = null
+                viewModel.setDestination(null)
+                viewModel.clearPinnedBorders()
+            },
+            onMapClick = { gp ->
+                selectedSavedPlace = null
+                viewModel.selectMapPoint(gp)
+            },
             activityProfile = activityProfile,
             isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
             opticalOffsetX = measuredOpticalOffsetX,
@@ -354,16 +367,14 @@ fun LocationScreen(viewModel: MainViewModel) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // ── Floating Header Panels (Left Column in Landscape, Top/Bottom in Portrait) ──
+        // ── Floating Header Panels (Side-by-Side in Landscape, Top/Bottom in Portrait) ──
         if (isLandscape) {
-            Column(
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .widthIn(max = 380.dp)
-                    .fillMaxHeight()
-                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.Top
             ) {
                 if (!showTripsSheet) {
                     LocalityCard(
@@ -385,15 +396,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                         onSetActivityProfile = { viewModel.setActivityProfile(it) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.widthIn(max = 360.dp)
                     )
                 }
 
-                if (!showTripsSheet && destinationPoint != null) {
+                val activeTargetPoint = selectedSavedPlace?.geoPoint ?: destinationPoint
+                if (!showTripsSheet && activeTargetPoint != null) {
                     DestinationPlaceCard(
-                        destinationPoint = destinationPoint!!,
+                        destinationPoint = activeTargetPoint,
                         destinationItem = destinationItem,
-                        onClearDestination = { viewModel.setDestination(null) },
+                        savedPlace = selectedSavedPlace,
+                        onClearDestination = {
+                            selectedSavedPlace = null
+                            viewModel.setDestination(null)
+                            viewModel.clearPinnedBorders()
+                        },
                         onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
                         onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
                         onSavePlace = { lat, lng, item ->
@@ -404,25 +421,48 @@ fun LocationScreen(viewModel: MainViewModel) {
                             placeToSaveCategory = PlaceCategory.FAVORITE
                             showSavePlaceDialog = true
                         },
+                        onEditSavedPlace = { sp ->
+                            editingSavedPlace = sp
+                        },
+                        onDeleteSavedPlace = { sp ->
+                            placeToDelete = sp
+                        },
                         onTogglePinBorders = {
-                            val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                            if (selectedSavedPlace != null) {
+                                val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
+                                viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                            } else {
+                                val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                            }
                         },
                         isPinBorderVisible = pinnedBoundaryPoints != null,
                         onShare = {
-                            val destPt = destinationPoint!!
-                            val title = destinationItem?.title ?: "Pinned Location"
-                            val subtitle = destinationItem?.subtitle ?: ""
-                            val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
-                            activeLocationShareTarget = LocationShareTarget(
-                                title = "Share Pinned Location",
-                                placeName = title,
-                                addressOrCoords = addressLine,
-                                latitude = destPt.latitude,
-                                longitude = destPt.longitude
-                            )
+                            if (selectedSavedPlace != null) {
+                                val sp = selectedSavedPlace!!
+                                val addr = listOfNotNull(sp.street.takeIf { it.isNotBlank() }, sp.locality.takeIf { it.isNotBlank() }).joinToString(", ")
+                                activeLocationShareTarget = LocationShareTarget(
+                                    title = "Share Saved Place",
+                                    placeName = sp.name,
+                                    addressOrCoords = addr.ifBlank { String.format(Locale.US, "%.5f, %.5f", sp.latitude, sp.longitude) },
+                                    latitude = sp.latitude,
+                                    longitude = sp.longitude
+                                )
+                            } else {
+                                val destPt = destinationPoint!!
+                                val title = destinationItem?.title ?: "Pinned Location"
+                                val subtitle = destinationItem?.subtitle ?: ""
+                                val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
+                                activeLocationShareTarget = LocationShareTarget(
+                                    title = "Share Pinned Location",
+                                    placeName = title,
+                                    addressOrCoords = addressLine,
+                                    latitude = destPt.latitude,
+                                    longitude = destPt.longitude
+                                )
+                            }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.widthIn(max = 380.dp)
                     )
                 }
             }
@@ -463,11 +503,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             }
 
-            if (!showTripsSheet && destinationPoint != null) {
+            val activeTargetPoint = selectedSavedPlace?.geoPoint ?: destinationPoint
+            if (!showTripsSheet && activeTargetPoint != null) {
                 DestinationPlaceCard(
-                    destinationPoint = destinationPoint!!,
+                    destinationPoint = activeTargetPoint,
                     destinationItem = destinationItem,
-                    onClearDestination = { viewModel.setDestination(null) },
+                    savedPlace = selectedSavedPlace,
+                    onClearDestination = {
+                        selectedSavedPlace = null
+                        viewModel.setDestination(null)
+                        viewModel.clearPinnedBorders()
+                    },
                     onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
                     onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
                     onSavePlace = { lat, lng, item ->
@@ -478,23 +524,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                         placeToSaveCategory = PlaceCategory.FAVORITE
                         showSavePlaceDialog = true
                     },
+                    onEditSavedPlace = { sp ->
+                        editingSavedPlace = sp
+                    },
+                    onDeleteSavedPlace = { sp ->
+                        placeToDelete = sp
+                    },
                     onTogglePinBorders = {
-                        val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                        viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                        if (selectedSavedPlace != null) {
+                            val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
+                            viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                        } else {
+                            val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
+                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                        }
                     },
                     isPinBorderVisible = pinnedBoundaryPoints != null,
                     onShare = {
-                        val destPt = destinationPoint!!
-                        val title = destinationItem?.title ?: "Pinned Location"
-                        val subtitle = destinationItem?.subtitle ?: ""
-                        val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
-                        activeLocationShareTarget = LocationShareTarget(
-                            title = "Share Pinned Location",
-                            placeName = title,
-                            addressOrCoords = addressLine,
-                            latitude = destPt.latitude,
-                            longitude = destPt.longitude
-                        )
+                        if (selectedSavedPlace != null) {
+                            val sp = selectedSavedPlace!!
+                            val addr = listOfNotNull(sp.street.takeIf { it.isNotBlank() }, sp.locality.takeIf { it.isNotBlank() }).joinToString(", ")
+                            activeLocationShareTarget = LocationShareTarget(
+                                title = "Share Saved Place",
+                                placeName = sp.name,
+                                addressOrCoords = addr.ifBlank { String.format(Locale.US, "%.5f, %.5f", sp.latitude, sp.longitude) },
+                                latitude = sp.latitude,
+                                longitude = sp.longitude
+                            )
+                        } else {
+                            val destPt = destinationPoint!!
+                            val title = destinationItem?.title ?: "Pinned Location"
+                            val subtitle = destinationItem?.subtitle ?: ""
+                            val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
+                            activeLocationShareTarget = LocationShareTarget(
+                                title = "Share Pinned Location",
+                                placeName = title,
+                                addressOrCoords = addressLine,
+                                latitude = destPt.latitude,
+                                longitude = destPt.longitude
+                            )
+                        }
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -797,16 +866,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             .fillMaxWidth()
                                             .clickable {
                                                 showTripsSheet = false
-                                                viewModel.setDestination(
-                                                    SearchResultItem(
-                                                        title = "${place.category.iconEmoji} ${place.name}",
-                                                        subtitle = listOfNotNull(
-                                                            place.street.takeIf { it.isNotBlank() },
-                                                            place.locality.takeIf { it.isNotBlank() }
-                                                        ).joinToString(", "),
-                                                        geoPoint = place.geoPoint
-                                                    )
-                                                )
+                                                selectedSavedPlace = place
+                                                viewModel.setDestination(null)
                                             },
                                         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                         shape = RoundedCornerShape(14.dp)
@@ -2578,11 +2639,11 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     OutlinedTextField(
                         value = placeToSaveName,
-                        onValueChange = { if (it.length <= 20) placeToSaveName = it },
+                        onValueChange = { if (it.length <= 30) placeToSaveName = it },
                         label = { Text("Place Name") },
                         supportingText = {
                             Text(
-                                text = "${placeToSaveName.length}/20",
+                                text = "${placeToSaveName.length}/30",
                                 color = Color(0xFF94A3B8),
                                 fontSize = 11.sp,
                                 modifier = Modifier.fillMaxWidth(),
@@ -2668,109 +2729,24 @@ fun LocationScreen(viewModel: MainViewModel) {
         )
     }
 
-    // ── 8. Saved Place Details Dialog (when tapping a saved place marker on map) ────
-    if (selectedSavedPlace != null) {
-        val sp = selectedSavedPlace!!
+    // ── 8. Delete Saved Place Confirmation Dialog ──────────────────────────
+    if (placeToDelete != null) {
+        val sp = placeToDelete!!
         AlertDialog(
-            onDismissRequest = { selectedSavedPlace = null },
+            onDismissRequest = { placeToDelete = null },
             title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(sp.category.iconEmoji, fontSize = 24.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(sp.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                }
+                Text("Delete Saved Place", color = Color.White, fontWeight = FontWeight.Bold)
             },
             text = {
-                Column(modifier = Modifier.padding(top = 4.dp)) {
-                    val addr = listOfNotNull(
-                        sp.street.takeIf { it.isNotBlank() },
-                        sp.locality.takeIf { it.isNotBlank() }
-                    ).joinToString(", ")
-                    if (addr.isNotBlank()) {
-                        Text(text = "📍 $addr", color = Color.White, fontSize = 14.sp)
-                    }
-                    Text(
-                        text = String.format(Locale.US, "Coordinates: %.5f, %.5f", sp.latitude, sp.longitude),
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                launchNavigation(context, sp.latitude, sp.longitude)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp)
-                        ) {
-                            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-                        }
-
-                        Button(
-                            onClick = {
-                                openInGoogleMaps(context, sp.latitude, sp.longitude, sp.name)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp)
-                        ) {
-                            Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Maps", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
-                        }
-
-                        Button(
-                            onClick = {
-                                editingSavedPlace = sp
-                                selectedSavedPlace = null
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp)
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Edit", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
-                        }
-
-                        Button(
-                            onClick = {
-                                activeLocationShareTarget = LocationShareTarget(
-                                    title = "Share Saved Place",
-                                    placeName = sp.name,
-                                    addressOrCoords = addr.ifBlank { String.format(Locale.US, "%.5f, %.5f", sp.latitude, sp.longitude) },
-                                    latitude = sp.latitude,
-                                    longitude = sp.longitude
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp)
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Share", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
-                        }
-                    }
-                }
+                Text("Are you sure you want to delete '${sp.name}'?", color = Color(0xFFCBD5E1))
             },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.deleteSavedPlace(sp.id)
+                        placeToDelete = null
                         selectedSavedPlace = null
+                        viewModel.clearPinnedBorders()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
                 ) {
@@ -2778,8 +2754,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { selectedSavedPlace = null }) {
-                    Text("Close", color = Color.LightGray)
+                TextButton(onClick = { placeToDelete = null }) {
+                    Text("Cancel", color = Color.LightGray)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -2851,11 +2827,11 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     OutlinedTextField(
                         value = editName,
-                        onValueChange = { if (it.length <= 20) editName = it },
+                        onValueChange = { if (it.length <= 30) editName = it },
                         label = { Text("Place Name") },
                         supportingText = {
                             Text(
-                                text = "${editName.length}/20",
+                                text = "${editName.length}/30",
                                 color = Color(0xFF94A3B8),
                                 fontSize = 11.sp,
                                 modifier = Modifier.fillMaxWidth(),
@@ -2956,6 +2932,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                         viewModel.updateSavedPlace(updated)
                         editingSavedPlace = null
+                        if (selectedSavedPlace?.id == updated.id) {
+                            selectedSavedPlace = updated
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
                 ) {
@@ -4810,25 +4789,57 @@ private fun LocalityCard(
                         }
                     }
 
-                    // ── Right Utility Icons: Quick Saved Places, Direct Collapse ──
+                    // ── Right Utility Icons: Saved Places & Direct Collapse ──
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Quick Access Bookmark Icon Button
-                        IconButton(
-                            onClick = onOpenSavedPlaces,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1E293B))
-                        ) {
-                            Icon(
-                                imageVector = if (nearbySavedPlace != null) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = "Saved Places",
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(18.dp)
-                            )
+                        if (nearbySavedPlace == null) {
+                            // Quick Access Bookmark Icon Button when no saved place nearby
+                            IconButton(
+                                onClick = onOpenSavedPlaces,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1E293B))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BookmarkBorder,
+                                    contentDescription = "Saved Places",
+                                    tint = Color(0xFF10B981),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        } else if (nearbySavedPlace.name.length <= 12) {
+                            // Short Place Name (<= 12 chars): Fits compactly in Row 1!
+                            Surface(
+                                onClick = onOpenSavedPlaces,
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0x3310B981),
+                                border = BorderStroke(1.dp, Color(0x5510B981)),
+                                modifier = Modifier.height(36.dp).widthIn(max = 140.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 8.dp)
+                                ) {
+                                    Text(
+                                        text = nearbySavedPlace.category.iconEmoji,
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = nearbySavedPlace.name,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF10B981),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
 
                         // Direct Collapse Toggle (switches to Compact mode)
@@ -4849,8 +4860,8 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Dedicated Bookmarked Place Full-Width Line (Never squashes utility headers) ──
-                if (nearbySavedPlace != null) {
+                // ── Dedicated Bookmarked Place Line: Only if Long (> 12 chars) to avoid Row 1 overflow ──
+                if (nearbySavedPlace != null && nearbySavedPlace.name.length > 12) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
                         onClick = onOpenSavedPlaces,
@@ -4861,34 +4872,23 @@ private fun LocalityCard(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f, fill = false)
-                            ) {
-                                Text(
-                                    text = nearbySavedPlace.category.iconEmoji,
-                                    fontSize = 13.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = nearbySavedPlace.name,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.Bookmark,
-                                contentDescription = "View Saved Places",
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(16.dp)
+                            Text(
+                                text = nearbySavedPlace.category.iconEmoji,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = nearbySavedPlace.name,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -5231,10 +5231,13 @@ private fun MainBottomControlsCard(
 private fun DestinationPlaceCard(
     destinationPoint: org.osmdroid.util.GeoPoint,
     destinationItem: SearchResultItem?,
+    savedPlace: SavedPlace? = null,
     onClearDestination: () -> Unit,
     onNavigate: (Double, Double) -> Unit,
     onGoogleMaps: (Double, Double, String) -> Unit,
-    onSavePlace: (Double, Double, SearchResultItem?) -> Unit,
+    onSavePlace: ((Double, Double, SearchResultItem?) -> Unit)? = null,
+    onEditSavedPlace: ((SavedPlace) -> Unit)? = null,
+    onDeleteSavedPlace: ((SavedPlace) -> Unit)? = null,
     onTogglePinBorders: () -> Unit,
     isPinBorderVisible: Boolean,
     onShare: () -> Unit,
@@ -5253,58 +5256,60 @@ private fun DestinationPlaceCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = Icons.Default.Place,
-                        contentDescription = "Destination Pin",
-                        tint = Color(0xFFEF4444),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    if (savedPlace != null) {
+                        Text(
+                            text = savedPlace.category.iconEmoji,
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Place,
+                            contentDescription = "Destination Pin",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    val titleText = savedPlace?.name ?: destinationItem?.title ?: "Selected Location"
                     Text(
-                        text = destinationItem?.title ?: "Selected Location",
+                        text = titleText,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
-                        maxLines = 1
+                        lineHeight = 18.sp,
+                        maxLines = 2
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onShare,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share Location",
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    IconButton(
-                        onClick = onClearDestination,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Exit Destination",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = onClearDestination,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Exit Destination",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
 
-            if (destinationItem?.subtitle?.isNotBlank() == true) {
+            val subtitleText = if (savedPlace != null) {
+                listOfNotNull(
+                    savedPlace.street.takeIf { it.isNotBlank() },
+                    savedPlace.locality.takeIf { it.isNotBlank() }
+                ).joinToString(", ")
+            } else {
+                destinationItem?.subtitle ?: ""
+            }
+
+            if (subtitleText.isNotBlank()) {
                 Text(
-                    text = destinationItem.subtitle,
+                    text = subtitleText,
                     color = Color(0xFF94A3B8),
                     fontSize = 12.sp,
                     maxLines = 2,
@@ -5333,9 +5338,10 @@ private fun DestinationPlaceCard(
                     Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
 
+                val gmapsTitle = savedPlace?.name ?: destinationItem?.title ?: ""
                 Button(
                     onClick = {
-                        onGoogleMaps(destinationPoint.latitude, destinationPoint.longitude, destinationItem?.title ?: "")
+                        onGoogleMaps(destinationPoint.latitude, destinationPoint.longitude, gmapsTitle)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                     shape = RoundedCornerShape(8.dp),
@@ -5360,37 +5366,65 @@ private fun DestinationPlaceCard(
                 }
             }
 
-            // Row 2: Save, Remove Pin, & Show/Hide Borders Actions
+            // Row 2: Secondary Context Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Button(
-                    onClick = {
-                        onSavePlace(destinationPoint.latitude, destinationPoint.longitude, destinationItem)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
-                ) {
-                    Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text("Save", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-                }
+                if (savedPlace != null) {
+                    // Saved Place: Edit, Delete, Borders
+                    Button(
+                        onClick = { onEditSavedPlace?.invoke(savedPlace) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Edit", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
 
-                Button(
-                    onClick = onClearDestination,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text("Remove", color = Color(0xFFF87171), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    Button(
+                        onClick = { onDeleteSavedPlace?.invoke(savedPlace) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Delete", color = Color(0xFFF87171), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+                } else {
+                    // Unsaved Pin: Save, Clear Pin, Borders
+                    Button(
+                        onClick = {
+                            onSavePlace?.invoke(destinationPoint.latitude, destinationPoint.longitude, destinationItem)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Save", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+
+                    Button(
+                        onClick = onClearDestination,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Clear Pin", color = Color(0xFFE2E8F0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
                 }
 
                 Button(
