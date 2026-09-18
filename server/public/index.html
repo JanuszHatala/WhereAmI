@@ -59,12 +59,24 @@
     
     .live-badge {
       display: inline-flex; align-items: center; gap: 6px;
-      background: rgba(16, 185, 129, 0.2); color: #10b981;
+      background: rgba(34, 197, 94, 0.18); color: #4ade80;
+      border: 1px solid rgba(74, 222, 128, 0.45);
       padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.5px;
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
     }
-    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 2s infinite; }
-    @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
+    .pulse-dot {
+      width: 8px; height: 8px;
+      background: #4ade80;
+      border-radius: 50%;
+      box-shadow: 0 0 8px rgba(74, 222, 128, 0.9);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); box-shadow: 0 0 4px rgba(74, 222, 128, 0.6); }
+      50% { opacity: 0.5; transform: scale(1.3); box-shadow: 0 0 12px rgba(74, 222, 128, 1); }
+      100% { opacity: 1; transform: scale(1); box-shadow: 0 0 4px rgba(74, 222, 128, 0.6); }
+    }
     
     .countdown-chip {
       background: rgba(255, 255, 255, 0.08);
@@ -450,6 +462,7 @@
           if (data.isStatic) {
             badge.textContent = 'STANDBY';
             badge.style.background = 'rgba(59, 130, 246, 0.2)';
+            badge.style.borderColor = 'rgba(96, 165, 250, 0.4)';
             badge.style.color = '#60a5fa';
             alertBox.className = 'status-alert alert-paused';
             alertBox.textContent = '📡 Personal Live Link • Host is not currently broadcasting. This page will update automatically when a new live session begins.';
@@ -461,6 +474,7 @@
           } else {
             badge.textContent = 'ENDED';
             badge.style.background = 'rgba(239, 68, 68, 0.2)';
+            badge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
             badge.style.color = '#ef4444';
             alertBox.className = 'status-alert alert-ended';
             alertBox.textContent = '📍 Live Sharing Ended. The host has completed this trip.';
@@ -469,6 +483,7 @@
         } else if (agoSec >= disconnectThresholdSec) {
           badge.textContent = 'DISCONNECTED';
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badge.style.color = '#fbbf24';
           alertBox.className = 'status-alert alert-paused';
           if (isSessionPaused) {
@@ -480,14 +495,16 @@
         } else if (isSessionPaused) {
           badge.textContent = 'PAUSED';
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badge.style.color = '#fbbf24';
           alertBox.className = 'status-alert alert-paused';
           alertBox.textContent = '⏸️ Live Sharing is currently paused by the host.';
           alertBox.style.display = 'block';
         } else {
           badge.innerHTML = '<div class="pulse-dot"></div> ONLINE';
-          badge.style.background = 'rgba(16, 185, 129, 0.2)';
-          badge.style.color = '#10b981';
+          badge.style.background = 'rgba(34, 197, 94, 0.18)';
+          badge.style.borderColor = 'rgba(74, 222, 128, 0.45)';
+          badge.style.color = '#4ade80';
           alertBox.className = 'status-alert';
           alertBox.style.display = 'none';
         }
