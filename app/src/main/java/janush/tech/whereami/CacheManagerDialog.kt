@@ -26,6 +26,7 @@ fun CacheManagerDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cacheManager = remember { CacheManager.getInstance(context) }
+    val prefetchState by cacheManager.prefetchState.collectAsState()
 
     var tileBytes by remember { mutableStateOf(0L) }
     var boundaryBytes by remember { mutableStateOf(0L) }
@@ -36,9 +37,7 @@ fun CacheManagerDialog(
     var allowOnBattery by remember { mutableStateOf(cacheManager.allowOnBattery) }
     var allowMobileData by remember { mutableStateOf(cacheManager.allowMobileData) }
 
-    var isPreloading by remember { mutableStateOf(false) }
-    var preloadProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL"
 
     fun refreshMetrics() {
         scope.launch {
@@ -106,7 +105,7 @@ fun CacheManagerDialog(
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color(0xFF94A3B8)
+                            tint = Color.White
                         )
                     }
                 }
@@ -124,7 +123,7 @@ fun CacheManagerDialog(
                             text = "STORAGE BREAKDOWN",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B),
+                            color = Color(0xFF38BDF8),
                             letterSpacing = 1.sp
                         )
 
@@ -136,15 +135,10 @@ fun CacheManagerDialog(
                         ) {
                             Column {
                                 Text("Map Tiles", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text(formatBytes(tileBytes), color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                Text(formatBytes(tileBytes), color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
                             OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        cacheManager.clearTileCache()
-                                        refreshMetrics()
-                                    }
-                                },
+                                onClick = { cacheClearConfirmTarget = "TILES" },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -162,15 +156,10 @@ fun CacheManagerDialog(
                         ) {
                             Column {
                                 Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("${formatBytes(boundaryBytes)} • $boundaryCount places", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                Text("${formatBytes(boundaryBytes)} • $boundaryCount places", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
                             OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        cacheManager.clearBoundaryCache()
-                                        refreshMetrics()
-                                    }
-                                },
+                                onClick = { cacheClearConfirmTarget = "BOUNDARIES" },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -188,15 +177,10 @@ fun CacheManagerDialog(
                         ) {
                             Column {
                                 Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("${formatBytes(spatialBytes)} • $spatialCount points", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                Text("${formatBytes(spatialBytes)} • $spatialCount points", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
                             OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        cacheManager.clearSpatialCache()
-                                        refreshMetrics()
-                                    }
-                                },
+                                onClick = { cacheClearConfirmTarget = "SPATIAL" },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -230,7 +214,7 @@ fun CacheManagerDialog(
                             text = "BATTERY & NETWORK RULES",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B),
+                            color = Color(0xFF38BDF8),
                             letterSpacing = 1.sp
                         )
 
@@ -244,7 +228,7 @@ fun CacheManagerDialog(
                                 Text("Allow on battery", color = Color.White, fontSize = 14.sp)
                                 Text(
                                     if (allowOnBattery) "Pre-fetching permitted on battery" else "Pre-fetch only runs while charging",
-                                    color = Color(0xFF94A3B8),
+                                    color = Color(0xFFE2E8F0),
                                     fontSize = 11.sp
                                 )
                             }
@@ -269,7 +253,7 @@ fun CacheManagerDialog(
                                 Text("Allow on mobile data", color = Color.White, fontSize = 14.sp)
                                 Text(
                                     if (allowMobileData) "Pre-fetching permitted on cellular" else "Pre-fetch only runs on Wi-Fi",
-                                    color = Color(0xFF94A3B8),
+                                    color = Color(0xFFE2E8F0),
                                     fontSize = 11.sp
                                 )
                             }
@@ -284,63 +268,236 @@ fun CacheManagerDialog(
                     }
                 }
 
-                // Route Pre-fetch Action Card
-                Button(
-                    onClick = {
-                        if (!isPreloading) {
-                            isPreloading = true
-                            statusMessage = null
-                            scope.launch {
-                                val result = cacheManager.prefetchTripCorridors { current, total ->
-                                    preloadProgress = current to total
+                // Persistent Background Route Pre-fetch Control Card
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "CORRIDOR PRE-FETCH ENGINE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8),
+                            letterSpacing = 1.sp
+                        )
+
+                        when (val state = prefetchState) {
+                            is CacheManager.PrefetchState.Idle -> {
+                                Button(
+                                    onClick = { cacheManager.startPrefetch() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Pre-fetch Recorded Route Areas", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
-                                isPreloading = false
-                                preloadProgress = null
-                                refreshMetrics()
-                                statusMessage = when (result) {
-                                    is CacheManager.PreloadResult.BlockedByBattery ->
-                                        "Blocked: Device is not charging. Connect charger or enable 'Allow on battery'."
-                                    is CacheManager.PreloadResult.BlockedByNetwork ->
-                                        "Blocked: Not on Wi-Fi. Connect to Wi-Fi or enable 'Allow on mobile data'."
-                                    is CacheManager.PreloadResult.Completed ->
-                                        "Complete: Cached ${result.addedCount} new points (${result.alreadyCachedCount} already cached)."
-                                    is CacheManager.PreloadResult.Failed ->
-                                        "Failed: ${result.error}"
+                            }
+                            is CacheManager.PrefetchState.Running -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Pre-fetching: ${state.current} / ${state.total}",
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
+                                        Text(
+                                            text = "$percent%",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = if (state.total > 0) state.current.toFloat() / state.total.toFloat() else 0f,
+                                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                                        color = Color(0xFF38BDF8),
+                                        trackColor = Color(0xFF1E293B)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { cacheManager.pausePrefetch() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("⏸ Pause", fontSize = 12.sp, color = Color.White)
+                                        }
+                                        Button(
+                                            onClick = { cacheManager.cancelPrefetch() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("⏹ Stop", fontSize = 12.sp, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                            is CacheManager.PrefetchState.Paused -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Paused at: ${state.current} / ${state.total}",
+                                            color = Color(0xFFFBBF24),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
+                                        Text(
+                                            text = "$percent%",
+                                            color = Color(0xFFFBBF24),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = if (state.total > 0) state.current.toFloat() / state.total.toFloat() else 0f,
+                                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                                        color = Color(0xFFFBBF24),
+                                        trackColor = Color(0xFF1E293B)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { cacheManager.resumePrefetch() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("▶ Resume", fontSize = 12.sp, color = Color.White)
+                                        }
+                                        Button(
+                                            onClick = { cacheManager.cancelPrefetch() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("⏹ Stop", fontSize = 12.sp, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                            is CacheManager.PrefetchState.Completed -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "✔ Pre-fetch Complete: ${state.addedCount} new points cached (${state.alreadyCachedCount} already cached of ${state.total} total).",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Button(
+                                        onClick = { cacheManager.startPrefetch() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Check Again", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            is CacheManager.PrefetchState.Blocked -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "⚠️ ${state.reason}",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Button(
+                                        onClick = { cacheManager.startPrefetch() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            is CacheManager.PrefetchState.Error -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "❌ Error: ${state.message}",
+                                        color = Color(0xFFF87171),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Button(
+                                        onClick = { cacheManager.startPrefetch() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                    shape = RoundedCornerShape(10.dp),
-                    enabled = !isPreloading
-                ) {
-                    if (isPreloading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        val prog = preloadProgress
-                        val txt = if (prog != null) "Pre-fetching (${prog.first}/${prog.second})..." else "Pre-fetching..."
-                        Text(txt, fontSize = 13.sp)
-                    } else {
-                        Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Pre-fetch Recorded Route Areas", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                }
-
-                statusMessage?.let { msg ->
-                    Text(
-                        text = msg,
-                        color = if (msg.startsWith("Complete")) Color(0xFF4ADE80) else Color(0xFFFBBF24),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
                 }
             }
         }
+    }
+
+    // Safety Confirmation Alert Dialog for Clearing Caches
+    cacheClearConfirmTarget?.let { target ->
+        val (title, msg) = when (target) {
+            "TILES" -> "Clear Map Tiles Cache?" to "This will delete all downloaded offline map tiles. They will be re-downloaded when viewing the map."
+            "BOUNDARIES" -> "Clear Administrative Boundaries?" to "This will delete all saved town and city boundary polygons. They will be fetched again on demand."
+            "SPATIAL" -> "Clear Addresses & Streets Cache?" to "This will clear all locally cached reverse-geocoded coordinates and street names."
+            else -> "Clear Cache?" to "Are you sure you want to clear this cached data?"
+        }
+
+        AlertDialog(
+            onDismissRequest = { cacheClearConfirmTarget = null },
+            containerColor = Color(0xFF0F172A),
+            title = {
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(msg, color = Color(0xFFE2E8F0), fontSize = 14.sp)
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            when (target) {
+                                "TILES" -> cacheManager.clearTileCache()
+                                "BOUNDARIES" -> cacheManager.clearBoundaryCache()
+                                "SPATIAL" -> cacheManager.clearSpatialCache()
+                            }
+                            cacheClearConfirmTarget = null
+                            refreshMetrics()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                ) {
+                    Text("Clear", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { cacheClearConfirmTarget = null }) {
+                    Text("Cancel", color = Color.LightGray)
+                }
+            }
+        )
     }
 }

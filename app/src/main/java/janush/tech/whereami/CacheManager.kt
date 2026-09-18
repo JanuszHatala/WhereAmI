@@ -6,8 +6,10 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.osmdroid.config.Configuration
 import java.io.File
 
@@ -119,74 +121,161 @@ class CacheManager private constructor(private val context: Context) {
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
-    // ── Battery-Safe Route Corridor Pre-fetcher ───────────────────────────────
+    // ── Persistent Route Corridor Pre-fetch Engine ───────────────────────────
 
-    sealed class PreloadResult {
-        object BlockedByBattery : PreloadResult()
-        object BlockedByNetwork : PreloadResult()
-        data class Completed(val addedCount: Int, val alreadyCachedCount: Int) : PreloadResult()
-        data class Failed(val error: String) : PreloadResult()
+    sealed class PrefetchState {
+        object Idle : PrefetchState()
+        data class Running(val current: Int, val total: Int, val added: Int) : PrefetchState()
+        data class Paused(val current: Int, val total: Int, val added: Int) : PrefetchState()
+        data class Completed(val addedCount: Int, val alreadyCachedCount: Int, val total: Int) : PrefetchState()
+        data class Blocked(val reason: String) : PrefetchState()
+        data class Error(val message: String) : PrefetchState()
     }
 
-    suspend fun prefetchTripCorridors(
-        onProgress: (current: Int, total: Int) -> Unit
-    ): PreloadResult = withContext(Dispatchers.IO) {
-        // Strict battery gating: do not run unless phone is charging OR user explicitly authorized battery usage
+    private val managerJob = kotlinx.coroutines.SupervisorJob()
+    private val managerScope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + managerJob)
+    private var prefetchJob: kotlinx.coroutines.Job? = null
+    @Volatile private var isPrefetchPaused: Boolean = false
+
+    private val _prefetchState = kotlinx.coroutines.flow.MutableStateFlow<PrefetchState>(PrefetchState.Idle)
+    val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
+
+    private val NOTIF_CHANNEL_PREFETCH = "prefetch_channel"
+    private val NOTIF_PREFETCH_ID = 3001
+
+    private fun ensurePrefetchChannel() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                NOTIF_CHANNEL_PREFETCH,
+                "Offline Data Pre-fetch",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun updateNotification(current: Int, total: Int, isPaused: Boolean) {
+        ensurePrefetchChannel()
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+        val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_PREFETCH)
+            .setContentTitle(if (isPaused) "WhereAmI Pre-fetch (Paused)" else "WhereAmI Offline Pre-fetch")
+            .setContentText("Pre-fetching corridors: $current of $total")
+            .setSmallIcon(R.drawable.ic_stat_location)
+            .setProgress(total, current, false)
+            .setOngoing(!isPaused)
+            .setOnlyAlertOnce(true)
+        manager.notify(NOTIF_PREFETCH_ID, builder.build())
+    }
+
+    private fun dismissNotification() {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        manager?.cancel(NOTIF_PREFETCH_ID)
+    }
+
+    fun startPrefetch() {
+        if (_prefetchState.value is PrefetchState.Running) return
+
         if (!allowOnBattery && !isDeviceCharging()) {
-            return@withContext PreloadResult.BlockedByBattery
+            _prefetchState.value = PrefetchState.Blocked("Device is not charging. Connect charger or enable 'Allow on battery'.")
+            return
         }
-
-        // Strict data gating: do not run unless on Wi-Fi OR user explicitly authorized mobile data
         if (!allowMobileData && !isUnmeteredWifi()) {
-            return@withContext PreloadResult.BlockedByNetwork
+            _prefetchState.value = PrefetchState.Blocked("Not on Wi-Fi. Connect to Wi-Fi or enable 'Allow on mobile data'.")
+            return
         }
 
-        try {
-            val dbHelper = TripDatabaseHelper(context)
-            val allTrips = dbHelper.getAllTrips()
-            val spatialHelper = SpatialCacheHelper.getInstance(context)
-            val locManager = LocationManager.getInstance(context)
+        isPrefetchPaused = false
+        prefetchJob?.cancel()
 
-            // Extract unique grid points along all recorded trips
-            val uniquePoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
-            for (trip in allTrips) {
-                for (pt in trip.points) {
-                    val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
-                    if (!uniquePoints.containsKey(key)) {
-                        uniquePoints[key] = pt
+        prefetchJob = managerScope.launch {
+            try {
+                val dbHelper = TripDatabaseHelper(context)
+                val allTrips = dbHelper.getAllTrips()
+                val spatialHelper = SpatialCacheHelper.getInstance(context)
+                val locManager = LocationManager.getInstance(context)
+
+                val uniquePoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
+                for (trip in allTrips) {
+                    for (pt in trip.points) {
+                        val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                        if (!uniquePoints.containsKey(key)) {
+                            uniquePoints[key] = pt
+                        }
                     }
                 }
-            }
 
-            val totalUnique = uniquePoints.size
-            if (totalUnique == 0) {
-                return@withContext PreloadResult.Completed(addedCount = 0, alreadyCachedCount = 0)
-            }
-
-            val uncachedPoints = uniquePoints.filter { (key, pt) ->
-                spatialHelper.get(pt.latitude, pt.longitude) == null
-            }.values.toList()
-
-            val alreadyCached = totalUnique - uncachedPoints.size
-            var added = 0
-
-            for ((index, pt) in uncachedPoints.withIndex()) {
-                // Check if charging was disconnected mid-run
-                if (!allowOnBattery && !isDeviceCharging()) {
-                    return@withContext PreloadResult.BlockedByBattery
+                val totalUnique = uniquePoints.size
+                if (totalUnique == 0) {
+                    _prefetchState.value = PrefetchState.Completed(0, 0, 0)
+                    return@launch
                 }
 
-                locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                added++
-                onProgress(index + 1, uncachedPoints.size)
+                val uncachedPoints = uniquePoints.filter { (_, pt) ->
+                    spatialHelper.get(pt.latitude, pt.longitude) == null
+                }.values.toList()
 
-                // Nominatim polite rate limiting: 1.5s delay between network requests
-                kotlinx.coroutines.delay(1500L)
+                val alreadyCached = totalUnique - uncachedPoints.size
+                var added = 0
+
+                _prefetchState.value = PrefetchState.Running(alreadyCached, totalUnique, added)
+                updateNotification(alreadyCached, totalUnique, false)
+
+                for (pt in uncachedPoints) {
+                    while (isPrefetchPaused) {
+                        kotlinx.coroutines.delay(500L)
+                    }
+
+                    if (!allowOnBattery && !isDeviceCharging()) {
+                        _prefetchState.value = PrefetchState.Blocked("Charging disconnected. Connect charger to continue.")
+                        dismissNotification()
+                        return@launch
+                    }
+
+                    locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
+                    added++
+                    val current = alreadyCached + added
+
+                    _prefetchState.value = PrefetchState.Running(current, totalUnique, added)
+                    updateNotification(current, totalUnique, false)
+
+                    kotlinx.coroutines.delay(1500L)
+                }
+
+                _prefetchState.value = PrefetchState.Completed(added, alreadyCached, totalUnique)
+                dismissNotification()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                dismissNotification()
+            } catch (e: Exception) {
+                _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
+                dismissNotification()
             }
-
-            return@withContext PreloadResult.Completed(addedCount = added, alreadyCachedCount = alreadyCached)
-        } catch (e: Exception) {
-            return@withContext PreloadResult.Failed(e.message ?: "Unknown pre-fetch error")
         }
+    }
+
+    fun pausePrefetch() {
+        isPrefetchPaused = true
+        val cur = _prefetchState.value
+        if (cur is PrefetchState.Running) {
+            _prefetchState.value = PrefetchState.Paused(cur.current, cur.total, cur.added)
+            updateNotification(cur.current, cur.total, true)
+        }
+    }
+
+    fun resumePrefetch() {
+        isPrefetchPaused = false
+        val cur = _prefetchState.value
+        if (cur is PrefetchState.Paused) {
+            _prefetchState.value = PrefetchState.Running(cur.current, cur.total, cur.added)
+            updateNotification(cur.current, cur.total, false)
+        }
+    }
+
+    fun cancelPrefetch() {
+        isPrefetchPaused = false
+        prefetchJob?.cancel()
+        prefetchJob = null
+        _prefetchState.value = PrefetchState.Idle
+        dismissNotification()
     }
 }

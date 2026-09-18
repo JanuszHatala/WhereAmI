@@ -151,7 +151,33 @@ class LiveTrackingService : Service() {
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_SYNC_NOW },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, "🔄 Sync Now", syncIntent)
+            builder.addAction(0, "🔄 Sync", syncIntent)
+
+            // Quick Share Action
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                val shareUrl = liveSession.getViewerUrl()
+                val shareText = if (!shareUrl.isNullOrBlank()) {
+                    "Track my live trip on WhereAmI: $shareUrl"
+                } else {
+                    val lastLoc = LocationManager.getInstance(this@LiveTrackingService).lastLocationSnapshot
+                    if (lastLoc != null) {
+                        "WhereAmI Location: https://maps.google.com/?q=${lastLoc.lat},${lastLoc.lng}"
+                    } else "WhereAmI Active Tracking"
+                }
+                putExtra(Intent.EXTRA_TEXT, shareText)
+                type = "text/plain"
+            }
+            val chooserIntent = Intent.createChooser(sendIntent, "Share Location via").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val shareIntent = android.app.PendingIntent.getActivity(
+                this,
+                4,
+                chooserIntent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, "🔗 Share", shareIntent)
 
             // Stop Action (LIV-R01)
             val stopIntent = android.app.PendingIntent.getService(

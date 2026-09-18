@@ -256,6 +256,7 @@ fun OsmMapView(
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
     onInstantShare: (() -> Unit)? = null,
+    onClearSelectedTrips: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -728,23 +729,45 @@ fun OsmMapView(
     }
 
     // Collect all visible points (active recording track + selected past trips)
-    val allShownPoints = remember(trackPoints, selectedTrips) {
+    // If user is not recording, only fit selected past trips so current location does not distort the view
+    val allShownPoints = remember(trackPoints, selectedTrips, isRecording) {
         val pts = mutableListOf<GeoPoint>()
-        pts.addAll(trackPoints)
+        if (isRecording) {
+            pts.addAll(trackPoints)
+        }
         selectedTrips.forEach { trip ->
             pts.addAll(trip.points)
+        }
+        if (pts.isEmpty() && trackPoints.isNotEmpty()) {
+            pts.addAll(trackPoints)
         }
         pts
     }
 
     // Fit-to-track trigger (fits all shown trips: active and/or selected)
     LaunchedEffect(fitTrackTrigger) {
-        if (fitTrackTrigger > 0L && allShownPoints.size >= 2) {
+        if (fitTrackTrigger > 0L && allShownPoints.isNotEmpty()) {
             val map = mapView ?: return@LaunchedEffect
-            val box = BoundingBox.fromGeoPoints(allShownPoints)
             isFollowing = false
             snapHandler.removeCallbacks(snapRunnable)
-            map.zoomToBoundingBox(box, true, 100)
+            if (allShownPoints.size == 1) {
+                map.controller.animateTo(allShownPoints.first())
+                map.controller.setZoom(16.0)
+            } else {
+                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
+                val minSpan = 0.005 // ~500m
+                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                val centerLat = rawBox.centerLatitude
+                val centerLon = rawBox.centerLongitude
+                val paddedBox = BoundingBox(
+                    centerLat + latSpan / 2.0,
+                    centerLon + lonSpan / 2.0,
+                    centerLat - latSpan / 2.0,
+                    centerLon - lonSpan / 2.0
+                )
+                map.zoomToBoundingBox(paddedBox, true, 120)
+            }
             currentZoom = map.zoomLevelDouble
         }
     }
@@ -795,14 +818,20 @@ fun OsmMapView(
                         org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
                     )
 
-                    // Map tap listener: tapping anywhere on map selects that point & reverse geocodes
+                    // Map gesture listener:
+                    // Long-press drops a pin at that point & reverse geocodes.
+                    // Single-tap clears active pin/saved place card if visible, without dropping a new pin!
                     val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
                         override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                            currentOnMapClick?.invoke(p)
-                            return true
+                            if (destinationPoint != null || selectedSavedPlace != null) {
+                                onClearDestination?.invoke()
+                                return true
+                            }
+                            return false
                         }
                         override fun longPressHelper(p: GeoPoint): Boolean {
-                            return false
+                            currentOnMapClick?.invoke(p)
+                            return true
                         }
                     })
                     overlays.add(0, eventsOverlay)
@@ -844,16 +873,17 @@ fun OsmMapView(
             update = { }
         )
 
-        // Floating Map Controls (Recenter/Refresh, Layers/Settings, Fit Track, Fit Places)
-        // Zoom buttons (+/-) removed in favor of pinch-to-zoom; orientation moved to Map Settings
-        // Positioned at BottomEnd (above bottom action pill / destination card) so it NEVER collides with Locality Card
+        // Floating Map Controls (Recenter/Refresh, Layers/Settings, Fit Track, Hide Shown Trips, Instant Share)
+        // Positioned vertically centered in the clear map aperture (CenterEnd):
+        // In landscape: exactly centered (offset 0dp).
+        // In portrait: offset downwards to center cleanly between top card and bottom toolbar.
+        // It never shifts or collides with the destination/saved place bottom card!
+        val mapControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
         Column(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    end = 12.dp,
-                    bottom = if (destinationPoint != null || selectedSavedPlace != null) 230.dp else 105.dp
-                ),
+                .align(Alignment.CenterEnd)
+                .offset(y = mapControlsApertureOffsetY)
+                .padding(end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -937,15 +967,31 @@ fun OsmMapView(
                 }
             }
 
-            // Fit Shown Trips (if at least 2 points exist from active recording or selected past trips)
-            if (allShownPoints.size >= 2) {
+            // Fit Shown Trips (if any shown points exist from recording or selected past trips)
+            if (allShownPoints.isNotEmpty()) {
                 IconButton(
                     onClick = {
                         val map = mapView ?: return@IconButton
-                        val box = BoundingBox.fromGeoPoints(allShownPoints)
                         isFollowing = false
                         snapHandler.removeCallbacks(snapRunnable)
-                        map.zoomToBoundingBox(box, true, 100)
+                        if (allShownPoints.size == 1) {
+                            map.controller.animateTo(allShownPoints.first())
+                            map.controller.setZoom(16.0)
+                        } else {
+                            val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
+                            val minSpan = 0.005
+                            val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                            val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                            val centerLat = rawBox.centerLatitude
+                            val centerLon = rawBox.centerLongitude
+                            val paddedBox = BoundingBox(
+                                centerLat + latSpan / 2.0,
+                                centerLon + lonSpan / 2.0,
+                                centerLat - latSpan / 2.0,
+                                centerLon - lonSpan / 2.0
+                            )
+                            map.zoomToBoundingBox(paddedBox, true, 120)
+                        }
                     },
                     modifier = Modifier
                         .size(40.dp)
@@ -958,6 +1004,41 @@ fun OsmMapView(
                         tint = ComposeColor(0xFF38BDF8),
                         modifier = Modifier.size(20.dp)
                     )
+                }
+            }
+
+            // Hide / Unselect Shown Historical Trips
+            if (selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
+                Box(contentAlignment = Alignment.TopEnd) {
+                    IconButton(
+                        onClick = { onClearSelectedTrips.invoke() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC7F1D1D))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Hide Shown Trips",
+                            tint = ComposeColor(0xFFFCA5A5),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .offset(x = 2.dp, y = (-2).dp)
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xFFEF4444)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${selectedTrips.size}",
+                            color = ComposeColor.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -1366,59 +1447,18 @@ private fun MapSettingsDialog(
                 color = ComposeColor(0xFF94A3B8)
             )
 
-            Row(
+            Button(
+                onClick = {
+                    onDismiss()
+                    onOpenCacheManager()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF0284C7)),
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                shape = RoundedCornerShape(10.dp)
             ) {
-                OutlinedButton(
-                    onClick = {
-                        try {
-                            tileDir.deleteRecursively()
-                            tileDir.mkdirs()
-                            tileCacheSizeMb = 0L
-                            onClearCache()
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ComposeColor(0xFFF87171)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Clear Cache", modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Clear Cache", fontSize = 12.sp)
-                }
-
-                val isDownloadingTiles = cacheDownloadState is CacheDownloadState.Downloading
-                Button(
-                    onClick = {
-                        val lat = currentLatLng?.first ?: 50.0647
-                        val lng = currentLatLng?.second ?: 19.9450
-                        MapCacheHelper.startCachingRegion(
-                            context,
-                            lat,
-                            lng,
-                            isFreemapOutdoor = (currentBaseLayer == MapBaseLayer.FREEMAP_OUTDOOR)
-                        )
-                    },
-                    enabled = !isDownloadingTiles,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ComposeColor(0xFF1E293B),
-                        disabledContainerColor = ComposeColor(0xFF1E293B),
-                        contentColor = ComposeColor(0xFF38BDF8),
-                        disabledContentColor = ComposeColor(0xFF38BDF8).copy(alpha = 0.7f)
-                    ),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        if (isDownloadingTiles) Icons.Default.Refresh else Icons.Default.Download,
-                        contentDescription = "Pre-cache",
-                        modifier = Modifier.size(16.dp),
-                        tint = if (isDownloadingTiles) ComposeColor(0xFF38BDF8).copy(alpha = 0.7f) else ComposeColor(0xFF38BDF8)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isDownloadingTiles) "Downloading..." else "Cache 5km", fontSize = 12.sp)
-                }
+                Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp), tint = ComposeColor.White)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Manage Storage & Offline Cache", fontSize = 13.sp, color = ComposeColor.White, fontWeight = FontWeight.SemiBold)
             }
 
             when (val state = cacheDownloadState) {
