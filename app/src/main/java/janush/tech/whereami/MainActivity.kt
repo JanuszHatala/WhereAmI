@@ -17,6 +17,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -223,25 +224,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     var topCardBottomPx by remember { mutableStateOf(0) }
     var bottomControlsTopPx by remember { mutableStateOf(0) }
     var rootScreenHeightPx by remember { mutableStateOf(0) }
+    var rootScreenWidthPx by remember { mutableStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
-    val measuredOpticalOffsetY = remember(topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx, destinationPoint, density) {
-        if (topCardBottomPx > 0 && rootScreenHeightPx > 0) {
-            // Bottom clearance accounts for bottom controls + floating action buttons column (~200dp, or ~300dp with destination card)
-            val bottomClearanceDp = if (destinationPoint != null) 300f else 200f
-            val maxBottomAllowedPx = rootScreenHeightPx - (bottomClearanceDp * density).toInt()
-            val effectiveBottomPx = if (bottomControlsTopPx > 0) {
-                minOf(bottomControlsTopPx, maxBottomAllowedPx)
-            } else {
-                maxBottomAllowedPx
-            }
-            val apertureCenter = (topCardBottomPx + effectiveBottomPx) / 2
-            // Upward optical bias of 24dp so cursor sits comfortably in upper half of clear aperture
-            val upwardBiasPx = (24f * density).toInt()
-            (apertureCenter - (rootScreenHeightPx / 2)) - upwardBiasPx
-        } else {
-            null
-        }
-    }
 
     // Selected Saved Place Details Modal State
     var selectedSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
@@ -299,174 +283,151 @@ fun LocationScreen(viewModel: MainViewModel) {
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
     val heatMapTracks = remember(savedTrips) { savedTrips.map { it.points } }
 
-    if (isLandscape) {
-        Row(modifier = Modifier.fillMaxSize()) {
+    val measuredOpticalOffsetX = remember(isLandscape, density) {
+        if (isLandscape) {
+            // In landscape, left floating panel is up to 380dp + 16dp padding = ~396dp.
+            // Half of this is ~198dp, shifting the GPS focus rightward to center it perfectly
+            // in the unobstructed map area.
+            (198f * density).toInt()
+        } else {
+            null
+        }
+    }
+
+    val measuredOpticalOffsetY = remember(isLandscape, topCardBottomPx, bottomControlsTopPx, rootScreenHeightPx, destinationPoint, density) {
+        if (isLandscape) {
+            // In landscape, slight upward bias (-16dp) so vehicle cursor sits clear above the bottom controls
+            -(16f * density).toInt()
+        } else if (topCardBottomPx > 0 && rootScreenHeightPx > 0) {
+            // Bottom clearance accounts for bottom controls + floating action buttons column (~200dp, or ~300dp with destination card)
+            val bottomClearanceDp = if (destinationPoint != null) 300f else 200f
+            val maxBottomAllowedPx = rootScreenHeightPx - (bottomClearanceDp * density).toInt()
+            val effectiveBottomPx = if (bottomControlsTopPx > 0) {
+                minOf(bottomControlsTopPx, maxBottomAllowedPx)
+            } else {
+                maxBottomAllowedPx
+            }
+            val apertureCenter = (topCardBottomPx + effectiveBottomPx) / 2
+            // Upward optical bias of 24dp so cursor sits comfortably in upper half of clear aperture
+            val upwardBiasPx = (24f * density).toInt()
+            (apertureCenter - (rootScreenHeightPx / 2)) - upwardBiasPx
+        } else {
+            null
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned {
+                rootScreenWidthPx = it.size.width
+                rootScreenHeightPx = it.size.height
+            }
+    ) {
+        // ── Fullscreen Map Canvas (Both Portrait and Landscape) ──────────────
+        OsmMapView(
+            latLng = currentLatLng,
+            trackPoints = activeTrip?.points ?: emptyList(),
+            selectedTrips = selectedTripsList,
+            savedPlaces = savedPlaces,
+            boundaryPoints = boundaryPoints,
+            pinnedBoundaryPoints = pinnedBoundaryPoints,
+            heatMapTracks = heatMapTracks,
+            showHeatMap = showHeatMap,
+            onToggleHeatMap = { viewModel.toggleShowHeatMap() },
+            fitTrackTrigger = fitTrackTrigger,
+            fitPlacesTrigger = fitPlacesTrigger,
+            destinationPoint = destinationPoint,
+            onDestinationMarkerClick = { showDestinationDetailsCard = true },
+            onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
+            onClearDestination = { viewModel.setDestination(null) },
+            onMapClick = { gp -> viewModel.selectMapPoint(gp) },
+            activityProfile = activityProfile,
+            isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
+            opticalOffsetX = measuredOpticalOffsetX,
+            opticalOffsetY = measuredOpticalOffsetY,
+            isRecording = activeTrip != null,
+            pauses = allDisplayPauses,
+            orientationMode = orientationMode,
+            onOrientationModeChange = { viewModel.setOrientationMode(it) },
+            onInstantShare = shareCurrentLocation,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // ── Floating Header Panels (Left Column in Landscape, Top/Bottom in Portrait) ──
+        if (isLandscape) {
             Column(
                 modifier = Modifier
-                    .weight(0.38f)
+                    .align(Alignment.TopStart)
+                    .widthIn(max = 380.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF0F172A))
-                    .padding(8.dp)
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!showTripsSheet) {
-                        LocalityCard(
-                            locationData = locationData,
-                            activeTrip = activeTrip,
-                            liveSession = liveSession,
-                            savedPlaces = savedPlaces,
-                            localityCardStyle = localityCardStyle,
-                            activityProfile = activityProfile,
-                            primaryPlace = primaryPlace,
-                            secondaryPlace = secondaryPlace,
-                            hierarchySubtitle = hierarchySubtitle,
-                            currentLatLng = currentLatLng,
-                            onShowActiveTripRoute = { showActiveTripRouteDialog = true },
-                            onShowLiveShare = { showLiveShareDialog = true },
-                            onOpenSavedPlaces = {
-                                sheetTab = 1
-                                showTripsSheet = true
-                            },
-                            onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
-                            onSetActivityProfile = { viewModel.setActivityProfile(it) },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    if (!showTripsSheet && destinationPoint != null) {
-                        DestinationPlaceCard(
-                            destinationPoint = destinationPoint!!,
-                            destinationItem = destinationItem,
-                            onClearDestination = { viewModel.setDestination(null) },
-                            onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
-                            onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
-                            onSavePlace = { lat, lng, item ->
-                                placeToSaveCoords = lat to lng
-                                placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
-                                placeToSaveStreet = item?.title ?: ""
-                                placeToSaveName = item?.title ?: "My Place"
-                                placeToSaveCategory = PlaceCategory.FAVORITE
-                                showSavePlaceDialog = true
-                            },
-                            onTogglePinBorders = {
-                                val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
-                            },
-                            isPinBorderVisible = pinnedBoundaryPoints != null,
-                            onShare = {
-                                val destPt = destinationPoint!!
-                                val title = destinationItem?.title ?: "Pinned Location"
-                                val subtitle = destinationItem?.subtitle ?: ""
-                                val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
-                                activeLocationShareTarget = LocationShareTarget(
-                                    title = "Share Pinned Location",
-                                    placeName = title,
-                                    addressOrCoords = addressLine,
-                                    latitude = destPt.latitude,
-                                    longitude = destPt.longitude
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                if (!showTripsSheet) {
+                    LocalityCard(
+                        locationData = locationData,
+                        activeTrip = activeTrip,
+                        liveSession = liveSession,
+                        savedPlaces = savedPlaces,
+                        localityCardStyle = localityCardStyle,
+                        activityProfile = activityProfile,
+                        primaryPlace = primaryPlace,
+                        secondaryPlace = secondaryPlace,
+                        hierarchySubtitle = hierarchySubtitle,
+                        currentLatLng = currentLatLng,
+                        onShowActiveTripRoute = { showActiveTripRouteDialog = true },
+                        onShowLiveShare = { showLiveShareDialog = true },
+                        onOpenSavedPlaces = {
+                            sheetTab = 1
+                            showTripsSheet = true
+                        },
+                        onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
+                        onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
-                if (!showTripsSheet) {
-                    MainBottomControlsCard(
-                        keepScreenOn = keepScreenOn,
-                        isRecording = activeTrip != null,
-                        onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
-                        onToggleTripRecording = {
-                            if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
+                if (!showTripsSheet && destinationPoint != null) {
+                    DestinationPlaceCard(
+                        destinationPoint = destinationPoint!!,
+                        destinationItem = destinationItem,
+                        onClearDestination = { viewModel.setDestination(null) },
+                        onNavigate = { lat, lng -> launchNavigation(context, lat, lng) },
+                        onGoogleMaps = { lat, lng, title -> openInGoogleMaps(context, lat, lng, title) },
+                        onSavePlace = { lat, lng, item ->
+                            placeToSaveCoords = lat to lng
+                            placeToSaveLocality = item?.localityName ?: item?.subtitle?.split(",")?.firstOrNull()?.trim() ?: ""
+                            placeToSaveStreet = item?.title ?: ""
+                            placeToSaveName = item?.title ?: "My Place"
+                            placeToSaveCategory = PlaceCategory.FAVORITE
+                            showSavePlaceDialog = true
                         },
-                        onShowTripsSheet = { showTripsSheet = true },
-                        onShowSearch = { showSearchDialog = true },
-                        onSaveLocation = {
-                            val lat = currentLatLng?.first
-                            val lng = currentLatLng?.second
-                            if (lat != null && lng != null) {
-                                val currentPlace = locationData.primaryPlace
-                                placeToSaveCoords = lat to lng
-                                placeToSaveLocality = currentPlace?.city ?: ""
-                                placeToSaveStreet = currentPlace?.street ?: ""
-                                placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                                placeToSaveCategory = PlaceCategory.FAVORITE
-                                showSavePlaceDialog = true
-                            }
+                        onTogglePinBorders = {
+                            val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
+                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
                         },
-                        onShowSettings = { showSettingsSheet = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
+                        isPinBorderVisible = pinnedBoundaryPoints != null,
+                        onShare = {
+                            val destPt = destinationPoint!!
+                            val title = destinationItem?.title ?: "Pinned Location"
+                            val subtitle = destinationItem?.subtitle ?: ""
+                            val addressLine = if (subtitle.isNotBlank()) "$title, $subtitle" else title
+                            activeLocationShareTarget = LocationShareTarget(
+                                title = "Share Pinned Location",
+                                placeName = title,
+                                addressOrCoords = addressLine,
+                                latitude = destPt.latitude,
+                                longitude = destPt.longitude
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
-
-            Box(modifier = Modifier.weight(0.62f).fillMaxHeight()) {
-                OsmMapView(
-                    latLng = currentLatLng,
-                    trackPoints = activeTrip?.points ?: emptyList(),
-                    selectedTrips = selectedTripsList,
-                    savedPlaces = savedPlaces,
-                    boundaryPoints = boundaryPoints,
-                    pinnedBoundaryPoints = pinnedBoundaryPoints,
-                    heatMapTracks = heatMapTracks,
-                    showHeatMap = showHeatMap,
-                    onToggleHeatMap = { viewModel.toggleShowHeatMap() },
-                    fitTrackTrigger = fitTrackTrigger,
-                    fitPlacesTrigger = fitPlacesTrigger,
-                    destinationPoint = destinationPoint,
-                    onDestinationMarkerClick = { showDestinationDetailsCard = true },
-                    onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
-                    onClearDestination = { viewModel.setDestination(null) },
-                    onMapClick = { gp -> viewModel.selectMapPoint(gp) },
-                    activityProfile = activityProfile,
-                    isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
-                    isRecording = activeTrip != null,
-                    pauses = allDisplayPauses,
-                    orientationMode = orientationMode,
-                    onOrientationModeChange = { viewModel.setOrientationMode(it) },
-                    onInstantShare = shareCurrentLocation,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        }
-    } else {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .onGloballyPositioned { rootScreenHeightPx = it.size.height }
-        ) {
-            OsmMapView(
-                latLng = currentLatLng,
-                trackPoints = activeTrip?.points ?: emptyList(),
-                selectedTrips = selectedTripsList,
-                savedPlaces = savedPlaces,
-                boundaryPoints = boundaryPoints,
-                pinnedBoundaryPoints = pinnedBoundaryPoints,
-                heatMapTracks = heatMapTracks,
-                showHeatMap = showHeatMap,
-                onToggleHeatMap = { viewModel.toggleShowHeatMap() },
-                fitTrackTrigger = fitTrackTrigger,
-                fitPlacesTrigger = fitPlacesTrigger,
-                destinationPoint = destinationPoint,
-                onDestinationMarkerClick = { showDestinationDetailsCard = true },
-                onSavedPlaceClick = { sp -> selectedSavedPlace = sp },
-                onClearDestination = { viewModel.setDestination(null) },
-                onMapClick = { gp -> viewModel.selectMapPoint(gp) },
-                activityProfile = activityProfile,
-                isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
-                opticalOffsetY = measuredOpticalOffsetY,
-                isRecording = activeTrip != null,
-                pauses = allDisplayPauses,
-                orientationMode = orientationMode,
-                onOrientationModeChange = { viewModel.setOrientationMode(it) },
-                onInstantShare = shareCurrentLocation,
-                modifier = Modifier.fillMaxSize()
-            )
-
+        } else {
+            // Portrait: LocalityCard at TopCenter, DestinationPlaceCard at BottomCenter
             if (!showTripsSheet) {
                 LocalityCard(
                     locationData = locationData,
@@ -544,41 +505,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                 )
             }
+        }
 
-            if (!showTripsSheet) {
-                MainBottomControlsCard(
-                    keepScreenOn = keepScreenOn,
-                    isRecording = activeTrip != null,
-                    onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
-                    onToggleTripRecording = {
-                        if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
-                    },
-                    onShowTripsSheet = { showTripsSheet = true },
-                    onShowSearch = { showSearchDialog = true },
-                    onSaveLocation = {
-                        val lat = currentLatLng?.first
-                        val lng = currentLatLng?.second
-                        if (lat != null && lng != null) {
-                            val currentPlace = locationData.primaryPlace
-                            placeToSaveCoords = lat to lng
-                            placeToSaveLocality = currentPlace?.city ?: ""
-                            placeToSaveStreet = currentPlace?.street ?: ""
-                            placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                            placeToSaveCategory = PlaceCategory.FAVORITE
-                            showSavePlaceDialog = true
-                        }
-                    },
-                    onShowSettings = { showSettingsSheet = true },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(horizontal = 12.dp, vertical = 20.dp)
-                        .widthIn(max = 440.dp)
-                        .fillMaxWidth()
-                        .onGloballyPositioned {
-                            bottomControlsTopPx = it.positionInRoot().y.toInt()
-                        }
-                )
-            }
+        // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
+        if (!showTripsSheet) {
+            MainBottomControlsCard(
+                keepScreenOn = keepScreenOn,
+                isRecording = activeTrip != null,
+                onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
+                onToggleTripRecording = {
+                    if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
+                },
+                onShowTripsSheet = { showTripsSheet = true },
+                onShowSearch = { showSearchDialog = true },
+                onSaveLocation = {
+                    val lat = currentLatLng?.first
+                    val lng = currentLatLng?.second
+                    if (lat != null && lng != null) {
+                        val currentPlace = locationData.primaryPlace
+                        placeToSaveCoords = lat to lng
+                        placeToSaveLocality = currentPlace?.city ?: ""
+                        placeToSaveStreet = currentPlace?.street ?: ""
+                        placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
+                        placeToSaveCategory = PlaceCategory.FAVORITE
+                        showSavePlaceDialog = true
+                    }
+                },
+                onShowSettings = { showSettingsSheet = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = if (isLandscape) 400.dp else 12.dp,
+                        end = if (isLandscape) 84.dp else 12.dp,
+                        bottom = if (isLandscape) 12.dp else 20.dp
+                    )
+                    .widthIn(max = if (isLandscape) 420.dp else 440.dp)
+                    .fillMaxWidth()
+                    .onGloballyPositioned {
+                        bottomControlsTopPx = it.positionInRoot().y.toInt()
+                    }
+            )
         }
     }
 
@@ -1883,7 +1849,9 @@ fun LocationScreen(viewModel: MainViewModel) {
         ) {
             Column(
                 modifier = Modifier
+                    .widthIn(max = 640.dp)
                     .fillMaxWidth()
+                    .align(Alignment.CenterHorizontally)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp)
                     .navigationBarsPadding()
@@ -3010,8 +2978,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
                 modifier = Modifier
+                    .widthIn(max = 560.dp)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.75f)
+                    .fillMaxHeight(0.85f)
                     .padding(8.dp)
             ) {
                 Column(
@@ -4156,6 +4125,7 @@ fun LocationShareDialog(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
             modifier = Modifier
+                .widthIn(max = 540.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 24.dp)
         ) {
@@ -4840,50 +4810,25 @@ private fun LocalityCard(
                         }
                     }
 
-                    // ── Right Utility Icons: Bookmarked Place (Clickable to open Places tab), Collapse ──
+                    // ── Right Utility Icons: Quick Saved Places, Direct Collapse ──
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (nearbySavedPlace != null) {
-                            Surface(
-                                onClick = onOpenSavedPlaces,
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0x3310B981),
-                                modifier = Modifier.height(36.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 8.dp)
-                                ) {
-                                    Text(
-                                        text = "${nearbySavedPlace.category.iconEmoji} ${nearbySavedPlace.name}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF10B981),
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                            }
-                        } else {
-                            // Quick Access Bookmark Icon Button
-                            IconButton(
-                                onClick = onOpenSavedPlaces,
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.BookmarkBorder,
-                                    contentDescription = "Saved Places",
-                                    tint = Color(0xFF10B981),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                        // Quick Access Bookmark Icon Button
+                        IconButton(
+                            onClick = onOpenSavedPlaces,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = if (nearbySavedPlace != null) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = "Saved Places",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
 
                         // Direct Collapse Toggle (switches to Compact mode)
@@ -4899,6 +4844,51 @@ private fun LocalityCard(
                                 contentDescription = "Collapse Locality Card",
                                 tint = Color(0xFFCBD5E1),
                                 modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                // ── Dedicated Bookmarked Place Full-Width Line (Never squashes utility headers) ──
+                if (nearbySavedPlace != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        onClick = onOpenSavedPlaces,
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0x3310B981),
+                        border = BorderStroke(1.dp, Color(0x5510B981)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                Text(
+                                    text = nearbySavedPlace.category.iconEmoji,
+                                    fontSize = 13.sp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = nearbySavedPlace.name,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.Bookmark,
+                                contentDescription = "View Saved Places",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
@@ -5370,7 +5360,7 @@ private fun DestinationPlaceCard(
                 }
             }
 
-            // Row 2: Save Place & Show/Hide Borders Actions
+            // Row 2: Save, Remove Pin, & Show/Hide Borders Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -5383,12 +5373,24 @@ private fun DestinationPlaceCard(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).height(38.dp)
                 ) {
                     Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Save Place", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Save", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                }
+
+                Button(
+                    onClick = onClearDestination,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Remove", color = Color(0xFFF87171), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
 
                 Button(
@@ -5397,7 +5399,7 @@ private fun DestinationPlaceCard(
                         containerColor = if (isPinBorderVisible) Color(0xFFDC2626) else Color(0xFF1E293B)
                     ),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).height(38.dp)
                 ) {
                     Icon(
@@ -5406,12 +5408,12 @@ private fun DestinationPlaceCard(
                         tint = if (isPinBorderVisible) Color.White else Color(0xFFEF4444),
                         modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = if (isPinBorderVisible) "Hide Borders" else "Show Borders",
+                        text = if (isPinBorderVisible) "Hide" else "Borders",
                         color = Color.White,
                         fontSize = 11.sp,
-                        fontWeight = if (isPinBorderVisible) FontWeight.Bold else FontWeight.SemiBold,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false
                     )
