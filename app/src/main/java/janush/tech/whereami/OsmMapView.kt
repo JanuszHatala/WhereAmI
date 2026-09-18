@@ -573,6 +573,8 @@ fun OsmMapView(
             it.outlinePaint.strokeWidth = 12f
             it.outlinePaint.strokeCap = Paint.Cap.ROUND
             it.outlinePaint.strokeJoin = Paint.Join.ROUND
+            it.infoWindow = null
+            it.setOnClickListener { _, _, _ -> true }
             map.overlays.add(0, it) // Add below marker
             polyline = it
         }
@@ -605,6 +607,7 @@ fun OsmMapView(
                 }
                 icon = makePauseIcon(context, durText)
                 infoWindow = null
+                setOnMarkerClickListener { _, _ -> true }
             }
             map.overlays.add(pm)
             newPauseMarkers.add(pm)
@@ -625,6 +628,8 @@ fun OsmMapView(
                 outlinePaint.strokeWidth = 5f
                 fillPaint.color = Color.parseColor("#2238BDF8")  // Semi-transparent blue fill
                 points = boundaryPoints
+                infoWindow = null
+                setOnClickListener { _, _, _ -> true }
             }
             map.overlays.add(0, poly)
             boundaryPolygon = poly
@@ -645,6 +650,8 @@ fun OsmMapView(
                 outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
                 fillPaint.color = Color.parseColor("#20EF4444")  // Subtle red tint
                 points = pinnedBoundaryPoints
+                infoWindow = null
+                setOnClickListener { _, _, _ -> true }
             }
             map.overlays.add(0, poly)
             pinnedBoundaryPolygon = poly
@@ -677,6 +684,8 @@ fun OsmMapView(
                     outlinePaint.strokeWidth = 8f
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
                     setPoints(trip.points)
                 }
                 map.overlays.add(0, line)
@@ -707,6 +716,8 @@ fun OsmMapView(
                     outlinePaint.strokeWidth = 14f
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
                     setPoints(track)
                 }
                 map.overlays.add(0, poly)
@@ -718,6 +729,8 @@ fun OsmMapView(
                     outlinePaint.strokeWidth = 6f
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
                     setPoints(track)
                 }
                 map.overlays.add(0, core)
@@ -820,14 +833,15 @@ fun OsmMapView(
 
                     // Map gesture listener:
                     // Long-press drops a pin at that point & reverse geocodes.
-                    // Single-tap clears active pin/saved place card if visible, without dropping a new pin!
+                    // Single-tap clears active pin/saved place card if visible, without dropping a new pin or showing any empty hint/bubble!
                     val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
                         override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
                             if (destinationPoint != null || selectedSavedPlace != null) {
                                 onClearDestination?.invoke()
-                                return true
                             }
-                            return false
+                            // Always consume single tap and close any lingering info windows to guarantee no empty hint appears
+                            org.osmdroid.views.overlay.infowindow.InfoWindow.closeAllInfoWindowsOn(this@apply)
+                            return true
                         }
                         override fun longPressHelper(p: GeoPoint): Boolean {
                             currentOnMapClick?.invoke(p)
