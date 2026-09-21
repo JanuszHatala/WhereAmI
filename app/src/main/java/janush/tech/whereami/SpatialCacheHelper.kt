@@ -44,6 +44,10 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         fun toGridKey(lat: Double, lng: Double): String {
             return "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         }
+
+        fun toLegacyGridKey(lat: Double, lng: Double): String {
+            return "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}"
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -67,6 +71,69 @@ class SpatialCacheHelper private constructor(private val context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // First version, no upgrades yet
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        migrateLegacyKeys(db)
+    }
+
+    /**
+     * Migrates legacy 3-decimal keys (e.g. "49.822_19.245") to precise 4-decimal keys ("49.8223_19.2451")
+     * using the saved exact latitude and longitude coordinates so existing recorded trip cache data
+     * is 100% preserved and never re-downloaded.
+     */
+    fun migrateLegacyKeys(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                "SELECT $COL_GRID_KEY, $COL_LAT, $COL_LNG, $COL_CITY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON, $COL_TIMESTAMP FROM $TABLE_CACHE",
+                null
+            )
+            val legacyRows = mutableListOf<ContentValues>()
+            val keysToDelete = mutableListOf<String>()
+
+            cursor.use {
+                while (it.moveToNext()) {
+                    val oldKey = it.getString(0)
+                    val parts = oldKey.split("_")
+                    val is3Decimal = parts.size == 2 && parts.any { p -> p.substringAfter(".", "").length <= 3 }
+                    if (is3Decimal) {
+                        val lat = it.getDouble(1)
+                        val lng = it.getDouble(2)
+                        val newKey = toGridKey(lat, lng)
+                        val cv = ContentValues().apply {
+                            put(COL_GRID_KEY, newKey)
+                            put(COL_LAT, lat)
+                            put(COL_LNG, lng)
+                            put(COL_CITY, it.getString(3))
+                            put(COL_STREET, it.getString(4))
+                            put(COL_ROAD_REF, it.getString(5))
+                            put(COL_EN_JSON, it.getString(6))
+                            put(COL_PL_JSON, it.getString(7))
+                            put(COL_NATIVE_JSON, it.getString(8))
+                            put(COL_TIMESTAMP, it.getLong(9))
+                        }
+                        legacyRows.add(cv)
+                        keysToDelete.add(oldKey)
+                    }
+                }
+            }
+
+            if (legacyRows.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for (cv in legacyRows) {
+                        db.insertWithOnConflict(TABLE_CACHE, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    }
+                    for (oldKey in keysToDelete) {
+                        db.delete(TABLE_CACHE, "$COL_GRID_KEY = ?", arrayOf(oldKey))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     fun get(lat: Double, lng: Double, maxAgeMs: Long? = null): MultiLanguagePlaceInfo? {
@@ -100,7 +167,65 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 }
             }
         }
+
+        // Fallback: Check legacy 3-decimal key if 4-decimal key not yet created
+        val legacyKey = toLegacyGridKey(lat, lng)
+        val cursorLegacy = db.query(
+            TABLE_CACHE,
+            arrayOf(COL_EN_JSON, COL_PL_JSON, COL_NATIVE_JSON, COL_TIMESTAMP),
+            "$COL_GRID_KEY = ?",
+            arrayOf(legacyKey),
+            null,
+            null,
+            null
+        )
+        cursorLegacy.use {
+            if (it.moveToFirst()) {
+                if (maxAgeMs != null) {
+                    val timestamp = it.getLong(3)
+                    if (System.currentTimeMillis() - timestamp > maxAgeMs) {
+                        return null
+                    }
+                }
+                val enJson = it.getString(0)
+                val plJson = it.getString(1)
+                val nativeJson = it.getString(2)
+                val en = deserializePlaceInfo(enJson)
+                val pl = deserializePlaceInfo(plJson)
+                val native = deserializePlaceInfo(nativeJson)
+                if (en != null && pl != null && native != null) {
+                    return MultiLanguagePlaceInfo(en = en, pl = pl, native = native)
+                }
+            }
+        }
         return null
+    }
+
+    fun isCached(lat: Double, lng: Double): Boolean {
+        return get(lat, lng, maxAgeMs = null) != null
+    }
+
+    /**
+     * Checks if any cached address exists within [radiusMeters] (default 50m) of this point.
+     * Prevents redundant corridor network queries where spatial awareness data is already available.
+     */
+    fun hasNearbyCache(lat: Double, lng: Double, radiusMeters: Double = 50.0): Boolean {
+        if (isCached(lat, lng)) return true
+        val deltaLat = radiusMeters / 111320.0
+        val deltaLng = radiusMeters / (111320.0 * Math.cos(Math.toRadians(lat)))
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT 1 FROM $TABLE_CACHE WHERE $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ? LIMIT 1",
+            arrayOf(
+                (lat - deltaLat).toString(),
+                (lat + deltaLat).toString(),
+                (lng - deltaLng).toString(),
+                (lng + deltaLng).toString()
+            )
+        )
+        cursor.use {
+            return it.moveToFirst()
+        }
     }
 
     fun put(lat: Double, lng: Double, info: MultiLanguagePlaceInfo) {
