@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleNotificationIntent(intent)
         checkPermissionsAndStart()
         setContent {
             WhereIAmTheme {
@@ -95,6 +96,20 @@ class MainActivity : ComponentActivity() {
                     LocationScreen(viewModel)
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
+    }
+
+    private fun handleNotificationIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(CacheManager.EXTRA_OPEN_CACHE_MANAGER, false) == true ||
+            intent?.action == CacheManager.ACTION_OPEN_CACHE_MANAGER
+        ) {
+            viewModel.openCacheManager()
         }
     }
 
@@ -244,7 +259,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
-    var showCacheManagerDialog by remember { mutableStateOf(false) }
+    val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
 
     // Keep Screen On handler
     DisposableEffect(keepScreenOn) {
@@ -2658,7 +2673,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
                     Button(
-                        onClick = { showCacheManagerDialog = true },
+                        onClick = { viewModel.openCacheManager() },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         shape = RoundedCornerShape(8.dp)
@@ -2699,7 +2714,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     if (showCacheManagerDialog) {
         CacheManagerDialog(
-            onDismissRequest = { showCacheManagerDialog = false }
+            onDismissRequest = { viewModel.dismissCacheManager() }
         )
     }
 
