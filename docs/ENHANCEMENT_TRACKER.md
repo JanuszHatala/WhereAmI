@@ -15,9 +15,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
 | **Round 2** | Field Testing (2026-09-15) Enhancements | 32 | 32 | 0 | 0 |
 | **Round 3** | Field Testing (2026-09-17 & 2026-09-18) Feedback & Enhancements | 13 | 13 | 0 | 0 |
-| **Round 4** | Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul | 8 | 8 | 0 | 0 |
+| **Round 4** | Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul | 9 | 9 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 5 | 0 | 0 | 5 |
-| **Total** | | **81** | **77** | **0** | **5** |
+| **Total** | | **82** | **78** | **0** | **5** |
 
 ---
 
@@ -138,6 +138,7 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **FT4-06** | Hide Trips FAB counter badge styling: fix illegible/cramped digit. | `OsmMapView.kt` | **Completed** | Badge enlarged with `sizeIn(minWidth = 18.dp, minHeight = 18.dp)`, given outer border `1.5.dp ComposeColor(0xFF0F172A)` matching map UI, negative offset `(-4).dp`, and centered font styling without padding. |
 | **FT4-07** | Guest Live Location web page overhaul: decouple duplicate recenter from compass, add visitor geolocation, visitor marker, visitor recenter button, dual-fit bounds, and live distance to host. | `server/public/index.html` | **Completed** | Explained why two centering buttons existed (compass had duplicate `onclick="recenterMap()"`). Added `navigator.geolocation.watchPosition` tracking, visitor marker with green pulse and tooltip, dedicated green visitor recenter button (📍), dual-fit bounds covering both host track and visitor, and real-time distance to host in top card (`To Host: X.X km`). |
 | **FT4-08** | Custom Pin Colors for Saved Places, 2-Pass Progressive Corridor Pre-fetch Engine, Spatial Cache Key Migration, and Category Button Vertical Centering. | `SavedPlace.kt`, `TripDatabaseHelper.kt`, `OsmMapView.kt`, `MainActivity.kt`, `SpatialCacheHelper.kt`, `CacheManager.kt`, `CacheManagerDialog.kt` | **Completed** | 1) Custom Pin Colors: added `colorHex` palette to `SavedPlace` with 10 vibrant presets + Auto, auto-migrated `saved_places` SQLite schema, added color picker chips in Add/Edit Place dialogs, added color indicator dot in Places list, rendered custom pins dynamically on map; 2) Fixed Category button text vertical alignment in Add/Edit dialogs with `PlatformTextStyle(includeFontPadding = false)` and fixed height; 3) 2-Pass Progressive Pre-fetch: Pass 1 fills macro gaps (~50m skeleton) quickly, Pass 2 refines high-accuracy points (~15m); 4) Spatial Cache Key Migration: converted 1,328 existing 3-decimal cache keys to 4 decimals on startup so existing offline address data is preserved; 5) Clarified Cache Manager metrics in UI and documented Nominatim 1 req/sec rate limit. |
+| **FT4-09** | Pre-fetch Download Notification Action Buttons: Pause / Resume and Stop. | `CacheManager.kt`, `CacheNotificationReceiver.kt`, `AndroidManifest.xml` | **Completed** | Added `CacheNotificationReceiver` handling `ACTION_PREFETCH_PAUSE`, `ACTION_PREFETCH_RESUME`, and `ACTION_PREFETCH_STOP`. Notification now contains interactive action buttons (`⏸ Pause` / `▶ Resume` and `⏹ Stop`) and opens the app on tap, allowing full control directly from the Android status bar and lock screen without opening the cache dialog. |
 
 ---
 

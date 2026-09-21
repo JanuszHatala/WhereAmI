@@ -46,6 +46,16 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <receiver
+            android:name=".CacheNotificationReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="janush.tech.whereami.ACTION_PREFETCH_PAUSE" />
+                <action android:name="janush.tech.whereami.ACTION_PREFETCH_RESUME" />
+                <action android:name="janush.tech.whereami.ACTION_PREFETCH_STOP" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
