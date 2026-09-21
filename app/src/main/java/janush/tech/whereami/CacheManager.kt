@@ -174,13 +174,55 @@ class CacheManager private constructor(private val context: Context) {
     private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean) {
         ensurePrefetchChannel()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+
+        val contentIntent = android.app.PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val pauseResumeIntent = if (isPaused) {
+            android.app.PendingIntent.getBroadcast(
+                context,
+                101,
+                Intent(context, CacheNotificationReceiver::class.java).apply {
+                    action = CacheNotificationReceiver.ACTION_RESUME
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+        } else {
+            android.app.PendingIntent.getBroadcast(
+                context,
+                102,
+                Intent(context, CacheNotificationReceiver::class.java).apply {
+                    action = CacheNotificationReceiver.ACTION_PAUSE
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        val stopIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            103,
+            Intent(context, CacheNotificationReceiver::class.java).apply {
+                action = CacheNotificationReceiver.ACTION_STOP
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
         val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_PREFETCH)
             .setContentTitle(if (isPaused) "WhereAmI Pre-fetch (Paused)" else "WhereAmI Offline Pre-fetch")
             .setContentText("$passName: $current of $total")
             .setSmallIcon(R.drawable.ic_stat_location)
+            .setContentIntent(contentIntent)
             .setProgress(total, current, false)
             .setOngoing(!isPaused)
             .setOnlyAlertOnce(true)
+            .addAction(0, if (isPaused) "▶ Resume" else "⏸ Pause", pauseResumeIntent)
+            .addAction(0, "⏹ Stop", stopIntent)
         manager.notify(NOTIF_PREFETCH_ID, builder.build())
     }
 
