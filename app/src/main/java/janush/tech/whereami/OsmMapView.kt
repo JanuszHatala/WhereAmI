@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -1040,17 +1041,25 @@ fun OsmMapView(
                     }
                     Box(
                         modifier = Modifier
-                            .offset(x = 2.dp, y = (-2).dp)
-                            .size(16.dp)
+                            .offset(x = 4.dp, y = (-4).dp)
+                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
                             .clip(CircleShape)
-                            .background(ComposeColor(0xFFEF4444)),
+                            .background(ComposeColor(0xFFEF4444))
+                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "${selectedTrips.size}",
                             color = ComposeColor.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                    includeFontPadding = false
+                                )
+                            )
                         )
                     }
                 }
@@ -1249,6 +1258,7 @@ private fun MapSettingsDialog(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
                         ),
+                        shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1272,6 +1282,7 @@ private fun MapSettingsDialog(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
                         ),
+                        shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1472,7 +1483,7 @@ private fun MapSettingsDialog(
             ) {
                 Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp), tint = ComposeColor.White)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Manage Storage & Offline Cache", fontSize = 13.sp, color = ComposeColor.White, fontWeight = FontWeight.SemiBold)
+                Text("Manage Storage, Boundaries & Pre-fetch", fontSize = 13.sp, color = ComposeColor.White, fontWeight = FontWeight.SemiBold)
             }
 
             when (val state = cacheDownloadState) {
@@ -1547,19 +1558,6 @@ private fun MapSettingsDialog(
                     )
                 }
                 else -> {}
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Button(
-                onClick = onOpenCacheManager,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF0284C7)),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Manage Storage, Boundaries & Pre-fetch", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(modifier = Modifier.height(36.dp))

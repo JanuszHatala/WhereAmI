@@ -157,9 +157,33 @@
       background: #0369a1;
     }
 
-    .fit-trip-btn {
+    .recenter-visitor-btn {
       position: absolute;
       bottom: 80px;
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #059669;
+      border: none;
+      color: #fff;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+      transition: transform 0.15s ease, background 0.2s ease;
+    }
+    .recenter-visitor-btn:hover {
+      transform: scale(1.06);
+      background: #047857;
+    }
+
+    .fit-trip-btn {
+      position: absolute;
+      bottom: 136px;
       right: 20px;
       width: 48px;
       height: 48px;
@@ -185,7 +209,7 @@
 
     .compass-widget {
       position: absolute;
-      bottom: 136px;
+      bottom: 192px;
       right: 20px;
       width: 48px;
       height: 48px;
@@ -197,13 +221,13 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      cursor: pointer;
+      cursor: default;
       box-shadow: 0 4px 14px rgba(0,0,0,0.5);
       z-index: 1000;
       transition: transform 0.15s ease;
     }
     .compass-widget:hover {
-      transform: scale(1.06);
+      transform: scale(1.04);
     }
     .compass-rose {
       width: 26px;
@@ -256,6 +280,14 @@
       border-radius: 50%;
       box-shadow: 0 0 12px rgba(2, 132, 199, 0.8);
     }
+    .live-visitor-marker {
+      width: 20px;
+      height: 20px;
+      background: #10b981;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.85);
+    }
   </style>
 </head>
 <body>
@@ -278,6 +310,7 @@
       <div class="stat-item">Speed: <b id="speedVal">--</b></div>
       <div class="stat-item">Alt: <b id="altVal">--</b></div>
       <div class="stat-item">Battery: <b id="batteryVal">--</b></div>
+      <div class="stat-item" id="visitorDistanceStat" style="display: none;">To Host: <b id="visitorDistanceVal">--</b></div>
       <div class="stat-item">Last seen: <b id="updatedVal">Waiting...</b></div>
     </div>
 
@@ -289,7 +322,7 @@
   </div>
 
   <div id="map"></div>
-  <div class="compass-widget" id="compassWidget" onclick="recenterMap()" title="Compass • Tap to recenter">
+  <div class="compass-widget" id="compassWidget" title="Compass Heading">
     <div class="compass-rose" id="compassRose">
       <div class="needle-north"></div>
       <div class="needle-south"></div>
@@ -297,7 +330,8 @@
     </div>
     <div class="compass-heading-text" id="compassHeadingText">N</div>
   </div>
-  <button class="fit-trip-btn" onclick="fitTripBounds()" title="Fit Entire Trip to Viewport">📐</button>
+  <button class="fit-trip-btn" onclick="fitTripBounds()" title="Fit Track & You to Viewport">📐</button>
+  <button class="recenter-visitor-btn" onclick="recenterVisitor()" title="Recenter to You (Visitor)">📍</button>
   <button class="recenter-btn" onclick="recenterMap()" title="Recenter to Host">🎯</button>
 
   <script>
@@ -356,12 +390,29 @@
       });
     }
 
+    let visitorCoords = null;
+    let visitorMarker = null;
+    let visitorAccuracyCircle = null;
+
     function getOffsetCenter(coords, zoom) {
       const topCard = document.querySelector('.top-card');
       const cardHeight = topCard ? topCard.offsetHeight : 160;
       const point = map.project(coords, zoom);
       const targetPoint = point.subtract([0, cardHeight / 2]);
       return map.unproject(targetPoint, zoom);
+    }
+
+    function updateVisitorDistance() {
+      const distEl = document.getElementById('visitorDistanceStat');
+      const distVal = document.getElementById('visitorDistanceVal');
+      if (!distEl || !distVal) return;
+      if (lastCoords && visitorCoords) {
+        const dMeters = map.distance(lastCoords, visitorCoords);
+        distVal.textContent = dMeters < 1000 ? `${Math.round(dMeters)} m` : `${(dMeters / 1000).toFixed(2)} km`;
+        distEl.style.display = 'inline-block';
+      } else {
+        distEl.style.display = 'none';
+      }
     }
 
     function recenterMap(zoom) {
@@ -373,20 +424,97 @@
       }
     }
 
+    function recenterVisitor(zoom) {
+      if (visitorCoords) {
+        const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
+        const offsetCenter = getOffsetCenter(visitorCoords, targetZoom);
+        map.setView(offsetCenter, targetZoom);
+        autoFollow = false;
+      } else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            onVisitorPosition(pos);
+            if (visitorCoords) {
+              const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
+              map.setView(getOffsetCenter(visitorCoords, targetZoom), targetZoom);
+              autoFollow = false;
+            }
+          },
+          err => console.warn('Visitor location unavailable:', err),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
+        );
+      }
+    }
+
     function fitTripBounds() {
+      const points = [];
       const latlngs = trackPolyline.getLatLngs();
-      if (latlngs && latlngs.length > 1) {
+      if (latlngs && latlngs.length > 0) {
+        points.push(...latlngs);
+      } else if (lastCoords) {
+        points.push(L.latLng(lastCoords[0], lastCoords[1]));
+      }
+
+      if (visitorCoords) {
+        points.push(L.latLng(visitorCoords[0], visitorCoords[1]));
+      }
+
+      if (points.length > 1) {
+        const bounds = L.latLngBounds(points);
         const topCard = document.querySelector('.top-card');
-        const topOffset = topCard ? (topCard.offsetHeight + 20) : 180;
-        map.fitBounds(trackPolyline.getBounds(), {
-          paddingTopLeft: [24, topOffset],
-          paddingBottomRight: [24, 80],
+        const topOffset = topCard ? (topCard.offsetHeight + 24) : 180;
+        map.fitBounds(bounds, {
+          paddingTopLeft: [30, topOffset],
+          paddingBottomRight: [30, 90],
           maxZoom: 16
         });
         autoFollow = false;
       } else if (lastCoords) {
         recenterMap(15);
+      } else if (visitorCoords) {
+        recenterVisitor(15);
       }
+    }
+
+    function onVisitorPosition(pos) {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const acc = pos.coords.accuracy;
+      visitorCoords = [lat, lng];
+
+      if (!visitorMarker) {
+        const icon = L.divIcon({ className: 'live-visitor-marker', iconSize: [20, 20], iconAnchor: [10, 10] });
+        visitorMarker = L.marker([lat, lng], { icon, zIndexOffset: 900 })
+          .bindTooltip('👤 You (Visitor)', { permanent: false, direction: 'top' })
+          .addTo(map);
+      } else {
+        visitorMarker.setLatLng([lat, lng]);
+      }
+
+      if (acc && acc < 1000) {
+        if (!visitorAccuracyCircle) {
+          visitorAccuracyCircle = L.circle([lat, lng], {
+            radius: acc,
+            color: '#10b981',
+            weight: 1,
+            fillColor: '#10b981',
+            fillOpacity: 0.12
+          }).addTo(map);
+        } else {
+          visitorAccuracyCircle.setLatLng([lat, lng]);
+          visitorAccuracyCircle.setRadius(acc);
+        }
+      }
+
+      updateVisitorDistance();
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(
+        onVisitorPosition,
+        err => console.warn('Visitor watchPosition error:', err),
+        { enableHighAccuracy: true, maximumAge: 5000 }
+      );
     }
 
     function openGoogleMaps() {
@@ -512,6 +640,7 @@
         if (data.current) {
           const { lat, lng, spd, alt, place, trekking, battery, t } = data.current;
           lastCoords = [lat, lng];
+          updateVisitorDistance();
 
           document.getElementById('placeName').textContent = place || 'Active Track';
           document.getElementById('speedVal').textContent = spd ? (spd.toFixed(1) + ' km/h') : '0.0 km/h';
