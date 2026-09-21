@@ -26,6 +26,8 @@ class CacheManager private constructor(private val context: Context) {
         const val PREFS_NAME = "where_am_i_cache_prefs"
         const val KEY_ALLOW_ON_BATTERY = "allow_prefetch_on_battery"
         const val KEY_ALLOW_MOBILE_DATA = "allow_prefetch_mobile_data"
+        const val ACTION_OPEN_CACHE_MANAGER = "janush.tech.whereami.ACTION_OPEN_CACHE_MANAGER"
+        const val EXTRA_OPEN_CACHE_MANAGER = "extra_open_cache_manager"
 
         @Volatile
         private var instance: CacheManager? = null
@@ -179,6 +181,8 @@ class CacheManager private constructor(private val context: Context) {
             context,
             0,
             Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_CACHE_MANAGER
+                putExtra(EXTRA_OPEN_CACHE_MANAGER, true)
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE

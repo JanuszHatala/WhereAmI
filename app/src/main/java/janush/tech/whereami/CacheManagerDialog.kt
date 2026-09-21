@@ -1,5 +1,6 @@
 package janush.tech.whereami
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -306,38 +307,70 @@ fun CacheManagerDialog(
                                 }
                             }
                             is CacheManager.PrefetchState.Running -> {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
+
+                                    // Row 1: Pass Title and Percentage Badge (guaranteed non-wrapping)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.passName}: ${state.current} / ${state.total}",
+                                            text = state.passName,
                                             color = Color.White,
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
                                         )
-                                        val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
-                                        Text(
-                                            text = "$percent%",
-                                            color = Color(0xFF38BDF8),
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Surface(
+                                            color = Color(0xFF0284C7).copy(alpha = 0.25f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(1.dp, Color(0xFF38BDF8))
+                                        ) {
+                                            Text(
+                                                text = "$percent%",
+                                                color = Color(0xFF38BDF8),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                softWrap = false
+                                            )
+                                        }
                                     }
+
+                                    // Progress Bar
                                     LinearProgressIndicator(
                                         progress = if (state.total > 0) state.current.toFloat() / state.total.toFloat() else 0f,
                                         modifier = Modifier.fillMaxWidth().height(6.dp),
                                         color = Color(0xFF38BDF8),
                                         trackColor = Color(0xFF1E293B)
                                     )
-                                    if (state.added > 0) {
+
+                                    // Row 2: Progress Counts and Added Metric
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = "+${state.added} new points cached this run",
-                                            color = Color(0xFF4ADE80),
-                                            fontSize = 11.sp
+                                            text = "${state.current} / ${state.total} points processed",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 12.sp,
+                                            softWrap = false
                                         )
+                                        if (state.added > 0) {
+                                            Text(
+                                                text = "+${state.added} cached",
+                                                color = Color(0xFF4ADE80),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
+
+                                    // Action Buttons
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -362,31 +395,70 @@ fun CacheManagerDialog(
                                 }
                             }
                             is CacheManager.PrefetchState.Paused -> {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
+
+                                    // Row 1: Pass Title and Paused Percentage Badge (guaranteed non-wrapping)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.passName} (Paused): ${state.current} / ${state.total}",
-                                            color = Color(0xFFFBBF24),
+                                            text = state.passName,
+                                            color = Color.White,
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
                                         )
-                                        val percent = if (state.total > 0) (state.current * 100 / state.total) else 0
-                                        Text(
-                                            text = "$percent%",
-                                            color = Color(0xFFFBBF24),
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Surface(
+                                            color = Color(0xFFF59E0B).copy(alpha = 0.25f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(1.dp, Color(0xFFFBBF24))
+                                        ) {
+                                            Text(
+                                                text = "$percent% (Paused)",
+                                                color = Color(0xFFFBBF24),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                softWrap = false
+                                            )
+                                        }
                                     }
+
+                                    // Progress Bar
                                     LinearProgressIndicator(
                                         progress = if (state.total > 0) state.current.toFloat() / state.total.toFloat() else 0f,
                                         modifier = Modifier.fillMaxWidth().height(6.dp),
                                         color = Color(0xFFFBBF24),
                                         trackColor = Color(0xFF1E293B)
                                     )
+
+                                    // Row 2: Progress Counts and Added Metric
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${state.current} / ${state.total} points processed",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 12.sp,
+                                            softWrap = false
+                                        )
+                                        if (state.added > 0) {
+                                            Text(
+                                                text = "+${state.added} cached",
+                                                color = Color(0xFF4ADE80),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
+
+                                    // Action Buttons
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
