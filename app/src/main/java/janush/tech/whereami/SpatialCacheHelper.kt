@@ -42,7 +42,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         }
 
         fun toGridKey(lat: Double, lng: Double): String {
-            return "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}"
+            return "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         }
     }
 
@@ -69,12 +69,12 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         // First version, no upgrades yet
     }
 
-    fun get(lat: Double, lng: Double): MultiLanguagePlaceInfo? {
+    fun get(lat: Double, lng: Double, maxAgeMs: Long? = null): MultiLanguagePlaceInfo? {
         val key = toGridKey(lat, lng)
         val db = readableDatabase
         val cursor = db.query(
             TABLE_CACHE,
-            arrayOf(COL_EN_JSON, COL_PL_JSON, COL_NATIVE_JSON),
+            arrayOf(COL_EN_JSON, COL_PL_JSON, COL_NATIVE_JSON, COL_TIMESTAMP),
             "$COL_GRID_KEY = ?",
             arrayOf(key),
             null,
@@ -83,6 +83,12 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         )
         cursor.use {
             if (it.moveToFirst()) {
+                if (maxAgeMs != null) {
+                    val timestamp = it.getLong(3)
+                    if (System.currentTimeMillis() - timestamp > maxAgeMs) {
+                        return null
+                    }
+                }
                 val enJson = it.getString(0)
                 val plJson = it.getString(1)
                 val nativeJson = it.getString(2)
