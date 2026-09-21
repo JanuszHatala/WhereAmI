@@ -110,6 +110,10 @@ class MainActivity : ComponentActivity() {
             intent?.action == CacheManager.ACTION_OPEN_CACHE_MANAGER
         ) {
             viewModel.openCacheManager()
+        } else if (intent?.getBooleanExtra(LiveTrackingService.EXTRA_OPEN_LIVE_SHARING, false) == true ||
+            intent?.action == LiveTrackingService.ACTION_OPEN_LIVE_SHARING
+        ) {
+            viewModel.openLiveSharing()
         }
     }
 
@@ -260,6 +264,46 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
+    val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
+
+    val dismissAllDialogs = {
+        showTripsSheet = false
+        showSettingsSheet = false
+        showSearchDialog = false
+        tripToRename = null
+        tripToDelete = null
+        showResetDefaultsConfirm = false
+        showSavePlaceDialog = false
+        placeToSaveCoords = null
+        selectedSavedPlace = null
+        placeToDelete = null
+        editingSavedPlace = null
+        showDestinationDetailsCard = false
+        showActiveTripRouteDialog = false
+        showLiveShareDialog = false
+        activeLocationShareTarget = null
+        viewModel.dismissCacheManager()
+    }
+
+    LaunchedEffect(requestedDialogTarget) {
+        when (requestedDialogTarget) {
+            MainViewModel.AppDialogTarget.CACHE_MANAGER -> {
+                if (!showCacheManagerDialog) {
+                    dismissAllDialogs()
+                    viewModel.openCacheManager()
+                }
+                viewModel.consumeDialogTarget()
+            }
+            MainViewModel.AppDialogTarget.LIVE_SHARING -> {
+                if (!showLiveShareDialog) {
+                    dismissAllDialogs()
+                    showLiveShareDialog = true
+                }
+                viewModel.consumeDialogTarget()
+            }
+            MainViewModel.AppDialogTarget.NONE -> {}
+        }
+    }
 
     // Keep Screen On handler
     DisposableEffect(keepScreenOn) {
@@ -384,6 +428,10 @@ fun LocationScreen(viewModel: MainViewModel) {
             onOrientationModeChange = { viewModel.setOrientationMode(it) },
             onInstantShare = shareCurrentLocation,
             onClearSelectedTrips = { viewModel.clearTripSelection() },
+            onOpenCacheManager = {
+                dismissAllDialogs()
+                viewModel.openCacheManager()
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -408,9 +456,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                         secondaryPlace = secondaryPlace,
                         hierarchySubtitle = hierarchySubtitle,
                         currentLatLng = currentLatLng,
-                        onShowActiveTripRoute = { showActiveTripRouteDialog = true },
-                        onShowLiveShare = { showLiveShareDialog = true },
+                        onShowActiveTripRoute = {
+                            dismissAllDialogs()
+                            showActiveTripRouteDialog = true
+                        },
+                        onShowLiveShare = {
+                            dismissAllDialogs()
+                            showLiveShareDialog = true
+                        },
                         onOpenSavedPlaces = {
+                            dismissAllDialogs()
                             sheetTab = 1
                             showTripsSheet = true
                         },
@@ -500,9 +555,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                     secondaryPlace = secondaryPlace,
                     hierarchySubtitle = hierarchySubtitle,
                     currentLatLng = currentLatLng,
-                    onShowActiveTripRoute = { showActiveTripRouteDialog = true },
-                    onShowLiveShare = { showLiveShareDialog = true },
+                    onShowActiveTripRoute = {
+                        dismissAllDialogs()
+                        showActiveTripRouteDialog = true
+                    },
+                    onShowLiveShare = {
+                        dismissAllDialogs()
+                        showLiveShareDialog = true
+                    },
                     onOpenSavedPlaces = {
+                        dismissAllDialogs()
                         sheetTab = 1
                         showTripsSheet = true
                     },
@@ -605,8 +667,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onToggleTripRecording = {
                     if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
                 },
-                onShowTripsSheet = { showTripsSheet = true },
-                onShowSearch = { showSearchDialog = true },
+                onShowTripsSheet = {
+                    dismissAllDialogs()
+                    showTripsSheet = true
+                },
+                onShowSearch = {
+                    dismissAllDialogs()
+                    showSearchDialog = true
+                },
                 onSaveLocation = {
                     val lat = currentLatLng?.first
                     val lng = currentLatLng?.second
@@ -617,10 +685,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                         placeToSaveStreet = currentPlace?.street ?: ""
                         placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
                         placeToSaveCategory = PlaceCategory.FAVORITE
+                        dismissAllDialogs()
                         showSavePlaceDialog = true
                     }
                 },
-                onShowSettings = { showSettingsSheet = true },
+                onShowSettings = {
+                    dismissAllDialogs()
+                    showSettingsSheet = true
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(
@@ -2673,7 +2745,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
                     Button(
-                        onClick = { viewModel.openCacheManager() },
+                        onClick = {
+                            dismissAllDialogs()
+                            viewModel.openCacheManager()
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         shape = RoundedCornerShape(8.dp)
