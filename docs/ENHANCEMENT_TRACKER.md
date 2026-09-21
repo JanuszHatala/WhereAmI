@@ -15,8 +15,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
 | **Round 2** | Field Testing (2026-09-15) Enhancements | 32 | 32 | 0 | 0 |
 | **Round 3** | Field Testing (2026-09-17 & 2026-09-18) Feedback & Enhancements | 13 | 13 | 0 | 0 |
+| **Round 4** | Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul | 7 | 7 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 4 | 0 | 0 | 4 |
-| **Total** | | **73** | **69** | **0** | **4** |
+| **Total** | | **80** | **76** | **0** | **4** |
 
 ---
 
@@ -125,7 +126,21 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 7. Features Inventory & Future Backlog
+## 7. Round 4: Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul
+
+| Item ID | User Feedback / Description | Target Components / Files | Status | Diagnostic Root Cause / Solution & Verification |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT4-01** | Telemetry deep extraction and analysis: battery, app freezing, location precision, cache usage, street recognition latency, and Android Auto freeze. | Diagnostics Directory (`phone_diagnostics_20260921/`), `AutoMediaService.kt`, `SpatialCacheHelper.kt` | **Completed** | Pulled 1.27MB trips DB, 1.31MB spatial cache DB, logcat, and dumpsys. Isolated exact 746.2m tele-jump in Trip #44 caused by Android Auto service lacking location foreground type. Found spatial cache key (~111m) was returning stale street names on turns without re-querying geocoder. |
+| **FT4-02** | Android Auto freeze when phone app closed: speed and street freeze after brief run. | `AndroidManifest.xml`, `AutoMediaService.kt` | **Completed** | Declared `android:foregroundServiceType="mediaPlayback|location"` on `AutoMediaService`. Upgraded `ServiceCompat.startForeground` to supply `FOREGROUND_SERVICE_TYPE_LOCATION`. Acquired power wake lock during active playback to prevent OS CPU suspension. |
+| **FT4-03** | Spatial Cache grid resolution & turn latency: prompt street display when turning into a new street. | `SpatialCacheHelper.kt`, `LocationManager.kt`, `SpatialCacheGridTest.kt` | **Completed** | Refined grid key resolution to 4 decimal places (~11m x ~7m cell resolution) adhering to `AGENTS.md` ~15m specification. Added 30-minute freshness TTL (`maxAgeMs = 30 * 60 * 1000L`) for persistent cache hits before triggering geocoding, and relaxed street hysteresis at residential turn angles ($\ge 30^\circ$ and $\ge 5\text{ km/h}$). |
+| **FT4-04** | Map Settings & Layers: Remove duplicate "Manage Storage..." button and style Map Orientation buttons as rectangles with rounded corners (`10.dp`). | `OsmMapView.kt` | **Completed** | Removed redundant bottom storage management button, retaining the top button in Map Settings. Styled all 5 Map Orientation buttons (`Course Up`, `North Up`, `East Up`, `South Up`, `West Up`) with `shape = RoundedCornerShape(10.dp)`. |
+| **FT4-05** | UI button shape unification: standardize all UI buttons across app to rectangles with rounded corners (`10.dp`), reserving CircleShape exclusively for map floating action controls. | `Theme.kt`, `MainActivity.kt` | **Completed** | Updated `WhereAmIShapes` with `AppButtonShape = RoundedCornerShape(10.dp)`. Re-styled action/dialog buttons across "My Locations", rename trip, save place, delete place, delete trip, reset defaults, and edit place to `RoundedCornerShape(10.dp)`. |
+| **FT4-06** | Hide Trips FAB counter badge styling: fix illegible/cramped digit. | `OsmMapView.kt` | **Completed** | Badge enlarged with `sizeIn(minWidth = 18.dp, minHeight = 18.dp)`, given outer border `1.5.dp ComposeColor(0xFF0F172A)` matching map UI, negative offset `(-4).dp`, and centered font styling without padding. |
+| **FT4-07** | Guest Live Location web page overhaul: decouple duplicate recenter from compass, add visitor geolocation, visitor marker, visitor recenter button, dual-fit bounds, and live distance to host. | `server/public/index.html` | **Completed** | Explained why two centering buttons existed (compass had duplicate `onclick="recenterMap()"`). Added `navigator.geolocation.watchPosition` tracking, visitor marker with green pulse and tooltip, dedicated green visitor recenter button (📍), dual-fit bounds covering both host track and visitor, and real-time distance to host in top card (`To Host: X.X km`). |
+
+---
+
+## 8. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |

@@ -4,13 +4,16 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.media.MediaBrowserServiceCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,9 +28,15 @@ class AutoMediaService : MediaBrowserServiceCompat() {
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
     private lateinit var locationManager: LocationManager
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:AutoMediaWakeLock")?.apply {
+            acquire(6 * 60 * 60 * 1000L) // 6h safe timeout
+        }
 
         mediaSession = MediaSessionCompat(this, "AutoMediaService").apply {
             setPlaybackState(
@@ -67,7 +76,16 @@ class AutoMediaService : MediaBrowserServiceCompat() {
             .build()
 
         try {
-            startForeground(1, notification)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    1,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(1, notification)
+            }
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "AutoMediaService startForeground failed: ${e.message}")
         }
@@ -259,6 +277,11 @@ class AutoMediaService : MediaBrowserServiceCompat() {
     override fun onDestroy() {
         super.onDestroy()
         AppStateManager.getInstance(this).setAutoMediaActive(false)
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {}
         serviceJob.cancel()
         mediaSession.isActive = false
         mediaSession.release()

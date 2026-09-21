@@ -463,13 +463,13 @@ class LocationManager private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         val speedKmh = speedMs * 3.6f
 
-        // Kinematic turn tracking: if vehicle turns (heading change >= 35 deg at speed > 10 km/h),
+        // Kinematic turn tracking: if vehicle turns (heading change >= 30 deg at speed >= 5 km/h),
         // record turn timestamp so we promptly switch to the new street.
-        if (bearing != null && speedKmh > 10f) {
+        if (bearing != null && speedKmh >= 5f) {
             val prev = lastSustainedBearing
             if (prev != null) {
                 val delta = kotlin.math.abs(((bearing - prev + 540) % 360) - 180)
-                if (delta >= 35f) {
+                if (delta >= 30f) {
                     lastTurnTimestamp = now
                     TelemetryLogger.log("STREET", "Kinematic turn detected: Δbearing=${delta.toInt()}°, heading=$prev -> $bearing")
                     lastSustainedBearing = bearing
@@ -915,15 +915,15 @@ class LocationManager private constructor(private val context: Context) {
 
     fun resolveMultiLanguageData(lat: Double, lng: Double): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
-        val gridKey = "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}"
+        val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         val cached = spatialPlaceCache[gridKey]
         if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
             return cached.data
         }
 
-        // Check persistent SQLite spatial cache for instant offline hits
+        // Check persistent SQLite spatial cache for fresh hits within 30-minute window (~15m cell resolution)
         try {
-            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng)
+            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = 30 * 60 * 1000L)
             if (diskCached != null) {
                 spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                 return diskCached
@@ -946,6 +946,17 @@ class LocationManager private constructor(private val context: Context) {
         val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm)
         val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm)
         val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm)
+
+        // If online geocoding failed or returned unknown (e.g. offline tunnel/cell cutout), fall back to persistent cache of any age
+        if (enPlace.city == "Unknown City" && plPlace.city == "Unknown City") {
+            try {
+                val fallbackDisk = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
+                if (fallbackDisk != null) {
+                    spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, fallbackDisk)
+                    return fallbackDisk
+                }
+            } catch (_: Exception) {}
+        }
 
         if (enPlace.city != "Unknown City")     saveLastGood(prefs, "en",     lat, lng, enPlace)
         if (plPlace.city != "Unknown City")     saveLastGood(prefs, "pl",     lat, lng, plPlace)
