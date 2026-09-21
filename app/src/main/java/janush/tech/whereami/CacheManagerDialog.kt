@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 
 @Composable
@@ -62,13 +63,16 @@ fun CacheManagerDialog(
         }
     }
 
-    Dialog(onDismissRequest = onDismissRequest) {
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = Color(0xFF1E293B),
             tonalElevation = 6.dp,
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth(0.94f)
                 .padding(vertical = 16.dp)
         ) {
             Column(
@@ -354,17 +358,20 @@ fun CacheManagerDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.current} / ${state.total} points processed",
+                                            text = "${state.current} / ${state.total} points",
                                             color = Color(0xFF94A3B8),
                                             fontSize = 12.sp,
-                                            softWrap = false
+                                            fontWeight = FontWeight.Medium,
+                                            softWrap = false,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
                                         if (state.added > 0) {
+                                            Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = "+${state.added} cached",
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
+                                                fontWeight = FontWeight.SemiBold,
                                                 softWrap = false
                                             )
                                         }
@@ -442,17 +449,20 @@ fun CacheManagerDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.current} / ${state.total} points processed",
+                                            text = "${state.current} / ${state.total} points",
                                             color = Color(0xFF94A3B8),
                                             fontSize = 12.sp,
-                                            softWrap = false
+                                            fontWeight = FontWeight.Medium,
+                                            softWrap = false,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
                                         if (state.added > 0) {
+                                            Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = "+${state.added} cached",
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
+                                                fontWeight = FontWeight.SemiBold,
                                                 softWrap = false
                                             )
                                         }

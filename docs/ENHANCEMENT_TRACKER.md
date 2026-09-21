@@ -15,9 +15,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Phase 4** | Live Sharing Power-Up & Web Viewer | 6 | 6 | 0 | 0 |
 | **Round 2** | Field Testing (2026-09-15) Enhancements | 32 | 32 | 0 | 0 |
 | **Round 3** | Field Testing (2026-09-17 & 2026-09-18) Feedback & Enhancements | 13 | 13 | 0 | 0 |
-| **Round 4** | Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul | 10 | 10 | 0 | 0 |
+| **Round 4** | Field Testing (2026-09-19 – 2026-09-21) Telemetry Diagnostics, AA Freeze, Spatial Cache & Live Web Overhaul | 11 | 11 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 5 | 0 | 0 | 5 |
-| **Total** | | **83** | **79** | **0** | **5** |
+| **Total** | | **84** | **80** | **0** | **5** |
 
 ---
 
@@ -140,6 +140,7 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **FT4-08** | Custom Pin Colors for Saved Places, 2-Pass Progressive Corridor Pre-fetch Engine, Spatial Cache Key Migration, and Category Button Vertical Centering. | `SavedPlace.kt`, `TripDatabaseHelper.kt`, `OsmMapView.kt`, `MainActivity.kt`, `SpatialCacheHelper.kt`, `CacheManager.kt`, `CacheManagerDialog.kt` | **Completed** | 1) Custom Pin Colors: added `colorHex` palette to `SavedPlace` with 10 vibrant presets + Auto, auto-migrated `saved_places` SQLite schema, added color picker chips in Add/Edit Place dialogs, added color indicator dot in Places list, rendered custom pins dynamically on map; 2) Fixed Category button text vertical alignment in Add/Edit dialogs with `PlatformTextStyle(includeFontPadding = false)` and fixed height; 3) 2-Pass Progressive Pre-fetch: Pass 1 fills macro gaps (~50m skeleton) quickly, Pass 2 refines high-accuracy points (~15m); 4) Spatial Cache Key Migration: converted 1,328 existing 3-decimal cache keys to 4 decimals on startup so existing offline address data is preserved; 5) Clarified Cache Manager metrics in UI and documented Nominatim 1 req/sec rate limit. |
 | **FT4-09** | Pre-fetch Download Notification Action Buttons: Pause / Resume and Stop. | `CacheManager.kt`, `CacheNotificationReceiver.kt`, `AndroidManifest.xml` | **Completed** | Added `CacheNotificationReceiver` handling `ACTION_PREFETCH_PAUSE`, `ACTION_PREFETCH_RESUME`, and `ACTION_PREFETCH_STOP`. Notification now contains interactive action buttons (`⏸ Pause` / `▶ Resume` and `⏹ Stop`) and opens the app on tap, allowing full control directly from the Android status bar and lock screen without opening the cache dialog. |
 | **FT4-10** | Notification Tap Redirect to Manage Storage Pre-fetch Panel & Percentage Progress Label Non-Wrapping Alignment. | `CacheManager.kt`, `MainViewModel.kt`, `MainActivity.kt`, `CacheManagerDialog.kt` | **Completed** | 1) Notification Tap Redirect: configured `contentIntent` with `ACTION_OPEN_CACHE_MANAGER` and extra; wired into `MainActivity.onNewIntent`/`onCreate` to trigger `viewModel.openCacheManager()`, immediately presenting the Manage Storage dialog; 2) Progress Layout Non-Wrapping Alignment: separated long pass names and point metrics into dedicated rows with `weight(1f)` and wrapped percentage badge in pill container with `softWrap = false`, permanently preventing character-by-character vertical text squashing. |
+| **FT4-11** | Cache Manager Dialog Width & Progress Counter Overflow Fix. | `CacheManagerDialog.kt` | **Completed** | 1) Dialog Width Expansion: set `DialogProperties(usePlatformDefaultWidth = false)` with `fillMaxWidth(0.94f)`, eliminating the rigid ~280dp default Android dialog horizontal constraint; 2) Counter Streamlining: streamlined `X / Y points processed` to `X / Y points` with `weight(1f, fill = false)` and `Spacer(8.dp)`, permanently eliminating horizontal overflow clipping of the `+N cached` indicator on mobile screens. |
 
 ---
 
