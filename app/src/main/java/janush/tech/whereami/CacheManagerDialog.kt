@@ -278,11 +278,18 @@ fun CacheManagerDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "CORRIDOR PRE-FETCH ENGINE",
+                            text = "OFFLINE ROUTE ADDRESSES & LOCALITIES",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
                             letterSpacing = 1.sp
+                        )
+
+                        Text(
+                            text = "Locations visited during trip recording are automatically cached offline. Pre-fetch scans your trip history and fills in missing address & road data along recorded corridors in 2 passes (Pass 1: ~50m skeleton, Pass 2: ~15m precision). Downloads are rate-limited to 1 req/sec per OpenStreetMap usage policies.",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
                         )
 
                         when (val state = prefetchState) {
@@ -295,7 +302,7 @@ fun CacheManagerDialog(
                                 ) {
                                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Pre-fetch Recorded Route Areas", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text("Pre-fetch Missing Route Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                             is CacheManager.PrefetchState.Running -> {
@@ -305,7 +312,7 @@ fun CacheManagerDialog(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "Pre-fetching: ${state.current} / ${state.total}",
+                                            text = "${state.passName}: ${state.current} / ${state.total}",
                                             color = Color.White,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold
@@ -324,6 +331,13 @@ fun CacheManagerDialog(
                                         color = Color(0xFF38BDF8),
                                         trackColor = Color(0xFF1E293B)
                                     )
+                                    if (state.added > 0) {
+                                        Text(
+                                            text = "+${state.added} new points cached this run",
+                                            color = Color(0xFF4ADE80),
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -354,7 +368,7 @@ fun CacheManagerDialog(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "Paused at: ${state.current} / ${state.total}",
+                                            text = "${state.passName} (Paused): ${state.current} / ${state.total}",
                                             color = Color(0xFFFBBF24),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold
@@ -399,7 +413,7 @@ fun CacheManagerDialog(
                             is CacheManager.PrefetchState.Completed -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
-                                        text = "✔ Pre-fetch Complete: ${state.addedCount} new points cached (${state.alreadyCachedCount} already cached of ${state.total} total).",
+                                        text = "✔ Pre-fetch Complete: ${state.addedCount} new points cached (${state.alreadyCachedCount} already cached of ${state.total} corridor points).",
                                         color = Color(0xFF4ADE80),
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium

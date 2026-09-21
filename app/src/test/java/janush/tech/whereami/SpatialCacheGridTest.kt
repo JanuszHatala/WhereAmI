@@ -34,4 +34,16 @@ class SpatialCacheGridTest {
 
         assertNotEquals("Movement beyond 15m must yield different grid keys for prompt turn detection", key1, key2)
     }
+
+    @Test
+    fun testLegacy3DecKeyResolution() {
+        val lat = 49.82231
+        val lon = 19.24512
+
+        val legacyKey = SpatialCacheHelper.toLegacyGridKey(lat, lon)
+        val preciseKey = SpatialCacheHelper.toGridKey(lat, lon)
+
+        assertEquals("49.822_19.245", legacyKey)
+        assertEquals("49.8223_19.2451", preciseKey)
+    }
 }
