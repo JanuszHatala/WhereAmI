@@ -44,6 +44,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_SP_LOCALITY = "locality"
         private const val COL_SP_STREET = "street"
         private const val COL_SP_CREATED_AT = "created_at"
+        private const val COL_SP_COLOR = "color"
 
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
@@ -83,7 +84,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COL_SP_RADIUS REAL DEFAULT 100.0,
                 $COL_SP_LOCALITY TEXT DEFAULT '',
                 $COL_SP_STREET TEXT DEFAULT '',
-                $COL_SP_CREATED_AT INTEGER NOT NULL
+                $COL_SP_CREATED_AT INTEGER NOT NULL,
+                $COL_SP_COLOR TEXT DEFAULT ''
             )
         """.trimIndent()
         db.execSQL(createPlacesTable)
@@ -115,6 +117,13 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         cleanUpTrailingDestinationPauses(db)
+        ensureSavedPlacesColumns(db)
+    }
+
+    private fun ensureSavedPlacesColumns(db: SQLiteDatabase) {
+        try {
+            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_COLOR TEXT DEFAULT ''")
+        } catch (_: Exception) {}
     }
 
     private fun cleanUpTrailingDestinationPauses(db: SQLiteDatabase) {
@@ -445,6 +454,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_SP_LOCALITY, place.locality)
             put(COL_SP_STREET, place.street)
             put(COL_SP_CREATED_AT, place.createdAt)
+            put(COL_SP_COLOR, place.colorHex)
         }
         return db.insert(TABLE_SAVED_PLACES, null, values)
     }
@@ -459,6 +469,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_SP_RADIUS, place.radiusMeters)
             put(COL_SP_LOCALITY, place.locality)
             put(COL_SP_STREET, place.street)
+            put(COL_SP_COLOR, place.colorHex)
         }
         db.update(TABLE_SAVED_PLACES, values, "$COL_SP_ID = ?", arrayOf(place.id.toString()))
     }
@@ -491,6 +502,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 val locality = it.getString(it.getColumnIndexOrThrow(COL_SP_LOCALITY)) ?: ""
                 val street = it.getString(it.getColumnIndexOrThrow(COL_SP_STREET)) ?: ""
                 val createdAt = it.getLong(it.getColumnIndexOrThrow(COL_SP_CREATED_AT))
+                val colorIdx = it.getColumnIndex(COL_SP_COLOR)
+                val colorHex = if (colorIdx >= 0) it.getString(colorIdx) ?: "" else ""
 
                 val category = try {
                     PlaceCategory.valueOf(catStr)
@@ -508,7 +521,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                         radiusMeters = radius,
                         locality = locality,
                         street = street,
-                        createdAt = createdAt
+                        createdAt = createdAt,
+                        colorHex = colorHex
                     )
                 )
             }
