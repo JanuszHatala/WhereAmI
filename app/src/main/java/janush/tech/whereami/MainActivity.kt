@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -221,6 +222,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var placeToSaveStreet by remember { mutableStateOf("") }
     var placeToSaveName by remember { mutableStateOf("") }
     var placeToSaveCategory by remember { mutableStateOf(PlaceCategory.FAVORITE) }
+    var placeToSaveColor by remember { mutableStateOf("") }
 
     // Measured Layout Positions for Exact Optical Viewport Centering
     var topCardBottomPx by remember { mutableStateOf(0) }
@@ -971,12 +973,29 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
+                                                        val pinColorHex = place.getEffectiveColorHex()
+                                                        val pinComposeColor = try {
+                                                            Color(android.graphics.Color.parseColor(pinColorHex))
+                                                        } catch (_: Exception) {
+                                                            Color(0xFF10B981)
+                                                        }
+
                                                         Row(
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             modifier = Modifier.weight(1f)
                                                         ) {
-                                                            Text(place.category.iconEmoji, fontSize = 22.sp)
-                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                            Box(contentAlignment = Alignment.BottomEnd) {
+                                                                Text(place.category.iconEmoji, fontSize = 22.sp)
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .offset(x = 2.dp, y = 2.dp)
+                                                                        .size(10.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(pinComposeColor)
+                                                                        .border(1.5.dp, Color(0xFF1E293B), CircleShape)
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(10.dp))
                                                             Column {
                                                                 Row(
                                                                     verticalAlignment = Alignment.CenterVertically,
@@ -996,15 +1015,26 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                         color = Color(0xFF0F172A),
                                                                         shape = RoundedCornerShape(4.dp)
                                                                     ) {
-                                                                        Text(
-                                                                            text = place.category.displayName,
-                                                                            color = Color(0xFF10B981),
-                                                                            fontSize = 10.sp,
-                                                                            fontWeight = FontWeight.SemiBold,
-                                                                            maxLines = 1,
-                                                                            softWrap = false,
+                                                                        Row(
+                                                                            verticalAlignment = Alignment.CenterVertically,
                                                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                                        )
+                                                                        ) {
+                                                                            Box(
+                                                                                modifier = Modifier
+                                                                                    .size(6.dp)
+                                                                                    .clip(CircleShape)
+                                                                                    .background(pinComposeColor)
+                                                                            )
+                                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                                            Text(
+                                                                                text = place.category.displayName,
+                                                                                color = pinComposeColor,
+                                                                                fontSize = 10.sp,
+                                                                                fontWeight = FontWeight.SemiBold,
+                                                                                maxLines = 1,
+                                                                                softWrap = false
+                                                                            )
+                                                                        }
                                                                     }
                                                                 }
                                                                 val sub = listOfNotNull(
@@ -2863,22 +2893,97 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         placeToSaveName = cat.displayName
                                     }
                                 },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) Color(0xFF10B981) else Color(0xFF1E293B),
                                 border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF475569)),
-                                modifier = Modifier.height(34.dp)
+                                modifier = Modifier.height(36.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(horizontal = 10.dp)
                                 ) {
-                                    Text(cat.iconEmoji, fontSize = 14.sp)
+                                    Text(
+                                        text = cat.iconEmoji,
+                                        fontSize = 14.sp,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 16.sp
+                                        )
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = cat.displayName,
                                         color = if (isSelected) Color.White else Color.LightGray,
                                         fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 16.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = "Pin Color",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PRESET_PIN_COLORS.forEach { opt ->
+                            val isColorSelected = if (opt.hex.isEmpty()) placeToSaveColor.isEmpty() else placeToSaveColor.equals(opt.hex, ignoreCase = true)
+                            val chipBg = if (opt.hex.isEmpty()) {
+                                when (placeToSaveCategory) {
+                                    PlaceCategory.FAVORITE -> Color(0xFF8B5CF6)
+                                    PlaceCategory.HOME -> Color(0xFF10B981)
+                                    PlaceCategory.WORK -> Color(0xFF3B82F6)
+                                    PlaceCategory.FAMILY -> Color(0xFFEC4899)
+                                    PlaceCategory.SCHOOL -> Color(0xFFF59E0B)
+                                    PlaceCategory.CUSTOM -> Color(0xFF06B6D4)
+                                }
+                            } else {
+                                Color(android.graphics.Color.parseColor(opt.hex))
+                            }
+
+                            Surface(
+                                onClick = { placeToSaveColor = opt.hex },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isColorSelected) chipBg.copy(alpha = 0.25f) else Color(0xFF1E293B),
+                                border = if (isColorSelected) androidx.compose.foundation.BorderStroke(2.dp, chipBg) else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(chipBg)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = opt.label,
+                                        color = if (isColorSelected) Color.White else Color.LightGray,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isColorSelected) FontWeight.Bold else FontWeight.Normal,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                        )
                                     )
                                 }
                             }
@@ -2960,7 +3065,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 category = placeToSaveCategory,
                                 geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
                                 locality = placeToSaveLocality.trim(),
-                                street = placeToSaveStreet.trim()
+                                street = placeToSaveStreet.trim(),
+                                colorHex = placeToSaveColor
                             )
                         }
                         showSavePlaceDialog = false
@@ -3093,6 +3199,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         var editStreet by remember(placeToEdit.id) { mutableStateOf(placeToEdit.street) }
         var editLocality by remember(placeToEdit.id) { mutableStateOf(placeToEdit.locality) }
         var editRadius by remember(placeToEdit.id) { mutableFloatStateOf(placeToEdit.radiusMeters) }
+        var editColor by remember(placeToEdit.id) { mutableStateOf(placeToEdit.colorHex) }
 
         AlertDialog(
             onDismissRequest = { editingSavedPlace = null },
@@ -3124,22 +3231,97 @@ fun LocationScreen(viewModel: MainViewModel) {
                             val isSelected = editCategory == cat
                             Surface(
                                 onClick = { editCategory = cat },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) Color(0xFF10B981) else Color(0xFF1E293B),
                                 border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF475569)),
-                                modifier = Modifier.height(34.dp)
+                                modifier = Modifier.height(36.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(horizontal = 10.dp)
                                 ) {
-                                    Text(cat.iconEmoji, fontSize = 14.sp)
+                                    Text(
+                                        text = cat.iconEmoji,
+                                        fontSize = 14.sp,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 16.sp
+                                        )
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = cat.displayName,
                                         color = if (isSelected) Color.White else Color.LightGray,
                                         fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 16.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = "Pin Color",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PRESET_PIN_COLORS.forEach { opt ->
+                            val isColorSelected = if (opt.hex.isEmpty()) editColor.isEmpty() else editColor.equals(opt.hex, ignoreCase = true)
+                            val chipBg = if (opt.hex.isEmpty()) {
+                                when (editCategory) {
+                                    PlaceCategory.FAVORITE -> Color(0xFF8B5CF6)
+                                    PlaceCategory.HOME -> Color(0xFF10B981)
+                                    PlaceCategory.WORK -> Color(0xFF3B82F6)
+                                    PlaceCategory.FAMILY -> Color(0xFFEC4899)
+                                    PlaceCategory.SCHOOL -> Color(0xFFF59E0B)
+                                    PlaceCategory.CUSTOM -> Color(0xFF06B6D4)
+                                }
+                            } else {
+                                Color(android.graphics.Color.parseColor(opt.hex))
+                            }
+
+                            Surface(
+                                onClick = { editColor = opt.hex },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isColorSelected) chipBg.copy(alpha = 0.25f) else Color(0xFF1E293B),
+                                border = if (isColorSelected) androidx.compose.foundation.BorderStroke(2.dp, chipBg) else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(chipBg)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = opt.label,
+                                        color = if (isColorSelected) Color.White else Color.LightGray,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isColorSelected) FontWeight.Bold else FontWeight.Normal,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                        )
                                     )
                                 }
                             }
@@ -3251,7 +3433,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             category = editCategory,
                             street = editStreet.trim(),
                             locality = editLocality.trim(),
-                            radiusMeters = editRadius
+                            radiusMeters = editRadius,
+                            colorHex = editColor
                         )
                         viewModel.updateSavedPlace(updated)
                         editingSavedPlace = null

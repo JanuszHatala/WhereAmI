@@ -538,7 +538,7 @@ fun OsmMapView(
             val spm = Marker(map).apply {
                 position = place.geoPoint
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                icon = makeSavedPlaceIcon(context, place.category)
+                icon = makeSavedPlaceIcon(context, place)
                 title = "${place.category.iconEmoji} ${place.name}"
                 snippet = listOfNotNull(
                     place.street.takeIf { it.isNotBlank() },
@@ -1635,7 +1635,7 @@ private fun makeMarkerIcon(context: Context, hasBearing: Boolean): android.graph
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
 
-private fun makeSavedPlaceIcon(context: Context, category: PlaceCategory): android.graphics.drawable.BitmapDrawable {
+private fun makeSavedPlaceIcon(context: Context, place: SavedPlace): android.graphics.drawable.BitmapDrawable {
     val size = (context.resources.displayMetrics.density * 34).toInt()
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
@@ -1643,13 +1643,11 @@ private fun makeSavedPlaceIcon(context: Context, category: PlaceCategory): andro
     val cy = size / 2.6f
     val r = size / 3.2f
 
-    val pinColor = when (category) {
-        PlaceCategory.HOME -> Color.parseColor("#10B981")     // Emerald Green
-        PlaceCategory.WORK -> Color.parseColor("#3B82F6")     // Blue
-        PlaceCategory.FAMILY -> Color.parseColor("#EC4899")   // Pink
-        PlaceCategory.SCHOOL -> Color.parseColor("#F59E0B")   // Amber
-        PlaceCategory.FAVORITE -> Color.parseColor("#8B5CF6") // Purple
-        PlaceCategory.CUSTOM -> Color.parseColor("#06B6D4")   // Cyan
+    val hex = place.getEffectiveColorHex()
+    val pinColor = try {
+        Color.parseColor(hex)
+    } catch (_: Exception) {
+        Color.parseColor("#10B981")
     }
 
     val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1679,7 +1677,7 @@ private fun makeSavedPlaceIcon(context: Context, category: PlaceCategory): andro
         textAlign = Paint.Align.CENTER
     }
     val yPos = cy - (textPaint.descent() + textPaint.ascent()) / 2
-    canvas.drawText(category.iconEmoji, cx, yPos, textPaint)
+    canvas.drawText(place.category.iconEmoji, cx, yPos, textPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
