@@ -210,7 +210,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         category: PlaceCategory,
         geoPoint: org.osmdroid.util.GeoPoint,
         locality: String,
-        street: String
+        street: String,
+        colorHex: String = ""
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val place = SavedPlace(
@@ -219,7 +220,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 latitude = geoPoint.latitude,
                 longitude = geoPoint.longitude,
                 locality = locality,
-                street = street
+                street = street,
+                colorHex = colorHex
             )
             dbHelper.insertSavedPlace(place)
             loadSavedPlaces()

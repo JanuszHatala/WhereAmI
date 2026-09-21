@@ -125,9 +125,25 @@ class CacheManager private constructor(private val context: Context) {
 
     sealed class PrefetchState {
         object Idle : PrefetchState()
-        data class Running(val current: Int, val total: Int, val added: Int) : PrefetchState()
-        data class Paused(val current: Int, val total: Int, val added: Int) : PrefetchState()
-        data class Completed(val addedCount: Int, val alreadyCachedCount: Int, val total: Int) : PrefetchState()
+        data class Running(
+            val pass: Int,
+            val passName: String,
+            val current: Int,
+            val total: Int,
+            val added: Int
+        ) : PrefetchState()
+        data class Paused(
+            val pass: Int,
+            val passName: String,
+            val current: Int,
+            val total: Int,
+            val added: Int
+        ) : PrefetchState()
+        data class Completed(
+            val addedCount: Int,
+            val alreadyCachedCount: Int,
+            val total: Int
+        ) : PrefetchState()
         data class Blocked(val reason: String) : PrefetchState()
         data class Error(val message: String) : PrefetchState()
     }
@@ -155,12 +171,12 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 
-    private fun updateNotification(current: Int, total: Int, isPaused: Boolean) {
+    private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean) {
         ensurePrefetchChannel()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
         val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_PREFETCH)
             .setContentTitle(if (isPaused) "WhereAmI Pre-fetch (Paused)" else "WhereAmI Offline Pre-fetch")
-            .setContentText("Pre-fetching corridors: $current of $total")
+            .setContentText("$passName: $current of $total")
             .setSmallIcon(R.drawable.ic_stat_location)
             .setProgress(total, current, false)
             .setOngoing(!isPaused)
@@ -195,33 +211,49 @@ class CacheManager private constructor(private val context: Context) {
                 val spatialHelper = SpatialCacheHelper.getInstance(context)
                 val locManager = LocationManager.getInstance(context)
 
-                val uniquePoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
+                // 1. Ensure legacy 3-decimal cache keys are migrated so actual trip data is recognized
+                spatialHelper.migrateLegacyKeys()
+
+                // Calculate total unique points in all trips for accurate reporting
+                val allUnique15mPoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
                 for (trip in allTrips) {
                     for (pt in trip.points) {
                         val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
-                        if (!uniquePoints.containsKey(key)) {
-                            uniquePoints[key] = pt
+                        if (!allUnique15mPoints.containsKey(key)) {
+                            allUnique15mPoints[key] = pt
                         }
                     }
                 }
 
-                val totalUnique = uniquePoints.size
-                if (totalUnique == 0) {
+                if (allUnique15mPoints.isEmpty()) {
                     _prefetchState.value = PrefetchState.Completed(0, 0, 0)
                     return@launch
                 }
 
-                val uncachedPoints = uniquePoints.filter { (_, pt) ->
-                    spatialHelper.get(pt.latitude, pt.longitude) == null
-                }.values.toList()
+                var totalAdded = 0
+                val totalPointsInTrips = allUnique15mPoints.size
 
-                val alreadyCached = totalUnique - uncachedPoints.size
-                var added = 0
+                // ── PASS 1: Macro Corridor Coverage (~50m spacing) ───────────────────
+                // Guarantees zero blank offline spots along all recorded route corridors rapidly
+                val pass1Candidates = mutableListOf<org.osmdroid.util.GeoPoint>()
+                for (trip in allTrips) {
+                    var lastPt: org.osmdroid.util.GeoPoint? = null
+                    for (pt in trip.points) {
+                        if (lastPt == null || lastPt.distanceToAsDouble(pt) >= 50.0) {
+                            lastPt = pt
+                            if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                                pass1Candidates.add(pt)
+                            }
+                        }
+                    }
+                }
 
-                _prefetchState.value = PrefetchState.Running(alreadyCached, totalUnique, added)
-                updateNotification(alreadyCached, totalUnique, false)
+                val pass1Total = pass1Candidates.size
+                var pass1Current = 0
+                _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, totalAdded)
+                updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
-                for (pt in uncachedPoints) {
+                for (pt in pass1Candidates) {
                     while (isPrefetchPaused) {
                         kotlinx.coroutines.delay(500L)
                     }
@@ -232,17 +264,55 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                    added++
-                    val current = alreadyCached + added
+                    // Skip if now cached by an adjacent query
+                    if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
+                        totalAdded++
+                    }
 
-                    _prefetchState.value = PrefetchState.Running(current, totalUnique, added)
-                    updateNotification(current, totalUnique, false)
+                    pass1Current++
+                    _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, totalAdded)
+                    updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                     kotlinx.coroutines.delay(1500L)
                 }
 
-                _prefetchState.value = PrefetchState.Completed(added, alreadyCached, totalUnique)
+                // ── PASS 2: Fine Precision Down to ~15m Grid Resolution ──────────────
+                // Fills in intermediate gaps and house numbers along the corridors
+                val pass2Candidates = allUnique15mPoints.values.filter { pt ->
+                    !spatialHelper.isCached(pt.latitude, pt.longitude)
+                }
+
+                val pass2Total = pass2Candidates.size
+                var pass2Current = 0
+                _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, totalAdded)
+                updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
+
+                for (pt in pass2Candidates) {
+                    while (isPrefetchPaused) {
+                        kotlinx.coroutines.delay(500L)
+                    }
+
+                    if (!allowOnBattery && !isDeviceCharging()) {
+                        _prefetchState.value = PrefetchState.Blocked("Charging disconnected. Connect charger to continue.")
+                        dismissNotification()
+                        return@launch
+                    }
+
+                    if (!spatialHelper.isCached(pt.latitude, pt.longitude)) {
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
+                        totalAdded++
+                    }
+
+                    pass2Current++
+                    _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, totalAdded)
+                    updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
+
+                    kotlinx.coroutines.delay(1500L)
+                }
+
+                val finalCached = allUnique15mPoints.values.count { pt -> spatialHelper.isCached(pt.latitude, pt.longitude) }
+                _prefetchState.value = PrefetchState.Completed(totalAdded, finalCached, totalPointsInTrips)
                 dismissNotification()
             } catch (_: kotlinx.coroutines.CancellationException) {
                 dismissNotification()
@@ -257,8 +327,8 @@ class CacheManager private constructor(private val context: Context) {
         isPrefetchPaused = true
         val cur = _prefetchState.value
         if (cur is PrefetchState.Running) {
-            _prefetchState.value = PrefetchState.Paused(cur.current, cur.total, cur.added)
-            updateNotification(cur.current, cur.total, true)
+            _prefetchState.value = PrefetchState.Paused(cur.pass, cur.passName, cur.current, cur.total, cur.added)
+            updateNotification(cur.passName, cur.current, cur.total, true)
         }
     }
 
@@ -266,8 +336,8 @@ class CacheManager private constructor(private val context: Context) {
         isPrefetchPaused = false
         val cur = _prefetchState.value
         if (cur is PrefetchState.Paused) {
-            _prefetchState.value = PrefetchState.Running(cur.current, cur.total, cur.added)
-            updateNotification(cur.current, cur.total, false)
+            _prefetchState.value = PrefetchState.Running(cur.pass, cur.passName, cur.current, cur.total, cur.added)
+            updateNotification(cur.passName, cur.current, cur.total, false)
         }
     }
 
