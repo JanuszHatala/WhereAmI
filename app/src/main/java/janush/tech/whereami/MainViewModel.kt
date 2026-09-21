@@ -98,6 +98,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedTripIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedTripIds: StateFlow<Set<Long>> = _selectedTripIds.asStateFlow()
 
+    // Manage Storage / Cache Pre-fetch Dialog State
+    private val _showCacheManagerDialog = MutableStateFlow(false)
+    val showCacheManagerDialog: StateFlow<Boolean> = _showCacheManagerDialog.asStateFlow()
+
+    fun openCacheManager() {
+        _showCacheManagerDialog.value = true
+    }
+
+    fun dismissCacheManager() {
+        _showCacheManagerDialog.value = false
+    }
+
     // Administrative Borders Layer (Phase 2)
     private val _showBorders = MutableStateFlow(appPrefs.getBoolean("pref_show_borders", false))
     val showBorders: StateFlow<Boolean> = _showBorders.asStateFlow()
