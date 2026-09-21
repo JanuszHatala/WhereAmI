@@ -173,6 +173,17 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 
+    private fun formatActionTitle(text: String, colorHex: String): CharSequence {
+        val spannable = android.text.SpannableString(text)
+        spannable.setSpan(
+            android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor(colorHex)),
+            0,
+            text.length,
+            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return spannable
+    }
+
     private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean) {
         ensurePrefetchChannel()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
@@ -217,16 +228,29 @@ class CacheManager private constructor(private val context: Context) {
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
 
+        val percent = if (total > 0) (current.toLong() * 100 / total).toInt().coerceIn(0, 100) else 0
+
+        val title = if (isPaused) "WhereAmI Pre-fetch (Paused) • $percent%" else "WhereAmI Offline Pre-fetch • $percent%"
+        val contentText = "$percent% • $passName ($current of $total)"
+
+        val pauseResumeActionTitle = if (isPaused) {
+            formatActionTitle("▶ Resume", "#10B981")
+        } else {
+            formatActionTitle("⏸ Pause", "#F59E0B")
+        }
+        val stopActionTitle = formatActionTitle("🛑 Stop", "#EF4444")
+
         val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_PREFETCH)
-            .setContentTitle(if (isPaused) "WhereAmI Pre-fetch (Paused)" else "WhereAmI Offline Pre-fetch")
-            .setContentText("$passName: $current of $total")
+            .setContentTitle(title)
+            .setSubText("$percent%")
+            .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_stat_location)
             .setContentIntent(contentIntent)
             .setProgress(total, current, false)
             .setOngoing(!isPaused)
             .setOnlyAlertOnce(true)
-            .addAction(0, if (isPaused) "▶ Resume" else "⏸ Pause", pauseResumeIntent)
-            .addAction(0, "⏹ Stop", stopIntent)
+            .addAction(0, pauseResumeActionTitle, pauseResumeIntent)
+            .addAction(0, stopActionTitle, stopIntent)
         manager.notify(NOTIF_PREFETCH_ID, builder.build())
     }
 
