@@ -887,7 +887,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Icon(Icons.Default.CropFree, contentDescription = "Fit Map", modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -911,7 +911,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
@@ -2122,7 +2122,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                         tripToRename = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Save")
                 }
@@ -2964,7 +2965,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                         showSavePlaceDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Save")
                 }
@@ -2997,7 +2999,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         selectedSavedPlace = null
                         viewModel.clearPinnedBorders()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Delete")
                 }
@@ -3032,7 +3035,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         viewModel.deleteTrip(trip.id)
                         tripToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Delete")
                 }
@@ -3066,7 +3070,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         showResetDefaultsConfirm = false
                         android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Restore Defaults")
                 }
@@ -3254,7 +3259,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             selectedSavedPlace = updated
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Save Changes")
                 }
