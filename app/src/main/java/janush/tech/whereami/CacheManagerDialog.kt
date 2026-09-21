@@ -396,7 +396,7 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("⏹ Stop", fontSize = 12.sp, color = Color.White)
+                                            Text("🛑 Stop", fontSize = 12.sp, color = Color.White)
                                         }
                                     }
                                 }
@@ -487,7 +487,7 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("⏹ Stop", fontSize = 12.sp, color = Color.White)
+                                            Text("🛑 Stop", fontSize = 12.sp, color = Color.White)
                                         }
                                     }
                                 }

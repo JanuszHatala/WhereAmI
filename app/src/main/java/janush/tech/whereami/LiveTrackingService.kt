@@ -52,6 +52,8 @@ class LiveTrackingService : Service() {
         const val ACTION_PAUSE_RESUME = "janush.tech.whereami.ACTION_PAUSE_RESUME"
         const val ACTION_SYNC_NOW = "janush.tech.whereami.ACTION_SYNC_NOW"
         const val ACTION_STOP = "janush.tech.whereami.ACTION_STOP"
+        const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
+        const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
     }
 
     private var lastPlaceName: String = "In Transit"
@@ -61,7 +63,12 @@ class LiveTrackingService : Service() {
         when (intent?.action) {
             "STOP_TRACKING", ACTION_STOP -> {
                 LiveSharingManager.getInstance(this).stopSession()
-                stopSelf()
+                val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+                if (hasTrip) {
+                    updateNotification()
+                } else {
+                    stopSelf()
+                }
                 return START_NOT_STICKY
             }
             ACTION_PAUSE_RESUME -> {
@@ -111,19 +118,34 @@ class LiveTrackingService : Service() {
         startForeground(NOTIF_ID, notification)
     }
 
+    private fun formatActionTitle(text: String, colorHex: String): CharSequence {
+        val spannable = android.text.SpannableString(text)
+        spannable.setSpan(
+            android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor(colorHex)),
+            0,
+            text.length,
+            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return spannable
+    }
+
     private fun buildNotification(title: String, text: String): Notification {
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val isLiveActive = liveSession != null && liveSession.isActive
+        val isPaused = liveSession?.isPaused == true
+
         val contentIntent = android.app.PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java).apply {
+                if (isLiveActive) {
+                    action = ACTION_OPEN_LIVE_SHARING
+                    putExtra(EXTRA_OPEN_LIVE_SHARING, true)
+                }
                 this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-
-        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
-        val isLiveActive = liveSession != null && liveSession.isActive
-        val isPaused = liveSession?.isPaused == true
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
@@ -134,7 +156,7 @@ class LiveTrackingService : Service() {
             .setOnlyAlertOnce(true)
 
         if (isLiveActive) {
-            // Pause / Resume Action (LIV-R01)
+            // 1. Pause / Resume Action (Amber / Emerald Green)
             val pauseIntent = android.app.PendingIntent.getService(
                 this,
                 1,
@@ -142,18 +164,10 @@ class LiveTrackingService : Service() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             val pauseLabel = if (isPaused) "▶ Resume" else "⏸ Pause"
-            builder.addAction(0, pauseLabel, pauseIntent)
+            val pauseColor = if (isPaused) "#10B981" else "#F59E0B"
+            builder.addAction(0, formatActionTitle(pauseLabel, pauseColor), pauseIntent)
 
-            // Sync Now Action (LIV-R01)
-            val syncIntent = android.app.PendingIntent.getService(
-                this,
-                2,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_SYNC_NOW },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(0, "🔄 Sync", syncIntent)
-
-            // Quick Share Action
+            // 2. Quick Share Action (Cyan / Blue)
             val sendIntent = Intent().apply {
                 action = Intent.ACTION_SEND
                 val shareUrl = liveSession.getViewerUrl()
@@ -177,16 +191,16 @@ class LiveTrackingService : Service() {
                 chooserIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, "🔗 Share", shareIntent)
+            builder.addAction(0, formatActionTitle("🔗 Share", "#38BDF8"), shareIntent)
 
-            // Stop Action (LIV-R01)
+            // 3. Stop Action (Vibrant Red 🛑) - capped at 3 actions total so Android OS won't drop it
             val stopIntent = android.app.PendingIntent.getService(
                 this,
                 3,
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, "⏹ Stop", stopIntent)
+            builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
         }
 
         return builder.build()

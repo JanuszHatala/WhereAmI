@@ -258,6 +258,7 @@ fun OsmMapView(
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
     onInstantShare: (() -> Unit)? = null,
     onClearSelectedTrips: (() -> Unit)? = null,
+    onOpenCacheManager: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1107,14 +1108,6 @@ fun OsmMapView(
         }
     }
 
-    var showCacheManagerDialog by remember { mutableStateOf(false) }
-
-    if (showCacheManagerDialog) {
-        CacheManagerDialog(
-            onDismissRequest = { showCacheManagerDialog = false }
-        )
-    }
-
     if (showSettingsDialog) {
         MapSettingsDialog(
             currentBaseLayer = baseLayer,
@@ -1145,7 +1138,10 @@ fun OsmMapView(
                 mapView?.invalidate()
                 Toast.makeText(context, "Map tile cache cleared", Toast.LENGTH_SHORT).show()
             },
-            onOpenCacheManager = { showCacheManagerDialog = true },
+            onOpenCacheManager = {
+                showSettingsDialog = false
+                onOpenCacheManager?.invoke()
+            },
             onDismiss = { showSettingsDialog = false }
         )
     }

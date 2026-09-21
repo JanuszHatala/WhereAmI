@@ -98,16 +98,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedTripIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedTripIds: StateFlow<Set<Long>> = _selectedTripIds.asStateFlow()
 
-    // Manage Storage / Cache Pre-fetch Dialog State
+    // Manage Storage / Cache Pre-fetch & Navigation Dialog Target State
+    enum class AppDialogTarget {
+        NONE,
+        CACHE_MANAGER,
+        LIVE_SHARING
+    }
+
+    private val _requestedDialogTarget = MutableStateFlow(AppDialogTarget.NONE)
+    val requestedDialogTarget: StateFlow<AppDialogTarget> = _requestedDialogTarget.asStateFlow()
+
     private val _showCacheManagerDialog = MutableStateFlow(false)
     val showCacheManagerDialog: StateFlow<Boolean> = _showCacheManagerDialog.asStateFlow()
 
     fun openCacheManager() {
+        _requestedDialogTarget.value = AppDialogTarget.CACHE_MANAGER
         _showCacheManagerDialog.value = true
     }
 
     fun dismissCacheManager() {
         _showCacheManagerDialog.value = false
+    }
+
+    fun openLiveSharing() {
+        _requestedDialogTarget.value = AppDialogTarget.LIVE_SHARING
+    }
+
+    fun requestDialogTarget(target: AppDialogTarget) {
+        _requestedDialogTarget.value = target
+        if (target == AppDialogTarget.CACHE_MANAGER) {
+            _showCacheManagerDialog.value = true
+        }
+    }
+
+    fun consumeDialogTarget() {
+        _requestedDialogTarget.value = AppDialogTarget.NONE
     }
 
     // Administrative Borders Layer (Phase 2)
