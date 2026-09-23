@@ -29,7 +29,7 @@ fun CacheManagerDialog(
     val scope = rememberCoroutineScope()
     val cacheManager = remember { CacheManager.getInstance(context) }
     val prefetchState by cacheManager.prefetchState.collectAsState()
-    val missingPointsEstimate by cacheManager.missingPointsEstimate.collectAsState()
+    val cacheDeficit by cacheManager.cacheDeficit.collectAsState()
 
     var tileBytes by remember { mutableStateOf(0L) }
     var boundaryBytes by remember { mutableStateOf(0L) }
@@ -43,7 +43,7 @@ fun CacheManagerDialog(
     var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL"
 
     fun refreshMetrics() {
-        cacheManager.calculateMissingPointsEstimate()
+        cacheManager.calculateCacheDeficit()
         scope.launch {
             tileBytes = cacheManager.getTileCacheBytes()
             boundaryBytes = cacheManager.getBoundaryCacheBytes()
@@ -53,8 +53,11 @@ fun CacheManagerDialog(
         }
     }
 
-    LaunchedEffect(Unit) {
-        refreshMetrics()
+    // Refresh metrics on start and when prefetch finishes
+    LaunchedEffect(prefetchState) {
+        if (prefetchState is CacheManager.PrefetchState.Idle || prefetchState is CacheManager.PrefetchState.Completed) {
+            refreshMetrics()
+        }
     }
 
     fun formatBytes(bytes: Long): String {
@@ -313,12 +316,13 @@ fun CacheManagerDialog(
                                     Text("Pre-fetch All Missing Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
 
-                                    val estimateStr = when (missingPointsEstimate) {
+                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries }
+                                    val estimateStr = when (totalMissing) {
                                         null -> "Calculating pending items..."
-                                        0 -> "All known routes are fully cached offline."
-                                        else -> "Found $missingPointsEstimate missing locations to fetch."
+                                        0 -> "All known routes and boundaries are fully cached offline."
+                                        else -> "Found $totalMissing missing items to fetch."
                                     }
-                                    val estimateColor = if (missingPointsEstimate == 0) Color(0xFF10B981) else Color(0xFFF59E0B)
+                                    val estimateColor = if (totalMissing == 0) Color(0xFF10B981) else Color(0xFFF59E0B)
                                     
                                     Text(
                                         text = estimateStr,
@@ -514,7 +518,7 @@ fun CacheManagerDialog(
                             is CacheManager.PrefetchState.Completed -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
-                                        text = "✔ Pre-fetch Complete: ${state.addedCount} new points cached (${state.alreadyCachedCount} already cached of ${state.total} corridor points).",
+                                        text = "\u2713 Pre-fetch Complete! Downloaded: ${state.addedRoutes} route points, ${state.addedBoundaries} boundaries.",
                                         color = Color(0xFF4ADE80),
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium
@@ -616,6 +620,10 @@ fun CacheManagerDialog(
         )
     }
 }
+
+
+
+
 
 
 
