@@ -112,15 +112,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val showCacheManagerDialog: StateFlow<Boolean> = _showCacheManagerDialog.asStateFlow()
 
     fun openCacheManager() {
+        dismissAllDialogs()
         _requestedDialogTarget.value = AppDialogTarget.CACHE_MANAGER
         _showCacheManagerDialog.value = true
     }
+
+    fun dismissAllDialogs() {
+        _showCacheManagerDialog.value = false
+            }
 
     fun dismissCacheManager() {
         _showCacheManagerDialog.value = false
     }
 
     fun openLiveSharing() {
+        dismissAllDialogs()
         _requestedDialogTarget.value = AppDialogTarget.LIVE_SHARING
     }
 
@@ -251,6 +257,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         colorHex: String = ""
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val finalColor = if (colorHex.isBlank()) PRESET_PIN_COLORS.filter { it.hex.isNotEmpty() }.random().hex else colorHex
             val place = SavedPlace(
                 name = name,
                 category = category,
@@ -258,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 longitude = geoPoint.longitude,
                 locality = locality,
                 street = street,
-                colorHex = colorHex
+                colorHex = finalColor
             )
             dbHelper.insertSavedPlace(place)
             loadSavedPlaces()
@@ -512,3 +519,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         TelemetryLogger.log("SETTINGS", "All settings reset to canonical defaults")
     }
 }
+
+
+
+
