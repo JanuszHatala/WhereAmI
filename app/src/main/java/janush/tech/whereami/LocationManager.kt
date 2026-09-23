@@ -691,7 +691,11 @@ class LocationManager private constructor(private val context: Context) {
 
                         val speedKmh = speed * 3.6f
                         val alt = if (location.hasAltitude()) location.altitude else null
-                        val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= 1.2f)) {
+                        
+                        // Map Spinning Fix: If accuracy is poor (> 15m), require a stronger actual velocity (> 4.5m/s or 16km/h) 
+                        // to update the bearing, ignoring multipath jumps.
+                        val minSpeedForBearing = if (location.hasAccuracy() && location.accuracy > 15f) 4.5f else 1.2f
+                        val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= minSpeedForBearing)) {
                             lastValidBearing = location.bearing
                             location.bearing
                         } else {
@@ -914,7 +918,7 @@ class LocationManager private constructor(private val context: Context) {
 
     // ── Place resolution ───────────────────────────────────────────────────────
 
-    fun resolveMultiLanguageData(lat: Double, lng: Double): MultiLanguagePlaceInfo {
+    fun resolveMultiLanguageData(lat: Double, lng: Double, bearing: Float? = null, speedKmh: Float? = null): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         val cached = spatialPlaceCache[gridKey]
@@ -943,10 +947,15 @@ class LocationManager private constructor(private val context: Context) {
 
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
         val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
+        
+        // Kinematic Engine: Only query OSRM if moving > 10 km/h (reduces unnecessary API calls when walking/stopped)
+        val osrmStreet = if (speedKmh != null && speedKmh > 10f) {
+            OsmMapMatcher.getNearestStreet(lat, lng, bearing)
+        } else null
 
-        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm)
-        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm)
-        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm)
+        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet)
+        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet)
+        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm, osrmStreet)
 
         // If online geocoding failed or returned unknown (e.g. offline tunnel/cell cutout), fall back to persistent cache of any age
         if (enPlace.city == "Unknown City" && plPlace.city == "Unknown City") {
@@ -980,7 +989,8 @@ class LocationManager private constructor(private val context: Context) {
         osmLang: String,
         countryCode: String,
         prefs: SharedPreferences,
-        sharedOsm: OsmPlaceResult? = null
+        sharedOsm: OsmPlaceResult? = null,
+        osrmStreet: String? = null
     ): PlaceInfo {
         val lastGood = loadLastGood(prefs, cacheKey)
         val lastGoodLat = prefs.getFloat("last_good_lat", Float.MIN_VALUE).toDouble()
@@ -991,10 +1001,13 @@ class LocationManager private constructor(private val context: Context) {
 
         val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang)
 
-        // Tier 1 – Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
+        // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
             val basePlace = address.toPlaceInfo(countryCode)
-            val canonicalStreet = if (osm != null && !osm.roadRef.isNullOrBlank()) {
+            val canonicalStreet = if (osrmStreet != null) {
+                // Highest precision: OSRM Map Matching explicitly provided the road
+                RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, null)
+            } else if (osm != null && !osm.roadRef.isNullOrBlank()) {
                 RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
             } else {
                 basePlace.street ?: osm?.street
@@ -1027,7 +1040,7 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         // Tier 2a – Close to last known good
-        if (lastGood != null && distToLastGood < 300f) {
+        if (lastGood != null && distToLastGood < 45f) {
             return lastGood
         }
 
