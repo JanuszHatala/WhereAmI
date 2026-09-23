@@ -703,7 +703,8 @@ class LocationManager private constructor(private val context: Context) {
                             location.latitude,
                             location.longitude,
                             speed,
-                            committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en }
+                            committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
+                            if (location.hasAccuracy()) location.accuracy else null
                         )
 
                         // 2. Immediate LiveSharing telemetry notification
@@ -921,9 +922,9 @@ class LocationManager private constructor(private val context: Context) {
             return cached.data
         }
 
-        // Check persistent SQLite spatial cache for fresh hits within 30-minute window (~15m cell resolution)
+        // Check persistent SQLite spatial cache (indefinite TTL for offline resilience)
         try {
-            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = 30 * 60 * 1000L)
+            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
                 spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                 return diskCached
@@ -1087,9 +1088,13 @@ class LocationManager private constructor(private val context: Context) {
             }
             lastOsmRequestTime = System.currentTimeMillis()
 
+            val prefs = context.getSharedPreferences("where_am_i_trip_prefs", Context.MODE_PRIVATE)
+            val profile = prefs.getString("pref_activity_profile", "CAR") ?: "CAR"
+            val zoom = if (profile == "CAR") 17 else 18
+
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
-                    "&accept-language=$language&zoom=18&addressdetails=1"
+                    "&accept-language=$language&zoom=$zoom&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000

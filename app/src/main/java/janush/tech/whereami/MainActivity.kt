@@ -2991,7 +2991,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center,
-                                    modifier = Modifier.padding(horizontal = 10.dp)
+                                    modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp)
                                 ) {
                                     Text(
                                         text = cat.iconEmoji,
@@ -3329,7 +3329,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center,
-                                    modifier = Modifier.padding(horizontal = 10.dp)
+                                    modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp)
                                 ) {
                                     Text(
                                         text = cat.iconEmoji,
@@ -6053,3 +6053,4 @@ private fun DestinationPlaceCard(
         }
     }
 }
+
