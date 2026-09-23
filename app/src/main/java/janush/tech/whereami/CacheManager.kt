@@ -416,6 +416,75 @@ class CacheManager private constructor(private val context: Context) {
         dismissNotification()
     }
 
+    fun fetchMissingBoundaries() {
+        if (_prefetchState.value is PrefetchState.Running) return
+        
+        if (!allowOnBattery && !isDeviceCharging()) {
+            _prefetchState.value = PrefetchState.Blocked("Device is not charging.")
+            return
+        }
+        if (!allowMobileData && !isUnmeteredWifi()) {
+            _prefetchState.value = PrefetchState.Blocked("Not on Wi-Fi.")
+            return
+        }
+
+        isPrefetchPaused = false
+        prefetchJob?.cancel()
+
+        prefetchJob = managerScope.launch(Dispatchers.IO) {
+            try {
+                BoundaryHelper.clearMemoryCache()
+                val spatialHelper = SpatialCacheHelper.getInstance(context)
+                val db = spatialHelper.readableDatabase
+                val cursor = db.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                val cities = mutableListOf<String>()
+                while (cursor.moveToNext()) {
+                    val c = cursor.getString(0)
+                    if (c.isNotBlank()) cities.add(c)
+                }
+                cursor.close()
+
+                val total = cities.size
+                var current = 0
+                var added = 0
+
+                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Administrative Boundaries", current, total, added)
+                updateNotification("Pass 3: Boundaries", current, total, false)
+
+                for (city in cities) {
+                    while (isPrefetchPaused) {
+                        kotlinx.coroutines.delay(500L)
+                    }
+
+                    if (!allowOnBattery && !isDeviceCharging()) {
+                        _prefetchState.value = PrefetchState.Blocked("Charging disconnected.")
+                        dismissNotification()
+                        return@launch
+                    }
+
+                    val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
+                    val cleanKey = "${cleanCity}_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                    val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
+                    
+                    if (!file.exists()) {
+                        BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
+                        added++
+                    }
+
+                    current++
+                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Administrative Boundaries", current, total, added)
+                    updateNotification("Pass 3: Boundaries", current, total, false)
+                }
+
+                _prefetchState.value = PrefetchState.Completed(added, total - added, total)
+                dismissNotification()
+            } catch (e: Exception) {
+                _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
+                dismissNotification()
+            }
+        }
+    }
+
     fun calculateMissingPointsEstimate() {
         if (_prefetchState.value !is PrefetchState.Idle) return
         managerScope.launch {
@@ -448,6 +517,8 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 }
+
+
 
 
 
