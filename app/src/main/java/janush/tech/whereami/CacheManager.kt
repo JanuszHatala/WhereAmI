@@ -378,6 +378,41 @@ class CacheManager private constructor(private val context: Context) {
                     kotlinx.coroutines.delay(1500L)
                 }
 
+                //  PASS 3: Administrative Boundaries 
+                BoundaryHelper.clearMemoryCache()
+                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                val cities = mutableListOf<String>()
+                while (dbCursor.moveToNext()) {
+                    val c = dbCursor.getString(0)
+                    if (c.isNotBlank()) cities.add(c)
+                }
+                dbCursor.close()
+
+                val pass3Total = cities.size
+                var pass3Current = 0
+                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, totalAdded)
+                updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
+
+                for (city in cities) {
+                    while (isPrefetchPaused) { kotlinx.coroutines.delay(500L) }
+                    if (!allowOnBattery && !isDeviceCharging()) {
+                        _prefetchState.value = PrefetchState.Blocked("Charging disconnected.")
+                        dismissNotification()
+                        return@launch
+                    }
+
+                    val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
+                    val cleanKey = "_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                    val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
+                    if (!file.exists()) {
+                        BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
+                        totalAdded++
+                    }
+                    pass3Current++
+                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, totalAdded)
+                    updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
+                }
+
                 val finalCached = allUnique15mPoints.values.count { pt -> spatialHelper.isCached(pt.latitude, pt.longitude) }
                 _prefetchState.value = PrefetchState.Completed(totalAdded, finalCached, totalPointsInTrips)
                 dismissNotification()
@@ -517,6 +552,7 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 }
+
 
 
 
