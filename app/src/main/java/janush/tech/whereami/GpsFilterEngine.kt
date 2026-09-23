@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.location.Location
 
@@ -108,6 +108,13 @@ class GpsFilterEngine private constructor() {
                 "Spike rejected: jump of ${deltaDistMeters.toInt()}m in ${deltaTimeSeconds.toInt()}s (implied ${impliedSpeedKmh.toInt()} km/h > ${maxPlausibleSpeedKmh.toInt()} km/h)"
             )
             return false
+        }
+
+        // ── Stage 4: Stationary Jitter Dampener ──
+        // GPS chips indoors often report fake speeds (e.g., 15 km/h) due to signal multipath bounces off walls.
+        // If we moved less than 15 meters from the last accepted fix, AND accuracy is poor (> 15m), we are likely stationary.
+        if (deltaDistMeters < 15.0 && candidate.hasAccuracy() && candidate.accuracy > 15.0f) {
+            candidate.speed = 0.0f
         }
 
         // Valid fix
