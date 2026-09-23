@@ -119,14 +119,7 @@ class LiveTrackingService : Service() {
     }
 
     private fun formatActionTitle(text: String, colorHex: String): CharSequence {
-        val spannable = android.text.SpannableString(text)
-        spannable.setSpan(
-            android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor(colorHex)),
-            0,
-            text.length,
-            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        return spannable
+        return androidx.core.text.HtmlCompat.fromHtml("<font color='$colorHex'>$text</font>", androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY)
     }
 
     private fun buildNotification(title: String, text: String): Notification {
@@ -287,3 +280,5 @@ class LiveTrackingService : Service() {
         return null
     }
 }
+
+

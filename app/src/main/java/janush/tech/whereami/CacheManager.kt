@@ -174,14 +174,7 @@ class CacheManager private constructor(private val context: Context) {
     }
 
     private fun formatActionTitle(text: String, colorHex: String): CharSequence {
-        val spannable = android.text.SpannableString(text)
-        spannable.setSpan(
-            android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor(colorHex)),
-            0,
-            text.length,
-            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        return spannable
+        return androidx.core.text.HtmlCompat.fromHtml("<font color='$colorHex'>$text</font>", androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY)
     }
 
     private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean) {
@@ -230,19 +223,20 @@ class CacheManager private constructor(private val context: Context) {
 
         val percent = if (total > 0) (current.toLong() * 100 / total).toInt().coerceIn(0, 100) else 0
 
-        val title = if (isPaused) "WhereAmI Pre-fetch (Paused) • $percent%" else "WhereAmI Offline Pre-fetch • $percent%"
-        val contentText = "$percent% • $passName ($current of $total)"
+        val title = if (isPaused) "WhereAmI Pre-fetch (Paused) - $percent%" else "WhereAmI Pre-fetch - $percent%"
+        val contentText = "$passName: $current / $total"
 
-        val pauseResumeActionTitle = if (isPaused) {
-            formatActionTitle("▶ Resume", "#10B981")
-        } else {
-            formatActionTitle("⏸ Pause", "#F59E0B")
-        }
-        val stopActionTitle = formatActionTitle("🛑 Stop", "#EF4444")
+        val pauseResumeActionTitle = androidx.core.text.HtmlCompat.fromHtml(
+            if (isPaused) "<font color='#10B981'>▶ Resume</font>" else "<font color='#F59E0B'>⏸ Pause</font>",
+            androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY
+        )
+        val stopActionTitle = androidx.core.text.HtmlCompat.fromHtml(
+            "<font color='#EF4444'>⏹ Stop</font>",
+            androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY
+        )
 
         val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_PREFETCH)
             .setContentTitle(title)
-            .setSubText("$percent%")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_stat_location)
             .setContentIntent(contentIntent)
@@ -419,3 +413,6 @@ class CacheManager private constructor(private val context: Context) {
         dismissNotification()
     }
 }
+
+
+

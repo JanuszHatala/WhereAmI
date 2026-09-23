@@ -89,15 +89,26 @@ class TripManager private constructor(private val context: Context) {
         scope.launch {
             val unclosed = dbHelper.getActiveOrUnclosedTrip()
             if (unclosed != null && _activeTrip.value == null) {
-                _activeTrip.value = unclosed
-                lastMovingTimestamp = System.currentTimeMillis()
-                lastLocation = unclosed.points.lastOrNull()?.let {
-                    Location("").apply {
-                        latitude = it.latitude
-                        longitude = it.longitude
+                val lastPointTime = unclosed.placesVisited.lastOrNull()?.timestamp ?: unclosed.startTime
+                val now = System.currentTimeMillis()
+                val timeoutMs = _autoStopMinutes.value * 60 * 1000L
+                
+                // MAP-R05: If trip was abandoned during process death and exceeded timeout, close it instead of resuming
+                if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs)) {
+                    val closed = unclosed.copy(endTime = lastPointTime)
+                    dbHelper.updateTrip(closed)
+                    TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
+                } else {
+                    _activeTrip.value = unclosed
+                    lastMovingTimestamp = System.currentTimeMillis() // Reset watchdog timer on restore
+                    lastLocation = unclosed.points.lastOrNull()?.let {
+                        Location("").apply {
+                            latitude = it.latitude
+                            longitude = it.longitude
+                        }
                     }
+                    TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points")
                 }
-                TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points")
             }
         }
     }
@@ -166,40 +177,6 @@ class TripManager private constructor(private val context: Context) {
         pendingCandidate = null
 
         val profile = _activityProfile.value
-
-        // In AUTO mode, check if we can reopen/merge with the previous trip if stationary pause was reasonable (< 35 min and < 1500m)
-        if (isAuto) {
-            val lastTrip = dbHelper.getAllTrips().firstOrNull()
-            if (lastTrip != null && lastTrip.endTime != null) {
-                val endedAgoMs = now - lastTrip.endTime
-                val lastPt = lastTrip.points.lastOrNull()
-                val distFromLastPt = if (lastPt != null && lastLocation != null) {
-                    val res = FloatArray(1)
-                    Location.distanceBetween(lastPt.latitude, lastPt.longitude, lastLocation!!.latitude, lastLocation!!.longitude, res)
-                    res[0]
-                } else 0f
-
-                if (endedAgoMs < 35 * 60 * 1000L && distFromLastPt < 1500f) {
-                    val pause = TripPause(
-                        startTime = lastTrip.endTime,
-                        endTime = now,
-                        latitude = lastLocation?.latitude ?: (lastPt?.latitude ?: 0.0),
-                        longitude = lastLocation?.longitude ?: (lastPt?.longitude ?: 0.0),
-                        durationMs = endedAgoMs,
-                        pointIndex = lastTrip.points.size
-                    )
-                    val reopened = lastTrip.copy(
-                        endTime = null,
-                        pauses = lastTrip.pauses + pause
-                    )
-                    dbHelper.updateTrip(reopened)
-                    _activeTrip.value = reopened
-                    TelemetryLogger.logTrip("REOPENED_MERGED", reopened.id, "Reopened trip after ${(endedAgoMs / 60000)}m pause")
-                    startLiveTrackingService()
-                    return
-                }
-            }
-        }
 
         val trip = TripRecord(
             startTime = now,
@@ -279,7 +256,8 @@ class TripManager private constructor(private val context: Context) {
         lat: Double,
         lng: Double,
         speedMs: Float?,
-        currentPlace: PlaceInfo?
+        currentPlace: PlaceInfo?,
+        accuracy: Float? = null
     ) {
         val now = System.currentTimeMillis()
         val speedKmh = (speedMs ?: 0f) * 3.6f
@@ -291,14 +269,18 @@ class TripManager private constructor(private val context: Context) {
         val newLoc = Location("").apply {
             latitude = lat
             longitude = lng
+            if (accuracy != null) this.accuracy = accuracy
         }
 
         // ── Auto-Start / Auto-Stop Logic ───────────────────────────────────────
         if (_tripMode.value == TripMode.AUTO) {
             if (_activeTrip.value == null) {
+                // MAP-R02: Gate auto-start behind strict accuracy (<= 25m) to prevent indoor multipath jumps
+                val isAccurate = (accuracy ?: 0f) <= 25f
+                
                 // Sensitive auto-start: triggered by sustained speed OR cumulative displacement >= 25m
                 val candidateSpeed = speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f)
-                if (candidateSpeed) {
+                if (isAccurate && candidateSpeed) {
                     if (autoStartFirstLocation == null) {
                         autoStartFirstLocation = newLoc
                         autoStartFirstTime = now
@@ -595,3 +577,4 @@ class TripManager private constructor(private val context: Context) {
         return result
     }
 }
+
