@@ -382,7 +382,7 @@ class CacheManager private constructor(private val context: Context) {
 
                 //  PASS 3: Administrative Boundaries 
                 BoundaryHelper.clearMemoryCache()
-                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
                 val cities = mutableListOf<String>()
                 while (dbCursor.moveToNext()) {
                     val c = dbCursor.getString(0)
@@ -390,12 +390,13 @@ class CacheManager private constructor(private val context: Context) {
                 }
                 dbCursor.close()
 
-                val pass3Total = cities.size
+                val missingCities = cities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
+                val pass3Total = missingCities.size
                 var pass3Current = 0
-                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes)
+                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
                 updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
 
-                for (city in cities) {
+                for (city in missingCities) {
                     while (isPrefetchPaused) { kotlinx.coroutines.delay(500L) }
                     if (!allowOnBattery && !isDeviceCharging()) {
                         _prefetchState.value = PrefetchState.Blocked("Charging disconnected.")
@@ -403,15 +404,12 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
-                    val cleanKey = "_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                    val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
-                    if (!file.exists()) {
-                        BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
-                        addedRoutes++
+                    val boundary = BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
+                    if (boundary != null && boundary.isNotEmpty()) {
+                        addedBoundaries++
                     }
                     pass3Current++
-                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes)
+                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
                     updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
                 }
 
@@ -473,7 +471,7 @@ class CacheManager private constructor(private val context: Context) {
                 BoundaryHelper.clearMemoryCache()
                 val spatialHelper = SpatialCacheHelper.getInstance(context)
                 val db = spatialHelper.readableDatabase
-                val cursor = db.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                val cursor = db.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
                 val cities = mutableListOf<String>()
                 while (cursor.moveToNext()) {
                     val c = cursor.getString(0)
@@ -481,14 +479,15 @@ class CacheManager private constructor(private val context: Context) {
                 }
                 cursor.close()
 
-                val total = cities.size
+                val missingCities = cities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
+                val total = missingCities.size
                 var current = 0
                 var added = 0
 
                 _prefetchState.value = PrefetchState.Running(3, "Pass 3: Administrative Boundaries", current, total, added)
                 updateNotification("Pass 3: Boundaries", current, total, false)
 
-                for (city in cities) {
+                for (city in missingCities) {
                     while (isPrefetchPaused) {
                         kotlinx.coroutines.delay(500L)
                     }
@@ -499,12 +498,8 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
-                    val cleanKey = "${cleanCity}_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                    val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
-                    
-                    if (!file.exists()) {
-                        BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
+                    val boundary = BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
+                    if (boundary != null && boundary.isNotEmpty()) {
                         added++
                     }
 
@@ -548,17 +543,12 @@ class CacheManager private constructor(private val context: Context) {
                     !spatialHelper.isCached(pt.latitude, pt.longitude) 
                 }
                 
-                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
                 var missingBoundaries = 0
                 while (dbCursor.moveToNext()) {
                     val city = dbCursor.getString(0)
-                    if (city.isNotBlank()) {
-                        val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
-                        val cleanKey = "${cleanCity}_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                        val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
-                        if (!file.exists()) {
-                            missingBoundaries++
-                        }
+                    if (city.isNotBlank() && !BoundaryHelper.hasBoundary(context, city, "pl")) {
+                        missingBoundaries++
                     }
                 }
                 dbCursor.close()

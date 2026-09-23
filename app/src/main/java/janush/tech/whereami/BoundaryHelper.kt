@@ -63,9 +63,13 @@ object BoundaryHelper {
 
         // Tier 2: Persistent disk cache
         val diskPoints = loadFromDiskCache(context, cleanKey)
-        if (diskPoints != null && diskPoints.isNotEmpty()) {
-            memoryCache[cleanKey] = diskPoints
-            return@withContext diskPoints
+        if (diskPoints != null) {
+            if (diskPoints.isNotEmpty()) {
+                memoryCache[cleanKey] = diskPoints
+                return@withContext diskPoints
+            } else {
+                return@withContext null
+            }
         }
 
         // Tier 3: Network fetch from OSM Nominatim with rate limiting & 429 resilience
@@ -123,10 +127,22 @@ object BoundaryHelper {
                 memoryCache[cleanKey] = simplified
                 saveToDiskCache(context, cleanKey, simplified)
                 return@withContext simplified
+            } else if (System.currentTimeMillis() >= coolDownUntil) {
+                // Authoritative non-429 response had no polygon. Cache empty array so we don't hammer Nominatim repeatedly.
+                saveToDiskCache(context, cleanKey, emptyList())
             }
         }
 
         return@withContext null
+    }
+
+    fun hasBoundary(context: Context, cityName: String?, countryCode: String = "pl"): Boolean {
+        val cleanCity = cityName?.trim()?.takeIf {
+            it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
+        } ?: return true
+        val cleanKey = sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+        val file = File(getCacheDir(context), "$cleanKey.json")
+        return file.exists()
     }
 
     private fun fetchFromNetwork(cityName: String, countryPart: String): List<GeoPoint>? {

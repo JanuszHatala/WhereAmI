@@ -517,19 +517,24 @@ fun CacheManagerDialog(
                             }
                             is CacheManager.PrefetchState.Completed -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    val statusText = if (state.addedRoutes == 0 && state.addedBoundaries == 0) {
+                                        "✓ All recorded routes & boundaries are fully cached!"
+                                    } else {
+                                        "✓ Pre-fetch Complete! Downloaded: ${state.addedRoutes} route points, ${state.addedBoundaries} boundaries."
+                                    }
                                     Text(
-                                        text = "\u2713 Pre-fetch Complete! Downloaded: ${state.addedRoutes} route points, ${state.addedBoundaries} boundaries.",
+                                        text = statusText,
                                         color = Color(0xFF4ADE80),
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium
                                     )
                                     Button(
-                                        onClick = { cacheManager.startPrefetch() },
+                                        onClick = { cacheManager.calculateCacheDeficit() },
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Check Again", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
