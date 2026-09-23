@@ -402,7 +402,7 @@ fun OsmMapView(
     }
 
     // Update marker position & auto-rotation with Stationary Bearing Freeze
-    LaunchedEffect(latLng, orientationMode, isRecording) {
+    LaunchedEffect(latLng, orientationMode, isRecording, isFollowing) {
         val pos = latLng ?: return@LaunchedEffect
         val map = mapView ?: return@LaunchedEffect
         val gp = GeoPoint(pos.first, pos.second)
@@ -418,8 +418,10 @@ fun OsmMapView(
 
         val targetMapOrientation: Float? = when (orientationMode) {
             MapOrientationMode.COURSE_UP -> {
+                // When user panned the map (not following), do NOT auto-rotate
+                if (!isFollowing) null
                 // When not recording and stationary, do NOT auto-rotate map; allow free manual gesture rotation
-                if (!isRecording && !isMoving) null
+                else if (!isRecording && !isMoving) null
                 else if (effectiveBearing != null) -effectiveBearing
                 else 0f
             }

@@ -358,7 +358,7 @@ fun CacheManagerDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.current} / ${state.total} points",
+                                            text = "${state.current} / ${state.total} pts",
                                             color = Color(0xFF94A3B8),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
@@ -368,7 +368,7 @@ fun CacheManagerDialog(
                                         if (state.added > 0) {
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "+${state.added} cached",
+                                                text = "+${state.added} new",
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
@@ -449,7 +449,7 @@ fun CacheManagerDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "${state.current} / ${state.total} points",
+                                            text = "${state.current} / ${state.total} pts",
                                             color = Color(0xFF94A3B8),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
@@ -459,7 +459,7 @@ fun CacheManagerDialog(
                                         if (state.added > 0) {
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "+${state.added} cached",
+                                                text = "+${state.added} new",
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
@@ -597,3 +597,4 @@ fun CacheManagerDialog(
         )
     }
 }
+

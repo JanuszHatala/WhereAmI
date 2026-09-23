@@ -8,6 +8,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body, html { width: 100%; height: 100%; overflow: hidden; background: #0f172a; }
@@ -342,7 +343,15 @@
       sessionId = urlParams.get('id') || 'demo';
     }
 
-    const map = L.map('map', { zoomControl: false }).setView([49.822, 19.044], 14);
+    const map = L.map('map', { 
+      zoomControl: false,
+      rotate: true,
+      touchRotate: true,
+      rotateControl: {
+        closeOnZeroBearing: false,
+        position: 'bottomleft'
+      }
+    }).setView([49.822, 19.044], 14);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors'
@@ -417,6 +426,7 @@
 
     function recenterMap(zoom) {
       if (lastCoords) {
+        if (map.setBearing) map.setBearing(0);
         const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
         const offsetCenter = getOffsetCenter(lastCoords, targetZoom);
         map.setView(offsetCenter, targetZoom);
@@ -426,6 +436,7 @@
 
     function recenterVisitor(zoom) {
       if (visitorCoords) {
+        if (map.setBearing) map.setBearing(0);
         const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
         const offsetCenter = getOffsetCenter(visitorCoords, targetZoom);
         map.setView(offsetCenter, targetZoom);
