@@ -155,3 +155,4 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **BKL-04** | Historical shared routes catalog portal (Item 21c). | Web Platform | Future Sprint |
 | **BKL-05** | Redesign and overhaul Search Place functionality (better geocoding UX, instant suggestions, fuzzy matching, clean address hierarchy, and robust error handling). | Search / Geocoding | Future Sprint |
 
+| **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing). | Cache / Map | Future Sprint |
