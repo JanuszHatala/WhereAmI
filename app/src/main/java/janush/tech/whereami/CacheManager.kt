@@ -142,9 +142,8 @@ class CacheManager private constructor(private val context: Context) {
             val added: Int
         ) : PrefetchState()
         data class Completed(
-            val addedCount: Int,
-            val alreadyCachedCount: Int,
-            val total: Int
+            val addedRoutes: Int,
+            val addedBoundaries: Int
         ) : PrefetchState()
         data class Blocked(val reason: String) : PrefetchState()
         data class Error(val message: String) : PrefetchState()
@@ -158,8 +157,9 @@ class CacheManager private constructor(private val context: Context) {
     private val _prefetchState = kotlinx.coroutines.flow.MutableStateFlow<PrefetchState>(PrefetchState.Idle)
     val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
 
-    private val _missingPointsEstimate = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
-    val missingPointsEstimate: StateFlow<Int?> = _missingPointsEstimate.asStateFlow()
+    data class CacheDeficit(val missingRoutes: Int, val missingBoundaries: Int)
+    private val _cacheDeficit = kotlinx.coroutines.flow.MutableStateFlow<CacheDeficit?>(null)
+    val cacheDeficit: StateFlow<CacheDeficit?> = _cacheDeficit.asStateFlow()
 
     private val NOTIF_CHANNEL_PREFETCH = "prefetch_channel"
     private val NOTIF_PREFETCH_ID = 3001
@@ -293,11 +293,11 @@ class CacheManager private constructor(private val context: Context) {
                 }
 
                 if (allUnique15mPoints.isEmpty()) {
-                    _prefetchState.value = PrefetchState.Completed(0, 0, 0)
+                    _prefetchState.value = PrefetchState.Completed(0, 0)
                     return@launch
                 }
 
-                var totalAdded = 0
+                var addedRoutes = 0; var addedBoundaries = 0
                 val totalPointsInTrips = allUnique15mPoints.size
 
                 // ── PASS 1: Macro Corridor Coverage (~50m spacing) ───────────────────
@@ -317,7 +317,7 @@ class CacheManager private constructor(private val context: Context) {
 
                 val pass1Total = pass1Candidates.size
                 var pass1Current = 0
-                _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, totalAdded)
+                _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, addedRoutes)
                 updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                 for (pt in pass1Candidates) {
@@ -334,11 +334,11 @@ class CacheManager private constructor(private val context: Context) {
                     // Skip if now cached by an adjacent query
                     if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
                         locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                        totalAdded++
+                        addedRoutes++
                     }
 
                     pass1Current++
-                    _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, totalAdded)
+                    _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, addedRoutes)
                     updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                     kotlinx.coroutines.delay(1500L)
@@ -352,7 +352,7 @@ class CacheManager private constructor(private val context: Context) {
 
                 val pass2Total = pass2Candidates.size
                 var pass2Current = 0
-                _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, totalAdded)
+                _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, addedRoutes)
                 updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
 
                 for (pt in pass2Candidates) {
@@ -368,11 +368,11 @@ class CacheManager private constructor(private val context: Context) {
 
                     if (!spatialHelper.isCached(pt.latitude, pt.longitude)) {
                         locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                        totalAdded++
+                        addedRoutes++
                     }
 
                     pass2Current++
-                    _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, totalAdded)
+                    _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, addedRoutes)
                     updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
 
                     kotlinx.coroutines.delay(1500L)
@@ -390,7 +390,7 @@ class CacheManager private constructor(private val context: Context) {
 
                 val pass3Total = cities.size
                 var pass3Current = 0
-                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, totalAdded)
+                _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes)
                 updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
 
                 for (city in cities) {
@@ -406,15 +406,15 @@ class CacheManager private constructor(private val context: Context) {
                     val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
                     if (!file.exists()) {
                         BoundaryHelper.getLocalityBoundary(context, cityName = city, countryCode = "pl")
-                        totalAdded++
+                        addedRoutes++
                     }
                     pass3Current++
-                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, totalAdded)
+                    _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes)
                     updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
                 }
 
                 val finalCached = allUnique15mPoints.values.count { pt -> spatialHelper.isCached(pt.latitude, pt.longitude) }
-                _prefetchState.value = PrefetchState.Completed(totalAdded, finalCached, totalPointsInTrips)
+                _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries)
                 dismissNotification()
             } catch (_: kotlinx.coroutines.CancellationException) {
                 dismissNotification()
@@ -511,7 +511,7 @@ class CacheManager private constructor(private val context: Context) {
                     updateNotification("Pass 3: Boundaries", current, total, false)
                 }
 
-                _prefetchState.value = PrefetchState.Completed(added, total - added, total)
+                _prefetchState.value = PrefetchState.Completed(0, added)
                 dismissNotification()
             } catch (e: Exception) {
                 _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
@@ -520,8 +520,8 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 
-    fun calculateMissingPointsEstimate() {
-        if (_prefetchState.value !is PrefetchState.Idle) return
+    fun calculateCacheDeficit() {
+        if (_prefetchState.value !is PrefetchState.Idle && _prefetchState.value !is PrefetchState.Completed) return
         managerScope.launch {
             try {
                 val dbHelper = TripDatabaseHelper(context)
@@ -542,16 +542,34 @@ class CacheManager private constructor(private val context: Context) {
                 }
 
                 // A point is missing if it's NOT explicitly cached.
-                val missingCount = allUnique15mPoints.values.count { pt -> 
+                val missingRoutes = allUnique15mPoints.values.count { pt -> 
                     !spatialHelper.isCached(pt.latitude, pt.longitude) 
                 }
-                _missingPointsEstimate.value = missingCount
+                
+                val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City'", null)
+                var missingBoundaries = 0
+                while (dbCursor.moveToNext()) {
+                    val city = dbCursor.getString(0)
+                    if (city.isNotBlank()) {
+                        val cleanCity = city.trim().lowercase(java.util.Locale.ROOT)
+                        val cleanKey = "${cleanCity}_pl".replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                        val file = java.io.File(context.cacheDir, "boundaries/$cleanKey.json")
+                        if (!file.exists()) {
+                            missingBoundaries++
+                        }
+                    }
+                }
+                dbCursor.close()
+
+                _cacheDeficit.value = CacheDeficit(missingRoutes, missingBoundaries)
             } catch (e: Exception) {
-                _missingPointsEstimate.value = null
+                _cacheDeficit.value = null
             }
         }
     }
 }
+
+
 
 
 
