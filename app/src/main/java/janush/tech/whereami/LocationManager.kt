@@ -918,7 +918,7 @@ class LocationManager private constructor(private val context: Context) {
 
     // ── Place resolution ───────────────────────────────────────────────────────
 
-    fun resolveMultiLanguageData(lat: Double, lng: Double, bearing: Float? = null, speedKmh: Float? = null): MultiLanguagePlaceInfo {
+    fun resolveMultiLanguageData(lat: Double, lng: Double, bearing: Float? = null, speedKmh: Float? = null, forceCache: Boolean = false): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         val cached = spatialPlaceCache[gridKey]
@@ -973,7 +973,7 @@ class LocationManager private constructor(private val context: Context) {
         if (nativePlace.city != "Unknown City") saveLastGood(prefs, "native", lat, lng, nativePlace)
 
         val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
-        if (enPlace.city != "Unknown City" || plPlace.city != "Unknown City") {
+        if (enPlace.city != "Unknown City" || plPlace.city != "Unknown City" || forceCache) {
             spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
             try {
                 SpatialCacheHelper.getInstance(context).put(lat, lng, result)
@@ -1248,5 +1248,6 @@ class LocationManager private constructor(private val context: Context) {
         return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, countryName, cc)
     }
 }
+
 
 
