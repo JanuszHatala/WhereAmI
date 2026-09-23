@@ -1227,7 +1227,7 @@ class LocationManager private constructor(private val context: Context) {
         return try {
             @Suppress("DEPRECATION")
             val addresses = geocoder.getFromLocation(lat, lng, 1)
-            if (!addresses.isNullOrEmpty()) addresses[0] else null
+            if (!addresses.isNullOrEmpty()) addresses[0] else Address(locale)
         } catch (_: IOException) {
             null
         } catch (_: IllegalArgumentException) {
@@ -1236,7 +1236,7 @@ class LocationManager private constructor(private val context: Context) {
     }
 
     private fun Address.toPlaceInfo(countryCode: String): PlaceInfo {
-        val cityName = locality ?: subLocality ?: subAdminArea ?: "Unknown City"
+        val cityName = locality ?: subLocality ?: subAdminArea ?: "--"
         val thoroughfare = this.thoroughfare
         val houseNum = this.subThoroughfare
         val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum)
@@ -1248,3 +1248,5 @@ class LocationManager private constructor(private val context: Context) {
         return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, countryName, cc)
     }
 }
+
+
