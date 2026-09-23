@@ -333,21 +333,10 @@ class CacheManager private constructor(private val context: Context) {
 
                     // Skip if now cached by an adjacent query
                     if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
-                        val result = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                        if (result.pl.city == "Unknown City") {
-                            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-                            val actNw = cm.activeNetwork
-                            if (actNw != null) {
-                                val caps = cm.getNetworkCapabilities(actNw)
-                                if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                                    try {
-                                        spatialHelper.put(pt.latitude, pt.longitude, result)
-                                    } catch (_: Exception) {}
-                                }
-                            }
-                        }
-                        addedRoutes++
-                    }
+                                  locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                                  addedRoutes++
+                                  kotlinx.coroutines.delay(500L)
+                              }
 
                     pass1Current++
                     _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, addedRoutes)
@@ -379,23 +368,10 @@ class CacheManager private constructor(private val context: Context) {
                     }
 
                     if (!spatialHelper.isCached(pt.latitude, pt.longitude)) {
-                        val result = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude)
-                        
-                        // If we are online but the place is truly unknown, force cache it so we stop looping forever.
-                        if (result.pl.city == "Unknown City") {
-                            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-                            val actNw = cm.activeNetwork
-                            if (actNw != null) {
-                                val caps = cm.getNetworkCapabilities(actNw)
-                                if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                                    try {
-                                        spatialHelper.put(pt.latitude, pt.longitude, result)
-                                    } catch (_: Exception) {}
-                                }
-                            }
-                        }
-                        addedRoutes++
-                    }
+                          locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                          addedRoutes++
+                          kotlinx.coroutines.delay(500L)
+                      }
 
                     pass2Current++
                     _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, addedRoutes)
@@ -594,7 +570,6 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 }
-
 
 
 
