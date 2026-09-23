@@ -310,7 +310,7 @@ fun CacheManagerDialog(
                                 ) {
                                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Pre-fetch Missing Route Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text("Pre-fetch All Missing Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
 
                                     val estimateStr = when (missingPointsEstimate) {
@@ -616,6 +616,7 @@ fun CacheManagerDialog(
         )
     }
 }
+
 
 
 
