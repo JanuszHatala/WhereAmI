@@ -158,6 +158,9 @@ class CacheManager private constructor(private val context: Context) {
     private val _prefetchState = kotlinx.coroutines.flow.MutableStateFlow<PrefetchState>(PrefetchState.Idle)
     val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
 
+    private val _missingPointsEstimate = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
+    val missingPointsEstimate: StateFlow<Int?> = _missingPointsEstimate.asStateFlow()
+
     private val NOTIF_CHANNEL_PREFETCH = "prefetch_channel"
     private val NOTIF_PREFETCH_ID = 3001
 
@@ -411,6 +414,38 @@ class CacheManager private constructor(private val context: Context) {
         prefetchJob = null
         _prefetchState.value = PrefetchState.Idle
         dismissNotification()
+    }
+
+    fun calculateMissingPointsEstimate() {
+        if (_prefetchState.value !is PrefetchState.Idle) return
+        managerScope.launch {
+            try {
+                val dbHelper = TripDatabaseHelper(context)
+                val allTrips = dbHelper.getAllTrips()
+                val spatialHelper = SpatialCacheHelper.getInstance(context)
+
+                // Ensure keys are migrated first
+                spatialHelper.migrateLegacyKeys()
+
+                val allUnique15mPoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
+                for (trip in allTrips) {
+                    for (pt in trip.points) {
+                        val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                        if (!allUnique15mPoints.containsKey(key)) {
+                            allUnique15mPoints[key] = org.osmdroid.util.GeoPoint(pt.latitude, pt.longitude)
+                        }
+                    }
+                }
+
+                // A point is missing if it's NOT explicitly cached.
+                val missingCount = allUnique15mPoints.values.count { pt -> 
+                    !spatialHelper.isCached(pt.latitude, pt.longitude) 
+                }
+                _missingPointsEstimate.value = missingCount
+            } catch (e: Exception) {
+                _missingPointsEstimate.value = null
+            }
+        }
     }
 }
 
