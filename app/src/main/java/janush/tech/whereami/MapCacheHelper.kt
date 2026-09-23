@@ -92,56 +92,72 @@ object MapCacheHelper {
 
                 _downloadState.value = CacheDownloadState.Downloading(0, total, 0)
 
-                var count = 0
-                var skippedCount = 0
-                val userAgent = Configuration.getInstance().userAgentValue.ifBlank { "WhereAmI/1.3.1 (Android)" }
+                                val userAgent = Configuration.getInstance().userAgentValue.ifBlank { "WhereAmI/1.3.1 (Android)" }
 
                 val folderName = if (isFreemapOutdoor) "FreemapOutdoor" else "OpenStreetMapMapnik"
                 val targetFolder = File(tileDir, "tiles/$folderName")
                 val fallbackFolder = File(tileDir, folderName)
 
-                for (tile in tilesToDownload) {
-                    // Cooperative cancellation — check on every tile so Cancel is responsive
-                    if (!isActive) {
-                        _downloadState.value = CacheDownloadState.Idle
-                        return@launch
-                    }
+                val channel = kotlinx.coroutines.channels.Channel<TileCoord>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                tilesToDownload.forEach { channel.trySend(it) }
+                channel.close()
 
-                    val file1 = File(targetFolder, "${tile.z}/${tile.x}/${tile.y}.png.tile")
-                    val file2 = File(fallbackFolder, "${tile.z}/${tile.x}/${tile.y}.png.tile")
+                val count = java.util.concurrent.atomic.AtomicInteger(0)
+                val skippedCount = java.util.concurrent.atomic.AtomicInteger(0)
+                val concurrency = 6 // MAP-R08: Parallel downloading with reasonable bounds
 
-                    if (!file1.exists() && !file2.exists()) {
-                        val urlStr = if (isFreemapOutdoor) {
-                            "https://outdoor.tiles.freemap.sk/${tile.z}/${tile.x}/${tile.y}@2x"
-                        } else {
-                            "https://tile.openstreetmap.org/${tile.z}/${tile.x}/${tile.y}.png"
-                        }
-                        try {
-                            val conn = URL(urlStr).openConnection() as HttpURLConnection
-                            conn.setRequestProperty("User-Agent", userAgent)
-                            conn.connectTimeout = 3000
-                            conn.readTimeout = 4000
-                            if (conn.responseCode in 200..299) {
-                                val bytes = conn.inputStream.use { it.readBytes() }
-                                file1.parentFile?.mkdirs()
-                                file1.outputStream().use { it.write(bytes) }
+                val workers = (1..concurrency).map {
+                    launch {
+                        for (tile in channel) {
+                            if (!isActive) break
 
-                                file2.parentFile?.mkdirs()
-                                file2.outputStream().use { it.write(bytes) }
+                            val file1 = File(targetFolder, "${tile.z}/${tile.x}/${tile.y}.png.tile")
+                            val file2 = File(fallbackFolder, "${tile.z}/${tile.x}/${tile.y}.png.tile")
+
+                            if (!file1.exists() && !file2.exists()) {
+                                val urlStr = if (isFreemapOutdoor) {
+                                    "https://outdoor.tiles.freemap.sk/${tile.z}/${tile.x}/${tile.y}@2x"
+                                } else {
+                                    "https://tile.openstreetmap.org/${tile.z}/${tile.x}/${tile.y}.png"
+                                }
+                                try {
+                                    val conn = URL(urlStr).openConnection() as HttpURLConnection
+                                    conn.setRequestProperty("User-Agent", userAgent)
+                                    conn.connectTimeout = 3000
+                                    conn.readTimeout = 4000
+                                    if (conn.responseCode in 200..299) {
+                                        val bytes = conn.inputStream.use { it.readBytes() }
+                                        file1.parentFile?.mkdirs()
+                                        file1.outputStream().use { it.write(bytes) }
+
+                                        file2.parentFile?.mkdirs()
+                                        file2.outputStream().use { it.write(bytes) }
+                                    }
+                                } catch (_: Exception) {
+                                }
+                            } else {
+                                skippedCount.incrementAndGet()
                             }
-                        } catch (_: Exception) {
-                        }
-                    } else {
-                        skippedCount++
-                    }
 
-                    count++
-                    val pct = ((count * 100) / total)
-                    _downloadState.value = CacheDownloadState.Downloading(count, total, pct)
+                            val current = count.incrementAndGet()
+                            val pct = ((current * 100) / total)
+                            _downloadState.value = CacheDownloadState.Downloading(current, total, pct)
+                        }
+                    }
+                }
+                
+                kotlinx.coroutines.joinAll(*workers.toTypedArray())
+
+                if (!isActive) {
+                    _downloadState.value = CacheDownloadState.Idle
+                    return@launch
                 }
 
+                val finalSkipped = skippedCount.get()
+                val finalCount = count.get()
+
                 // If every tile was already on disk, report "already cached"
-                if (skippedCount == total) {
+                if (finalSkipped == total) {
                     _downloadState.value = CacheDownloadState.AlreadyCached(total)
                     return@launch
                 }
@@ -149,7 +165,7 @@ object MapCacheHelper {
                 val finalSize = getDirectorySize(tileDir)
                 val deltaMb = ((finalSize - initialSize).coerceAtLeast(0L)).toDouble() / (1024.0 * 1024.0)
 
-                _downloadState.value = CacheDownloadState.Completed(count, deltaMb)
+                _downloadState.value = CacheDownloadState.Completed(finalCount, deltaMb)
             } catch (e: Exception) {
                 if (e is CancellationException) {
                     _downloadState.value = CacheDownloadState.Idle
@@ -179,3 +195,4 @@ object MapCacheHelper {
         }
     }
 }
+
