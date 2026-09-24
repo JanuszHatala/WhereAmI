@@ -382,15 +382,23 @@ class CacheManager private constructor(private val context: Context) {
 
                 //  PASS 3: Administrative Boundaries 
                 BoundaryHelper.clearMemoryCache()
+                val distinctCities = mutableSetOf<String>()
+                for (trip in allTrips) {
+                    for (p in trip.placesVisited) {
+                        val c = p.placeName.trim()
+                        if (c.isNotBlank() && c != "Unknown City" && c != "--") {
+                            distinctCities.add(c)
+                        }
+                    }
+                }
                 val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
-                val cities = mutableListOf<String>()
                 while (dbCursor.moveToNext()) {
-                    val c = dbCursor.getString(0)
-                    if (c.isNotBlank()) cities.add(c)
+                    val c = dbCursor.getString(0)?.trim()
+                    if (!c.isNullOrBlank()) distinctCities.add(c)
                 }
                 dbCursor.close()
 
-                val missingCities = cities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
+                val missingCities = distinctCities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
                 val pass3Total = missingCities.size
                 var pass3Current = 0
                 _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
@@ -469,17 +477,27 @@ class CacheManager private constructor(private val context: Context) {
         prefetchJob = managerScope.launch(Dispatchers.IO) {
             try {
                 BoundaryHelper.clearMemoryCache()
+                val dbHelper = TripDatabaseHelper(context)
+                val allTrips = dbHelper.getAllTrips()
+                val distinctCities = mutableSetOf<String>()
+                for (trip in allTrips) {
+                    for (p in trip.placesVisited) {
+                        val c = p.placeName.trim()
+                        if (c.isNotBlank() && c != "Unknown City" && c != "--") {
+                            distinctCities.add(c)
+                        }
+                    }
+                }
                 val spatialHelper = SpatialCacheHelper.getInstance(context)
                 val db = spatialHelper.readableDatabase
                 val cursor = db.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
-                val cities = mutableListOf<String>()
                 while (cursor.moveToNext()) {
-                    val c = cursor.getString(0)
-                    if (c.isNotBlank()) cities.add(c)
+                    val c = cursor.getString(0)?.trim()
+                    if (!c.isNullOrBlank()) distinctCities.add(c)
                 }
                 cursor.close()
 
-                val missingCities = cities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
+                val missingCities = distinctCities.filter { !BoundaryHelper.hasBoundary(context, it, "pl") }
                 val total = missingCities.size
                 var current = 0
                 var added = 0
@@ -519,6 +537,8 @@ class CacheManager private constructor(private val context: Context) {
 
     fun calculateCacheDeficit() {
         if (_prefetchState.value !is PrefetchState.Idle && _prefetchState.value !is PrefetchState.Completed) return
+        // Immediately transition to Idle so the UI shows the Pre-fetch button and deficit counter
+        _prefetchState.value = PrefetchState.Idle
         managerScope.launch {
             try {
                 val dbHelper = TripDatabaseHelper(context)
@@ -543,15 +563,25 @@ class CacheManager private constructor(private val context: Context) {
                     !spatialHelper.isCached(pt.latitude, pt.longitude) 
                 }
                 
+                val distinctCities = mutableSetOf<String>()
+                for (trip in allTrips) {
+                    for (p in trip.placesVisited) {
+                        val c = p.placeName.trim()
+                        if (c.isNotBlank() && c != "Unknown City" && c != "--") {
+                            distinctCities.add(c)
+                        }
+                    }
+                }
                 val dbCursor = spatialHelper.readableDatabase.rawQuery("SELECT DISTINCT city FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--'", null)
-                var missingBoundaries = 0
                 while (dbCursor.moveToNext()) {
-                    val city = dbCursor.getString(0)
-                    if (city.isNotBlank() && !BoundaryHelper.hasBoundary(context, city, "pl")) {
-                        missingBoundaries++
+                    val city = dbCursor.getString(0)?.trim()
+                    if (!city.isNullOrBlank()) {
+                        distinctCities.add(city)
                     }
                 }
                 dbCursor.close()
+
+                val missingBoundaries = distinctCities.count { !BoundaryHelper.hasBoundary(context, it, "pl") }
 
                 _cacheDeficit.value = CacheDeficit(missingRoutes, missingBoundaries)
             } catch (e: Exception) {
