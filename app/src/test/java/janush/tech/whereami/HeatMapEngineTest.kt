@@ -45,14 +45,17 @@ class HeatMapEngineTest {
 
     @Test
     fun testTierDetermination() {
-        // High max visits scenario (e.g. 10 visits)
-        assertEquals(HeatMapTier.TIER_1_COLD, HeatMapEngine.determineTier(visitCount = 1, maxVisits = 10))
-        assertEquals(HeatMapTier.TIER_2_WARM, HeatMapEngine.determineTier(visitCount = 2, maxVisits = 10))
-        assertEquals(HeatMapTier.TIER_3_HOT, HeatMapEngine.determineTier(visitCount = 5, maxVisits = 10))
-        assertEquals(HeatMapTier.TIER_4_PEAK, HeatMapEngine.determineTier(visitCount = 8, maxVisits = 10))
+        // High max visits scenario (e.g. 15 visits)
+        assertEquals(HeatMapTier.TIER_1_BLUE, HeatMapEngine.determineTier(visitCount = 1, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_2_CYAN, HeatMapEngine.determineTier(visitCount = 2, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_3_GREEN, HeatMapEngine.determineTier(visitCount = 3, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_4_YELLOW, HeatMapEngine.determineTier(visitCount = 5, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_5_ORANGE, HeatMapEngine.determineTier(visitCount = 8, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_6_RED, HeatMapEngine.determineTier(visitCount = 11, maxVisits = 15))
+        assertEquals(HeatMapTier.TIER_7_MAGENTA, HeatMapEngine.determineTier(visitCount = 15, maxVisits = 15))
 
         // Single visit scenario
-        assertEquals(HeatMapTier.TIER_1_COLD, HeatMapEngine.determineTier(visitCount = 1, maxVisits = 1))
+        assertEquals(HeatMapTier.TIER_1_BLUE, HeatMapEngine.determineTier(visitCount = 1, maxVisits = 1))
     }
 
     @Test
@@ -73,12 +76,11 @@ class HeatMapEngineTest {
         val result = HeatMapEngine.processTracks(listOf(track1, track2), epsilonMeters = 5.0)
 
         assertEquals(2, result.maxVisits)
-        // Check that we have both peak (Tier 4 or Warm/Peak depending on maxVisits=2) and cold polylines
-        val coldPaths = result.tierPolylines[HeatMapTier.TIER_1_COLD] ?: emptyList()
-        val peakPaths = result.tierPolylines[HeatMapTier.TIER_4_PEAK] ?: emptyList()
+        val coldPaths = result.tierPolylines[HeatMapTier.TIER_1_BLUE] ?: emptyList()
+        val redPaths = result.tierPolylines[HeatMapTier.TIER_6_RED] ?: emptyList()
 
         assertTrue("Should have cold paths for once-visited branches", coldPaths.isNotEmpty())
-        assertTrue("Should have higher-tier paths for shared corridor A->B", peakPaths.isNotEmpty())
+        assertTrue("Should have higher-tier paths for shared corridor A->B", redPaths.isNotEmpty())
     }
 
     @Test
@@ -100,10 +102,66 @@ class HeatMapEngineTest {
 
         // The corridor buffer (~32-35m) must group them together so both tracks see 2 visits
         assertEquals(2, result.maxVisits)
-        val peakPaths = result.tierPolylines[HeatMapTier.TIER_4_PEAK] ?: emptyList()
-        val coldPaths = result.tierPolylines[HeatMapTier.TIER_1_COLD] ?: emptyList()
+        val redPaths = result.tierPolylines[HeatMapTier.TIER_6_RED] ?: emptyList()
+        val bluePaths = result.tierPolylines[HeatMapTier.TIER_1_BLUE] ?: emptyList()
 
-        assertTrue("Both parallel tracks should be grouped as peak tier visits in the corridor", peakPaths.isNotEmpty())
-        assertTrue("No segments should remain cold since both tracks share the 15m corridor", coldPaths.isEmpty())
+        assertTrue("Both parallel tracks should be grouped as peak tier visits in the corridor", redPaths.isNotEmpty())
+        assertTrue("No segments should remain cold since both tracks share the 15m corridor", bluePaths.isEmpty())
+    }
+
+    @Test
+    fun testConsolidateCorridorsEliminatesDuplicateOverlappingPolylines() {
+        val track1 = listOf(
+            GeoPoint(50.000, 19.000),
+            GeoPoint(50.002, 19.000),
+            GeoPoint(50.005, 19.000)
+        )
+        val track2 = listOf(
+            GeoPoint(50.000, 19.0001),
+            GeoPoint(50.002, 19.0001),
+            GeoPoint(50.005, 19.0001)
+        )
+
+        val consolidated = HeatMapEngine.processTracks(
+            listOf(track1, track2),
+            HeatMapOptions(consolidateCorridors = true, epsilonMeters = 5.0)
+        )
+        val raw = HeatMapEngine.processTracks(
+            listOf(track1, track2),
+            HeatMapOptions(consolidateCorridors = false, epsilonMeters = 5.0)
+        )
+
+        val consolidatedSegments = consolidated.tierPolylines.values.flatten()
+        val rawSegments = raw.tierPolylines.values.flatten()
+
+        // With consolidation ON, the duplicate second track is merged into the single corridor backbone
+        assertEquals(1, consolidatedSegments.size)
+        // With consolidation OFF, both tracks are drawn as separate lines
+        assertEquals(2, rawSegments.size)
+    }
+
+    @Test
+    fun testMinVisitsFilterSuppressesSingleVisits() {
+        val ptA = GeoPoint(50.0, 19.0)
+        val ptB = GeoPoint(50.005, 19.0)
+        val ptC = GeoPoint(50.010, 19.0)
+        val ptD = GeoPoint(50.005, 19.01)
+
+        val track1 = listOf(ptA, ptB, ptC)
+        val track2 = listOf(ptA, ptB, ptD)
+
+        // Filter with minVisits = 2 (only frequent routes)
+        val filtered = HeatMapEngine.processTracks(
+            listOf(track1, track2),
+            HeatMapOptions(minVisits = 2, epsilonMeters = 5.0)
+        )
+
+        val bluePaths = filtered.tierPolylines[HeatMapTier.TIER_1_BLUE] ?: emptyList()
+        val redPaths = filtered.tierPolylines[HeatMapTier.TIER_6_RED] ?: emptyList()
+
+        // Single-visit branches (B->C and B->D) should be filtered out
+        assertTrue("Single-visit branches should be filtered out", bluePaths.isEmpty())
+        // Shared 2-visit corridor (A->B) should remain visible
+        assertTrue("Frequent corridor should remain visible", redPaths.isNotEmpty())
     }
 }
