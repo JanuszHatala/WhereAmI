@@ -743,7 +743,12 @@ class LocationManager private constructor(private val context: Context) {
 
                         // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
                         ioScope.launch {
-                            val rawMultiData = resolveMultiLanguageData(location.latitude, location.longitude)
+                            val rawMultiData = resolveMultiLanguageData(
+                                lat = location.latitude,
+                                lng = location.longitude,
+                                bearing = currentBearing,
+                                speedKmh = speedKmh
+                            )
                             val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
                             val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, currentBearing)
 
@@ -922,14 +927,38 @@ class LocationManager private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         val cached = spatialPlaceCache[gridKey]
+        val isDrivingFast = speedKmh != null && speedKmh > 15f && bearing != null
+
         if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
-            return cached.data
+            if (!isDrivingFast || RoadNameNormalizer.isMajorRoad(cached.data.pl.street)) {
+                return cached.data
+            }
         }
 
         // Check persistent SQLite spatial cache (indefinite TTL for offline resilience)
         try {
             val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
+                // If we are actively driving (>15 km/h) and the cached street is a minor/side street (e.g. saved from an underpass or point-geocoding),
+                // query OSRM with compass heading to snap to the actual driven corridor geometry.
+                if (isDrivingFast && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
+                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, bearing)
+                    if (osrmStreet != null) {
+                        val canonical = RoadNameNormalizer.normalize(osrmStreet, diskCached.pl.roadRef, null)
+                        if (!canonical.isNullOrBlank() && canonical != diskCached.pl.street) {
+                            val corrected = diskCached.copy(
+                                en = diskCached.en.copy(street = canonical),
+                                pl = diskCached.pl.copy(street = canonical),
+                                native = diskCached.native.copy(street = canonical)
+                            )
+                            spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, corrected)
+                            try {
+                                SpatialCacheHelper.getInstance(context).put(lat, lng, corrected)
+                            } catch (_: Exception) {}
+                            return corrected
+                        }
+                    }
+                }
                 spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                 return diskCached
             }
