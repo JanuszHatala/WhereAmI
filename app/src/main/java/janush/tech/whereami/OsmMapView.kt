@@ -1111,7 +1111,7 @@ fun OsmMapView(
                 shadowElevation = 6.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 110.dp)
+                    .padding(bottom = if (showHeatMap) 150.dp else 105.dp)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -1136,7 +1136,6 @@ fun OsmMapView(
 
         // Floating Heat Map Controls ("Fit All to Map" and "Close Heat Map")
         if (showHeatMap) {
-            val hasRecenter = !isFollowing && destinationPoint == null && selectedSavedPlace == null
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = ComposeColor(0xF00F172A),
@@ -1144,26 +1143,29 @@ fun OsmMapView(
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (hasRecenter) 165.dp else 105.dp)
+                    .padding(bottom = 90.dp)
+                    .padding(horizontal = 8.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Whatshot,
                             contentDescription = null,
                             tint = ComposeColor(0xFFF97316),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            text = heatMapTitle,
+                            text = if (heatMapFilterActive) "Heat Map*" else "Heat Map",
                             color = ComposeColor.White,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
 
@@ -1176,7 +1178,7 @@ fun OsmMapView(
                             modifier = Modifier.height(28.dp)
                         ) {
                             Box(
-                                modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                                modifier = Modifier.fillMaxHeight().padding(horizontal = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Row(
@@ -1189,12 +1191,14 @@ fun OsmMapView(
                                         tint = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
                                         modifier = Modifier.size(13.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
                                     Text(
                                         text = "Filter",
                                         color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         style = androidx.compose.ui.text.TextStyle(
                                             platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                             lineHeight = 11.sp
@@ -1235,7 +1239,7 @@ fun OsmMapView(
                         modifier = Modifier.height(28.dp)
                     ) {
                         Box(
-                            modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                            modifier = Modifier.fillMaxHeight().padding(horizontal = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
@@ -1248,12 +1252,14 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFF38BDF8),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "Fit All",
                                     color = ComposeColor(0xFF38BDF8),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     style = androidx.compose.ui.text.TextStyle(
                                         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                         lineHeight = 11.sp
@@ -1271,7 +1277,7 @@ fun OsmMapView(
                         modifier = Modifier.height(28.dp)
                     ) {
                         Box(
-                            modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                            modifier = Modifier.fillMaxHeight().padding(horizontal = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
@@ -1284,18 +1290,143 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFFFCA5A5),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "Close",
                                     color = ComposeColor(0xFFFCA5A5),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     style = androidx.compose.ui.text.TextStyle(
                                         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                         lineHeight = 11.sp
                                     )
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // ── Floating Left-Side Thermal Color Legend ─────────────────────────
+            var showLegendDetail by remember { mutableStateOf(false) }
+
+            Surface(
+                onClick = { showLegendDetail = !showLegendDetail },
+                shape = RoundedCornerShape(12.dp),
+                color = ComposeColor(0xF00F172A),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ComposeColor(0x80F97316)),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp)
+            ) {
+                if (!showLegendDetail) {
+                    // Compact vertical thermometer bar
+                    Column(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Hot",
+                            color = ComposeColor(0xFFD946EF),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(7.dp)
+                                .height(85.dp)
+                                .clip(RoundedCornerShape(3.5.dp))
+                                .background(
+                                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                                        listOf(
+                                            ComposeColor(0xFFD946EF), // 7 Magenta
+                                            ComposeColor(0xFFEF4444), // 6 Red
+                                            ComposeColor(0xFFF97316), // 5 Orange
+                                            ComposeColor(0xFFEAB308), // 4 Yellow
+                                            ComposeColor(0xFF10B981), // 3 Green
+                                            ComposeColor(0xFF06B6D4), // 2 Cyan
+                                            ComposeColor(0xFF2563EB)  // 1 Blue
+                                        )
+                                    )
+                                )
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "1x",
+                            color = ComposeColor(0xFF60A5FA),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                } else {
+                    // Detailed tier breakdown popup on click
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.width(135.dp)
+                        ) {
+                            Text(
+                                text = "🔥 Thermal Scale",
+                                color = ComposeColor.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Legend",
+                                tint = ComposeColor.LightGray,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        val legendTiers = listOf(
+                            ComposeColor(0xFFD946EF) to "20+ Hotspot",
+                            ComposeColor(0xFFEF4444) to "13-19 passes",
+                            ComposeColor(0xFFF97316) to "8-12 passes",
+                            ComposeColor(0xFFEAB308) to "5-7 passes",
+                            ComposeColor(0xFF10B981) to "3-4 passes",
+                            ComposeColor(0xFF06B6D4) to "2 passes",
+                            ComposeColor(0xFF2563EB) to "1 pass (Cold)"
+                        )
+                        legendTiers.forEach { (color, label) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 16.dp, height = 5.dp)
+                                        .clip(RoundedCornerShape(2.5.dp))
+                                        .background(color)
+                                )
+                                Text(
+                                    text = label,
+                                    color = ComposeColor(0xFFE2E8F0),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        if (onOpenHeatMapSettings != null) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "⚙️ Filter / Options",
+                                color = ComposeColor(0xFFF97316),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
