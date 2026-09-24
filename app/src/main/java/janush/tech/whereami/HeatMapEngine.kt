@@ -81,13 +81,46 @@ object HeatMapEngine {
         return num / lineLen
     }
 
+    // Grid resolution: ~16m per cell (111139m / 7000 ~= 15.88m)
+    private const val LAT_CELL_FACTOR = 7000.0
+
+    fun cellCoords(lat: Double, lon: Double): Pair<Int, Int> {
+        val latCell = (lat * LAT_CELL_FACTOR).toInt()
+        val cosLat = cos(Math.toRadians(lat)).coerceAtLeast(0.1)
+        val lonCell = (lon * LAT_CELL_FACTOR * cosLat).toInt()
+        return Pair(latCell, lonCell)
+    }
+
     /**
-     * Computes a 64-bit spatial grid hash cell (~35m resolution).
+     * Computes a 64-bit spatial grid hash cell.
      */
     fun cellKey(lat: Double, lon: Double): Long {
-        val latCell = (lat * 3000.0).toLong()
-        val lonCell = (lon * 3000.0).toLong()
-        return (latCell shl 32) or (lonCell and 0xFFFFFFFFL)
+        val (latCell, lonCell) = cellCoords(lat, lon)
+        return cellKey(latCell, lonCell)
+    }
+
+    fun cellKey(latCell: Int, lonCell: Int): Long {
+        return (latCell.toLong() shl 32) or (lonCell.toLong() and 0xFFFFFFFFL)
+    }
+
+    /**
+     * Queries unique track visits in a spatial corridor buffer around (lat, lon).
+     * Using a circular kernel with dLat^2 + dLon^2 <= 5 (~32-35m radius),
+     * parallel tracks in adjacent lanes or GPS fixes with lateral drift (~10-25m)
+     * are correctly aggregated into the same corridor.
+     */
+    fun queryCorridorVisits(lat: Double, lon: Double, cellVisits: Map<Long, Set<Int>>): Int {
+        val (cLat, cLon) = cellCoords(lat, lon)
+        val uniqueTracks = mutableSetOf<Int>()
+        for (dLat in -2..2) {
+            for (dLon in -2..2) {
+                if (dLat * dLat + dLon * dLon <= 5) {
+                    val key = cellKey(cLat + dLat, cLon + dLon)
+                    cellVisits[key]?.let { uniqueTracks.addAll(it) }
+                }
+            }
+        }
+        return uniqueTracks.size.coerceAtLeast(1)
     }
 
     /**
@@ -131,7 +164,7 @@ object HeatMapEngine {
     /**
      * Processes all tracks:
      * 1. Decimates each track using RDP (~10m).
-     * 2. Accumulates distinct trip visits per ~35m spatial cell along segments.
+     * 2. Accumulates distinct trip visits per spatial corridor (~32-35m radius) along segments.
      * 3. Classifies each segment into one of 4 thermal tiers.
      * 4. Batches adjacent segments of the same tier into continuous polyline paths.
      */
@@ -158,7 +191,8 @@ object HeatMapEngine {
                 val p1 = track[i]
                 val p2 = track[i + 1]
                 val distMeters = approximateDistanceMeters(p1, p2)
-                val stepCount = (distMeters / 25.0).toInt().coerceIn(1, 100)
+                // Sample every ~12 meters so no cell along the segment is missed
+                val stepCount = (distMeters / 12.0).toInt().coerceIn(1, 200)
 
                 for (s in 0..stepCount) {
                     val t = s.toDouble() / stepCount
@@ -170,7 +204,18 @@ object HeatMapEngine {
             }
         }
 
-        val maxVisits = cellVisits.values.maxOfOrNull { it.size } ?: 1
+        // Determine true maximum corridor visit count across all track segments
+        var maxVisits = 1
+        simplifiedTracks.forEach { track ->
+            for (i in 0 until track.size - 1) {
+                val midLat = (track[i].latitude + track[i + 1].latitude) / 2.0
+                val midLon = (track[i].longitude + track[i + 1].longitude) / 2.0
+                val visits = queryCorridorVisits(midLat, midLon, cellVisits)
+                if (visits > maxVisits) {
+                    maxVisits = visits
+                }
+            }
+        }
 
         // 3. Segment tier assignment and adjacent batching
         val tierPolylines = mutableMapOf<HeatMapTier, MutableList<List<GeoPoint>>>(
@@ -191,7 +236,7 @@ object HeatMapEngine {
                 val p2 = track[i + 1]
                 val midLat = (p1.latitude + p2.latitude) / 2.0
                 val midLon = (p1.longitude + p2.longitude) / 2.0
-                val visits = cellVisits[cellKey(midLat, midLon)]?.size ?: 1
+                val visits = queryCorridorVisits(midLat, midLon, cellVisits)
                 val segmentTier = determineTier(visits, maxVisits)
 
                 if (currentTier == null) {
