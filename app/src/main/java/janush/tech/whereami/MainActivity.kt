@@ -216,6 +216,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     val localityCardStyle by viewModel.localityCardStyle.collectAsState()
     val orientationMode by viewModel.orientationMode.collectAsState()
     val showHeatMap by viewModel.showHeatMap.collectAsState()
+    val heatMapFilterState by viewModel.heatMapFilterState.collectAsState()
+    var showHeatMapSettingsDialog by remember { mutableStateOf(false) }
 
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
@@ -289,6 +291,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         showDestinationDetailsCard = false
         showActiveTripRouteDialog = false
         showLiveShareDialog = false
+        showHeatMapSettingsDialog = false
         activeLocationShareTarget = null
         viewModel.dismissCacheManager()
     }
@@ -353,7 +356,91 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
-    val heatMapTracks = remember(savedTrips) { savedTrips.map { it.points } }
+
+    // Calendar-accurate timestamp boundaries for local time filters
+    val (startOfTodayMs, startOfWeekMs, startOfMonthMs, startOfYearMs) = remember {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val todayMs = cal.timeInMillis
+
+        val weekCal = Calendar.getInstance().apply {
+            timeInMillis = todayMs
+            set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+        }
+        val weekMs = weekCal.timeInMillis
+
+        val monthCal = Calendar.getInstance().apply {
+            timeInMillis = todayMs
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        val monthMs = monthCal.timeInMillis
+
+        val yearCal = Calendar.getInstance().apply {
+            timeInMillis = todayMs
+            set(Calendar.DAY_OF_YEAR, 1)
+        }
+        val yearMs = yearCal.timeInMillis
+
+        listOf(todayMs, weekMs, monthMs, yearMs)
+    }
+
+    val heatMapTracks = remember(savedTrips, activeTrip, heatMapFilterState, startOfTodayMs, startOfWeekMs, startOfMonthMs, startOfYearMs) {
+        val tracks = mutableListOf<List<GeoPoint>>()
+        val filtered = savedTrips.filter { trip ->
+            val matchesProfile = heatMapFilterState.activityProfile == null || trip.activityProfile == heatMapFilterState.activityProfile
+            val matchesDate = when (heatMapFilterState.datePeriod) {
+                "TODAY" -> trip.startTime >= startOfTodayMs
+                "WEEK" -> trip.startTime >= startOfWeekMs
+                "MONTH" -> trip.startTime >= startOfMonthMs
+                "YEAR" -> trip.startTime >= startOfYearMs
+                else -> true
+            }
+            matchesProfile && matchesDate
+        }
+        filtered.forEach { tracks.add(it.points) }
+
+        val currentActiveTrip = activeTrip
+        if (heatMapFilterState.includeActiveTrip && currentActiveTrip != null && currentActiveTrip.points.isNotEmpty()) {
+            val matchesProfile = heatMapFilterState.activityProfile == null || currentActiveTrip.activityProfile == heatMapFilterState.activityProfile
+            val matchesDate = when (heatMapFilterState.datePeriod) {
+                "TODAY" -> currentActiveTrip.startTime >= startOfTodayMs
+                "WEEK" -> currentActiveTrip.startTime >= startOfWeekMs
+                "MONTH" -> currentActiveTrip.startTime >= startOfMonthMs
+                "YEAR" -> currentActiveTrip.startTime >= startOfYearMs
+                else -> true
+            }
+            if (matchesProfile && matchesDate) {
+                tracks.add(currentActiveTrip.points)
+            }
+        }
+        tracks
+    }
+
+    val heatMapTitle = remember(heatMapFilterState) {
+        val parts = mutableListOf<String>()
+        if (heatMapFilterState.datePeriod != "ALL") {
+            val p = when (heatMapFilterState.datePeriod) {
+                "TODAY" -> "Today"
+                "WEEK" -> "This Wk"
+                "MONTH" -> "This Mo"
+                "YEAR" -> "This Yr"
+                else -> heatMapFilterState.datePeriod
+            }
+            parts.add(p)
+        }
+        val actProfile = heatMapFilterState.activityProfile
+        if (actProfile != null) {
+            parts.add(actProfile.displayName)
+        }
+        if (heatMapFilterState.minVisits > 1) {
+            parts.add("${heatMapFilterState.minVisits}+")
+        }
+        if (parts.isEmpty()) "Heat Map" else "Heat Map (${parts.joinToString(", ")})"
+    }
 
     val measuredOpticalOffsetX = remember(isLandscape, density) {
         if (isLandscape) {
@@ -408,6 +495,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             heatMapTracks = heatMapTracks,
             showHeatMap = showHeatMap,
             onToggleHeatMap = { viewModel.toggleShowHeatMap() },
+            onOpenHeatMapSettings = { showHeatMapSettingsDialog = true },
+            heatMapFilterActive = heatMapFilterState.hasActiveFilter,
+            heatMapTitle = heatMapTitle,
+            heatMapConsolidate = heatMapFilterState.consolidateCorridors,
+            heatMapMinVisits = heatMapFilterState.minVisits,
             fitTrackTrigger = fitTrackTrigger,
             fitPlacesTrigger = fitPlacesTrigger,
             destinationPoint = destinationPoint,
@@ -4552,6 +4644,19 @@ fun LocationScreen(viewModel: MainViewModel) {
             onDismiss = { activeLocationShareTarget = null }
         )
     }
+
+    if (showHeatMapSettingsDialog) {
+        HeatMapSettingsDialog(
+            filterState = heatMapFilterState,
+            onApplyFilter = { newState ->
+                viewModel.updateHeatMapFilter(newState)
+            },
+            onResetFilter = {
+                viewModel.resetHeatMapFilter()
+            },
+            onDismiss = { showHeatMapSettingsDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -4717,6 +4822,438 @@ fun LocationShareDialog(
                         Icon(Icons.Default.Map, contentDescription = "Open Map", modifier = Modifier.size(16.dp), tint = Color(0xFF38BDF8))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Open Map", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeatMapSettingsDialog(
+    filterState: HeatMapFilterState,
+    onApplyFilter: (HeatMapFilterState) -> Unit,
+    onResetFilter: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedPeriod by remember(filterState.datePeriod) { mutableStateOf(filterState.datePeriod) }
+    var selectedProfile by remember(filterState.activityProfile) { mutableStateOf(filterState.activityProfile) }
+    var selectedMinVisits by remember(filterState.minVisits) { mutableIntStateOf(filterState.minVisits) }
+    var consolidate by remember(filterState.consolidateCorridors) { mutableStateOf(filterState.consolidateCorridors) }
+    var includeActive by remember(filterState.includeActiveTrip) { mutableStateOf(filterState.includeActiveTrip) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            border = BorderStroke(1.dp, Color(0xFFF97316)),
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Whatshot,
+                            contentDescription = null,
+                            tint = Color(0xFFF97316),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Heat Map Controls",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Configure thermal intensity, consolidated corridors, and trip filters.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                )
+
+                // 1. Date Period Filter
+                Text(
+                    text = "DATE PERIOD",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF97316),
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val periods = listOf(
+                        "ALL" to "All Time",
+                        "TODAY" to "Today",
+                        "WEEK" to "This Wk",
+                        "MONTH" to "This Mo",
+                        "YEAR" to "This Yr"
+                    )
+                    periods.forEach { (code, label) ->
+                        val isSelected = selectedPeriod == code
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
+                                .clickable {
+                                    selectedPeriod = code
+                                    onApplyFilter(
+                                        filterState.copy(
+                                            datePeriod = code,
+                                            activityProfile = selectedProfile,
+                                            minVisits = selectedMinVisits,
+                                            consolidateCorridors = consolidate,
+                                            includeActiveTrip = includeActive
+                                        )
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 2. Activity Mode Filter
+                Text(
+                    text = "ACTIVITY MODE",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF97316),
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val modes = listOf<Pair<ActivityProfile?, String>>(
+                    null to "All Modes",
+                    ActivityProfile.CAR to "🚗 Car",
+                    ActivityProfile.CYCLING to "🚴 Bike",
+                    ActivityProfile.MTB to "🚵 MTB",
+                    ActivityProfile.HIKING to "🥾 Hike",
+                    ActivityProfile.RUNNING to "🏃 Run",
+                    ActivityProfile.WALKING to "🚶 Walk"
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    modes.forEach { (profile, label) ->
+                        val isSelected = selectedProfile == profile
+                        Box(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
+                                .clickable {
+                                    selectedProfile = profile
+                                    onApplyFilter(
+                                        filterState.copy(
+                                            activityProfile = profile,
+                                            datePeriod = selectedPeriod,
+                                            minVisits = selectedMinVisits,
+                                            consolidateCorridors = consolidate,
+                                            includeActiveTrip = includeActive
+                                        )
+                                    )
+                                }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 3. Minimum Route Density (Passes Filter)
+                Text(
+                    text = "MINIMUM ROUTE VISITS (DENSITY)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF97316),
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val densityOptions = listOf(
+                        1 to "All (1+)",
+                        2 to "Frequent (2+)",
+                        4 to "Dense (4+)",
+                        7 to "Hotspots (7+)"
+                    )
+                    densityOptions.forEach { (thresh, label) ->
+                        val isSelected = selectedMinVisits == thresh
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
+                                .clickable {
+                                    selectedMinVisits = thresh
+                                    onApplyFilter(
+                                        filterState.copy(
+                                            minVisits = thresh,
+                                            datePeriod = selectedPeriod,
+                                            activityProfile = selectedProfile,
+                                            consolidateCorridors = consolidate,
+                                            includeActiveTrip = includeActive
+                                        )
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 4. Rendering Options (Consolidation & Active Trip)
+                Text(
+                    text = "DISPLAY OPTIONS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF97316),
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Switch: Consolidate corridors
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "Consolidate overlapping corridors",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Merges parallel repeated passes along the same street into a single bold thermal backbone.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                        Switch(
+                            checked = consolidate,
+                            onCheckedChange = {
+                                consolidate = it
+                                onApplyFilter(
+                                    filterState.copy(
+                                        consolidateCorridors = it,
+                                        datePeriod = selectedPeriod,
+                                        activityProfile = selectedProfile,
+                                        minVisits = selectedMinVisits,
+                                        includeActiveTrip = includeActive
+                                    )
+                                )
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFFF97316),
+                                uncheckedThumbColor = Color(0xFF94A3B8),
+                                uncheckedTrackColor = Color(0xFF334155)
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Switch: Include active trip
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "Include today's active recording",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Instantly reflects currently recorded GPS points on the heat map before saving.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                        Switch(
+                            checked = includeActive,
+                            onCheckedChange = {
+                                includeActive = it
+                                onApplyFilter(
+                                    filterState.copy(
+                                        includeActiveTrip = it,
+                                        datePeriod = selectedPeriod,
+                                        activityProfile = selectedProfile,
+                                        minVisits = selectedMinVisits,
+                                        consolidateCorridors = consolidate
+                                    )
+                                )
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFFF97316),
+                                uncheckedThumbColor = Color(0xFF94A3B8),
+                                uncheckedTrackColor = Color(0xFF334155)
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 5. Thermal Scale Legend
+                Text(
+                    text = "THERMAL INTENSITY SCALE (7 LEVELS)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF97316),
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // Palette bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                ) {
+                    val tierColors = listOf(
+                        Color(0xFF2563EB), // 1 Blue
+                        Color(0xFF06B6D4), // 2 Cyan
+                        Color(0xFF10B981), // 3 Green
+                        Color(0xFFEAB308), // 4 Yellow
+                        Color(0xFFF97316), // 5 Orange
+                        Color(0xFFEF4444), // 6 Red
+                        Color(0xFFD946EF)  // 7 Magenta
+                    )
+                    tierColors.forEach { c ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(c)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("1 Pass (Cold)", fontSize = 10.sp, color = Color(0xFF60A5FA))
+                    Text("Moderate", fontSize = 10.sp, color = Color(0xFFEAB308))
+                    Text("Hotspot (17+)", fontSize = 10.sp, color = Color(0xFFF472B6), fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Bottom Buttons: Reset & Done
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (filterState.hasActiveFilter) {
+                        TextButton(
+                            onClick = {
+                                onResetFilter()
+                                selectedPeriod = "ALL"
+                                selectedProfile = null
+                                selectedMinVisits = 1
+                                consolidate = true
+                                includeActive = true
+                            }
+                        ) {
+                            Text("Reset Defaults", color = Color(0xFFEF4444), fontSize = 13.sp)
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF97316)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }

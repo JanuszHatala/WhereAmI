@@ -11,6 +11,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+data class HeatMapFilterState(
+    val activityProfile: ActivityProfile? = null,
+    val datePeriod: String = "ALL", // "ALL", "TODAY", "WEEK", "MONTH", "YEAR"
+    val minVisits: Int = 1,
+    val consolidateCorridors: Boolean = true,
+    val includeActiveTrip: Boolean = true
+) {
+    val hasActiveFilter: Boolean
+        get() = activityProfile != null || datePeriod != "ALL" || minVisits > 1 || !consolidateCorridors || !includeActiveTrip
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val locationManager = LocationManager.getInstance(application)
     private val tripManager = TripManager.getInstance(application)
@@ -394,6 +405,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _showHeatMap.value = newState
         appPrefs.edit().putBoolean("pref_show_heat_map", newState).apply()
         TelemetryLogger.log("SETTINGS", "ShowHeatMap changed to $newState")
+    }
+
+    private val _heatMapFilterState = MutableStateFlow(
+        HeatMapFilterState(
+            activityProfile = appPrefs.getString("pref_heatmap_activity", null)?.let {
+                try { ActivityProfile.valueOf(it) } catch (_: Exception) { null }
+            },
+            datePeriod = appPrefs.getString("pref_heatmap_date", "ALL") ?: "ALL",
+            minVisits = appPrefs.getInt("pref_heatmap_min_visits", 1),
+            consolidateCorridors = appPrefs.getBoolean("pref_heatmap_consolidate", true),
+            includeActiveTrip = appPrefs.getBoolean("pref_heatmap_include_active", true)
+        )
+    )
+    val heatMapFilterState: StateFlow<HeatMapFilterState> = _heatMapFilterState.asStateFlow()
+
+    fun updateHeatMapFilter(state: HeatMapFilterState) {
+        _heatMapFilterState.value = state
+        appPrefs.edit().apply {
+            putString("pref_heatmap_activity", state.activityProfile?.name)
+            putString("pref_heatmap_date", state.datePeriod)
+            putInt("pref_heatmap_min_visits", state.minVisits)
+            putBoolean("pref_heatmap_consolidate", state.consolidateCorridors)
+            putBoolean("pref_heatmap_include_active", state.includeActiveTrip)
+            apply()
+        }
+    }
+
+    fun resetHeatMapFilter() {
+        updateHeatMapFilter(HeatMapFilterState())
     }
 
     fun setSelectedTripIds(ids: Set<Long>) {
