@@ -2077,7 +2077,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onSplitPause = { tripId, pauseIdx ->
                         viewModel.splitTripAtPause(tripId, pauseIdx)
+                        selectedTripForDetail = null
                         android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onDeletePause = { tripId, pauseIdx ->
+                        viewModel.deleteTripPause(tripId, pauseIdx)
+                        android.widget.Toast.makeText(context, "Removed pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onMergePause = { tripId, pauseIdx ->
+                        viewModel.mergeTripPauses(tripId, pauseIdx)
+                        android.widget.Toast.makeText(context, "Merged pause #${pauseIdx + 1} with next", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 )
             }
@@ -6152,7 +6161,9 @@ fun TripDetailDialog(
     onDelete: (TripRecord) -> Unit,
     onShare: (TripRecord) -> Unit,
     onUpdateProfile: (Long, ActivityProfile) -> Unit,
-    onSplitPause: (Long, Int) -> Unit
+    onSplitPause: (Long, Int) -> Unit,
+    onDeletePause: (Long, Int) -> Unit = { _, _ -> },
+    onMergePause: (Long, Int) -> Unit = { _, _ -> }
 ) {
     val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
     val startDateStr = shortDateFmt.format(Date(trip.startTime))
@@ -6199,6 +6210,8 @@ fun TripDetailDialog(
     }
 
     var showProfileMenu by remember { mutableStateOf(false) }
+    var pauseToDeleteIndex by remember { mutableStateOf<Int?>(null) }
+    var pauseToMergeIndex by remember { mutableStateOf<Int?>(null) }
 
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -6289,46 +6302,67 @@ fun TripDetailDialog(
                                     .height(230.dp)
                             ) {
                                 if (trip.points.size >= 2) {
-                                    AndroidView(
-                                        factory = { ctx ->
-                                            MapView(ctx).apply {
-                                                setMultiTouchControls(false)
-                                                setBuiltInZoomControls(false)
-                                                setTileSource(TileSourceFactory.MAPNIK)
-                                                val line = Polyline(this).apply {
-                                                    outlinePaint.color = android.graphics.Color.parseColor("#EF4444")
-                                                    outlinePaint.strokeWidth = 8f
-                                                    outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                                                    outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
-                                                    setPoints(trip.points)
-                                                }
-                                                overlays.add(line)
-                                                trip.points.firstOrNull()?.let { startPt ->
-                                                    val startMarker = Marker(this).apply {
-                                                        position = startPt
-                                                        title = "Start"
-                                                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                    key(trip.id, trip.pauses.size, trip.points.size) {
+                                        AndroidView(
+                                            factory = { ctx ->
+                                                MapView(ctx).apply {
+                                                    setMultiTouchControls(false)
+                                                    setBuiltInZoomControls(false)
+                                                    setTileSource(TileSourceFactory.MAPNIK)
+                                                    val line = Polyline(this).apply {
+                                                        outlinePaint.color = android.graphics.Color.parseColor("#EF4444")
+                                                        outlinePaint.strokeWidth = 8f
+                                                        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                                                        outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                                                        setPoints(trip.points)
                                                     }
-                                                    overlays.add(startMarker)
-                                                }
-                                                trip.points.lastOrNull()?.let { endPt ->
-                                                    val endMarker = Marker(this).apply {
-                                                        position = endPt
-                                                        title = "End"
-                                                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                                    overlays.add(line)
+                                                    trip.points.firstOrNull()?.let { startPt ->
+                                                        val startMarker = Marker(this).apply {
+                                                            position = startPt
+                                                            title = "Start"
+                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                                        }
+                                                        overlays.add(startMarker)
                                                     }
-                                                    overlays.add(endMarker)
+                                                    trip.points.lastOrNull()?.let { endPt ->
+                                                        val endMarker = Marker(this).apply {
+                                                            position = endPt
+                                                            title = "End"
+                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                                        }
+                                                        overlays.add(endMarker)
+                                                    }
+                                                    trip.pauses.forEachIndexed { pauseIdx, pause ->
+                                                        val durText = when {
+                                                            pause.durationMs < 60_000L -> "${pause.durationMs / 1000}s"
+                                                            pause.durationMs < 3600_000L -> "${pause.durationMs / 60000}m"
+                                                            else -> "${pause.durationMs / 3600000}h ${(pause.durationMs % 3600000) / 60000}m"
+                                                        }
+                                                        val pauseMarker = Marker(this).apply {
+                                                            position = GeoPoint(pause.latitude, pause.longitude)
+                                                            title = "Stop #${pauseIdx + 1} ($durText)"
+                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                                            icon = makePauseIcon(ctx, durText)
+                                                            infoWindow = null
+                                                            setOnMarkerClickListener { _, _ -> true }
+                                                        }
+                                                        overlays.add(pauseMarker)
+                                                    }
+                                                    post {
+                                                        try {
+                                                            val allPts = trip.points + trip.pauses.map { GeoPoint(it.latitude, it.longitude) }
+                                                            if (allPts.isNotEmpty()) {
+                                                                val bb = BoundingBox.fromGeoPoints(allPts)
+                                                                zoomToBoundingBox(bb, false, 48)
+                                                            }
+                                                        } catch (ignored: Exception) {}
+                                                    }
                                                 }
-                                                post {
-                                                    try {
-                                                        val bb = BoundingBox.fromGeoPoints(trip.points)
-                                                        zoomToBoundingBox(bb, false, 48)
-                                                    } catch (ignored: Exception) {}
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                            },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 } else {
                                     Box(
                                         modifier = Modifier.fillMaxSize().background(Color(0xFF0F172A)),
@@ -6646,18 +6680,16 @@ fun TripDetailDialog(
                                             val pause = item.pause
                                             val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pause.startTime))
                                             val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
-                                            Row(
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
                                                     .border(1.dp, Color(0x66F59E0B), RoundedCornerShape(8.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .padding(horizontal = 10.dp, vertical = 8.dp)
                                             ) {
                                                 Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     Box(
                                                         modifier = Modifier
@@ -6676,7 +6708,7 @@ fun TripDetailDialog(
                                                         )
                                                     }
                                                     Spacer(modifier = Modifier.width(10.dp))
-                                                    Column {
+                                                    Column(modifier = Modifier.weight(1f)) {
                                                         Text(
                                                             text = "Stop #${item.pauseIndex + 1} ($durMin min rest)",
                                                             fontSize = 12.sp,
@@ -6691,14 +6723,44 @@ fun TripDetailDialog(
                                                     }
                                                 }
 
-                                                Button(
-                                                    onClick = { onSplitPause(trip.id, item.pauseIndex) },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    modifier = Modifier.height(28.dp)
+                                                Spacer(modifier = Modifier.height(6.dp))
+
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text("✂️ Split Trip", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                    Button(
+                                                        onClick = { onSplitPause(trip.id, item.pauseIndex) },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text("✂️ Split", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                    }
+
+                                                    if (item.pauseIndex < trip.pauses.size - 1) {
+                                                        Button(
+                                                            onClick = { pauseToMergeIndex = item.pauseIndex },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            modifier = Modifier.height(28.dp)
+                                                        ) {
+                                                            Text("🔗 Merge", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                        }
+                                                    }
+
+                                                    Button(
+                                                        onClick = { pauseToDeleteIndex = item.pauseIndex },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D)),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text("🗑️ Remove", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFCA5A5))
+                                                    }
                                                 }
                                             }
                                         }
@@ -6754,6 +6816,66 @@ fun TripDetailDialog(
                 }
             }
         }
+    }
+
+    if (pauseToDeleteIndex != null) {
+        val idx = pauseToDeleteIndex!!
+        AlertDialog(
+            onDismissRequest = { pauseToDeleteIndex = null },
+            title = { Text("Remove Stop #${idx + 1}?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will remove the rest stop marker from the trip timeline. The GPS recorded route will remain unchanged.",
+                    color = Color(0xFFCBD5E1)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeletePause(trip.id, idx)
+                        pauseToDeleteIndex = null
+                    }
+                ) {
+                    Text("Remove", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pauseToDeleteIndex = null }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    if (pauseToMergeIndex != null) {
+        val idx = pauseToMergeIndex!!
+        AlertDialog(
+            onDismissRequest = { pauseToMergeIndex = null },
+            title = { Text("Merge Stops #${idx + 1} & #${idx + 2}?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will combine Stop #${idx + 1} and Stop #${idx + 2} into a single consolidated rest stop spanning the entire duration.",
+                    color = Color(0xFFCBD5E1)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onMergePause(trip.id, idx)
+                        pauseToMergeIndex = null
+                    }
+                ) {
+                    Text("Merge", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pauseToMergeIndex = null }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
     }
 }
 
