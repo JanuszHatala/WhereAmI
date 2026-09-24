@@ -61,6 +61,7 @@ import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.FolderOverlay
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
@@ -242,6 +243,11 @@ fun OsmMapView(
     heatMapTracks: List<List<GeoPoint>> = emptyList(),
     showHeatMap: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
+    onOpenHeatMapSettings: (() -> Unit)? = null,
+    heatMapFilterActive: Boolean = false,
+    heatMapTitle: String = "Heat Map",
+    heatMapConsolidate: Boolean = true,
+    heatMapMinVisits: Int = 1,
     fitTrackTrigger: Long = 0L,
     fitPlacesTrigger: Long = 0L,
     destinationPoint: GeoPoint? = null,
@@ -704,31 +710,44 @@ fun OsmMapView(
 
     // Render Road / Path Heat Map Layer (Density of all recorded paths, frequency-based coloring)
     var allHeatMapPoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var heatMapFolderOverlay by remember { mutableStateOf<FolderOverlay?>(null) }
 
-    LaunchedEffect(heatMapTracks, showHeatMap) {
+    LaunchedEffect(heatMapTracks, showHeatMap, heatMapConsolidate, heatMapMinVisits) {
         val map = mapView ?: return@LaunchedEffect
+        heatMapFolderOverlay?.let { map.overlays.remove(it) }
+        heatMapFolderOverlay = null
         heatMapPolylines.forEach { map.overlays.remove(it) }
+        heatMapPolylines = emptyList()
 
         if (!showHeatMap || heatMapTracks.isEmpty()) {
-            heatMapPolylines = emptyList()
             allHeatMapPoints = emptyList()
             map.invalidate()
             return@LaunchedEffect
         }
 
         val processed = withContext(Dispatchers.Default) {
-            HeatMapEngine.processTracks(heatMapTracks, epsilonMeters = 10.0)
+            HeatMapEngine.processTracks(
+                heatMapTracks,
+                HeatMapOptions(
+                    consolidateCorridors = heatMapConsolidate,
+                    minVisits = heatMapMinVisits,
+                    epsilonMeters = 10.0
+                )
+            )
         }
 
         allHeatMapPoints = processed.allSimplifiedPoints
 
-        val lines = mutableListOf<Polyline>()
-        // Draw from coldest (Tier 1) to hottest (Tier 4) so peak thermal lines render on top
+        val folder = FolderOverlay().apply { name = "HeatMapLayer" }
+        // Draw from lowest to highest thermal tier so peak thermal lines render on top
         listOf(
-            HeatMapTier.TIER_1_COLD,
-            HeatMapTier.TIER_2_WARM,
-            HeatMapTier.TIER_3_HOT,
-            HeatMapTier.TIER_4_PEAK
+            HeatMapTier.TIER_1_BLUE,
+            HeatMapTier.TIER_2_CYAN,
+            HeatMapTier.TIER_3_GREEN,
+            HeatMapTier.TIER_4_YELLOW,
+            HeatMapTier.TIER_5_ORANGE,
+            HeatMapTier.TIER_6_RED,
+            HeatMapTier.TIER_7_MAGENTA
         ).forEach { tier ->
             val paths = processed.tierPolylines[tier] ?: emptyList()
             paths.forEach { path ->
@@ -742,12 +761,12 @@ fun OsmMapView(
                         setOnClickListener { _, _, _ -> true }
                         setPoints(path)
                     }
-                    map.overlays.add(0, poly)
-                    lines.add(poly)
+                    folder.add(poly)
                 }
             }
         }
-        heatMapPolylines = lines
+        map.overlays.add(0, folder)
+        heatMapFolderOverlay = folder
         map.invalidate()
     }
 
@@ -1141,11 +1160,49 @@ fun OsmMapView(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Heat Map",
+                            text = heatMapTitle,
                             color = ComposeColor.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    // 0. Filter / Settings
+                    if (onOpenHeatMapSettings != null) {
+                        Surface(
+                            onClick = { onOpenHeatMapSettings() },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (heatMapFilterActive) ComposeColor(0xFFEA580C) else ComposeColor(0xFF1E293B),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Heat Map Filter",
+                                        tint = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Filter",
+                                        color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // 1. Fit All
