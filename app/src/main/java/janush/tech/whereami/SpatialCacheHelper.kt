@@ -76,6 +76,21 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         migrateLegacyKeys(db)
+        sanitizeKnownMismatches(db)
+    }
+
+    /**
+     * Purges legacy Google Geocoder misidentifications along Witosa & Przecznia
+     * so verified OpenStreetMap road vectors are cleanly re-cached indefinitely.
+     */
+    fun sanitizeKnownMismatches(db: SQLiteDatabase = writableDatabase) {
+        try {
+            db.execSQL("""
+                DELETE FROM $TABLE_CACHE 
+                WHERE (street LIKE '%Krzemionki%' AND latitude BETWEEN 49.8415 AND 49.8445)
+                   OR (street LIKE '%Klonowa%' AND latitude BETWEEN 49.8510 AND 49.8525 AND longitude BETWEEN 19.1420 AND 19.1435)
+            """.trimIndent())
+        } catch (_: Exception) {}
     }
 
     /**
