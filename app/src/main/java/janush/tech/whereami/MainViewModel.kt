@@ -369,6 +369,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteTripPause(tripId: Long, pauseIndex: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            tripManager.deleteTripPause(tripId, pauseIndex)
+            _savedTrips.value = tripManager.getAllTrips()
+        }
+    }
+
+    fun mergeTripPauses(tripId: Long, pauseIndex: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            tripManager.mergeTripPauses(tripId, pauseIndex)
+            _savedTrips.value = tripManager.getAllTrips()
+        }
+    }
+
     fun setOrientationMode(mode: MapOrientationMode) {
         _orientationMode.value = mode
         appPrefs.edit().putString("pref_map_orientation_mode", mode.name).apply()

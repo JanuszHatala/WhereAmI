@@ -670,6 +670,43 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return Pair(trip.id, trip2Id)
     }
 
+    fun getTrip(tripId: Long): TripRecord? = getTripsByIds(listOf(tripId)).firstOrNull()
+
+    fun deleteTripPause(tripId: Long, pauseIndex: Int): Boolean {
+        val trip = getTrip(tripId) ?: return false
+        if (pauseIndex < 0 || pauseIndex >= trip.pauses.size) return false
+        val updatedPauses = trip.pauses.toMutableList()
+        updatedPauses.removeAt(pauseIndex)
+        val updatedTrip = trip.copy(pauses = updatedPauses)
+        updateTrip(updatedTrip)
+        return true
+    }
+
+    fun mergeTripPauses(tripId: Long, pauseIndex: Int): Boolean {
+        val trip = getTrip(tripId) ?: return false
+        if (pauseIndex < 0 || pauseIndex >= trip.pauses.size - 1) return false
+        val p1 = trip.pauses[pauseIndex]
+        val p2 = trip.pauses[pauseIndex + 1]
+
+        val mergedEndTime = p2.endTime ?: (p2.startTime + p2.durationMs)
+        val mergedDuration = (mergedEndTime - p1.startTime).coerceAtLeast(p1.durationMs + p2.durationMs)
+        val mergedPause = TripPause(
+            startTime = p1.startTime,
+            endTime = mergedEndTime,
+            latitude = (p1.latitude + p2.latitude) / 2.0,
+            longitude = (p1.longitude + p2.longitude) / 2.0,
+            durationMs = mergedDuration,
+            pointIndex = p1.pointIndex
+        )
+
+        val updatedPauses = trip.pauses.toMutableList()
+        updatedPauses[pauseIndex] = mergedPause
+        updatedPauses.removeAt(pauseIndex + 1)
+        val updatedTrip = trip.copy(pauses = updatedPauses)
+        updateTrip(updatedTrip)
+        return true
+    }
+
     private fun pausesToJson(pauses: List<TripPause>): String {
         val array = JSONArray()
         for (p in pauses) {

@@ -80,4 +80,30 @@ class HeatMapEngineTest {
         assertTrue("Should have cold paths for once-visited branches", coldPaths.isNotEmpty())
         assertTrue("Should have higher-tier paths for shared corridor A->B", peakPaths.isNotEmpty())
     }
+
+    @Test
+    fun testParallelTracksWithinCorridorAreGroupedTogether() {
+        // Two parallel tracks 15 meters apart (e.g. opposing lanes or GPS offset on the same road)
+        // At lat 50.0, 1 deg lon ~= 71438m. 15m ~= 0.00021 deg lon.
+        val trackLane1 = listOf(
+            GeoPoint(50.000, 19.00000),
+            GeoPoint(50.002, 19.00000),
+            GeoPoint(50.005, 19.00000)
+        )
+        val trackLane2 = listOf(
+            GeoPoint(50.000, 19.00021),
+            GeoPoint(50.002, 19.00021),
+            GeoPoint(50.005, 19.00021)
+        )
+
+        val result = HeatMapEngine.processTracks(listOf(trackLane1, trackLane2), epsilonMeters = 5.0)
+
+        // The corridor buffer (~32-35m) must group them together so both tracks see 2 visits
+        assertEquals(2, result.maxVisits)
+        val peakPaths = result.tierPolylines[HeatMapTier.TIER_4_PEAK] ?: emptyList()
+        val coldPaths = result.tierPolylines[HeatMapTier.TIER_1_COLD] ?: emptyList()
+
+        assertTrue("Both parallel tracks should be grouped as peak tier visits in the corridor", peakPaths.isNotEmpty())
+        assertTrue("No segments should remain cold since both tracks share the 15m corridor", coldPaths.isEmpty())
+    }
 }
