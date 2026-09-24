@@ -403,6 +403,9 @@ fun OsmMapView(
     }
 
     var orientationAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
+    // Debounce cooldown: prevent starting a new rotation animation within 600ms of the previous one.
+    // Without this, rapid low-speed GPS bearing changes stack overlapping animations → map spinning.
+    var lastOrientationAnimStart by remember { mutableStateOf(0L) }
     DisposableEffect(Unit) {
         onDispose {
             orientationAnimator?.cancel()
@@ -442,11 +445,17 @@ fun OsmMapView(
         if (targetMapOrientation != null) {
             val currentRot = map.mapOrientation
             val diff = (targetMapOrientation - currentRot + 540f) % 360f - 180f
-            // 1.5° deadband rejects satellite bearing micro-jitter on straight roads
-            if (kotlin.math.abs(diff) >= 1.5f) {
+            val now = System.currentTimeMillis()
+            // Increased deadband: 5° (was 1.5°). The EMA-smoothed bearing still has ±2-4° residual
+            // jitter; a 1.5° deadband was too tight and caused continuous animation restarts.
+            // 600ms debounce: don't start a new animation if the previous one started < 600ms ago.
+            // This prevents stacking overlapping animations that produce the "spinning" visual.
+            val cooldownElapsed = (now - lastOrientationAnimStart) >= 600L
+            if (kotlin.math.abs(diff) >= 5.0f && cooldownElapsed) {
                 orientationAnimator?.cancel()
+                lastOrientationAnimStart = now
                 orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                    duration = 400L
+                    duration = 350L
                     interpolator = android.view.animation.DecelerateInterpolator()
                     addUpdateListener { anim ->
                         val frac = anim.animatedFraction
