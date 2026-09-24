@@ -106,7 +106,8 @@ private data class OsmPlaceResult(
     val county: String?,       // district / powiat
     val state: String?,
     val country: String?,
-    val countryCode: String?
+    val countryCode: String?,
+    val houseNumber: String? = null // Specific house number if returned by Nominatim
 )
 
 class LocationManager private constructor(private val context: Context) {
@@ -987,9 +988,9 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // Check persistent SQLite spatial cache (indefinite TTL for offline resilience)
+        // Check persistent SQLite spatial cache (30-minute expiry per AGENTS.md; indefinite fallback is strictly for offline)
         try {
-            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
+            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = 30 * 60 * 1000L)
             if (diskCached != null) {
                 // If we are actively driving (>15 km/h) and the cached street is a minor/side street (e.g. saved from an underpass or point-geocoding),
                 // query OSRM with compass heading to snap to the actual driven corridor geometry.
@@ -1029,10 +1030,10 @@ class LocationManager private constructor(private val context: Context) {
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
         val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
         
-        // Kinematic Engine: Only query OSRM if moving > 10 km/h (reduces unnecessary API calls when walking/stopped)
-        val osrmStreet = if (speedKmh != null && speedKmh > 10f) {
-            OsmMapMatcher.getNearestStreet(lat, lng, bearing)
-        } else null
+        // Kinematic Engine: Query OSRM using compass heading (or last valid heading when stopped)
+        // to snap to the true driven corridor centerline.
+        val effectiveBearing = bearing ?: lastValidBearing
+        val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
 
         val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet)
         val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet)
@@ -1085,17 +1086,36 @@ class LocationManager private constructor(private val context: Context) {
         // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
             val basePlace = address.toPlaceInfo(countryCode)
-            val canonicalStreet = if (osrmStreet != null) {
-                // Highest precision: OSRM Map Matching explicitly provided the road
-                RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, null)
-            } else if (osm != null && !osm.roadRef.isNullOrBlank()) {
-                RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
+            val canonicalStreet = when {
+                // 1. Highest precision: OSRM Map Matching explicitly provided the road centerline
+                !osrmStreet.isNullOrBlank() -> {
+                    val houseNumber = osm?.houseNumber ?: address.subThoroughfare
+                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, houseNumber)
+                }
+                // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
+                !osm?.street.isNullOrBlank() -> {
+                    osm.street
+                }
+                // 3. Road ref enrichment if thoroughfare provided
+                osm != null && !osm.roadRef.isNullOrBlank() -> {
+                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
+                }
+                // 4. Fallback to Android native Geocoder thoroughfare
+                else -> {
+                    basePlace.street
+                }
+            }
+
+            // Locality accuracy: if OSM has a resolved village/town within a gmina (e.g. Kozy in gmina Kozy),
+            // prefer it over Google Geocoder's postal city fallback (e.g. Bielsko-Biała)
+            val effectiveCity = if (!osm?.city.isNullOrBlank() && osm.city != "Unknown City" && osm.municipality != null) {
+                osm.city
             } else {
-                basePlace.street ?: osm?.street
+                basePlace.city
             }
 
             // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
-            val localityKey = basePlace.city.lowercase(Locale.ROOT)
+            val localityKey = effectiveCity.lowercase(Locale.ROOT)
             val isCountyCity = POLISH_COUNTY_CITIES.contains(localityKey)
             val candidateGmina = if (isCountyCity) null else (osm?.municipality ?: basePlace.gmina)
             val effectiveGmina = if (isCountyCity) {
@@ -1105,13 +1125,14 @@ class LocationManager private constructor(private val context: Context) {
                 candidateGmina
             } else {
                 prefs.getString("loc_gmina_$localityKey", null)
-                    ?: if (lastGood?.city.equals(basePlace.city, ignoreCase = true)) lastGood?.gmina else null
+                    ?: if (lastGood?.city.equals(effectiveCity, ignoreCase = true)) lastGood?.gmina else null
             }
 
             val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
             val effectiveVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
 
             return basePlace.copy(
+                city = effectiveCity,
                 street = canonicalStreet,
                 roadRef = osm?.roadRef ?: basePlace.roadRef,
                 gmina = effectiveGmina,
@@ -1222,15 +1243,31 @@ class LocationManager private constructor(private val context: Context) {
                     ?: str("subdistrict")
                     ?: str("local_administrative_area")
 
+                // In Poland: If municipality starts with "gmina ", check if village/town is present.
+                // If city is a neighbouring metropolis (e.g. city="Bielsko-Biała" for postal delivery, but municipality="gmina Kozy"),
+                // the true territorial place name is the village or gmina name ("Kozy").
+                val isPolishGmina = rawMunicipality != null && rawMunicipality.startsWith("gmina ", ignoreCase = true)
+                val gminaName = if (isPolishGmina) rawMunicipality.removePrefix("gmina ").trim() else null
+                val villageOrTown = str("village") ?: str("town") ?: str("hamlet")
+
+                val resolvedCity = if (isPolishGmina && !villageOrTown.isNullOrBlank()) {
+                    villageOrTown
+                } else if (isPolishGmina && gminaName != null && str("city") != null && !str("city").equals(gminaName, ignoreCase = true)) {
+                    gminaName
+                } else {
+                    str("city") ?: str("town") ?: str("village") ?: str("hamlet") ?: str("suburb")
+                }
+
                 val osmResult = OsmPlaceResult(
-                    city = str("city") ?: str("town") ?: str("village") ?: str("hamlet") ?: str("suburb"),
+                    city = resolvedCity,
                     street = normalizedStreet,
                     roadRef = rawRef,
                     municipality = rawMunicipality,
                     county = str("county"),
                     state = str("state"),
                     country = str("country"),
-                    countryCode = str("country_code")
+                    countryCode = str("country_code"),
+                    houseNumber = houseNum
                 )
                 osmResponseCache[osmKey] = CachedOsmResult(System.currentTimeMillis(), osmResult)
                 osmResult
