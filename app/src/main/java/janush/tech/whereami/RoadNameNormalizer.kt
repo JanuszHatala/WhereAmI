@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import java.util.Locale
 
@@ -29,6 +29,7 @@ object RoadNameNormalizer {
         if (name.isNullOrBlank()) return false
         val trimmed = name.trim().uppercase(Locale.ROOT)
         return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
+                trimmed.contains(Regex("""\((DK|DW|A|S|E)\s*\d+.*\)""")) ||
                 trimmed.startsWith("DROGA KRAJOWA") ||
                 trimmed.startsWith("KRAJOWA") ||
                 trimmed.startsWith("DROGA WOJEWÓDZKA") ||
@@ -130,6 +131,14 @@ object RoadNameNormalizer {
                     // 3 digits in Poland designate DW
                     normalizedHighway = "DW$ref"
                 }
+            }
+        }
+
+        // Special handling for key Polish expressway / national highway urban corridors where road name is used
+        if (normalizedHighway == null && road.isNotEmpty()) {
+            val upper = road.uppercase(Locale.ROOT)
+            if (upper.contains("ŚWIĘTEGO JANA PAWŁA II") || upper.contains("SWIETEGO JANA PAWLA II")) {
+                normalizedHighway = "S1"
             }
         }
 
