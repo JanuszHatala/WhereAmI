@@ -39,7 +39,7 @@ object OsmMapMatcher {
             ""
         }
 
-        val urlStr = "http://router.project-osrm.org/nearest/v1/driving/$lng,$lat?number=1$bearingParam"
+        val urlStr = "https://router.project-osrm.org/nearest/v1/driving/$lng,$lat?number=1$bearingParam"
 
         return try {
             val conn = URL(urlStr).openConnection() as HttpURLConnection
