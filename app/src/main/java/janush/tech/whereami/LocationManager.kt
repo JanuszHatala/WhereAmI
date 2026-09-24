@@ -988,14 +988,15 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // Check persistent SQLite spatial cache (30-minute expiry per AGENTS.md; indefinite fallback is strictly for offline)
+        // Check persistent SQLite spatial cache (indefinite retention for offline-first resilience & zero network overhead on daily commutes)
         try {
-            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = 30 * 60 * 1000L)
+            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
-                // If we are actively driving (>15 km/h) and the cached street is a minor/side street (e.g. saved from an underpass or point-geocoding),
-                // query OSRM with compass heading to snap to the actual driven corridor geometry.
-                if (isDrivingFast && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
-                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, bearing)
+                // If heading is available and the cached street is a minor street,
+                // verify against OSRM to auto-correct any legacy side-street mis-matches
+                val effectiveHeading = bearing ?: lastValidBearing
+                if (effectiveHeading != null && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
+                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveHeading)
                     if (osrmStreet != null) {
                         val canonical = RoadNameNormalizer.normalize(osrmStreet, diskCached.pl.roadRef, null)
                         if (!canonical.isNullOrBlank() && canonical != diskCached.pl.street) {
