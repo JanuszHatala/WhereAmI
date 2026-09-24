@@ -275,6 +275,42 @@ class LocationManager private constructor(private val context: Context) {
     @Volatile
     private var lastValidBearing: Float? = null
 
+    /**
+     * Bearing Exponential Moving Average (EMA) — circular-domain low-pass filter.
+     *
+     * Raw GPS bearing at < 15 km/h has ±60–120° noise. Without smoothing, the map
+     * spins 360° during slow urban driving. The alpha is speed-adaptive:
+     *   - Very slow (< 5 km/h):  α = 0.15  →  heavy damping, barely updates
+     *   - Slow (< 15 km/h):     α = 0.30  →  moderate damping
+     *   - Medium (< 50 km/h):   α = 0.55  →  light damping, responsive to turns
+     *   - Fast (>= 50 km/h):    α = 0.80  →  minimal damping (bearing is reliable)
+     *
+     * Uses sin/cos decomposition to handle 0°/360° wraparound correctly.
+     */
+    private var emaBearingSin: Double = 0.0
+    private var emaBearingCos: Double = 1.0
+    private var emaBearingInitialized: Boolean = false
+
+    private fun smoothBearing(rawBearing: Float, speedKmh: Float): Float {
+        val alpha = when {
+            speedKmh < 5f  -> 0.15
+            speedKmh < 15f -> 0.30
+            speedKmh < 50f -> 0.55
+            else           -> 0.80
+        }
+        val rad = Math.toRadians(rawBearing.toDouble())
+        if (!emaBearingInitialized) {
+            emaBearingSin = Math.sin(rad)
+            emaBearingCos = Math.cos(rad)
+            emaBearingInitialized = true
+        } else {
+            emaBearingSin = alpha * Math.sin(rad) + (1.0 - alpha) * emaBearingSin
+            emaBearingCos = alpha * Math.cos(rad) + (1.0 - alpha) * emaBearingCos
+        }
+        val smoothed = Math.toDegrees(Math.atan2(emaBearingSin, emaBearingCos)).toFloat()
+        return (smoothed + 360f) % 360f
+    }
+
     private fun hybridSpeedUpdate(
         rawSpeed: Float?,
         gpsAccuracyMps: Float?,
@@ -691,15 +727,28 @@ class LocationManager private constructor(private val context: Context) {
 
                         val speedKmh = speed * 3.6f
                         val alt = if (location.hasAltitude()) location.altitude else null
-                        
-                        // Map Spinning Fix: If accuracy is poor (> 15m), require a stronger actual velocity (> 4.5m/s or 16km/h) 
-                        // to update the bearing, ignoring multipath jumps.
-                        val minSpeedForBearing = if (location.hasAccuracy() && location.accuracy > 15f) 4.5f else 1.2f
-                        val currentBearing = if (location.hasBearing() && (location.hasSpeed() && location.speed >= minSpeedForBearing)) {
-                            lastValidBearing = location.bearing
-                            location.bearing
+
+                        // Bearing Stability Fix: tiered minimum speed gate before accepting GPS bearing.
+                        // Raw GPS bearing is highly noisy at low speeds (< 15 km/h):
+                        //   - accuracy > 20m: require >= 8 m/s (29 km/h) to avoid urban multipath flicker
+                        //   - accuracy ≤ 20m: require >= 3.0 m/s (10.8 km/h)
+                        // Below these thresholds, we hold lastValidBearing (frozen heading).
+                        // When bearing IS accepted, it is passed through the circular EMA smoother
+                        // before being stored — this eliminates second-to-second ±50° jitter.
+                        val rawAcc = if (location.hasAccuracy()) location.accuracy else 0f
+                        val minSpeedForBearing = when {
+                            rawAcc > 20f -> 8.0f    // poor accuracy → very high speed needed
+                            rawAcc > 15f -> 5.0f    // medium accuracy
+                            else         -> 3.0f    // good accuracy → raised from 1.2 to 3.0 m/s
+                        }
+                        val currentBearing = if (location.hasBearing() &&
+                            location.hasSpeed() && location.speed >= minSpeedForBearing) {
+                            // Apply circular EMA smoother before publishing (speed-adaptive α)
+                            val smoothed = smoothBearing(location.bearing, speedKmh)
+                            lastValidBearing = smoothed
+                            smoothed
                         } else {
-                            lastValidBearing
+                            lastValidBearing  // hold frozen heading when slow/stopped
                         }
 
                         // 1. Immediate TripManager kinematic notification
@@ -822,11 +871,14 @@ class LocationManager private constructor(private val context: Context) {
     /**
      * Lightweight flow for map composable (lat, lng, bearing).
      * Reuses the single shared master location pipeline without duplicate callbacks.
-     * Bearing is only non-null when moving (speed >= 1.2 m/s / 4.3 km/h).
+     * Bearing is only non-null when moving at a speed where GPS bearing is reliable (>= 3.0 m/s / 10.8 km/h).
+     * Below this threshold the map shows the stationary blue dot, avoiding map spinning at slow speeds.
      */
     fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> {
         return masterLocationFlow.map {
-            val movingBearing = if (it.speedMs >= 1.2f) it.bearing else null
+            // Only expose a bearing to the map when speed is high enough for GPS bearing to be reliable.
+            // Raised from 1.2 m/s → 3.0 m/s to eliminate map spinning at slow urban speeds.
+            val movingBearing = if (it.speedMs >= 3.0f) it.bearing else null
             Triple(it.lat, it.lng, movingBearing)
         }
     }
