@@ -1177,23 +1177,32 @@ fun OsmMapView(
                         color = ComposeColor(0xFF1E293B),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CropFree,
-                                contentDescription = "Fit All to Map",
-                                tint = ComposeColor(0xFF38BDF8),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Fit All",
-                                color = ComposeColor(0xFF38BDF8),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CropFree,
+                                    contentDescription = "Fit All to Map",
+                                    tint = ComposeColor(0xFF38BDF8),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Fit All",
+                                    color = ComposeColor(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                            }
                         }
                     }
 
@@ -1204,23 +1213,32 @@ fun OsmMapView(
                         color = ComposeColor(0xFF7F1D1D),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close Heat Map",
-                                tint = ComposeColor(0xFFFCA5A5),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Close",
-                                color = ComposeColor(0xFFFCA5A5),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Heat Map",
+                                    tint = ComposeColor(0xFFFCA5A5),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Close",
+                                    color = ComposeColor(0xFFFCA5A5),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -1798,7 +1816,7 @@ private fun makeSavedPlaceIcon(context: Context, place: SavedPlace): android.gra
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
 
-private fun makePauseIcon(context: Context, durText: String): android.graphics.drawable.BitmapDrawable {
+internal fun makePauseIcon(context: Context, durText: String): android.graphics.drawable.BitmapDrawable {
     val density = context.resources.displayMetrics.density
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE

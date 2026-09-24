@@ -576,5 +576,27 @@ class TripManager private constructor(private val context: Context) {
         }
         return result
     }
+
+    fun deleteTripPause(tripId: Long, pauseIndex: Int): Boolean {
+        val result = dbHelper.deleteTripPause(tripId, pauseIndex)
+        if (result) {
+            val active = _activeTrip.value
+            if (active?.id == tripId) {
+                _activeTrip.value = dbHelper.getTrip(tripId)
+            }
+        }
+        return result
+    }
+
+    fun mergeTripPauses(tripId: Long, pauseIndex: Int): Boolean {
+        val result = dbHelper.mergeTripPauses(tripId, pauseIndex)
+        if (result) {
+            val active = _activeTrip.value
+            if (active?.id == tripId) {
+                _activeTrip.value = dbHelper.getTrip(tripId)
+            }
+        }
+        return result
+    }
 }
 
