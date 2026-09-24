@@ -35,7 +35,10 @@ class GpsFilterEngine private constructor() {
             ActivityProfile.WALKING, ActivityProfile.HIKING -> 40.0f
             ActivityProfile.RUNNING -> 45.0f
             ActivityProfile.MTB, ActivityProfile.CYCLING -> 55.0f
-            ActivityProfile.CAR -> 75.0f
+            // Reduced from 75m → 55m: at 75m, the uncertainty radius easily spans two parallel
+            // residential streets (~50m apart), causing cross-street misidentification (e.g. Klonowa
+            // vs Przecznia in Kozy). 55m still admits typical open-sky urban quality.
+            ActivityProfile.CAR -> 55.0f
         }
 
         if (candidate.hasAccuracy() && candidate.accuracy > maxAccuracy) {
