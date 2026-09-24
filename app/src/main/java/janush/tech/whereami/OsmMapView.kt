@@ -66,6 +66,8 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class MapOrientationMode {
     NORTH,     // 0° (North at top)
@@ -700,7 +702,7 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Render Road / Path Heat Map Layer (Density of all recorded paths)
+    // Render Road / Path Heat Map Layer (Density of all recorded paths, frequency-based coloring)
     LaunchedEffect(heatMapTracks, showHeatMap) {
         val map = mapView ?: return@LaunchedEffect
         heatMapPolylines.forEach { map.overlays.remove(it) }
@@ -711,31 +713,98 @@ fun OsmMapView(
             return@LaunchedEffect
         }
 
-        val lines = mutableListOf<Polyline>()
-        heatMapTracks.forEach { track ->
-            if (track.size >= 2) {
-                val poly = Polyline(map).apply {
-                    // Semitransparent warm coral glow for heat map tracks (#88EF4444)
-                    outlinePaint.color = Color.parseColor("#88EF4444")
-                    outlinePaint.strokeWidth = 14f
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(track)
-                }
-                map.overlays.add(0, poly)
-                lines.add(poly)
+        // --- Background computation (frequency mapping + color assignment) ---
+        data class TrackVisuals(val track: List<GeoPoint>, val outerColor: Int, val innerColor: Int, val outerWidth: Float, val innerWidth: Float)
 
-                // Inner core line (#CCF59E0B)
-                val core = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor("#CCF59E0B")
-                    outlinePaint.strokeWidth = 6f
+        val trackVisuals: List<TrackVisuals> = withContext(Dispatchers.Default) {
+            // 1. Build grid-cell frequency map (cell ~11m at 4 decimal places)
+            val cellFreq = mutableMapOf<Long, Int>()
+            fun cellKey(pt: GeoPoint): Long {
+                val latGrid = (pt.latitude * 1000).toLong()   // ~111m per unit
+                val lngGrid = (pt.longitude * 1000).toLong()
+                return latGrid * 1_000_000L + lngGrid
+            }
+            heatMapTracks.forEach { track ->
+                track.forEach { pt ->
+                    val key = cellKey(pt)
+                    cellFreq[key] = (cellFreq[key] ?: 0) + 1
+                }
+            }
+
+            // 2. For each track, find its peak cell frequency (represents how often this corridor was used)
+            val trackFreq: List<Int> = heatMapTracks.map { track ->
+                if (track.isEmpty()) 0
+                else track.maxOf { pt -> cellFreq[cellKey(pt)] ?: 1 }
+            }
+
+            val maxFreq = trackFreq.maxOrNull()?.coerceAtLeast(1) ?: 1
+
+            // 3. Map frequency → color gradient: cold blue (1x) → warm amber (mid) → hot red (max)
+            // Colors: 1x = #0284C7 (blue), mid = #F59E0B (amber), max = #EF4444 (red)
+            fun freqColor(freq: Int, alpha: Int): Int {
+                val ratio = (freq - 1).toFloat() / (maxFreq - 1).coerceAtLeast(1).toFloat()
+                val r: Int
+                val g: Int
+                val b: Int
+                when {
+                    ratio <= 0.5f -> {
+                        // Blue → Amber
+                        val t = ratio / 0.5f
+                        r = (0x02 + (0xF5 - 0x02) * t).toInt()
+                        g = (0x84 + (0x9E - 0x84) * t).toInt()
+                        b = (0xC7 + (0x0B - 0xC7) * t).toInt()
+                    }
+                    else -> {
+                        // Amber → Red
+                        val t = (ratio - 0.5f) / 0.5f
+                        r = (0xF5 + (0xEF - 0xF5) * t).toInt()
+                        g = (0x9E + (0x44 - 0x9E) * t).toInt()
+                        b = (0x0B + (0x44 - 0x0B) * t).toInt()
+                    }
+                }
+                return Color.argb(alpha, r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+            }
+
+            heatMapTracks.mapIndexed { i, track ->
+                val freq = trackFreq[i].coerceAtLeast(1)
+                // Glow layer: 40-70% alpha; Core layer: 70-100% alpha; Width scales with frequency
+                val freqRatio = (freq - 1).toFloat() / (maxFreq - 1).coerceAtLeast(1).toFloat()
+                val outerAlpha = (0x66 + (0x99 - 0x66) * freqRatio).toInt()  // 40%→60%
+                val innerAlpha = (0xB3 + (0xFF - 0xB3) * freqRatio).toInt()  // 70%→100%
+                val outerWidth = 10f + 8f * freqRatio   // 10–18 px glow
+                val innerWidth = 4f + 4f * freqRatio    // 4–8 px core
+                TrackVisuals(track, freqColor(freq, outerAlpha), freqColor(freq, innerAlpha), outerWidth, innerWidth)
+            }
+        }
+
+        // --- Apply polylines on main thread ---
+        val lines = mutableListOf<Polyline>()
+        // Draw glow layer first (below), then core layer on top
+        trackVisuals.forEach { tv ->
+            if (tv.track.size >= 2) {
+                val glow = Polyline(map).apply {
+                    outlinePaint.color = tv.outerColor
+                    outlinePaint.strokeWidth = tv.outerWidth
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
                     infoWindow = null
                     setOnClickListener { _, _, _ -> true }
-                    setPoints(track)
+                    setPoints(tv.track)
+                }
+                map.overlays.add(0, glow)
+                lines.add(glow)
+            }
+        }
+        trackVisuals.forEach { tv ->
+            if (tv.track.size >= 2) {
+                val core = Polyline(map).apply {
+                    outlinePaint.color = tv.innerColor
+                    outlinePaint.strokeWidth = tv.innerWidth
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                    setPoints(tv.track)
                 }
                 map.overlays.add(0, core)
                 lines.add(core)
