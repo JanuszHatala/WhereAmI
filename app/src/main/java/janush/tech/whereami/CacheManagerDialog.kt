@@ -143,7 +143,7 @@ fun CacheManagerDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text("Map Tiles", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Text(formatBytes(tileBytes), color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
@@ -164,16 +164,40 @@ fun CacheManagerDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    val missingBoundaries = cacheDeficit?.missingBoundaries
+                                    when {
+                                        missingBoundaries == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                        missingBoundaries == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        else -> Text("⚠ $missingBoundaries missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
                                 Text("${formatBytes(boundaryBytes)} • $boundaryCount places", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
-                            OutlinedButton(
-                                onClick = { cacheClearConfirmTarget = "BOUNDARIES" },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Clear", fontSize = 12.sp, color = Color(0xFFF87171))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val missingBoundaries = cacheDeficit?.missingBoundaries
+                                if (missingBoundaries != null && missingBoundaries > 0) {
+                                    Button(
+                                        onClick = { cacheManager.fetchMissingBoundaries() },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                    ) {
+                                        Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { cacheClearConfirmTarget = "BOUNDARIES" },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Clear", fontSize = 11.sp, color = Color(0xFFF87171))
+                                }
                             }
                         }
 
@@ -185,16 +209,40 @@ fun CacheManagerDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    val missingRoutes = cacheDeficit?.missingRoutes
+                                    when {
+                                        missingRoutes == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                        missingRoutes == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        else -> Text("⚠ $missingRoutes missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
                                 Text("${formatBytes(spatialBytes)} • $spatialCount points", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
-                            OutlinedButton(
-                                onClick = { cacheClearConfirmTarget = "SPATIAL" },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Clear", fontSize = 12.sp, color = Color(0xFFF87171))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val missingRoutes = cacheDeficit?.missingRoutes
+                                if (missingRoutes != null && missingRoutes > 0) {
+                                    Button(
+                                        onClick = { cacheManager.startPrefetch() },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                    ) {
+                                        Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { cacheClearConfirmTarget = "SPATIAL" },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Clear", fontSize = 11.sp, color = Color(0xFFF87171))
+                                }
                             }
                         }
 
@@ -305,18 +353,34 @@ fun CacheManagerDialog(
                         when (val state = prefetchState) {
                             is CacheManager.PrefetchState.Idle -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                    onClick = { cacheManager.startPrefetch() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Pre-fetch All Missing Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries }
+                                    val buttonText = when {
+                                        totalMissing == null -> "Pre-fetch Missing Data"
+                                        totalMissing > 0 -> "Pre-fetch All Missing Data ($totalMissing)"
+                                        else -> "Re-scan Cache"
                                     }
 
-                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries }
+                                    Button(
+                                        onClick = {
+                                            if (totalMissing == 0) {
+                                                cacheManager.calculateCacheDeficit()
+                                            } else {
+                                                cacheManager.startPrefetch()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(
+                                            if (totalMissing == 0) Icons.Default.Refresh else Icons.Default.CloudDownload,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(buttonText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+
                                     val estimateStr = when (totalMissing) {
                                         null -> "Calculating pending items..."
                                         0 -> "All known routes and boundaries are fully cached offline."
@@ -528,13 +592,26 @@ fun CacheManagerDialog(
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium
                                     )
-                                    Button(
-                                        onClick = { cacheManager.calculateCacheDeficit() },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                        shape = RoundedCornerShape(10.dp)
-                                    ) {
-                                        Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries } ?: 0
+                                    if (totalMissing > 0) {
+                                        Button(
+                                            onClick = { cacheManager.startPrefetch() },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text("Fetch Remaining Missing Data ($totalMissing)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = { cacheManager.calculateCacheDeficit() },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
