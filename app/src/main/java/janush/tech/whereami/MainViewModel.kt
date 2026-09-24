@@ -12,14 +12,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 data class HeatMapFilterState(
-    val activityProfile: ActivityProfile? = null,
+    val activityProfiles: Set<ActivityProfile> = emptySet(), // empty = All Modes
     val datePeriod: String = "ALL", // "ALL", "TODAY", "WEEK", "MONTH", "YEAR"
     val minVisits: Int = 1,
     val consolidateCorridors: Boolean = true,
     val includeActiveTrip: Boolean = true
 ) {
     val hasActiveFilter: Boolean
-        get() = activityProfile != null || datePeriod != "ALL" || minVisits > 1 || !consolidateCorridors || !includeActiveTrip
+        get() = activityProfiles.isNotEmpty() || datePeriod != "ALL" || minVisits > 1 || !consolidateCorridors || !includeActiveTrip
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -409,9 +409,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _heatMapFilterState = MutableStateFlow(
         HeatMapFilterState(
-            activityProfile = appPrefs.getString("pref_heatmap_activity", null)?.let {
+            activityProfiles = appPrefs.getStringSet("pref_heatmap_activities", null)?.mapNotNull {
                 try { ActivityProfile.valueOf(it) } catch (_: Exception) { null }
-            },
+            }?.toSet() ?: appPrefs.getString("pref_heatmap_activity", null)?.let {
+                try { setOf(ActivityProfile.valueOf(it)) } catch (_: Exception) { emptySet() }
+            } ?: emptySet(),
             datePeriod = appPrefs.getString("pref_heatmap_date", "ALL") ?: "ALL",
             minVisits = appPrefs.getInt("pref_heatmap_min_visits", 1),
             consolidateCorridors = appPrefs.getBoolean("pref_heatmap_consolidate", true),
@@ -423,7 +425,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateHeatMapFilter(state: HeatMapFilterState) {
         _heatMapFilterState.value = state
         appPrefs.edit().apply {
-            putString("pref_heatmap_activity", state.activityProfile?.name)
+            putStringSet("pref_heatmap_activities", state.activityProfiles.map { it.name }.toSet())
+            remove("pref_heatmap_activity")
             putString("pref_heatmap_date", state.datePeriod)
             putInt("pref_heatmap_min_visits", state.minVisits)
             putBoolean("pref_heatmap_consolidate", state.consolidateCorridors)

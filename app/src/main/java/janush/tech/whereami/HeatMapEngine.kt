@@ -11,13 +11,13 @@ enum class HeatMapTier(
     val strokeWidth: Float,
     val label: String
 ) {
-    TIER_1_BLUE(1, 0xD92563EB.toInt(), 6.0f, "1 visit (Exploratory)"),     // Cobalt Royal Blue (~85% alpha)
-    TIER_2_CYAN(2, 0xE606B6D4.toInt(), 7.0f, "2 visits"),                  // Vivid Cyan / Aqua (~90% alpha)
-    TIER_3_GREEN(3, 0xF210B981.toInt(), 8.0f, "3-4 visits"),               // Emerald Green (~95% alpha)
-    TIER_4_YELLOW(4, 0xFFEAB308.toInt(), 9.0f, "5-7 visits"),              // Golden Yellow (100% alpha)
-    TIER_5_ORANGE(5, 0xFFF97316.toInt(), 10.5f, "8-12 visits"),            // Vivid Tangerine Orange (100% alpha)
-    TIER_6_RED(6, 0xFFEF4444.toInt(), 12.0f, "13-19 visits"),              // Crimson Fire Red (100% alpha)
-    TIER_7_MAGENTA(7, 0xFFD946EF.toInt(), 13.5f, "20+ visits (Hotspot)");   // Neon Magenta (100% alpha)
+    TIER_1_BLUE(1, 0xD92563EB.toInt(), 8.0f, "1 visit (Exploratory)"),     // Cobalt Royal Blue (~85% alpha)
+    TIER_2_CYAN(2, 0xE606B6D4.toInt(), 9.5f, "2 visits"),                  // Vivid Cyan / Aqua (~90% alpha)
+    TIER_3_GREEN(3, 0xF210B981.toInt(), 11.0f, "3-4 visits"),              // Emerald Green (~95% alpha)
+    TIER_4_YELLOW(4, 0xFFEAB308.toInt(), 12.5f, "5-7 visits"),             // Golden Yellow (100% alpha)
+    TIER_5_ORANGE(5, 0xFFF97316.toInt(), 14.5f, "8-12 visits"),            // Vivid Tangerine Orange (100% alpha)
+    TIER_6_RED(6, 0xFFEF4444.toInt(), 16.5f, "13-19 visits"),              // Crimson Fire Red (100% alpha)
+    TIER_7_MAGENTA(7, 0xFFD946EF.toInt(), 18.5f, "20+ visits (Hotspot)");   // Neon Magenta (100% alpha)
 
     companion object {
         fun fromLevel(level: Int): HeatMapTier = when (level.coerceIn(1, 7)) {
@@ -275,11 +275,28 @@ object HeatMapEngine {
         val occupiedCorridorCells = HashSet<Long>()
         var totalCorridorMeters = 0.0
 
-        simplifiedTracks.forEach { track ->
+        // Sort tracks by size descending so the longest, most complete trips establish continuous corridors first
+        val sortedTracks = simplifiedTracks.sortedByDescending { it.size }
+
+        sortedTracks.forEach { track ->
             if (track.size < 2) return@forEach
 
             var currentTier: HeatMapTier? = null
             var currentPath = mutableListOf<GeoPoint>()
+            // Collect cells drawn by THIS track; only committed to occupiedCorridorCells after track finishes
+            val thisTrackDrawnCells = HashSet<Long>()
+
+            fun flushCurrentPath() {
+                if (currentTier != null && currentPath.size >= 2) {
+                    // Suppress isolated 1-segment micro-stubs (< 35m) that touch an occupied corridor
+                    val isMicroStub = currentPath.size == 2 && approximateDistanceMeters(currentPath[0], currentPath[1]) < 35.0
+                    if (!options.consolidateCorridors || !isMicroStub) {
+                        tierPolylines[currentTier]?.add(currentPath)
+                    }
+                }
+                currentPath = mutableListOf()
+                currentTier = null
+            }
 
             for (i in 0 until track.size - 1) {
                 val p1 = track[i]
@@ -290,29 +307,21 @@ object HeatMapEngine {
 
                 // Density filter: skip segments below minimum visits
                 if (visits < options.minVisits) {
-                    if (currentTier != null && currentPath.size >= 2) {
-                        tierPolylines[currentTier]?.add(currentPath)
-                        currentPath = mutableListOf()
-                        currentTier = null
-                    }
+                    flushCurrentPath()
                     continue
                 }
 
-                // Corridor consolidation: skip redundant duplicate segments along an already drawn corridor
+                // Corridor consolidation: skip redundant duplicate segments along an already drawn corridor from prior tracks
                 if (options.consolidateCorridors) {
                     val (cLat, cLon) = cellCoords(midLat, midLon)
                     val midKey = cellKey(cLat, cLon)
                     if (occupiedCorridorCells.contains(midKey)) {
-                        if (currentTier != null && currentPath.size >= 2) {
-                            tierPolylines[currentTier]?.add(currentPath)
-                            currentPath = mutableListOf()
-                            currentTier = null
-                        }
+                        flushCurrentPath()
                         continue
                     }
                 }
 
-                // Register corridor cells as occupied to prevent parallel duplicates
+                // Register corridor cells in thisTrackDrawnCells
                 if (options.consolidateCorridors) {
                     val dist = approximateDistanceMeters(p1, p2)
                     totalCorridorMeters += dist
@@ -324,7 +333,7 @@ object HeatMapEngine {
                         val (sCLat, sCLon) = cellCoords(sLat, sLon)
                         for (dLat in -1..1) {
                             for (dLon in -1..1) {
-                                occupiedCorridorCells.add(cellKey(sCLat + dLat, sCLon + dLon))
+                                thisTrackDrawnCells.add(cellKey(sCLat + dLat, sCLon + dLon))
                             }
                         }
                     }
@@ -341,18 +350,20 @@ object HeatMapEngine {
                 } else if (currentTier == segmentTier) {
                     currentPath.add(p2)
                 } else {
-                    // Flush current path
+                    // Flush current path and transition to next tier seamlessly overlapping at p1
                     if (currentPath.size >= 2) {
                         tierPolylines[currentTier]?.add(currentPath)
                     }
-                    // Start new path overlapping at p1 so there's no visual gap
                     currentTier = segmentTier
                     currentPath = mutableListOf(p1, p2)
                 }
             }
 
-            if (currentTier != null && currentPath.size >= 2) {
-                tierPolylines[currentTier]?.add(currentPath)
+            flushCurrentPath()
+
+            // Commit drawn cells from this track to global occupied corridors for subsequent tracks
+            if (options.consolidateCorridors) {
+                occupiedCorridorCells.addAll(thisTrackDrawnCells)
             }
         }
 
