@@ -703,111 +703,48 @@ fun OsmMapView(
     }
 
     // Render Road / Path Heat Map Layer (Density of all recorded paths, frequency-based coloring)
+    var allHeatMapPoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+
     LaunchedEffect(heatMapTracks, showHeatMap) {
         val map = mapView ?: return@LaunchedEffect
         heatMapPolylines.forEach { map.overlays.remove(it) }
 
         if (!showHeatMap || heatMapTracks.isEmpty()) {
             heatMapPolylines = emptyList()
+            allHeatMapPoints = emptyList()
             map.invalidate()
             return@LaunchedEffect
         }
 
-        // --- Background computation (frequency mapping + color assignment) ---
-        data class TrackVisuals(val track: List<GeoPoint>, val outerColor: Int, val innerColor: Int, val outerWidth: Float, val innerWidth: Float)
-
-        val trackVisuals: List<TrackVisuals> = withContext(Dispatchers.Default) {
-            // 1. Build grid-cell frequency map (cell ~11m at 4 decimal places)
-            val cellFreq = mutableMapOf<Long, Int>()
-            fun cellKey(pt: GeoPoint): Long {
-                val latGrid = (pt.latitude * 1000).toLong()   // ~111m per unit
-                val lngGrid = (pt.longitude * 1000).toLong()
-                return latGrid * 1_000_000L + lngGrid
-            }
-            heatMapTracks.forEach { track ->
-                track.forEach { pt ->
-                    val key = cellKey(pt)
-                    cellFreq[key] = (cellFreq[key] ?: 0) + 1
-                }
-            }
-
-            // 2. For each track, find its peak cell frequency (represents how often this corridor was used)
-            val trackFreq: List<Int> = heatMapTracks.map { track ->
-                if (track.isEmpty()) 0
-                else track.maxOf { pt -> cellFreq[cellKey(pt)] ?: 1 }
-            }
-
-            val maxFreq = trackFreq.maxOrNull()?.coerceAtLeast(1) ?: 1
-
-            // 3. Map frequency → color gradient: cold blue (1x) → warm amber (mid) → hot red (max)
-            // Colors: 1x = #0284C7 (blue), mid = #F59E0B (amber), max = #EF4444 (red)
-            fun freqColor(freq: Int, alpha: Int): Int {
-                val ratio = (freq - 1).toFloat() / (maxFreq - 1).coerceAtLeast(1).toFloat()
-                val r: Int
-                val g: Int
-                val b: Int
-                when {
-                    ratio <= 0.5f -> {
-                        // Blue → Amber
-                        val t = ratio / 0.5f
-                        r = (0x02 + (0xF5 - 0x02) * t).toInt()
-                        g = (0x84 + (0x9E - 0x84) * t).toInt()
-                        b = (0xC7 + (0x0B - 0xC7) * t).toInt()
-                    }
-                    else -> {
-                        // Amber → Red
-                        val t = (ratio - 0.5f) / 0.5f
-                        r = (0xF5 + (0xEF - 0xF5) * t).toInt()
-                        g = (0x9E + (0x44 - 0x9E) * t).toInt()
-                        b = (0x0B + (0x44 - 0x0B) * t).toInt()
-                    }
-                }
-                return Color.argb(alpha, r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
-            }
-
-            heatMapTracks.mapIndexed { i, track ->
-                val freq = trackFreq[i].coerceAtLeast(1)
-                // Glow layer: 40-70% alpha; Core layer: 70-100% alpha; Width scales with frequency
-                val freqRatio = (freq - 1).toFloat() / (maxFreq - 1).coerceAtLeast(1).toFloat()
-                val outerAlpha = (0x66 + (0x99 - 0x66) * freqRatio).toInt()  // 40%→60%
-                val innerAlpha = (0xB3 + (0xFF - 0xB3) * freqRatio).toInt()  // 70%→100%
-                val outerWidth = 10f + 8f * freqRatio   // 10–18 px glow
-                val innerWidth = 4f + 4f * freqRatio    // 4–8 px core
-                TrackVisuals(track, freqColor(freq, outerAlpha), freqColor(freq, innerAlpha), outerWidth, innerWidth)
-            }
+        val processed = withContext(Dispatchers.Default) {
+            HeatMapEngine.processTracks(heatMapTracks, epsilonMeters = 10.0)
         }
 
-        // --- Apply polylines on main thread ---
+        allHeatMapPoints = processed.allSimplifiedPoints
+
         val lines = mutableListOf<Polyline>()
-        // Draw glow layer first (below), then core layer on top
-        trackVisuals.forEach { tv ->
-            if (tv.track.size >= 2) {
-                val glow = Polyline(map).apply {
-                    outlinePaint.color = tv.outerColor
-                    outlinePaint.strokeWidth = tv.outerWidth
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(tv.track)
+        // Draw from coldest (Tier 1) to hottest (Tier 4) so peak thermal lines render on top
+        listOf(
+            HeatMapTier.TIER_1_COLD,
+            HeatMapTier.TIER_2_WARM,
+            HeatMapTier.TIER_3_HOT,
+            HeatMapTier.TIER_4_PEAK
+        ).forEach { tier ->
+            val paths = processed.tierPolylines[tier] ?: emptyList()
+            paths.forEach { path ->
+                if (path.size >= 2) {
+                    val poly = Polyline(map).apply {
+                        outlinePaint.color = tier.colorArgb
+                        outlinePaint.strokeWidth = tier.strokeWidth
+                        outlinePaint.strokeCap = Paint.Cap.ROUND
+                        outlinePaint.strokeJoin = Paint.Join.ROUND
+                        infoWindow = null
+                        setOnClickListener { _, _, _ -> true }
+                        setPoints(path)
+                    }
+                    map.overlays.add(0, poly)
+                    lines.add(poly)
                 }
-                map.overlays.add(0, glow)
-                lines.add(glow)
-            }
-        }
-        trackVisuals.forEach { tv ->
-            if (tv.track.size >= 2) {
-                val core = Polyline(map).apply {
-                    outlinePaint.color = tv.innerColor
-                    outlinePaint.strokeWidth = tv.innerWidth
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(tv.track)
-                }
-                map.overlays.add(0, core)
-                lines.add(core)
             }
         }
         heatMapPolylines = lines
@@ -1174,6 +1111,118 @@ fun OsmMapView(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
+                }
+            }
+        }
+
+        // Floating Heat Map Controls ("Fit All to Map" and "Close Heat Map")
+        if (showHeatMap) {
+            val hasRecenter = !isFollowing && destinationPoint == null && selectedSavedPlace == null
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = ComposeColor(0xF00F172A),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ComposeColor(0xFFF97316)),
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (hasRecenter) 165.dp else 105.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Whatshot,
+                            contentDescription = null,
+                            tint = ComposeColor(0xFFF97316),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Heat Map",
+                            color = ComposeColor.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 1. Fit All
+                    Surface(
+                        onClick = {
+                            val map = mapView ?: return@Surface
+                            isFollowing = false
+                            snapHandler.removeCallbacks(snapRunnable)
+                            val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
+                            if (pts.isNotEmpty()) {
+                                try {
+                                    val rawBox = BoundingBox.fromGeoPoints(pts)
+                                    val minSpan = 0.008
+                                    val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                                    val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                                    val centerLat = rawBox.centerLatitude
+                                    val centerLon = rawBox.centerLongitude
+                                    val paddedBox = BoundingBox(
+                                        centerLat + latSpan * 0.55,
+                                        centerLon + lonSpan * 0.55,
+                                        centerLat - latSpan * 0.55,
+                                        centerLon - lonSpan * 0.55
+                                    )
+                                    map.zoomToBoundingBox(paddedBox, true, 120)
+                                } catch (e: Exception) {}
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = ComposeColor(0xFF1E293B),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CropFree,
+                                contentDescription = "Fit All to Map",
+                                tint = ComposeColor(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Fit All",
+                                color = ComposeColor(0xFF38BDF8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    // 2. Close Heat Map
+                    Surface(
+                        onClick = { onToggleHeatMap?.invoke() },
+                        shape = RoundedCornerShape(12.dp),
+                        color = ComposeColor(0xFF7F1D1D),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Heat Map",
+                                tint = ComposeColor(0xFFFCA5A5),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Close",
+                                color = ComposeColor(0xFFFCA5A5),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
             }
         }
