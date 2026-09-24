@@ -61,6 +61,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -1689,18 +1690,6 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                                         IconButton(
-                                                                            onClick = { selectedTripForDetail = trip },
-                                                                            modifier = Modifier.size(28.dp)
-                                                                        ) {
-                                                                            Icon(
-                                                                                Icons.Default.Info,
-                                                                                contentDescription = "Details",
-                                                                                tint = Color(0xFFFBBF24),
-                                                                                modifier = Modifier.size(18.dp)
-                                                                            )
-                                                                        }
-                                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                                        IconButton(
                                                                             onClick = {
                                                                                 GpxExporter.shareGpx(context, trip)
                                                                             },
@@ -1743,80 +1732,38 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
                                                                 }
 
-                                                                var showProfileMenu by remember { mutableStateOf(false) }
                                                                 Row(
                                                                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                                     verticalAlignment = Alignment.CenterVertically
                                                                 ) {
-                                                                    val distKm = trip.distanceMeters / 1000.0
-                                                                    Text(
-                                                                        text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
-                                                                        color = Color(0xFF38BDF8),
-                                                                        fontSize = 12.sp,
-                                                                        maxLines = 1,
-                                                                        overflow = TextOverflow.Ellipsis,
-                                                                        modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp)
-                                                                    )
+                                                                    Row(
+                                                                        verticalAlignment = Alignment.CenterVertically,
+                                                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = trip.activityProfile.iconEmoji,
+                                                                            fontSize = 14.sp,
+                                                                            modifier = Modifier.padding(end = 5.dp)
+                                                                        )
+                                                                        val distKm = trip.distanceMeters / 1000.0
+                                                                        Text(
+                                                                            text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
+                                                                            color = Color(0xFF38BDF8),
+                                                                            fontSize = 12.sp,
+                                                                            maxLines = 1,
+                                                                            overflow = TextOverflow.Ellipsis
+                                                                        )
+                                                                    }
 
-                                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                                        TextButton(
-                                                                            onClick = { selectedTripForDetail = trip },
-                                                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                                                            modifier = Modifier.height(26.dp)
-                                                                        ) {
-                                                                            Text("Details ➔", fontSize = 11.sp, color = Color(0xFFFBBF24), fontWeight = FontWeight.Bold)
-                                                                        }
-                                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                                        Box {
-                                                                            Surface(
-                                                                                shape = RoundedCornerShape(8.dp),
-                                                                                color = Color(0xFF0F172A),
-                                                                                modifier = Modifier.clickable { showProfileMenu = true }
-                                                                            ) {
-                                                                            Row(
-                                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                                                                verticalAlignment = Alignment.CenterVertically
-                                                                            ) {
-                                                                                Text(
-                                                                                    text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
-                                                                                    fontSize = 11.sp,
-                                                                                    fontWeight = FontWeight.SemiBold,
-                                                                                    color = Color(0xFF34D399),
-                                                                                    maxLines = 1,
-                                                                                    softWrap = false
-                                                                                )
-                                                                                Icon(
-                                                                                    Icons.Default.ArrowDropDown,
-                                                                                    contentDescription = "Change profile",
-                                                                                    tint = Color(0xFF94A3B8),
-                                                                                    modifier = Modifier.size(16.dp)
-                                                                                )
-                                                                            }
-                                                                        }
-
-                                                                        DropdownMenu(
-                                                                            expanded = showProfileMenu,
-                                                                            onDismissRequest = { showProfileMenu = false },
-                                                                            modifier = Modifier.background(Color(0xFF1E293B))
-                                                                        ) {
-                                                                            ActivityProfile.values().forEach { profile ->
-                                                                                DropdownMenuItem(
-                                                                                    text = {
-                                                                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                                                                            Text(profile.iconEmoji, fontSize = 14.sp)
-                                                                                            Spacer(modifier = Modifier.width(8.dp))
-                                                                                            Text(profile.displayName, color = Color.White, fontSize = 13.sp)
-                                                                                        }
-                                                                                    },
-                                                                                    onClick = {
-                                                                                        showProfileMenu = false
-                                                                                        viewModel.updateTripActivityProfile(trip.id, profile)
-                                                                                    }
-                                                                                )
-                                                                            }
-                                                                        }
-                                                                        }
+                                                                    Button(
+                                                                        onClick = { selectedTripForDetail = trip },
+                                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                                        shape = RoundedCornerShape(8.dp),
+                                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                                                        modifier = Modifier.height(28.dp)
+                                                                    ) {
+                                                                        Text("Details", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                                                     }
                                                                 }
 
@@ -6191,6 +6138,11 @@ fun TripFilterDropdowns(
     }
 }
 
+private sealed class RouteTimelineItem(val timestamp: Long) {
+    data class Place(val place: VisitedPlace, val orderNumber: Int) : RouteTimelineItem(place.timestamp)
+    data class Pause(val pause: TripPause, val pauseIndex: Int) : RouteTimelineItem(pause.startTime)
+}
+
 @Composable
 fun TripDetailDialog(
     trip: TripRecord,
@@ -6202,12 +6154,36 @@ fun TripDetailDialog(
     onUpdateProfile: (Long, ActivityProfile) -> Unit,
     onSplitPause: (Long, Int) -> Unit
 ) {
-    val dateStr = DateFormat.getDateInstance(DateFormat.FULL).format(Date(trip.startTime))
+    val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
+    val startDateStr = shortDateFmt.format(Date(trip.startTime))
+    val endDateStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
+        shortDateFmt.format(Date(trip.endTime))
+    } else null
+
+    val startCal = Calendar.getInstance().apply { timeInMillis = trip.startTime }
+    val endCal = trip.endTime?.let { Calendar.getInstance().apply { timeInMillis = it } }
+    val isSameDay = endCal == null || (
+        startCal.get(Calendar.YEAR) == endCal.get(Calendar.YEAR) &&
+        startCal.get(Calendar.DAY_OF_YEAR) == endCal.get(Calendar.DAY_OF_YEAR)
+    )
+
     val startTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
     val endTimeStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.endTime))
     } else {
         "In Progress / Live"
+    }
+
+    val timelineItems = remember(trip) {
+        val items = mutableListOf<RouteTimelineItem>()
+        var placeCounter = 1
+        trip.placesVisited.forEach { place ->
+            items.add(RouteTimelineItem.Place(place, placeCounter++))
+        }
+        trip.pauses.forEachIndexed { idx, pause ->
+            items.add(RouteTimelineItem.Pause(pause, idx))
+        }
+        items.sortedBy { it.timestamp }
     }
 
     val durationMs = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
@@ -6269,7 +6245,7 @@ fun TripDetailDialog(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "$dateStr • $startTimeStr",
+                                    text = "$startDateStr • $startTimeStr",
                                     fontSize = 11.sp,
                                     color = Color(0xFF94A3B8),
                                     maxLines = 1,
@@ -6515,19 +6491,43 @@ fun TripDetailDialog(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text("SCHEDULE & TIMING", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                Text("$dateStr at $startTimeStr", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                Text(endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                            if (isSameDay) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Date:", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    Text(startDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    Text(startTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    Text(endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    Text("$startDateStr, $startTimeStr", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    Text(if (endDateStr != null) "$endDateStr, $endTimeStr" else endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
                             }
                             if (trip.points.isNotEmpty()) {
                                 Row(
@@ -6541,7 +6541,7 @@ fun TripDetailDialog(
                         }
                     }
 
-                    // 4. Visited Places Timeline
+                    // 4. Unified Route Timeline (Visited Localities & Interleaved Rest Stops)
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
@@ -6551,132 +6551,156 @@ fun TripDetailDialog(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "VISITED LOCALITIES (${trip.placesVisited.size})",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8),
-                                    letterSpacing = 0.5.sp
-                                )
+                            val totalPlaces = trip.placesVisited.size
+                            val totalPauses = trip.pauses.size
+                            val timelineTitle = when {
+                                totalPauses > 0 -> "ROUTE TIMELINE ($totalPlaces ${if (totalPlaces == 1) "place" else "places"}, $totalPauses ${if (totalPauses == 1) "pause" else "pauses"})"
+                                else -> "VISITED LOCALITIES ($totalPlaces)"
                             }
+                            Text(
+                                text = timelineTitle,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                letterSpacing = 0.5.sp
+                            )
 
-                            if (trip.placesVisited.isEmpty()) {
+                            if (timelineItems.isEmpty()) {
                                 Text(
-                                    text = "No distinct locality transitions were recorded during this trip.",
+                                    text = "No distinct locality transitions or pauses recorded during this trip.",
                                     fontSize = 12.sp,
                                     color = Color(0xFF94A3B8),
                                     modifier = Modifier.padding(vertical = 4.dp)
                                 )
                             } else {
-                                trip.placesVisited.forEachIndexed { idx, place ->
-                                    val entryTime = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(place.timestamp))
-                                    val entryDistKm = place.distanceAtEntryMeters / 1000.0
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                                            .padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                        ) {
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = Color(0xFF0284C7),
-                                                modifier = Modifier.size(24.dp)
+                                timelineItems.forEach { item ->
+                                    when (item) {
+                                        is RouteTimelineItem.Place -> {
+                                            val place = item.place
+                                            val entryTime = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(place.timestamp))
+                                            val entryDistKm = place.distanceAtEntryMeters / 1000.0
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
+                                                    .padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Text("${idx + 1}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(24.dp)
+                                                            .background(Color(0xFF0284C7), CircleShape),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = "${item.orderNumber}",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            textAlign = TextAlign.Center,
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = place.placeName,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White
+                                                        )
+                                                        if (place.hierarchySubtitle.isNotBlank()) {
+                                                            Text(
+                                                                text = place.hierarchySubtitle,
+                                                                fontSize = 11.sp,
+                                                                color = Color(0xFF94A3B8)
+                                                            )
+                                                        }
+                                                    }
                                                 }
-                                            }
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Column {
-                                                Text(
-                                                    text = place.placeName,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White
-                                                )
-                                                if (place.hierarchySubtitle.isNotBlank()) {
+
+                                                Column(horizontalAlignment = Alignment.End) {
                                                     Text(
-                                                        text = place.hierarchySubtitle,
-                                                        fontSize = 11.sp,
-                                                        color = Color(0xFF94A3B8)
+                                                        text = entryTime,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = Color(0xFF38BDF8)
+                                                    )
+                                                    Text(
+                                                        text = String.format(Locale.getDefault(), "at %.2f km", entryDistKm),
+                                                        fontSize = 10.sp,
+                                                        color = Color(0xFF64748B)
                                                     )
                                                 }
                                             }
                                         }
+                                        is RouteTimelineItem.Pause -> {
+                                            val pause = item.pause
+                                            val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pause.startTime))
+                                            val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
+                                                    .border(1.dp, Color(0x66F59E0B), RoundedCornerShape(8.dp))
+                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(24.dp)
+                                                            .background(Color(0xFFD97706), CircleShape),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = "⏸",
+                                                            fontSize = 11.sp,
+                                                            textAlign = TextAlign.Center,
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = "Stop #${item.pauseIndex + 1} ($durMin min rest)",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFFFBBF24)
+                                                        )
+                                                        Text(
+                                                            text = "Paused at $pauseTimeStr",
+                                                            fontSize = 11.sp,
+                                                            color = Color(0xFF94A3B8)
+                                                        )
+                                                    }
+                                                }
 
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Text(
-                                                text = entryTime,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color(0xFF38BDF8)
-                                            )
-                                            Text(
-                                                text = String.format(Locale.getDefault(), "at %.2f km", entryDistKm),
-                                                fontSize = 10.sp,
-                                                color = Color(0xFF64748B)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 5. Rest Stops / Pauses Section (if any)
-                    if (trip.pauses.isNotEmpty()) {
-                        Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "REST STOPS & PAUSES (${trip.pauses.size})",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFF59E0B),
-                                    letterSpacing = 0.5.sp
-                                )
-
-                                trip.pauses.forEachIndexed { pauseIdx, pause ->
-                                    val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pause.startTime))
-                                    val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Stop #${pauseIdx + 1} at $pauseTimeStr ($durMin min rest)",
-                                            fontSize = 12.sp,
-                                            color = Color.White
-                                        )
-                                        Button(
-                                            onClick = { onSplitPause(trip.id, pauseIdx) },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.height(28.dp)
-                                        ) {
-                                            Text("✂️ Split Trip", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                Button(
+                                                    onClick = { onSplitPause(trip.id, item.pauseIndex) },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    modifier = Modifier.height(28.dp)
+                                                ) {
+                                                    Text("✂️ Split Trip", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
                                         }
                                     }
                                 }
