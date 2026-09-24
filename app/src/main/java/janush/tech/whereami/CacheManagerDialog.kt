@@ -159,36 +159,41 @@ fun CacheManagerDialog(
                         Divider(color = Color(0xFF1E293B))
 
                         // 2. Locality Boundaries
+                        val isRunning = prefetchState is CacheManager.PrefetchState.Running
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                    val missingBoundaries = cacheDeficit?.missingBoundaries
-                                    when {
-                                        missingBoundaries == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                                        missingBoundaries == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                        else -> Text("⚠ $missingBoundaries missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    }
+                                Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                val missingBoundaries = cacheDeficit?.missingBoundaries
+                                when {
+                                    missingBoundaries == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                    missingBoundaries == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    else -> Text("⚠ $missingBoundaries missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                 }
                                 Text("${formatBytes(boundaryBytes)} • $boundaryCount places", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val missingBoundaries = cacheDeficit?.missingBoundaries
                                 if (missingBoundaries != null && missingBoundaries > 0) {
                                     Button(
-                                        onClick = { cacheManager.fetchMissingBoundaries() },
+                                        onClick = { if (!isRunning) cacheManager.fetchMissingBoundaries() },
+                                        enabled = !isRunning,
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
                                     ) {
-                                        Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        if (isRunning) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(12.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White
+                                            )
+                                        } else {
+                                            Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                                 OutlinedButton(
@@ -207,33 +212,37 @@ fun CacheManagerDialog(
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                    val missingRoutes = cacheDeficit?.missingRoutes
-                                    when {
-                                        missingRoutes == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                                        missingRoutes == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                        else -> Text("⚠ $missingRoutes missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    }
+                                Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                val missingRoutes = cacheDeficit?.missingRoutes
+                                when {
+                                    missingRoutes == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                    missingRoutes == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    else -> Text("⚠ $missingRoutes missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                 }
                                 Text("${formatBytes(spatialBytes)} • $spatialCount points", color = Color(0xFFE2E8F0), fontSize = 12.sp)
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val missingRoutes = cacheDeficit?.missingRoutes
                                 if (missingRoutes != null && missingRoutes > 0) {
                                     Button(
-                                        onClick = { cacheManager.startPrefetch() },
+                                        onClick = { if (!isRunning) cacheManager.startPrefetch() },
+                                        enabled = !isRunning,
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
                                     ) {
-                                        Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        if (isRunning) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(12.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White
+                                            )
+                                        } else {
+                                            Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                                 OutlinedButton(
