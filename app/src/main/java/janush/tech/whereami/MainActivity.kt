@@ -391,7 +391,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val heatMapTracks = remember(savedTrips, activeTrip, heatMapFilterState, startOfTodayMs, startOfWeekMs, startOfMonthMs, startOfYearMs) {
         val tracks = mutableListOf<List<GeoPoint>>()
         val filtered = savedTrips.filter { trip ->
-            val matchesProfile = heatMapFilterState.activityProfile == null || trip.activityProfile == heatMapFilterState.activityProfile
+            val matchesProfile = heatMapFilterState.activityProfiles.isEmpty() || heatMapFilterState.activityProfiles.contains(trip.activityProfile)
             val matchesDate = when (heatMapFilterState.datePeriod) {
                 "TODAY" -> trip.startTime >= startOfTodayMs
                 "WEEK" -> trip.startTime >= startOfWeekMs
@@ -405,7 +405,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
         val currentActiveTrip = activeTrip
         if (heatMapFilterState.includeActiveTrip && currentActiveTrip != null && currentActiveTrip.points.isNotEmpty()) {
-            val matchesProfile = heatMapFilterState.activityProfile == null || currentActiveTrip.activityProfile == heatMapFilterState.activityProfile
+            val matchesProfile = heatMapFilterState.activityProfiles.isEmpty() || heatMapFilterState.activityProfiles.contains(currentActiveTrip.activityProfile)
             val matchesDate = when (heatMapFilterState.datePeriod) {
                 "TODAY" -> currentActiveTrip.startTime >= startOfTodayMs
                 "WEEK" -> currentActiveTrip.startTime >= startOfWeekMs
@@ -432,9 +432,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
             parts.add(p)
         }
-        val actProfile = heatMapFilterState.activityProfile
-        if (actProfile != null) {
-            parts.add(actProfile.displayName)
+        if (heatMapFilterState.activityProfiles.isNotEmpty()) {
+            parts.add(heatMapFilterState.activityProfiles.joinToString(", ") { it.displayName })
         }
         if (heatMapFilterState.minVisits > 1) {
             parts.add("${heatMapFilterState.minVisits}+")
@@ -4837,10 +4836,29 @@ private fun HeatMapSettingsDialog(
     onDismiss: () -> Unit
 ) {
     var selectedPeriod by remember(filterState.datePeriod) { mutableStateOf(filterState.datePeriod) }
-    var selectedProfile by remember(filterState.activityProfile) { mutableStateOf(filterState.activityProfile) }
+    var selectedProfiles by remember(filterState.activityProfiles) { mutableStateOf(filterState.activityProfiles) }
     var selectedMinVisits by remember(filterState.minVisits) { mutableIntStateOf(filterState.minVisits) }
     var consolidate by remember(filterState.consolidateCorridors) { mutableStateOf(filterState.consolidateCorridors) }
     var includeActive by remember(filterState.includeActiveTrip) { mutableStateOf(filterState.includeActiveTrip) }
+
+    var dateDropdownExpanded by remember { mutableStateOf(false) }
+    var activityDropdownExpanded by remember { mutableStateOf(false) }
+    var densityDropdownExpanded by remember { mutableStateOf(false) }
+
+    val periodLabels = mapOf(
+        "ALL" to "All Time",
+        "TODAY" to "Today",
+        "WEEK" to "This Week",
+        "MONTH" to "This Month",
+        "YEAR" to "This Year"
+    )
+
+    val densityLabels = mapOf(
+        1 to "All Passes (1+)",
+        2 to "Frequent Passes (2+)",
+        4 to "High Traffic (4+)",
+        7 to "Hotspots Only (7+)"
+    )
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -4851,7 +4869,7 @@ private fun HeatMapSettingsDialog(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
             border = BorderStroke(1.dp, Color(0xFFF97316)),
             modifier = Modifier
-                .widthIn(max = 520.dp)
+                .widthIn(max = 480.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
@@ -4896,10 +4914,10 @@ private fun HeatMapSettingsDialog(
                     text = "Configure thermal intensity, consolidated corridors, and trip filters.",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                    modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
                 )
 
-                // 1. Date Period Filter
+                // 1. Date Period Filter Dropdown
                 Text(
                     text = "DATE PERIOD",
                     fontSize = 11.sp,
@@ -4907,88 +4925,216 @@ private fun HeatMapSettingsDialog(
                     color = Color(0xFFF97316),
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    val periods = listOf(
-                        "ALL" to "All Time",
-                        "TODAY" to "Today",
-                        "WEEK" to "This Wk",
-                        "MONTH" to "This Mo",
-                        "YEAR" to "This Yr"
-                    )
-                    periods.forEach { (code, label) ->
-                        val isSelected = selectedPeriod == code
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
-                                .clickable {
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E293B))
+                            .clickable { dateDropdownExpanded = true }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = periodLabels[selectedPeriod] ?: "All Time",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = dateDropdownExpanded,
+                        onDismissRequest = { dateDropdownExpanded = false },
+                        modifier = Modifier
+                            .background(Color(0xFF1E293B))
+                            .widthIn(min = 200.dp)
+                    ) {
+                        periodLabels.forEach { (code, label) ->
+                            val isSelected = selectedPeriod == code
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (isSelected) Color(0xFFF97316) else Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color(0xFFF97316),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
                                     selectedPeriod = code
+                                    dateDropdownExpanded = false
                                     onApplyFilter(
                                         filterState.copy(
                                             datePeriod = code,
-                                            activityProfile = selectedProfile,
+                                            activityProfiles = selectedProfiles,
                                             minVisits = selectedMinVisits,
                                             consolidateCorridors = consolidate,
                                             includeActiveTrip = includeActive
                                         )
                                     )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                }
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // 2. Activity Mode Filter
+                // 2. Activity Mode Multi-Select Dropdown
                 Text(
-                    text = "ACTIVITY MODE",
+                    text = "ACTIVITY MODES (MULTI-SELECT)",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFFF97316),
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                val modes = listOf<Pair<ActivityProfile?, String>>(
-                    null to "All Modes",
-                    ActivityProfile.CAR to "🚗 Car",
-                    ActivityProfile.CYCLING to "🚴 Bike",
-                    ActivityProfile.MTB to "🚵 MTB",
-                    ActivityProfile.HIKING to "🥾 Hike",
-                    ActivityProfile.RUNNING to "🏃 Run",
-                    ActivityProfile.WALKING to "🚶 Walk"
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    modes.forEach { (profile, label) ->
-                        val isSelected = selectedProfile == profile
-                        Box(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
-                                .clickable {
-                                    selectedProfile = profile
+                Spacer(modifier = Modifier.height(4.dp))
+                val activitySummary = if (selectedProfiles.isEmpty()) "All Modes" else {
+                    selectedProfiles.joinToString(", ") { "${it.iconEmoji} ${it.displayName}" }
+                }
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E293B))
+                            .clickable { activityDropdownExpanded = true }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = activitySummary,
+                                color = if (selectedProfiles.isEmpty()) Color.White else Color(0xFFF97316),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = activityDropdownExpanded,
+                        onDismissRequest = { activityDropdownExpanded = false },
+                        modifier = Modifier
+                            .background(Color(0xFF1E293B))
+                            .widthIn(min = 240.dp)
+                    ) {
+                        // "All Modes" option
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "All Modes",
+                                        color = if (selectedProfiles.isEmpty()) Color(0xFFF97316) else Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (selectedProfiles.isEmpty()) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    if (selectedProfiles.isEmpty()) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color(0xFFF97316),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = {
+                                selectedProfiles = emptySet()
+                                onApplyFilter(
+                                    filterState.copy(
+                                        activityProfiles = emptySet(),
+                                        datePeriod = selectedPeriod,
+                                        minVisits = selectedMinVisits,
+                                        consolidateCorridors = consolidate,
+                                        includeActiveTrip = includeActive
+                                    )
+                                )
+                            }
+                        )
+
+                        ActivityProfile.values().forEach { profile ->
+                            val isChecked = selectedProfiles.contains(profile)
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(profile.iconEmoji, fontSize = 14.sp)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                profile.displayName,
+                                                color = if (isChecked) Color(0xFFF97316) else Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        }
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = null,
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = Color(0xFFF97316),
+                                                uncheckedColor = Color(0xFF64748B),
+                                                checkmarkColor = Color.White
+                                            ),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    val newProfiles = if (isChecked) {
+                                        selectedProfiles - profile
+                                    } else {
+                                        selectedProfiles + profile
+                                    }
+                                    selectedProfiles = newProfiles
                                     onApplyFilter(
                                         filterState.copy(
-                                            activityProfile = profile,
+                                            activityProfiles = newProfiles,
                                             datePeriod = selectedPeriod,
                                             minVisits = selectedMinVisits,
                                             consolidateCorridors = consolidate,
@@ -4996,22 +5142,14 @@ private fun HeatMapSettingsDialog(
                                         )
                                     )
                                 }
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // 3. Minimum Route Density (Passes Filter)
+                // 3. Minimum Route Density Dropdown
                 Text(
                     text = "MINIMUM ROUTE VISITS (DENSITY)",
                     fontSize = 11.sp,
@@ -5019,51 +5157,86 @@ private fun HeatMapSettingsDialog(
                     color = Color(0xFFF97316),
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    val densityOptions = listOf(
-                        1 to "All (1+)",
-                        2 to "Frequent (2+)",
-                        4 to "Dense (4+)",
-                        7 to "Hotspots (7+)"
-                    )
-                    densityOptions.forEach { (thresh, label) ->
-                        val isSelected = selectedMinVisits == thresh
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) Color(0xFFF97316) else Color(0xFF1E293B))
-                                .clickable {
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E293B))
+                            .clickable { densityDropdownExpanded = true }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = densityLabels[selectedMinVisits] ?: "All Passes (1+)",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = densityDropdownExpanded,
+                        onDismissRequest = { densityDropdownExpanded = false },
+                        modifier = Modifier
+                            .background(Color(0xFF1E293B))
+                            .widthIn(min = 220.dp)
+                    ) {
+                        densityLabels.forEach { (thresh, label) ->
+                            val isSelected = selectedMinVisits == thresh
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (isSelected) Color(0xFFF97316) else Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color(0xFFF97316),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
                                     selectedMinVisits = thresh
+                                    densityDropdownExpanded = false
                                     onApplyFilter(
                                         filterState.copy(
                                             minVisits = thresh,
                                             datePeriod = selectedPeriod,
-                                            activityProfile = selectedProfile,
+                                            activityProfiles = selectedProfiles,
                                             consolidateCorridors = consolidate,
                                             includeActiveTrip = includeActive
                                         )
                                     )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                textAlign = TextAlign.Center
+                                }
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // 4. Rendering Options (Consolidation & Active Trip)
                 Text(
@@ -5073,7 +5246,7 @@ private fun HeatMapSettingsDialog(
                     color = Color(0xFFF97316),
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // Switch: Consolidate corridors
                 Box(
@@ -5081,7 +5254,7 @@ private fun HeatMapSettingsDialog(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -5096,7 +5269,7 @@ private fun HeatMapSettingsDialog(
                                 color = Color.White
                             )
                             Text(
-                                text = "Merges parallel repeated passes along the same street into a single bold thermal backbone.",
+                                text = "Merges duplicate GPS tracks along the same street into a single bold thermal backbone.",
                                 fontSize = 11.sp,
                                 color = Color(0xFF94A3B8)
                             )
@@ -5109,7 +5282,7 @@ private fun HeatMapSettingsDialog(
                                     filterState.copy(
                                         consolidateCorridors = it,
                                         datePeriod = selectedPeriod,
-                                        activityProfile = selectedProfile,
+                                        activityProfiles = selectedProfiles,
                                         minVisits = selectedMinVisits,
                                         includeActiveTrip = includeActive
                                     )
@@ -5125,7 +5298,7 @@ private fun HeatMapSettingsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // Switch: Include active trip
                 Box(
@@ -5133,7 +5306,7 @@ private fun HeatMapSettingsDialog(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -5161,7 +5334,7 @@ private fun HeatMapSettingsDialog(
                                     filterState.copy(
                                         includeActiveTrip = it,
                                         datePeriod = selectedPeriod,
-                                        activityProfile = selectedProfile,
+                                        activityProfiles = selectedProfiles,
                                         minVisits = selectedMinVisits,
                                         consolidateCorridors = consolidate
                                     )
@@ -5177,7 +5350,7 @@ private fun HeatMapSettingsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // 5. Thermal Scale Legend
                 Text(
@@ -5187,8 +5360,7 @@ private fun HeatMapSettingsDialog(
                     color = Color(0xFFF97316),
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Palette bar
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -5220,10 +5392,10 @@ private fun HeatMapSettingsDialog(
                 ) {
                     Text("1 Pass (Cold)", fontSize = 10.sp, color = Color(0xFF60A5FA))
                     Text("Moderate", fontSize = 10.sp, color = Color(0xFFEAB308))
-                    Text("Hotspot (17+)", fontSize = 10.sp, color = Color(0xFFF472B6), fontWeight = FontWeight.Bold)
+                    Text("Hotspot (20+)", fontSize = 10.sp, color = Color(0xFFF472B6), fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Bottom Buttons: Reset & Done
                 Row(
@@ -5236,7 +5408,7 @@ private fun HeatMapSettingsDialog(
                             onClick = {
                                 onResetFilter()
                                 selectedPeriod = "ALL"
-                                selectedProfile = null
+                                selectedProfiles = emptySet()
                                 selectedMinVisits = 1
                                 consolidate = true
                                 includeActive = true

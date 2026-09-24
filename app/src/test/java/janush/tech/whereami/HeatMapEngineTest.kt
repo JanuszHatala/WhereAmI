@@ -164,4 +164,30 @@ class HeatMapEngineTest {
         // Shared 2-visit corridor (A->B) should remain visible
         assertTrue("Frequent corridor should remain visible", redPaths.isNotEmpty())
     }
+
+    @Test
+    fun testRoundaboutContinuityNotFragmentedByCorridorConsolidation() {
+        // A roundabout circle: 8 points around a center
+        // Center: 50.000, 19.000, radius ~ 20 meters (~0.0002 deg lat/lon)
+        val centerLat = 50.00000
+        val centerLon = 19.00000
+        val radius = 0.0002
+        val angles = listOf(0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0, 360.0)
+        val roundaboutTrack = angles.map { deg ->
+            val rad = Math.toRadians(deg)
+            GeoPoint(centerLat + radius * Math.cos(rad), centerLon + radius * Math.sin(rad))
+        }
+
+        val result = HeatMapEngine.processTracks(
+            listOf(roundaboutTrack),
+            HeatMapOptions(consolidateCorridors = true, epsilonMeters = 1.0)
+        )
+
+        // All segments of this track must be preserved as a single continuous polyline
+        val totalSegments = result.tierPolylines.values.flatten()
+        assertEquals("Roundabout must not self-fragment into pieces under corridor consolidation", 1, totalSegments.size)
+        // Ensure the full ring points are preserved
+        val ringPolyline = totalSegments.first()
+        assertTrue("Ring polyline should retain all waypoints without dropped gaps", ringPolyline.size >= 8)
+    }
 }
