@@ -48,6 +48,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentLatLng = MutableStateFlow<Triple<Double, Double, Float?>?>(null)
     val currentLatLng: StateFlow<Triple<Double, Double, Float?>?> = _currentLatLng.asStateFlow()
 
+    private val _currentLocationFix = MutableStateFlow<LocationFix?>(null)
+    val currentLocationFix: StateFlow<LocationFix?> = _currentLocationFix.asStateFlow()
+
     // Screen On Preference
     private val _keepScreenOn = MutableStateFlow(appPrefs.getBoolean("pref_keep_screen_on", false))
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
@@ -548,8 +551,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            locationManager.getLocationRaw().collect { (lat, lng, bearing) ->
-                _currentLatLng.value = Triple(lat, lng, bearing)
+            locationManager.getLocationRaw().collect { fix ->
+                _currentLatLng.value = Triple(fix.lat, fix.lng, fix.bearing)
+                _currentLocationFix.value = fix
             }
         }
     }
