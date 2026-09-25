@@ -25,15 +25,30 @@ class LiveTrackingService : Service() {
     private val NOTIF_ID = 2
     private val CHANNEL_ID = "live_tracking_channel"
 
+    companion object {
+        const val ACTION_PAUSE_RESUME = "janush.tech.whereami.ACTION_PAUSE_RESUME"
+        const val ACTION_SYNC_NOW = "janush.tech.whereami.ACTION_SYNC_NOW"
+        const val ACTION_STOP = "janush.tech.whereami.ACTION_STOP"
+        const val ACTION_ENTER_STANDBY = "janush.tech.whereami.ACTION_ENTER_STANDBY"
+        const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
+        const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
+    }
+
+    private var lastPlaceName: String = "In Transit"
+    private var lastSpeedKmh: Float = 0f
+
     override fun onCreate() {
         super.onCreate()
         locationManager = LocationManager.getInstance(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock").apply {
-            acquire(6 * 60 * 60 * 1000L) // 6h max safe timeout
-        }
-        
+        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock")
+
+        val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        updateWakeLock(hasTrip || hasLive)
+
         try {
             startForegroundService()
         } catch (e: Exception) {
@@ -41,23 +56,31 @@ class LiveTrackingService : Service() {
             stopSelf()
             return
         }
-        
-        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("is_tracking", true).apply()
 
         startTracking()
     }
 
-    companion object {
-        const val ACTION_PAUSE_RESUME = "janush.tech.whereami.ACTION_PAUSE_RESUME"
-        const val ACTION_SYNC_NOW = "janush.tech.whereami.ACTION_SYNC_NOW"
-        const val ACTION_STOP = "janush.tech.whereami.ACTION_STOP"
-        const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
-        const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
+    private fun updateWakeLock(shouldHold: Boolean) {
+        try {
+            if (shouldHold) {
+                if (wakeLock == null) {
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock")
+                }
+                if (wakeLock?.isHeld != true) {
+                    wakeLock?.acquire(3 * 60 * 60 * 1000L) // 3h safe timeout while active
+                    TelemetryLogger.log("POWER", "LiveTrackingWakeLock acquired (active trip or live sharing)")
+                }
+            } else {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                    TelemetryLogger.log("POWER", "LiveTrackingWakeLock released (standby or stopped)")
+                }
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Error updating LiveTrackingWakeLock: ${e.message}")
+        }
     }
-
-    private var lastPlaceName: String = "In Transit"
-    private var lastSpeedKmh: Float = 0f
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -67,8 +90,20 @@ class LiveTrackingService : Service() {
                 if (hasTrip) {
                     updateNotification()
                 } else {
+                    updateWakeLock(false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
                     stopSelf()
                 }
+                return START_NOT_STICKY
+            }
+            ACTION_ENTER_STANDBY -> {
+                updateWakeLock(false)
+                updateNotification()
                 return START_NOT_STICKY
             }
             ACTION_PAUSE_RESUME -> {
@@ -92,15 +127,32 @@ class LiveTrackingService : Service() {
             }
         }
 
-        // If neither trip nor live sharing is active, avoid running zombie service
         val hasTrip = TripManager.getInstance(this).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
+        val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+
         if (!hasTrip && !hasLive) {
-            stopSelf()
-            return START_NOT_STICKY
+            if (!isAuto) {
+                updateWakeLock(false)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            } else {
+                updateWakeLock(false)
+                updateNotification()
+                return START_NOT_STICKY
+            }
         }
-        return START_NOT_STICKY // Avoid aggressive system restart loops
+
+        updateWakeLock(true)
+        updateNotification()
+        return START_NOT_STICKY
     }
 
     private fun startForegroundService() {
@@ -114,7 +166,13 @@ class LiveTrackingService : Service() {
             manager.createNotificationChannel(channel)
         }
 
-        val notification = buildNotification("WhereAmI Active Tracking", "Recording trip & background location active")
+        val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+
+        val initialTitle = if (hasTrip || hasLive) "WhereAmI Active Tracking" else "WhereAmI • Auto-detect Standby"
+        val initialText = if (hasTrip || hasLive) "Recording trip & background location active" else "Ready to auto-record (standby • low power)"
+        val notification = buildNotification(initialTitle, initialText)
         startForeground(NOTIF_ID, notification)
     }
 
@@ -126,6 +184,8 @@ class LiveTrackingService : Service() {
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val isLiveActive = liveSession != null && liveSession.isActive
         val isPaused = liveSession?.isPaused == true
+        val activeTrip = TripManager.getInstance(this).activeTrip.value
+        val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
         val contentIntent = android.app.PendingIntent.getActivity(
             this,
@@ -149,7 +209,7 @@ class LiveTrackingService : Service() {
             .setOnlyAlertOnce(true)
 
         if (isLiveActive) {
-            // 1. Pause / Resume Action (Amber / Emerald Green)
+            // 1. Pause / Resume Action
             val pauseIntent = android.app.PendingIntent.getService(
                 this,
                 1,
@@ -160,7 +220,7 @@ class LiveTrackingService : Service() {
             val pauseColor = if (isPaused) "#10B981" else "#F59E0B"
             builder.addAction(0, formatActionTitle(pauseLabel, pauseColor), pauseIntent)
 
-            // 2. Quick Share Action (Cyan / Blue)
+            // 2. Quick Share Action
             val sendIntent = Intent().apply {
                 action = Intent.ACTION_SEND
                 val shareUrl = liveSession.getViewerUrl()
@@ -186,7 +246,16 @@ class LiveTrackingService : Service() {
             )
             builder.addAction(0, formatActionTitle("🔗 Share", "#38BDF8"), shareIntent)
 
-            // 3. Stop Action (Vibrant Red 🛑) - capped at 3 actions total so Android OS won't drop it
+            // 3. Stop Action
+            val stopIntent = android.app.PendingIntent.getService(
+                this,
+                3,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
+        } else if (activeTrip == null && isAuto) {
+            // Standby mode action: allow user to stop standby auto-recording directly from notification
             val stopIntent = android.app.PendingIntent.getService(
                 this,
                 3,
@@ -203,37 +272,45 @@ class LiveTrackingService : Service() {
         val activeTrip = TripManager.getInstance(this).activeTrip.value
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val isLiveActive = liveSession != null && liveSession.isActive
+        val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+        val profile = TripManager.getInstance(this).activityProfile.value
 
-        val title = if (isLiveActive && !liveSession.title.isNullOrBlank()) {
-            "🔴 ${liveSession.title}"
-        } else {
-            "WhereAmI Active Tracking"
+        val title = when {
+            isLiveActive && !liveSession.title.isNullOrBlank() -> "🔴 ${liveSession.title}"
+            activeTrip != null -> "WhereAmI Active Tracking"
+            isAuto -> "WhereAmI • Auto-detect Standby"
+            else -> "WhereAmI Tracking"
         }
 
-        val text = if (!overrideText.isNullOrBlank()) {
-            overrideText
-        } else if (activeTrip != null) {
-            val distKm = activeTrip.distanceMeters / 1000.0
-            val statusTag = when {
-                isLiveActive && liveSession.isPaused -> " • [PAUSED]"
-                isLiveActive -> " • [LIVE]"
-                else -> ""
+        val text = when {
+            !overrideText.isNullOrBlank() -> overrideText
+            activeTrip != null -> {
+                val distKm = activeTrip.distanceMeters / 1000.0
+                val statusTag = when {
+                    isLiveActive && liveSession.isPaused -> " • [PAUSED]"
+                    isLiveActive -> " • [LIVE]"
+                    else -> ""
+                }
+                val timeTag = if (isLiveActive) " • ${liveSession.getFormattedRemaining()}" else ""
+                String.format(
+                    java.util.Locale.getDefault(),
+                    "%s • %.1f km (%.1f km/h)%s%s",
+                    lastPlaceName,
+                    distKm,
+                    lastSpeedKmh,
+                    statusTag,
+                    timeTag
+                )
             }
-            val timeTag = if (isLiveActive) " • ${liveSession.getFormattedRemaining()}" else ""
-            String.format(
-                java.util.Locale.getDefault(),
-                "%s • %.1f km (%.1f km/h)%s%s",
-                lastPlaceName,
-                distKm,
-                lastSpeedKmh,
-                statusTag,
-                timeTag
-            )
-        } else if (isLiveActive) {
-            val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
-            "Live Sharing Active$pauseTag • $lastPlaceName • ${liveSession.getFormattedRemaining()}"
-        } else {
-            "Recording trip & background location active"
+            isLiveActive -> {
+                val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
+                "Live Sharing Active$pauseTag • $lastPlaceName • ${liveSession.getFormattedRemaining()}"
+            }
+            isAuto -> {
+                val speedFormatted = if (profile.autoStartSpeedKmh % 1f == 0f) ">${profile.autoStartSpeedKmh.toInt()}" else ">%.1f".format(profile.autoStartSpeedKmh)
+                "Ready for ${profile.displayName} ($speedFormatted km/h) • Low power"
+            }
+            else -> "Recording trip & background location active"
         }
 
         val notification = buildNotification(title, text)
@@ -245,18 +322,63 @@ class LiveTrackingService : Service() {
         val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
         val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
+
+        // 1. Observe location stream for real-time telemetry display
         serviceScope.launch {
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
-                val activeTrip = TripManager.getInstance(this@LiveTrackingService).activeTrip.value
-                val liveSession = LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.value
-                val isLiveActive = liveSession != null && liveSession.isActive
-
                 lastPlaceName = locationData.primaryPlace?.city ?: "In Transit"
                 lastSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                updateNotification()
+            }
+        }
 
-                if (activeTrip != null || isLiveActive) {
+        // 2. Observe active trip changes to maintain wake lock and notification lifecycle
+        serviceScope.launch {
+            TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest { trip ->
+                val liveSession = LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.value
+                val hasLive = liveSession != null && liveSession.isActive
+                val isAuto = TripManager.getInstance(this@LiveTrackingService).tripMode.value == TripMode.AUTO
+
+                if (trip != null || hasLive) {
+                    updateWakeLock(true)
+                    updateNotification()
+                } else if (isAuto) {
+                    updateWakeLock(false)
                     updateNotification()
                 } else {
+                    updateWakeLock(false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
+                    stopSelf()
+                }
+            }
+        }
+
+        // 3. Observe live sharing changes
+        serviceScope.launch {
+            LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.collectLatest { liveSession ->
+                val trip = TripManager.getInstance(this@LiveTrackingService).activeTrip.value
+                val hasLive = liveSession != null && liveSession.isActive
+                val isAuto = TripManager.getInstance(this@LiveTrackingService).tripMode.value == TripMode.AUTO
+
+                if (trip != null || hasLive) {
+                    updateWakeLock(true)
+                    updateNotification()
+                } else if (isAuto) {
+                    updateWakeLock(false)
+                    updateNotification()
+                } else {
+                    updateWakeLock(false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
                     stopSelf()
                 }
             }
@@ -266,19 +388,13 @@ class LiveTrackingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceJob.cancel()
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (_: Exception) {}
-        
+        updateWakeLock(false)
         val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         prefs.edit().putBoolean("is_tracking", false).apply()
+        TelemetryLogger.log("POWER", "LiveTrackingService destroyed, wake lock released")
     }
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
     }
 }
-
-
