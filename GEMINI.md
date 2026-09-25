@@ -1,10 +1,11 @@
 # GEMINI.md - WhereAmI Project Rules
 
-See [AGENTS.md](file:///c:/DevWorkspaces/jh/ProjektyIT/Android/WhereIAm/AGENTS.md) for the authoritative project guidelines, architecture priorities, testing gates, and Git branching rules.
+See [AGENTS.md](AGENTS.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the authoritative project guidelines, architecture priorities, testing gates, and Git branching rules.
 
 ### Core Quick Reference:
 1. **Core Purpose**: Ultra-fast, reliable spatial awareness displaying the **Current Place Name** with complete **Structural Administrative Hierarchy** (`gm.`, `pow.`, `woj.`, Country) and **Canonical Road Designation** (`DK52`, `DW946`, `A4`, `S7`, etc.). Never compromise or obstruct this display.
-2. **Battery Optimization**: Highest priority. Adaptive GPS sampling (10–12s live on battery, 6s charging), stationary jitter gating ($< 0.35\text{ m/s}$), and persistent multi-tier disk caching.
-3. **Mandatory Unit Tests**: Every feature and algorithmic rule must have unit tests in `app/src/test/java/`. Build gates require `.\gradlew.bat testDebugUnitTest` and `.\gradlew.bat assembleDebug` to pass before completion.
-4. **Git Branching**: From now on, never push directly to `master`. Create `feat/<name>` or `fix/<name>`, push the branch to GitHub, and merge to `master` only after verification.
-5. **Safeguards**: Never push to GitHub or install APK on phone without explicit user instruction.
+2. **Battery Optimization & Zero-Idle-Drain**: Highest priority. Complete GPS shutdown in `IDLE` state, low-power hardware motion detection via `MotionWakeManager` (`Sensor.TYPE_SIGNIFICANT_MOTION`), strict wake lock scoping (never acquire in `onCreate` or hold in idle), and Screen-off MANUAL mode complete shutdown (Option A).
+3. **Smooth Heading & Position Interpolation**: Decouple kinematics from async geocoding (`LocationFix` with `.distinctUntilChanged`), drive 60fps tracking on VSYNC via `PositionInterpolator`, and freeze bearing when speed $< 1.2\text{ m/s}$.
+4. **Mandatory Unit Tests & Build Gates**: Every algorithmic rule and feature must have unit tests in `app/src/test/java/`. Build gates require `./gradlew testDebugUnitTest` and `./gradlew assembleDebug` to pass before completion.
+5. **Git Branching**: Never push directly to `master`. Create `feat/<name>` or `fix/<name>`, test locally, push only on instruction, and merge to `master` with `--no-ff`.
+6. **Safeguards**: Never push to GitHub or install APK on phone without explicit user instruction.
