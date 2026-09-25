@@ -85,3 +85,58 @@ All cards, chips, and overlays use the following standardized high-contrast colo
 
 - **Pinch-to-Zoom Supremacy**: Digital zoom buttons (`+` / `-`) clutter precious screen space and are removed.
 - **Orientation Control**: Map orientation mode (`AUTO` course-up vs `NORTH` fixed-north) belongs in Map Settings, keeping the map canvas minimal and focused.
+
+---
+
+## 5. Single-Line & Multi-Element Alignment Architecture (Mandatory Guidelines)
+
+To permanently prevent UI alignment glitches and unwanted text wrapping across development sessions, every developer and AI agent MUST adhere to these architectural rules:
+
+### A. Emoji & Icon Baseline Alignment Rule
+- **Never Concatenate Emoji in Raw Text Strings**: Do not write `Text("${profile.iconEmoji} ${profile.displayName}")`. In Android Compose, Emoji fonts (e.g. *Noto Color Emoji*) have vastly different ascender/descender baselines and line-height metrics compared to alphanumeric fonts. Concatenating them in a single string throws off vertical centering.
+- **Mandatory Disentanglement Pattern**: Always separate the emoji into its own composable, declare `PlatformTextStyle(includeFontPadding = false)`, and align inside a `Row(verticalAlignment = Alignment.CenterVertically)`:
+```kotlin
+Row(verticalAlignment = Alignment.CenterVertically) {
+    Text(
+        text = profile.iconEmoji,
+        fontSize = 13.sp,
+        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+    )
+    Spacer(modifier = Modifier.width(4.dp))
+    Text(
+        text = profile.displayName,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+    )
+}
+```
+- **List Item Icons**: In dense list cards (e.g. trip history rows), wrap the emoji in a fixed-size `Box`:
+```kotlin
+Box(
+    modifier = Modifier.size(18.dp),
+    contentAlignment = Alignment.Center
+) {
+    Text(
+        text = trip.activityProfile.iconEmoji,
+        fontSize = 13.sp,
+        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+    )
+}
+```
+
+### B. Single-Line Multi-Metric Displays & Overflow Guarding
+- **Strict Single-Line Guard**: In metric displays where multiple values are shown together (e.g. `Pace` + `Speed`, or `Distance` + `Max Speed`), every metric `Text` MUST specify:
+  - `maxLines = 1`
+  - `softWrap = false`
+- **Ban Word-Breaking Glitches**: Never allow secondary units to break across whitespace (e.g. `(5.0 km/` wrapping onto `h)`).
+- **Subordinate Sizing**: Secondary metrics must always be 2–3sp smaller than the primary metric and use muted color token `Color(0xFF94A3B8)`.
+- **Flexible Content Weighting**: When displaying variable-length text (city, street, route names) alongside fixed metrics or buttons, the variable text must use `Modifier.weight(1f, fill = false)` with `overflow = TextOverflow.Ellipsis`.
+
+### C. Landscape Mode Screen Space Conservation
+- In landscape mode, vertical height is severely limited (~360–400dp) while horizontal width is abundant (~800–900dp).
+- **No Vertical Stacking of Toolbars**: Never stack floating toolbars vertically above each other at `BottomCenter` in landscape.
+- **Toolbar Collapse & Side-by-Side Placement**:
+  - Secondary toolbars (e.g. Heat Map controls) must collapse to icon-only representations in landscape (hiding textual labels via `LocalConfiguration.current.orientation`).
+  - Where possible, place toolbars side-by-side horizontally along the bottom edge rather than vertically stacked.
+
