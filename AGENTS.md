@@ -11,6 +11,7 @@ This document establishes the mandatory architectural standards, development wor
 - **Android Application ID / Package**: `janush.tech.whereami`
 - **Companion Web/Sync Backend**: Node.js / Express in `server/`
 - **Technical Architecture Document**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **Design System & UI Architecture**: [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md)
 
 ### The Core Value Proposition (Non-Negotiable)
 The absolute core purpose of this application is **ultra-fast, unambiguous, and reliable real-time spatial awareness**:
@@ -75,6 +76,11 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - Points are deduplicated by timestamp `t`.
 - Previously downloaded administrative boundaries persist on disk and must load when offline.
 - Spatial cache falls back to cached entries indefinitely when completely offline.
+
+### E. UI/UX Alignment, Typography & Layout Stability (`docs/DESIGN_SYSTEM.md`)
+- **Emoji/Icon Disentanglement**: Never embed emojis directly into text strings alongside labels. Separate emoji into its own composable with `PlatformTextStyle(includeFontPadding = false)` and align inside `Row(verticalAlignment = Alignment.CenterVertically)`.
+- **Single-Line Multi-Metric Displays**: Metric displays (pace, speed, distance) must declare `maxLines = 1` and `softWrap = false` to prevent word-breaking glitches (e.g. `(5.0 km/` wrapping onto `h)`).
+- **Landscape Screen Conservation**: In landscape mode, never stack toolbars vertically. Collapse secondary toolbars to icon-only representations or position them side-by-side with the main bottom toolbar.
 
 ---
 
