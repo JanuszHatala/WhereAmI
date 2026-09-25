@@ -44,10 +44,13 @@ WhereIAm/
 │   ├── public/           # Responsive OpenStreetMap Leaflet viewer
 │   └── README.md         # Synology NAS & Docker deployment guide
 ├── docs/
-│   ├── FEATURES_INVENTORY.md   # Authoritative feature register & status matrix
+│   ├── ARCHITECTURE.md         # Authoritative technical architecture & ADR register
+│   ├── FEATURES_INVENTORY.md   # Authoritative feature register & evolution matrix
+│   ├── ENHANCEMENT_TRACKER.md  # Continuous tracking register for all sprint items
 │   ├── BACKEND_SYNC_DESIGN.md  # Backend architecture & live sharing design
 │   └── LOCAL_TESTING_GUIDE.md  # Step-by-step local end-to-end USB & Docker testing guide
-└── README.md             # Project overview & quick start
+├── AGENTS.md                 # Mandatory AI pair programming rules & build gates
+└── README.md                 # Project overview & quick start
 ```
 
 ---

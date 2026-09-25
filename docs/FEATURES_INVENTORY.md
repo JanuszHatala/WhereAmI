@@ -10,15 +10,15 @@ It tracks the workflow and architectural decisions across all development sessio
 
 | Category | Total Features | Implemented & Verified | In Progress | Planned / Future | Abandoned / Retired |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **1. Core Location, Spatial Awareness & Kinematics** | 9 | 9 | 0 | 0 | 0 |
+| **1. Core Location, Spatial Awareness & Kinematics** | 10 | 10 | 0 | 0 | 0 |
 | **2. Map Engine, Layers & Viewport Navigation** | 8 | 8 | 0 | 0 | 2 |
 | **3. Trip Recording, History & Analytics** | 7 | 7 | 0 | 0 | 0 |
 | **4. Live Location Sharing (Self-Hosted Platform)** | 8 | 8 | 0 | 3 | 2 |
 | **5. Saved Places ("My Places") & Search** | 5 | 5 | 0 | 0 | 0 |
 | **6. User Interface, Responsive Layout & UX Polish** | 8 | 8 | 0 | 0 | 1 |
-| **7. Android System Integration & Power Architecture** | 6 | 5 | 0 | 0 | 1 |
+| **7. Android System Integration & Power Architecture** | 7 | 6 | 0 | 0 | 1 |
 | **8. Diagnostics, Telemetry & CI/CD Pipeline** | 5 | 5 | 0 | 0 | 0 |
-| **Total** | **56** | **50** | **0** | **3** | **6** |
+| **Total** | **58** | **52** | **0** | **3** | **6** |
 
 ---
 
@@ -114,6 +114,19 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Architecture & Implementation**:
   - Car/Cycling/MTB: Speed-first display (km/h), high kinematic thresholds.
   - Hiking/Run/Walk: Pace-first display (min/km), elevation contour prominence, Waymarked Trails overlay.
+
+### LOC-10: 60fps Dead-Reckoning Position Interpolation & Kinematic Decoupling
+- **Core Value**: Completely eliminates map marker teleportation, backward snapping, and camera animation jerks, delivering fluid 60fps tracking.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `PositionInterpolator.kt`: Flat-earth trigonometric dead-reckoning ($v \times \Delta t$) capped at 2.5s forward projection, with 250ms ease-out blending on new GPS fixes and stationary dampening ($< 0.35\text{ m/s}$).
+  - `LocationManager.kt`: Decouples asynchronous geocoding from kinematics; `getLocationRaw()` emits monotonic `LocationFix` with `.distinctUntilChanged` on coordinates and timestamps.
+  - `OsmMapView.kt`: Camera centering runs on display frame clock (`withFrameNanos`) using immediate `setCenter(centerGp)`.
+  - Unit tests: `PositionInterpolatorTest.kt` (6 unit tests).
+- **Decision History & Evolution**:
+  - *User Feedback (Field Test 2026-09-25)*: Heading icon was jumping back and forth and map repositioning was jerky.
+  - *Diagnostic Root Cause*: `enrichedSnapshot` was re-emitting past coordinates from asynchronous network closures (1-3s old) back into `masterLocationFlow`, which `getLocationRaw()` routed to map updates, while `animateTo(centerGp, 400L)` calls aborted each other mid-flight.
+  - *Resolution*: Decoupled geocoding enrichments from raw kinematic fixes and built `PositionInterpolator`.
 
 ---
 
@@ -416,22 +429,32 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Resolution*: Replaced factory instantiation with a thread-safe singleton, sharing geocoding caches and GPS listeners across phone UI and car head unit.
 
 ### SYS-03: Foreground Service & Guarded WakeLock Architecture
-- **Core Value**: Ensures background trip recording and live sharing run uninterrupted without leaking CPU wake locks.
+- **Core Value**: Ensures background trip recording and live sharing run uninterrupted without leaking CPU wake locks or running zombie background processes.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `LiveTrackingService.kt`: Scoped wake locks released strictly on service shutdown.
+  - `LiveTrackingService.kt`: Wake locks are strictly acquired only during an active trip or active live sharing session. Released immediately when entering standby or stopping. Eliminated zombie service persistence bug by decoupling shutdown from `is_tracking` preference.
 
 ### SYS-04: App State Machine & Power Policy (`AppStateManager`)
 - **Core Value**: Intelligent power management balancing responsiveness and battery consumption.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - States: `IDLE`, `LIVE_ONLY`, `TRIP_RECORDING`, `ANDROID_AUTO`.
+  - States: `IDLE`, `FOREGROUND_VIEW`, `LIVE_ONLY`, `TRIP_RECORDING`, `ANDROID_AUTO`.
   - Disables GPS hardware completely in `IDLE`.
   - Adapts sampling: 6s when charging, 10–12s on battery. Suppresses dispatch when stationary ($< 0.35\text{ m/s}$).
 
 ### SYS-05: Battery Optimization Exemption Flow
 - **Core Value**: Directly guides user to whitelist WhereAmI from OS battery restrictions.
 - **Status**: **Implemented & Verified**
+
+### SYS-06: Zero-Power Hardware Motion Wake & Sleep Architecture (`MotionWakeManager`)
+- **Core Value**: Eliminates overnight idle battery drain (~0 mAh when stationary) while preserving automatic trip detection across all activity modes.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `MotionWakeManager.kt`: Integrates Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` with `TriggerEventListener` (~0 mW micro-power sensor hub operation).
+  - In `AppLifecycleMode.IDLE`, continuous GNSS hardware polling is powered down completely (`LocationManager.stopLocationUpdates()`).
+  - Upon locomotion, triggers a profile-adapted confirmation GPS burst (`(profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)`). Auto-starts recording if movement threshold is sustained; powers back down and re-arms sensor if motion stops.
+  - Option A for MANUAL mode: powers down GPS completely when screen is off with no active trip or live sharing.
+  - Unit tests: `BatteryOptimizationAndAutoStartTest.kt`.
 
 ---
 
