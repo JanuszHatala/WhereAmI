@@ -553,7 +553,9 @@ This section documents features that were requested, prototyped, or previously d
 | **BKL-03** | Server data retention policy and TTL cleanup job for expired session breadcrumbs | Server Architecture | Future Sprint |
 | **BKL-04** | Visitor on-demand location refresh request from web page to mobile app | Live Protocol | Future Sprint |
 | **BKL-05** | Historical shared routes catalog portal | Web Platform | Future Sprint |
+| **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing) | Cache / Map | Future Sprint |
+| **BKL-07** | **Nearest Known Address Lookup** (on-demand button when current fix lacks house number; performs ~100m targeted Overpass/Nominatim query displaying closest numbered address chip, e.g. "Klonowa 5 — 47m away") | Geocoding / UI | Future Sprint |
 
 ---
 
-*Last Comprehensive Audit: 2026-09-16 (Post-Field Test Round 2, Package Migration to `janush.tech.whereami` Verified on Device, Round 2 UI/UX Polish: orientation modes, live pill alignment, cancel/caching improvements, normalized close buttons, live title propagation, ∞ continuous toggle)*
+*Last Comprehensive Audit: 2026-09-25 (Field Test UI/UX alignment fixes: start/end markers, hiking pace/speed overflow prevention, activity profile emoji disentanglement, landscape heat map optimization)*
