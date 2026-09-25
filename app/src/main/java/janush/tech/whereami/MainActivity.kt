@@ -196,6 +196,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val locationData by viewModel.locationData.collectAsState()
     val displayLanguage by viewModel.displayLanguage.collectAsState()
     val currentLatLng by viewModel.currentLatLng.collectAsState()
+    val currentLocationFix by viewModel.currentLocationFix.collectAsState()
     val keepScreenOn by viewModel.keepScreenOn.collectAsState()
     val activeTrip by viewModel.activeTrip.collectAsState()
     val tripMode by viewModel.tripMode.collectAsState()
@@ -486,6 +487,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         // ── Fullscreen Map Canvas (Both Portrait and Landscape) ──────────────
         OsmMapView(
             latLng = currentLatLng,
+            locationFix = currentLocationFix,
             trackPoints = activeTrip?.points ?: emptyList(),
             selectedTrips = selectedTripsList,
             savedPlaces = savedPlaces,

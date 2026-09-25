@@ -68,6 +68,7 @@ import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 enum class MapOrientationMode {
@@ -234,7 +235,8 @@ fun calculateOpticalCenter(
  */
 @Composable
 fun OsmMapView(
-    latLng: Triple<Double, Double, Float?>?, // (lat, lng, bearing-or-null)
+    latLng: Triple<Double, Double, Float?>? = null, // (lat, lng, bearing-or-null)
+    locationFix: LocationFix? = null,
     trackPoints: List<GeoPoint> = emptyList(),
     selectedTrips: List<TripRecord> = emptyList(),
     savedPlaces: List<SavedPlace> = emptyList(),
@@ -341,6 +343,15 @@ fun OsmMapView(
     var hikingOverlayRef by remember { mutableStateOf<TilesOverlay?>(null) }
     var hikingProviderRef by remember { mutableStateOf<MapTileProviderBasic?>(null) }
     var lastFrozenBearing by remember { mutableStateOf<Float?>(null) }
+    val posInterpolator = remember { PositionInterpolator() }
+    val currentFix = remember(locationFix, latLng) {
+        locationFix ?: latLng?.let {
+            LocationFix(it.first, it.second, it.third, 0f, System.currentTimeMillis())
+        }
+    }
+    val effectiveLatLng = remember(currentFix) {
+        currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
+    }
 
     val snapHandler = remember { Handler(Looper.getMainLooper()) }
     val snapRunnable = remember { Runnable { isFollowing = true } }
@@ -412,20 +423,24 @@ fun OsmMapView(
         }
     }
 
-    // Update marker position & auto-rotation with Stationary Bearing Freeze
-    LaunchedEffect(latLng, orientationMode, isRecording, isFollowing) {
-        val pos = latLng ?: return@LaunchedEffect
+    // Feed new GPS fixes into the interpolator
+    LaunchedEffect(currentFix) {
+        val fix = currentFix ?: return@LaunchedEffect
+        posInterpolator.onNewFix(fix.lat, fix.lng, fix.bearing, fix.speedMs, fix.timestamp)
+        if (fix.bearing != null) {
+            lastFrozenBearing = fix.bearing
+        }
+    }
+
+    // Auto-rotation with Stationary Bearing Freeze and Debounce
+    LaunchedEffect(currentFix?.bearing, orientationMode, isRecording, isFollowing) {
         val map = mapView ?: return@LaunchedEffect
-        val gp = GeoPoint(pos.first, pos.second)
-        val rawBearing = pos.third
+        val rawBearing = currentFix?.bearing
         if (rawBearing != null) {
             lastFrozenBearing = rawBearing
         }
-        // Stationary Bearing Freeze (MAP-R03): maintain last valid driving heading when stopped
         val effectiveBearing = rawBearing ?: lastFrozenBearing
-
         val isMoving = rawBearing != null
-        val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
 
         val targetMapOrientation: Float? = when (orientationMode) {
             MapOrientationMode.COURSE_UP -> {
@@ -446,17 +461,13 @@ fun OsmMapView(
             val currentRot = map.mapOrientation
             val diff = (targetMapOrientation - currentRot + 540f) % 360f - 180f
             val now = System.currentTimeMillis()
-            // Increased deadband: 5° (was 1.5°). The EMA-smoothed bearing still has ±2-4° residual
-            // jitter; a 1.5° deadband was too tight and caused continuous animation restarts.
-            // 600ms debounce: don't start a new animation if the previous one started < 600ms ago.
-            // This prevents stacking overlapping animations that produce the "spinning" visual.
             val cooldownElapsed = (now - lastOrientationAnimStart) >= 600L
             if (kotlin.math.abs(diff) >= 5.0f && cooldownElapsed) {
                 orientationAnimator?.cancel()
                 lastOrientationAnimStart = now
                 orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
                     duration = 350L
-                    interpolator = android.view.animation.DecelerateInterpolator()
+                    setInterpolator(android.view.animation.DecelerateInterpolator())
                     addUpdateListener { anim ->
                         val frac = anim.animatedFraction
                         val stepRot = (currentRot + diff * frac) % 360f
@@ -467,41 +478,68 @@ fun OsmMapView(
                 }
             }
         }
+    }
 
-        val m = marker ?: Marker(map).also {
-            it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            it.isFlat = false
-            it.infoWindow = null
-            it.setOnMarkerClickListener { _, _ -> true }
-            map.overlays.add(it)
-            marker = it
-        }
-        m.infoWindow = null
-        m.setOnMarkerClickListener { _, _ -> true }
+    // Continuous 60fps Choreographer Frame Loop: smooth dead-reckoning marker & optical camera tracking
+    LaunchedEffect(isFollowing, destinationPoint, selectedSavedPlace, orientationMode, isRecording) {
+        while (isActive) {
+            val map = mapView
+            if (map != null && currentFix != null) {
+                val nowMs = System.currentTimeMillis()
+                val pt = posInterpolator.interpolate(nowMs)
 
-        m.position = gp
-        m.isFlat = false
-        // In OSMDroid, Marker rotation on canvas is -rotation when isFlat is false.
-        // To make the arrow point at screen angle theta clockwise from top, set m.rotation = -theta.
-        // In COURSE_UP (AUTO), the map is already rotated to face forward, so cursor points straight UP (0°).
-        // In fixed cardinal modes, cursor points in travel direction relative to screen top.
-        val topHeading = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> if (hasHeading) (effectiveBearing ?: 0f) else -map.mapOrientation
-            MapOrientationMode.NORTH -> 0f
-            MapOrientationMode.EAST -> 90f
-            MapOrientationMode.SOUTH -> 180f
-            MapOrientationMode.WEST -> 270f
-        }
-        val screenAngle = if (hasHeading && effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
-        m.rotation = -screenAngle
-        m.icon = makeMarkerIcon(context, hasHeading)
-        m.title = null
+                if (pt.lat != 0.0 && pt.lng != 0.0) {
+                    val gp = GeoPoint(pt.lat, pt.lng)
+                    val effectiveBearing = pt.bearing ?: lastFrozenBearing
+                    val isMoving = !posInterpolator.isStationary()
+                    val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
 
-        if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
-            val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-            map.controller.animateTo(centerGp, null, 400L)
+                    val m = marker ?: Marker(map).also {
+                        it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        it.isFlat = false
+                        it.infoWindow = null
+                        it.setOnMarkerClickListener { _, _ -> true }
+                        map.overlays.add(it)
+                        marker = it
+                    }
+                    m.infoWindow = null
+                    m.setOnMarkerClickListener { _, _ -> true }
+
+                    m.position = gp
+                    m.isFlat = false
+
+                    // In OSMDroid, Marker rotation on canvas is -rotation when isFlat is false.
+                    // To make the arrow point at screen angle theta clockwise from top, set m.rotation = -theta.
+                    val topHeading = when (orientationMode) {
+                        MapOrientationMode.COURSE_UP -> if (hasHeading) (effectiveBearing ?: 0f) else -map.mapOrientation
+                        MapOrientationMode.NORTH -> 0f
+                        MapOrientationMode.EAST -> 90f
+                        MapOrientationMode.SOUTH -> 180f
+                        MapOrientationMode.WEST -> 270f
+                    }
+                    val screenAngle = if (hasHeading && effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
+                    m.rotation = -screenAngle
+                    m.icon = makeMarkerIcon(context, hasHeading)
+                    m.title = null
+
+                    if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
+                        val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                        // Immediate center tracking on frame clock: completely eliminates animation fighting and snap-back jerks!
+                        map.controller.setCenter(centerGp)
+                    }
+                    map.invalidate()
+                }
+            }
+
+            // Power / Battery optimization:
+            // When stationary, throttle the loop to save CPU & battery.
+            // When moving, synchronize with display VSYNC via withFrameNanos.
+            if (posInterpolator.isStationary()) {
+                kotlinx.coroutines.delay(350L)
+            } else {
+                withFrameNanos { /* next frame */ }
+            }
         }
-        map.invalidate()
     }
 
     // Destination Pin (from Search)
@@ -950,7 +988,7 @@ fun OsmMapView(
 
                     val targetMapOrientation = when (orientationMode) {
                         MapOrientationMode.COURSE_UP -> {
-                            val b = latLng?.third ?: lastFrozenBearing
+                            val b = effectiveLatLng?.third ?: lastFrozenBearing
                             if (b != null) -b else 0f
                         }
                         MapOrientationMode.NORTH -> 0f
@@ -960,7 +998,7 @@ fun OsmMapView(
                     }
                     mapView?.mapOrientation = targetMapOrientation
 
-                    latLng?.let { pos ->
+                    effectiveLatLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
                         val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                         mapView?.controller?.animateTo(centerGp, null, 400L)
@@ -1002,7 +1040,7 @@ fun OsmMapView(
             }
 
             // Instant Share Current Position
-            if (onInstantShare != null && latLng != null) {
+            if (onInstantShare != null && effectiveLatLng != null) {
                 IconButton(
                     onClick = { onInstantShare.invoke() },
                     modifier = Modifier
@@ -1108,7 +1146,7 @@ fun OsmMapView(
             Surface(
                 onClick = {
                     isFollowing = true
-                    latLng?.let { pos ->
+                    effectiveLatLng?.let { pos ->
                         val gp = GeoPoint(pos.first, pos.second)
                         val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
                         mapView?.controller?.setCenter(centerGp)
@@ -1460,13 +1498,13 @@ fun OsmMapView(
                     MapOrientationMode.SOUTH -> mapView?.mapOrientation = 180f
                     MapOrientationMode.WEST -> mapView?.mapOrientation = 90f
                     MapOrientationMode.COURSE_UP -> {
-                        val b = latLng?.third ?: lastFrozenBearing
+                        val b = effectiveLatLng?.third ?: lastFrozenBearing
                         b?.let { mapView?.mapOrientation = -it }
                     }
                 }
                 mapView?.invalidate()
             },
-            currentLatLng = latLng,
+            currentLatLng = effectiveLatLng,
             onClearCache = {
                 mapView?.tileProvider?.clearTileCache()
                 hikingProviderRef?.clearTileCache()
