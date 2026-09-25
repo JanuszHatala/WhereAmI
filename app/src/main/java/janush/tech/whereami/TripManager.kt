@@ -138,6 +138,24 @@ class TripManager private constructor(private val context: Context) {
         _tripMode.value = mode
         prefs.edit().putString(KEY_TRIP_MODE, mode.name).apply()
         TelemetryLogger.log("SETTINGS", "TripMode changed to ${mode.name}")
+
+        val hasTrip = _activeTrip.value != null
+        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+
+        if (!hasTrip && !hasLive) {
+            if (mode == TripMode.MANUAL) {
+                try {
+                    val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
+                        action = LiveTrackingService.ACTION_STOP
+                    }
+                    context.startService(intent)
+                } catch (_: Exception) {}
+            } else if (mode == TripMode.AUTO) {
+                startLiveTrackingService()
+            }
+        }
+        AppStateManager.getInstance(context).recalculateState()
     }
 
     fun setActivityProfile(profile: ActivityProfile) {
@@ -226,13 +244,17 @@ class TripManager private constructor(private val context: Context) {
         autoStartFirstLocation = null
         pendingCandidate = null
 
-        // Stop foreground service if widget live tracking is not explicitly enabled
-        val widgetPrefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
-        val isWidgetTracking = widgetPrefs.getBoolean("is_tracking", false)
-        if (!isWidgetTracking) {
+        // Stop foreground service or transition to low-power standby
+        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        if (!hasLive) {
             try {
                 val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
-                    action = "STOP_TRACKING"
+                    action = if (_tripMode.value == TripMode.AUTO) {
+                        LiveTrackingService.ACTION_ENTER_STANDBY
+                    } else {
+                        LiveTrackingService.ACTION_STOP
+                    }
                 }
                 context.startService(intent)
             } catch (_: Exception) {}
@@ -289,7 +311,7 @@ class TripManager private constructor(private val context: Context) {
                         val elapsed = now - autoStartFirstTime
                         val distMoved = autoStartFirstLocation!!.distanceTo(newLoc)
                         if ((speedKmh >= currentProfile.autoStartSpeedKmh && elapsed >= currentProfile.autoStartDurationMs) ||
-                            (distMoved >= 25.0 && elapsed >= 8_000L)
+                            (distMoved >= 25.0 && elapsed >= 8_000L && speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f))
                         ) {
                             startTrip(isAuto = true)
                             autoStartFirstLocation = null

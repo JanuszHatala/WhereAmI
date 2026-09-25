@@ -2344,13 +2344,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     color = Color.White
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                val thresholdInfo = if (activityProfile == ActivityProfile.WALKING || activityProfile == ActivityProfile.RUNNING) {
-                                    "Pace-first"
-                                } else "Speed-first"
+                                val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
+                                    ">${activityProfile.autoStartSpeedKmh.toInt()}"
+                                } else {
+                                    ">%.1f".format(activityProfile.autoStartSpeedKmh)
+                                }
                                 Text(
-                                    text = "($thresholdInfo)",
+                                    text = "(auto: $speedFormatted km/h)",
                                     fontSize = 12.sp,
-                                    color = Color(0xFF94A3B8)
+                                    color = Color(0xFF38BDF8)
                                 )
                             }
                             Icon(
@@ -2431,6 +2433,36 @@ fun LocationScreen(viewModel: MainViewModel) {
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Automatic")
+                    }
+                }
+
+                if (tripMode == TripMode.AUTO) {
+                    val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
+                        ">${activityProfile.autoStartSpeedKmh.toInt()}"
+                    } else {
+                        ">%.1f".format(activityProfile.autoStartSpeedKmh)
+                    }
+                    val autoDurationSec = activityProfile.autoStartDurationMs / 1000L
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        color = Color(0xFF0F172A),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("⚡", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for ${autoDurationSec}s (hardware motion wake for battery optimization)",
+                                fontSize = 12.sp,
+                                color = Color(0xFF94A3B8),
+                                lineHeight = 16.sp
+                            )
+                        }
                     }
                 }
 
