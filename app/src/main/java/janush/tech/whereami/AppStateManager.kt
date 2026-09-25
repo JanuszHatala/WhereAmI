@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,9 +62,12 @@ class AppStateManager private constructor(private val context: Context) {
     private var isAppInForeground = true
     private var isAutoMediaActive = false
 
+    private var motionBurstJob: Job? = null
+
     init {
         registerBatteryReceiver()
         monitorSubsystems()
+        setupMotionWakeListener()
     }
 
     private fun registerBatteryReceiver() {
@@ -116,9 +121,49 @@ class AppStateManager private constructor(private val context: Context) {
                 recalculateState()
             }
         }
+        scope.launch {
+            TripManager.getInstance(context).tripMode.collect {
+                recalculateState()
+            }
+        }
     }
 
-    private fun recalculateState() {
+    private fun setupMotionWakeListener() {
+        val motionWakeManager = MotionWakeManager.getInstance(context)
+        scope.launch {
+            motionWakeManager.motionEvents.collect {
+                handleMotionWake()
+            }
+        }
+    }
+
+    private fun handleMotionWake() {
+        val tripManager = TripManager.getInstance(context)
+        if (tripManager.tripMode.value != TripMode.AUTO) return
+        if (tripManager.activeTrip.value != null) return
+
+        val profile = tripManager.activityProfile.value
+        val burstDurationMs = (profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)
+
+        TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
+
+        val locManager = LocationManager.getInstance(context)
+        // Request GPS updates during confirmation window
+        locManager.updateSamplingInterval(2500L, 1000L)
+
+        motionBurstJob?.cancel()
+        motionBurstJob = scope.launch {
+            delay(burstDurationMs)
+            // If burst expired without trip starting and app is still in IDLE, power down GPS and re-arm sensor
+            if (tripManager.activeTrip.value == null && _currentMode.value == AppLifecycleMode.IDLE) {
+                TelemetryLogger.log("POWER", "Motion burst expired without trip auto-start. Powering down GPS and re-arming motion sensor.")
+                locManager.stopLocationUpdates()
+                MotionWakeManager.getInstance(context).arm()
+            }
+        }
+    }
+
+    fun recalculateState() {
         val tripActive = TripManager.getInstance(context).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val liveActive = liveSession != null && liveSession.isActive && !liveSession.isPaused
@@ -137,16 +182,28 @@ class AppStateManager private constructor(private val context: Context) {
 
     private fun applyModeToLocationEngine(mode: AppLifecycleMode) {
         val locManager = LocationManager.getInstance(context)
+        val motionManager = MotionWakeManager.getInstance(context)
         val policy = _powerPolicy.value
         val charging = _isCharging.value
 
         when (mode) {
             AppLifecycleMode.IDLE -> {
+                motionBurstJob?.cancel()
                 // Completely stop GPS when nothing is active in background!
                 locManager.stopLocationUpdates()
-                TelemetryLogger.log("POWER", "App state IDLE: GPS powered down completely.")
+
+                val tripManager = TripManager.getInstance(context)
+                if (tripManager.tripMode.value == TripMode.AUTO) {
+                    motionManager.arm()
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, hardware MotionWakeManager armed for AUTO auto-start.")
+                } else {
+                    motionManager.disarm()
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS powered down completely (MANUAL mode).")
+                }
             }
             AppLifecycleMode.FOREGROUND_VIEW -> {
+                motionBurstJob?.cancel()
+                motionManager.disarm()
                 if (policy == BatteryPowerPolicy.BATTERY_SAVER && !charging) {
                     locManager.updateSamplingInterval(3000L, 1500L)
                 } else {
@@ -154,6 +211,8 @@ class AppStateManager private constructor(private val context: Context) {
                 }
             }
             AppLifecycleMode.TRIP_RECORDING -> {
+                motionBurstJob?.cancel()
+                motionManager.disarm()
                 val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
                     ?: TripManager.getInstance(context).activityProfile.value
                 
@@ -171,12 +230,16 @@ class AppStateManager private constructor(private val context: Context) {
                 locManager.updateSamplingInterval(interval, minInterval)
             }
             AppLifecycleMode.LIVE_ONLY -> {
+                motionBurstJob?.cancel()
+                motionManager.disarm()
                 // Collect breadcrumbs at steady 10s (charging: 6s) so batch upload has complete trail
                 val interval = if (charging) 6_000L else 12_000L
                 val minInterval = if (charging) 3_000L else 6_000L
                 locManager.updateSamplingInterval(interval, minInterval)
             }
             AppLifecycleMode.ANDROID_AUTO -> {
+                motionBurstJob?.cancel()
+                motionManager.disarm()
                 locManager.updateSamplingInterval(3000L, 1000L)
             }
         }
