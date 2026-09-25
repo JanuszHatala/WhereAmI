@@ -1181,7 +1181,7 @@ fun OsmMapView(
             }
         }
 
-        // Floating Heat Map Controls ("Fit All to Map" and "Close Heat Map")
+        // Floating Heat Map Controls — collapses to icons-only in landscape to save precious screen width
         if (showHeatMap) {
             Surface(
                 shape = RoundedCornerShape(20.dp),
@@ -1198,6 +1198,7 @@ fun OsmMapView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Heat Map label — hidden in landscape to save space
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Whatshot,
@@ -1205,15 +1206,17 @@ fun OsmMapView(
                             tint = ComposeColor(0xFFF97316),
                             modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = if (heatMapFilterActive) "Heat Map*" else "Heat Map",
-                            color = ComposeColor.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        if (!isLandscape) {
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = if (heatMapFilterActive) "Heat Map*" else "Heat Map",
+                                color = ComposeColor.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
 
                     // 0. Filter / Settings
@@ -1238,19 +1241,21 @@ fun OsmMapView(
                                         tint = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
                                         modifier = Modifier.size(13.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Filter",
-                                        color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 11.sp
+                                    if (!isLandscape) {
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "Filter",
+                                            color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            style = androidx.compose.ui.text.TextStyle(
+                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 11.sp
+                                            )
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -1299,19 +1304,21 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFF38BDF8),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "Fit All",
-                                    color = ComposeColor(0xFF38BDF8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = androidx.compose.ui.text.TextStyle(
-                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                        lineHeight = 11.sp
+                                if (!isLandscape) {
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Fit All",
+                                        color = ComposeColor(0xFF38BDF8),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 11.sp
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }
@@ -1337,19 +1344,21 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFFFCA5A5),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "Close",
-                                    color = ComposeColor(0xFFFCA5A5),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = androidx.compose.ui.text.TextStyle(
-                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                        lineHeight = 11.sp
+                                if (!isLandscape) {
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Close",
+                                        color = ComposeColor(0xFFFCA5A5),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 11.sp
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }
@@ -2087,6 +2096,84 @@ internal fun makePauseIcon(context: Context, durText: String): android.graphics.
 
     val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
     canvas.drawText(fullText, bmp.width / 2f, textY, textPaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+}
+
+/**
+ * Green pin with a ▶ play-arrow shape — used as the trip START marker in Trip Details map.
+ */
+internal fun makeStartMarkerIcon(context: Context): android.graphics.drawable.BitmapDrawable {
+    val density = context.resources.displayMetrics.density
+    val size = (44f * density).toInt()
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+
+    // Filled green circle
+    val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#10B981") // Emerald 500
+        style = Paint.Style.FILL
+    }
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+    val cx = size / 2f
+    val cy = size / 2f
+    val radius = (size / 2f) - (2f * density)
+    canvas.drawCircle(cx, cy, radius, circlePaint)
+    canvas.drawCircle(cx, cy, radius, strokePaint)
+
+    // ▶ play triangle
+    val triPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val triSize = radius * 0.55f
+    val path = android.graphics.Path().apply {
+        moveTo(cx - triSize * 0.45f, cy - triSize * 0.7f)
+        lineTo(cx + triSize * 0.8f, cy)
+        lineTo(cx - triSize * 0.45f, cy + triSize * 0.7f)
+        close()
+    }
+    canvas.drawPath(path, triPaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+}
+
+/**
+ * Red pin with a ■ stop-square shape — used as the trip END marker in Trip Details map.
+ */
+internal fun makeEndMarkerIcon(context: Context): android.graphics.drawable.BitmapDrawable {
+    val density = context.resources.displayMetrics.density
+    val size = (44f * density).toInt()
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+
+    // Filled red circle
+    val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#EF4444") // Red 500
+        style = Paint.Style.FILL
+    }
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+    val cx = size / 2f
+    val cy = size / 2f
+    val radius = (size / 2f) - (2f * density)
+    canvas.drawCircle(cx, cy, radius, circlePaint)
+    canvas.drawCircle(cx, cy, radius, strokePaint)
+
+    // ■ stop square
+    val sqPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val sqHalf = radius * 0.4f
+    canvas.drawRect(cx - sqHalf, cy - sqHalf, cx + sqHalf, cy + sqHalf, sqPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
