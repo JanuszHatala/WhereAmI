@@ -1366,11 +1366,23 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
                                                         Text(
-                                                            text = "${activityProfile.iconEmoji} ${activityProfile.displayName}",
+                                                            text = activityProfile.iconEmoji,
+                                                            fontSize = 12.sp,
+                                                            style = androidx.compose.ui.text.TextStyle(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                            )
+                                                        )
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text(
+                                                            text = activityProfile.displayName,
                                                             fontSize = 11.sp,
                                                             fontWeight = FontWeight.SemiBold,
-                                                            color = Color(0xFF38BDF8)
+                                                            color = Color(0xFF38BDF8),
+                                                            style = androidx.compose.ui.text.TextStyle(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                            )
                                                         )
+                                                        Spacer(modifier = Modifier.width(2.dp))
                                                         Icon(
                                                             Icons.Default.ArrowDropDown,
                                                             contentDescription = "Switch profile",
@@ -1834,18 +1846,29 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                         verticalAlignment = Alignment.CenterVertically,
                                                                         modifier = Modifier.weight(1f).padding(end = 8.dp)
                                                                     ) {
-                                                                        Text(
-                                                                            text = trip.activityProfile.iconEmoji,
-                                                                            fontSize = 14.sp,
-                                                                            modifier = Modifier.padding(end = 5.dp)
-                                                                        )
+                                                                        Box(
+                                                                            modifier = Modifier.size(18.dp),
+                                                                            contentAlignment = Alignment.Center
+                                                                        ) {
+                                                                            Text(
+                                                                                text = trip.activityProfile.iconEmoji,
+                                                                                fontSize = 13.sp,
+                                                                                style = androidx.compose.ui.text.TextStyle(
+                                                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                                                )
+                                                                            )
+                                                                        }
+                                                                        Spacer(modifier = Modifier.width(6.dp))
                                                                         val distKm = trip.distanceMeters / 1000.0
                                                                         Text(
                                                                             text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, trip.maxSpeedKmh),
                                                                             color = Color(0xFF38BDF8),
                                                                             fontSize = 12.sp,
                                                                             maxLines = 1,
-                                                                            overflow = TextOverflow.Ellipsis
+                                                                            overflow = TextOverflow.Ellipsis,
+                                                                            style = androidx.compose.ui.text.TextStyle(
+                                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                                            )
                                                                         )
                                                                     }
 
@@ -6221,10 +6244,23 @@ private fun LocalityCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${activityProfile.iconEmoji} ${activityProfile.displayName.uppercase()}",
-                                fontSize = 12.sp,
+                                text = activityProfile.iconEmoji,
+                                fontSize = 13.sp,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = activityProfile.displayName.uppercase(),
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFBBF24)
+                                color = Color(0xFFFBBF24),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
                             Spacer(modifier = Modifier.width(2.dp))
                             Icon(
@@ -6245,8 +6281,10 @@ private fun LocalityCard(
                                 DropdownMenuItem(
                                     text = {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(profile.iconEmoji, fontSize = 14.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "${profile.iconEmoji}  ${profile.displayName}",
+                                                text = profile.displayName,
                                                 color = if (isSelected) Color(0xFF38BDF8) else Color.White,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                                 fontSize = 14.sp
@@ -6262,44 +6300,69 @@ private fun LocalityCard(
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
                     when (activityProfile) {
                         ActivityProfile.CAR -> {
                             Text(
                                 text = speedStr,
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
+                                color = Color(0xFF38BDF8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
                         }
                         ActivityProfile.CYCLING, ActivityProfile.MTB -> {
                             Text(
                                 text = speedStr,
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
+                                color = Color(0xFF38BDF8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = "($paceStr)",
-                                fontSize = 13.sp,
-                                color = Color(0xFF94A3B8)
+                                fontSize = 12.sp,
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
                         }
                         ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
                             Text(
                                 text = paceStr,
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
+                                color = Color(0xFF38BDF8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = "($speedStr)",
-                                fontSize = 13.sp,
-                                color = Color(0xFF94A3B8)
+                                fontSize = 12.sp,
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                )
                             )
                         }
                     }
@@ -7063,16 +7126,22 @@ fun TripDetailDialog(
                                                     trip.points.firstOrNull()?.let { startPt ->
                                                         val startMarker = Marker(this).apply {
                                                             position = startPt
-                                                            title = "Start"
-                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                                            title = "Trip Start"
+                                                            icon = makeStartMarkerIcon(ctx)
+                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                                            infoWindow = null
+                                                            setOnMarkerClickListener { _, _ -> true }
                                                         }
                                                         overlays.add(startMarker)
                                                     }
                                                     trip.points.lastOrNull()?.let { endPt ->
                                                         val endMarker = Marker(this).apply {
                                                             position = endPt
-                                                            title = "End"
-                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                                            title = "Trip End"
+                                                            icon = makeEndMarkerIcon(ctx)
+                                                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                                            infoWindow = null
+                                                            setOnMarkerClickListener { _, _ -> true }
                                                         }
                                                         overlays.add(endMarker)
                                                     }
@@ -7217,11 +7286,23 @@ fun TripDetailDialog(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = "${trip.activityProfile.iconEmoji} ${trip.activityProfile.displayName}",
+                                                text = trip.activityProfile.iconEmoji,
+                                                fontSize = 13.sp,
+                                                style = androidx.compose.ui.text.TextStyle(
+                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                )
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = trip.activityProfile.displayName,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = Color(0xFF34D399)
+                                                color = Color(0xFF34D399),
+                                                style = androidx.compose.ui.text.TextStyle(
+                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                )
                                             )
+                                            Spacer(modifier = Modifier.width(2.dp))
                                             Icon(
                                                 Icons.Default.ArrowDropDown,
                                                 contentDescription = "Change profile",
