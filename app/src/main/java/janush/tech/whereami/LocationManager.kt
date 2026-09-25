@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
@@ -96,6 +97,15 @@ data class MultiLocationSnapshot(
         )
     }
 }
+
+/** Lightweight position & kinematics snapshot for smooth map tracking. */
+data class LocationFix(
+    val lat: Double,
+    val lng: Double,
+    val bearing: Float?,
+    val speedMs: Float,
+    val timestamp: Long
+)
 
 /** Small data class for OSM Nominatim reverse-geocode results. */
 private data class OsmPlaceResult(
@@ -409,6 +419,10 @@ class LocationManager private constructor(private val context: Context) {
     }
 
     // ── Border Debounce / Hysteresis Engine ─────────────────────────────────────
+    private val geocodeLock = Any()
+    @Volatile
+    private var latestEnrichedTimestamp: Long = 0L
+
     private var committedPlace: MultiLanguagePlaceInfo? = null
     private var candidatePlace: MultiLanguagePlaceInfo? = null
     private var candidateCount: Int = 0
@@ -792,35 +806,48 @@ class LocationManager private constructor(private val context: Context) {
                         trySend(fastSnapshot)
 
                         // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
+                        val capturedBearing = currentBearing
+                        val fixTimestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
                         ioScope.launch {
                             val rawMultiData = resolveMultiLanguageData(
                                 lat = location.latitude,
                                 lng = location.longitude,
-                                bearing = currentBearing,
+                                bearing = capturedBearing,
                                 speedKmh = speedKmh
                             )
-                            val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
-                            val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, currentBearing)
+                            synchronized(geocodeLock) {
+                                // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
+                                if (fixTimestamp < latestEnrichedTimestamp) {
+                                    TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
+                                    return@launch
+                                }
+                                latestEnrichedTimestamp = fixTimestamp
 
-                            // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
-                            committedPlace = stabilizedMultiData
+                                val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
+                                val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, capturedBearing)
 
-                            // Update TripManager with verified locality hierarchy without injecting duplicate points
-                            TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
+                                // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
+                                committedPlace = stabilizedMultiData
 
-                            val enrichedSnapshot = MultiLocationSnapshot(
-                                multiPlace = stabilizedMultiData,
-                                speedMs = speed,
-                                speedKmh = speedKmh,
-                                lat = location.latitude,
-                                lng = location.longitude,
-                                altitude = alt,
-                                bearing = currentBearing,
-                                accuracy = if (location.hasAccuracy()) location.accuracy else null,
-                                timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
-                            )
-                            lastLocationSnapshot = enrichedSnapshot
-                            trySend(enrichedSnapshot)
+                                // Update TripManager with verified locality hierarchy without injecting duplicate points
+                                TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
+
+                                // Enriched snapshot MUST carry the CURRENT (latest) kinematic coordinates to prevent backward teleports!
+                                val currentSnap = lastLocationSnapshot
+                                val enrichedSnapshot = MultiLocationSnapshot(
+                                    multiPlace = stabilizedMultiData,
+                                    speedMs = currentSnap?.speedMs ?: speed,
+                                    speedKmh = currentSnap?.speedKmh ?: speedKmh,
+                                    lat = currentSnap?.lat ?: location.latitude,
+                                    lng = currentSnap?.lng ?: location.longitude,
+                                    altitude = currentSnap?.altitude ?: alt,
+                                    bearing = currentSnap?.bearing ?: capturedBearing,
+                                    accuracy = currentSnap?.accuracy ?: (if (location.hasAccuracy()) location.accuracy else null),
+                                    timestamp = currentSnap?.timestamp ?: fixTimestamp
+                                )
+                                lastLocationSnapshot = enrichedSnapshot
+                                trySend(enrichedSnapshot)
+                            }
                         }
                     }
                 }
@@ -870,18 +897,26 @@ class LocationManager private constructor(private val context: Context) {
     }
 
     /**
-     * Lightweight flow for map composable (lat, lng, bearing).
-     * Reuses the single shared master location pipeline without duplicate callbacks.
-     * Bearing is only non-null when moving at a speed where GPS bearing is reliable (>= 3.0 m/s / 10.8 km/h).
-     * Below this threshold the map shows the stationary blue dot, avoiding map spinning at slow speeds.
+     * Lightweight flow for map composable (LocationFix).
+     * Decoupled from asynchronous geocoding enrichment: only emits upon real GPS fix arrivals.
+     * Distinct by coordinate and timestamp so that locality geocoding enrichments do NOT
+     * re-trigger map marker repositioning or camera animation jerks.
      */
-    fun getLocationRaw(): Flow<Triple<Double, Double, Float?>> {
-        return masterLocationFlow.map {
-            // Only expose a bearing to the map when speed is high enough for GPS bearing to be reliable.
-            // Raised from 1.2 m/s → 3.0 m/s to eliminate map spinning at slow urban speeds.
-            val movingBearing = if (it.speedMs >= 3.0f) it.bearing else null
-            Triple(it.lat, it.lng, movingBearing)
-        }
+    fun getLocationRaw(): Flow<LocationFix> {
+        return masterLocationFlow
+            .distinctUntilChanged { old, new ->
+                old.lat == new.lat && old.lng == new.lng && old.timestamp == new.timestamp
+            }
+            .map {
+                val movingBearing = if (it.speedMs >= 1.2f) it.bearing else null
+                LocationFix(
+                    lat = it.lat,
+                    lng = it.lng,
+                    bearing = movingBearing,
+                    speedMs = it.speedMs,
+                    timestamp = it.timestamp
+                )
+            }
     }
 
     // ── One-shot location ────────────────────────────────
@@ -992,11 +1027,11 @@ class LocationManager private constructor(private val context: Context) {
         try {
             val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
-                // If heading is available and the cached street is a minor street,
+                // If heading is available and actively driving,
                 // verify against OSRM to auto-correct any legacy side-street mis-matches
-                val effectiveHeading = bearing ?: lastValidBearing
-                if (effectiveHeading != null && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
-                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveHeading)
+                val isActivelyDriving = speedKmh != null && speedKmh >= 10f && bearing != null
+                if (isActivelyDriving && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
+                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, bearing)
                     if (osrmStreet != null) {
                         val canonical = RoadNameNormalizer.normalize(osrmStreet, diskCached.pl.roadRef, null)
                         if (!canonical.isNullOrBlank() && canonical != diskCached.pl.street) {
