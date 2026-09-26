@@ -79,12 +79,12 @@ class BatteryOptimizationAndAutoStartTest {
     fun testMotionBurstDurationAdaptsToProfile() {
         // Confirmation burst window must be longer than the profile's required autoStartDurationMs
         for (profile in ActivityProfile.values()) {
-            val burstDurationMs = (profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)
+            val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
             assertTrue(
                 "Burst duration $burstDurationMs ms must comfortably exceed required autoStartDurationMs ${profile.autoStartDurationMs} ms for ${profile.name}",
-                burstDurationMs >= profile.autoStartDurationMs + 15_000L
+                burstDurationMs >= profile.autoStartDurationMs + 20_000L
             )
-            assertTrue("Burst duration should not be excessively long to preserve battery", burstDurationMs <= 45_000L)
+            assertTrue("Burst duration should not be excessively long to preserve battery", burstDurationMs <= 65_000L)
         }
     }
 

@@ -114,10 +114,12 @@ class GpsFilterEngine private constructor() {
         }
 
         // ── Stage 4: Stationary Jitter Dampener ──
-        // GPS chips indoors often report fake speeds (e.g., 15 km/h) due to signal multipath bounces off walls.
-        // If we moved less than 15 meters from the last accepted fix, AND accuracy is poor (> 15m), we are likely stationary.
-        if (deltaDistMeters < 15.0 && candidate.hasAccuracy() && candidate.accuracy > 15.0f) {
-            candidate.speed = 0.0f
+        // Dampen position micro-oscillations when stopped without destroying GNSS Doppler hardware speed.
+        // If device has micro-displacement (< 4.0m) and speed indicates stationary (< 0.5 m/s or ~1.8 km/h),
+        // clamp position to previous fix to prevent map crawling. Doppler speed is preserved for downstream Kalman filter.
+        if (deltaDistMeters < 4.0 && candidate.hasSpeed() && candidate.speed < 0.5f) {
+            candidate.latitude = prev.latitude
+            candidate.longitude = prev.longitude
         }
 
         // Valid fix

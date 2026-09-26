@@ -213,3 +213,30 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
   - Update `docs/ENHANCEMENT_TRACKER.md` after completing each milestone or phase.
   - Keep `docs/FEATURES_INVENTORY.md` updated as features evolve or retire.
   - Keep this `docs/ARCHITECTURE.md` updated when major architectural decisions are made.
+
+---
+
+## 8. Key Architectural Decision Records (ADRs)
+
+### ADR-01: GNSS Doppler Speed Decoupling in `GpsFilterEngine`
+- **Context**: In Stage 4 (Stationary Jitter Dampener), low-displacement fixes (< 15m) with moderate accuracy (> 15m) previously zeroed `candidate.speed`. During slow urban driving, turns, and roundabouts, 1-second and 5-second displacement frequently falls below 15m while urban multi-path accuracy is 16–25m. This erased valid GNSS Doppler speed, corrupting downstream Kalman filter state and causing speedometer displays of `0.0 km/h` while driving.
+- **Decision**: GpsFilterEngine must **NEVER mutate or zero `candidate.speed`**. Hardware GNSS Doppler velocity is physically decoupled from spatial multi-path jitter. Stage 4 only dampens coordinates (`candidate.latitude = prev.latitude`) when displacement is micro (< 4.0m) and speed already confirms stationary (< 0.5 m/s). Speed zero-snapping belongs strictly to `LocationManager.hybridSpeedUpdate()`.
+
+### ADR-02: Universal Screen-Relative Heading Angle in `OsmMapView`
+- **Context**: In Osmdroid, `Marker.isFlat = false` renders markers on a canvas that is pre-rotated by `+map.mapOrientation`, applying an internal rotation of `-map.mapOrientation - m.rotation`. Setting `m.rotation = 0` in `COURSE_UP` caused the heading arrow to point straight up even when the map had not finished animating or during sharp turns, twisting the arrow relative to the road track on the map.
+- **Decision**: The arrow angle on screen relative to screen top is universally computed as:
+  $$\text{roadScreenAngle} = (\text{effectiveBearing} + \text{mapOrientation} + 360^\circ) \bmod 360^\circ$$
+  Setting `m.rotation = -roadScreenAngle` guarantees the arrow points strictly along the road on the display across all modes (`COURSE_UP`, `NORTH_UP`, manual gesture rotation, and during active orientation animations).
+
+### ADR-03: Merged Trips Temporal & Spatial Continuity
+- **Context**: Merging trips previously concatenated points and visited places without adjusting time gaps or entry distances, resulting in non-monotonic place distances (resetting to 0 km for sub-trips) and 0 rest stops recorded in `pauses_json`.
+- **Decision**: `TripDatabaseHelper.mergeTrips()` synthesizes a `TripPause` for any inter-trip gap $\ge 10\text{s}$ at the junction coordinates, shifts existing sub-trip pauses by the cumulative point offset, and offsets each visited place's `distanceAtEntryMeters` by the cumulative distance of all preceding sub-trips, ensuring strictly monotonic distance progression from the merged origin.
+
+### ADR-04: Street Display & House Number Decoupling
+- **Context**: Reverse geocoded house numbers appeared intermittently depending on whether Nominatim had an explicit address node or Google Geocoder returned a parcel number, creating visual clutter and inconsistency during navigation.
+- **Decision**: House numbers are stripped completely from the primary street awareness display in `RoadNameNormalizer.kt` and `LocationManager.kt`. Street display focuses strictly on canonical street/road name identity. Detailed house number positioning is deferred to a dedicated, on-demand "Nearest Known Address" lookup feature (BKL-07).
+
+### ADR-05: 60s Minimum Motion Burst Confirmation Window
+- **Context**: On Android 17 devices in deep Doze, cold GPS Time-To-First-Fix (TTFF) can require 20–45 seconds. A 35-second motion burst window occasionally expired before a valid fix was acquired, preventing auto-start from triggering when leaving from home after overnight rest.
+- **Decision**: Motion burst confirmation is extended to at least 60 seconds (`coerceAtLeast(60_000L)`). At burst start, `GpsFilterEngine.reset()` clears overnight static anchors, and an active raw location stream collector is maintained for the duration of the burst to prevent subscriber flow timeout.
+

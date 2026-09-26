@@ -396,19 +396,64 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         val allPoints = mutableListOf<GeoPoint>()
         val allPlaces = mutableListOf<VisitedPlace>()
+        val allPauses = mutableListOf<TripPause>()
         var totalDist = 0.0
         var maxSpd = 0f
         var totalDurationSec = 0.0
         var weightedSpeedSum = 0.0
+        var cumulativeDistanceOffset = 0.0
 
-        for (trip in sorted) {
+        for (i in sorted.indices) {
+            val trip = sorted[i]
+            val pointOffset = allPoints.size
+
+            // 1. Preserve existing pauses from this trip, shifting pointIndex by pointOffset
+            for (pause in trip.pauses) {
+                allPauses.add(pause.copy(pointIndex = pause.pointIndex + pointOffset))
+            }
+
             allPoints.addAll(trip.points)
+
+            // 2. Add visited places with recalculated distance from the start of the merged trip
             for (p in trip.placesVisited) {
                 val last = allPlaces.lastOrNull()?.placeName
                 if (last == null || !last.equals(p.placeName, ignoreCase = true)) {
-                    allPlaces.add(p)
+                    allPlaces.add(
+                        p.copy(distanceAtEntryMeters = cumulativeDistanceOffset + p.distanceAtEntryMeters)
+                    )
                 }
             }
+
+            // 3. Mark the inter-trip time gap as a rest stop (TripPause)
+            if (i < sorted.size - 1) {
+                val nextTrip = sorted[i + 1]
+                val gapStart = trip.endTime ?: (trip.startTime + 60_000L)
+                val gapEnd = nextTrip.startTime
+                val gapDuration = (gapEnd - gapStart).coerceAtLeast(0L)
+
+                if (gapDuration >= 10_000L) {
+                    val pauseLat = trip.points.lastOrNull()?.latitude
+                        ?: nextTrip.points.firstOrNull()?.latitude
+                        ?: 0.0
+                    val pauseLng = trip.points.lastOrNull()?.longitude
+                        ?: nextTrip.points.firstOrNull()?.longitude
+                        ?: 0.0
+                    val junctionIndex = (allPoints.size - 1).coerceAtLeast(0)
+
+                    allPauses.add(
+                        TripPause(
+                            startTime = gapStart,
+                            endTime = gapEnd,
+                            latitude = pauseLat,
+                            longitude = pauseLng,
+                            durationMs = gapDuration,
+                            pointIndex = junctionIndex
+                        )
+                    )
+                }
+            }
+
+            cumulativeDistanceOffset += trip.distanceMeters
             totalDist += trip.distanceMeters
             maxSpd = maxOf(maxSpd, trip.maxSpeedKmh)
             val dur = (((trip.endTime ?: (trip.startTime + 60000L)) - trip.startTime) / 1000.0).coerceAtLeast(1.0)
@@ -429,7 +474,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             avgSpeedKmh = overallAvgSpeed,
             isAutoDetected = earliest.isAutoDetected,
             points = allPoints,
-            placesVisited = allPlaces
+            placesVisited = allPlaces,
+            pauses = allPauses.sortedBy { it.startTime }
         )
 
         val newId = insertTrip(mergedTrip)
