@@ -1773,13 +1773,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                         )
                                                                     )
 
-                                                                    Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                                                                     Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp)) {
                                                                         Text(
                                                                             text = displayTitle,
                                                                             color = Color.White,
                                                                             fontWeight = FontWeight.Bold,
                                                                             fontSize = 14.sp,
-                                                                            maxLines = 1,
+                                                                            maxLines = 2,
                                                                             overflow = TextOverflow.Ellipsis
                                                                         )
                                                                         if (trip.title.isNotBlank()) {
@@ -1846,18 +1846,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                         verticalAlignment = Alignment.CenterVertically,
                                                                         modifier = Modifier.weight(1f).padding(end = 8.dp)
                                                                     ) {
-                                                                        Box(
-                                                                            modifier = Modifier.size(18.dp),
-                                                                            contentAlignment = Alignment.Center
-                                                                        ) {
-                                                                            Text(
-                                                                                text = trip.activityProfile.iconEmoji,
-                                                                                fontSize = 13.sp,
-                                                                                style = androidx.compose.ui.text.TextStyle(
-                                                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                                                                )
+                                                                        Text(
+                                                                            text = trip.activityProfile.iconEmoji,
+                                                                            fontSize = 13.sp,
+                                                                            style = androidx.compose.ui.text.TextStyle(
+                                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
                                                                             )
-                                                                        }
+                                                                        )
                                                                         Spacer(modifier = Modifier.width(6.dp))
                                                                         val distKm = trip.distanceMeters / 1000.0
                                                                         Text(
@@ -1865,6 +1860,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             color = Color(0xFF38BDF8),
                                                                             fontSize = 12.sp,
                                                                             maxLines = 1,
+                                                                            softWrap = false,
                                                                             overflow = TextOverflow.Ellipsis,
                                                                             style = androidx.compose.ui.text.TextStyle(
                                                                                 platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
@@ -7057,10 +7053,10 @@ fun TripDetailDialog(
                             Column {
                                 Text(
                                     text = if (trip.title.isNotBlank()) trip.title else "Trip Details",
-                                    fontSize = 17.sp,
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
