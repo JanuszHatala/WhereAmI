@@ -42,11 +42,15 @@ class RoadNameNormalizerTest {
     }
 
     @Test
-    fun testResidentialStreetsRetainHouseNumbersAndCleanPrefix() {
-        assertEquals("ul. Mickiewicza 12", RoadNameNormalizer.normalize("ulica Mickiewicza", houseNumber = "12"))
-        assertEquals("al. Wolności 4A", RoadNameNormalizer.normalize("aleja Wolności", houseNumber = "4A"))
-        assertEquals("os. Tysiąclecia 5", RoadNameNormalizer.normalize("osiedle Tysiąclecia", houseNumber = "5"))
+    fun testResidentialStreetsStripHouseNumbersAndCleanPrefix() {
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza", houseNumber = "12"))
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza 12"))
+        assertEquals("al. Wolności", RoadNameNormalizer.normalize("aleja Wolności", houseNumber = "4A"))
+        assertEquals("os. Tysiąclecia", RoadNameNormalizer.normalize("osiedle Tysiąclecia", houseNumber = "5"))
         assertEquals("pl. Grunwaldzki", RoadNameNormalizer.normalize("plac Grunwaldzki"))
+        assertEquals("Zagłębocze", RoadNameNormalizer.normalize("Zagłębocze 45"))
+        assertEquals("Górska", RoadNameNormalizer.normalize("Górska 92"))
+        assertEquals("Zielona", RoadNameNormalizer.normalize("Zielona 18"))
     }
 
     @Test

@@ -20,7 +20,7 @@ object RoadNameNormalizer {
     private val S_SHORT_REGEX = Regex("""(?i)^S\s*(\d+)(.*)$""")
     private val E_ROUTE_REGEX = Regex("""(?i)^(?:Trasa\s+|Droga\s+)?(?:Europejska\s+|Międzynarodowa\s+)?E\s*(\d+)(.*)$""")
 
-    private val TRAILING_HOUSE_NUM = Regex("""\s+\d+([a-zA-Z]|/\d+)?$""")
+    private val TRAILING_HOUSE_NUM = Regex("""\s+\d+(\s*[a-zA-Z]|/\d+)?$""")
 
     /**
      * Determines whether a given road name represents a high-speed / national / provincial corridor.
@@ -154,20 +154,9 @@ object RoadNameNormalizer {
         }
 
         // It's a residential or local street:
-        // 1. Strip redundant house number from base if we have an explicit houseNumber
-        val cleanBase = cleanStreetPrefix(road)
-        val cleanHouse = houseNumber?.trim()
-
-        return if (!cleanHouse.isNullOrEmpty() && !cleanBase.endsWith(cleanHouse)) {
-            // Only append if cleanBase doesn't already have a house number
-            if (TRAILING_HOUSE_NUM.containsMatchIn(cleanBase)) {
-                cleanBase
-            } else {
-                "$cleanBase $cleanHouse"
-            }
-        } else {
-            cleanBase
-        }
+        // Strip house numbers completely until dedicated "nearest known address" feature is implemented.
+        val baseStreet = extractBaseStreet(road)
+        return cleanStreetPrefix(baseStreet)
     }
 
     /**

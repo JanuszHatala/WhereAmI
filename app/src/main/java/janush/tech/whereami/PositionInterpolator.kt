@@ -71,13 +71,21 @@ class PositionInterpolator {
     }
 
     private fun calculateExtrapolatedPosition(nowMs: Long): Pair<Double, Double> {
-        val dtSec = ((nowMs - lastFixTimestamp) / 1000.0).coerceIn(0.0, 2.5) // Cap extrapolation at 2.5s
+        val dtSec = ((nowMs - lastFixTimestamp) / 1000.0).coerceIn(0.0, 1.2) // Cap extrapolation at 1.2s (anti-runaway)
         if (lastFixSpeedMs < 0.35f || lastFixBearing == null || dtSec <= 0.0) {
             return Pair(lastFixLat, lastFixLng)
         }
 
-        // Distance traveled along bearing since last fix
-        val distMeters = lastFixSpeedMs * dtSec
+        // Distance traveled along bearing since last fix.
+        // Between fixes (typically delivered every 1.0s), linear extrapolation maintains velocity.
+        // Beyond 1.0s without a fix, decay is applied to prevent vehicle braking/stopping from
+        // overshooting and rubber-banding backwards upon delayed fix arrival.
+        val decay = if (dtSec > 1.0) {
+            (1.0 - (dtSec - 1.0) * 0.5).coerceIn(0.5, 1.0)
+        } else {
+            1.0
+        }
+        val distMeters = lastFixSpeedMs * dtSec * decay
         val radBearing = Math.toRadians(lastFixBearing!!.toDouble())
         val dLat = (distMeters * cos(radBearing)) / 111320.0
         val cosLat = cos(Math.toRadians(lastFixLat)).coerceAtLeast(0.01)

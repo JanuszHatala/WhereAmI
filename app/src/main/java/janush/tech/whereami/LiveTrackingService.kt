@@ -90,6 +90,7 @@ class LiveTrackingService : Service() {
                 if (hasTrip) {
                     updateNotification()
                 } else {
+                    TripManager.getInstance(this).setTripMode(TripMode.MANUAL)
                     updateWakeLock(false)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -146,13 +147,13 @@ class LiveTrackingService : Service() {
             } else {
                 updateWakeLock(false)
                 updateNotification()
-                return START_NOT_STICKY
+                return START_STICKY
             }
         }
 
         updateWakeLock(true)
         updateNotification()
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startForegroundService() {
@@ -262,7 +263,7 @@ class LiveTrackingService : Service() {
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
+            builder.addAction(0, formatActionTitle("🛑 Disable Auto-start", "#EF4444"), stopIntent)
         }
 
         return builder.build()
