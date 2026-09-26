@@ -143,9 +143,12 @@ class AppStateManager private constructor(private val context: Context) {
         if (tripManager.activeTrip.value != null) return
 
         val profile = tripManager.activityProfile.value
-        val burstDurationMs = (profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)
+        val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
 
         TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
+
+        // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
+        GpsFilterEngine.getInstance().reset()
 
         val locManager = LocationManager.getInstance(context)
         // Request GPS updates during confirmation window
@@ -153,7 +156,15 @@ class AppStateManager private constructor(private val context: Context) {
 
         motionBurstJob?.cancel()
         motionBurstJob = scope.launch {
-            delay(burstDurationMs)
+            // Actively collect raw location stream during burst to ensure fused provider remains engaged
+            val collectorJob = launch {
+                locManager.getLocationRaw().collect { /* Keeps masterLocationFlow active */ }
+            }
+            try {
+                delay(burstDurationMs)
+            } finally {
+                collectorJob.cancel()
+            }
             // If burst expired without trip starting and app is still in IDLE, power down GPS and re-arm sensor
             if (tripManager.activeTrip.value == null && _currentMode.value == AppLifecycleMode.IDLE) {
                 TelemetryLogger.log("POWER", "Motion burst expired without trip auto-start. Powering down GPS and re-arming motion sensor.")

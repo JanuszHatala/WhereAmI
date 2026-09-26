@@ -76,16 +76,16 @@ class PositionInterpolatorTest {
     }
 
     @Test
-    fun `extrapolation is capped at 2500ms`() {
+    fun `extrapolation is capped at 1200ms`() {
         val now = 10000L
         interpolator.onNewFix(lat = 49.85, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = now)
         
-        val at2500ms = interpolator.interpolate(now + 2500L)
-        val at5000ms = interpolator.interpolate(now + 5000L)
+        val at1200ms = interpolator.interpolate(now + 1200L)
+        val at3000ms = interpolator.interpolate(now + 3000L)
         
-        // Position at 5000ms should be equal to position at 2500ms (no runaway extrapolation)
-        assertEquals(at2500ms.lat, at5000ms.lat, 0.000001)
-        assertEquals(at2500ms.lng, at5000ms.lng, 0.000001)
+        // Position at 3000ms should be equal to position at 1200ms (no runaway extrapolation)
+        assertEquals(at1200ms.lat, at3000ms.lat, 0.000001)
+        assertEquals(at1200ms.lng, at3000ms.lng, 0.000001)
     }
 
     @Test
