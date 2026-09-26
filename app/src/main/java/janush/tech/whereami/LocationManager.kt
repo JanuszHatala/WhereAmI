@@ -1200,7 +1200,7 @@ class LocationManager private constructor(private val context: Context) {
 
                 return PlaceInfo(
                     city = city,
-                    street = osm.street ?: address?.thoroughfare?.let { RoadNameNormalizer.normalize(it, houseNumber = address.subThoroughfare) },
+                    street = osm.street?.let { RoadNameNormalizer.normalize(it, osm.roadRef) } ?: address?.thoroughfare?.let { RoadNameNormalizer.normalize(it) },
                     roadRef = osm.roadRef,
                     gmina = effectiveGmina,
                     powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
