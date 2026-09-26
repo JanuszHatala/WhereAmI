@@ -128,14 +128,14 @@ class StreetResolutionTest {
             basePlaceStreet = "Krzemionki 16"
         )
         assertEquals(
-            "OSRM map-matched road 'Wincentego Witosa 16' must take highest precedence",
-            "Wincentego Witosa 16",
+            "OSRM map-matched road 'Wincentego Witosa' must take highest precedence (house number stripped)",
+            "Wincentego Witosa",
             resolved
         )
     }
 
     @Test
-    fun `OSRM road centerline retains house number from Nominatim`() {
+    fun `OSRM road centerline retains base street name with house number stripped`() {
         val resolved = resolveCanonicalStreet(
             osrmStreet = "Przecznia",
             osmStreet = "Przecznia 17",
@@ -146,8 +146,8 @@ class StreetResolutionTest {
             basePlaceStreet = null
         )
         assertEquals(
-            "OSRM snapped street should preserve house number 17",
-            "Przecznia 17",
+            "OSRM snapped street should strip house number 17",
+            "Przecznia",
             resolved
         )
     }

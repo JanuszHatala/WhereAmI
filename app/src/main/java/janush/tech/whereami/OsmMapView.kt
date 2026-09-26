@@ -508,17 +508,18 @@ fun OsmMapView(
                     m.position = gp
                     m.isFlat = false
 
-                    // In OSMDroid, Marker rotation on canvas is -rotation when isFlat is false.
-                    // To make the arrow point at screen angle theta clockwise from top, set m.rotation = -theta.
-                    val topHeading = when (orientationMode) {
-                        MapOrientationMode.COURSE_UP -> if (hasHeading) (effectiveBearing ?: 0f) else -map.mapOrientation
-                        MapOrientationMode.NORTH -> 0f
-                        MapOrientationMode.EAST -> 90f
-                        MapOrientationMode.SOUTH -> 180f
-                        MapOrientationMode.WEST -> 270f
+                    // In OSMDroid, Marker rotation on canvas is (-map.mapOrientation - m.rotation) when isFlat is false.
+                    // Since the canvas itself is pre-rotated by +map.mapOrientation, the net marker angle on SCREEN is -m.rotation.
+                    // The vehicle's heading vector on screen (relative to top of screen) is:
+                    //   roadScreenAngle = (effectiveBearing + map.mapOrientation + 360f) % 360f.
+                    // To align the arrow strictly with the road on screen across all modes (COURSE_UP during turns, NORTH, EAST, manual gesture):
+                    //   -m.rotation = roadScreenAngle  ==>  m.rotation = -roadScreenAngle.
+                    val roadScreenAngle = if (hasHeading && effectiveBearing != null) {
+                        (effectiveBearing + map.mapOrientation + 360f) % 360f
+                    } else {
+                        0f
                     }
-                    val screenAngle = if (hasHeading && effectiveBearing != null) (effectiveBearing - topHeading + 360f) % 360f else 0f
-                    m.rotation = -screenAngle
+                    m.rotation = -roadScreenAngle
                     m.icon = makeMarkerIcon(context, hasHeading)
                     m.title = null
 
