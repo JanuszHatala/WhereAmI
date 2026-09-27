@@ -225,6 +225,22 @@ fun calculateOpticalCenter(
 }
 
 /**
+ * Places overlays (such as trip polylines) strictly above background and hiking tile overlays,
+ * but below interactive pins and position tracking markers.
+ */
+private fun addOverlayAboveTiles(map: MapView, overlay: org.osmdroid.views.overlay.Overlay) {
+    if (map.overlays.contains(overlay)) {
+        map.overlays.remove(overlay)
+    }
+    val markerIdx = map.overlays.indexOfFirst { it is Marker }
+    if (markerIdx >= 0) {
+        map.overlays.add(markerIdx, overlay)
+    } else {
+        map.overlays.add(overlay)
+    }
+}
+
+/**
  * Composable OSM map panel with:
  * - Position dot / heading arrow.
  * - Red live trip polyline drawing (#EF4444).
@@ -342,16 +358,23 @@ fun OsmMapView(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var hikingOverlayRef by remember { mutableStateOf<TilesOverlay?>(null) }
     var hikingProviderRef by remember { mutableStateOf<MapTileProviderBasic?>(null) }
-    var lastFrozenBearing by remember { mutableStateOf<Float?>(null) }
-    val posInterpolator = remember { PositionInterpolator() }
     val currentFix = remember(locationFix, latLng) {
         locationFix ?: latLng?.let {
             LocationFix(it.first, it.second, it.third, 0f, System.currentTimeMillis())
         }
     }
+    val posInterpolator = remember {
+        PositionInterpolator().apply {
+            val initFix = currentFix
+            if (initFix != null && initFix.lat != 0.0 && initFix.lng != 0.0) {
+                onNewFix(initFix.lat, initFix.lng, initFix.bearing, initFix.speedMs, initFix.timestamp)
+            }
+        }
+    }
     val effectiveLatLng = remember(currentFix) {
         currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
     }
+    var lastFrozenBearing by remember { mutableStateOf(currentFix?.bearing) }
 
     val snapHandler = remember { Handler(Looper.getMainLooper()) }
     val snapRunnable = remember { Runnable { isFollowing = true } }
@@ -635,10 +658,12 @@ fun OsmMapView(
             it.outlinePaint.strokeJoin = Paint.Join.ROUND
             it.infoWindow = null
             it.setOnClickListener { _, _, _ -> true }
-            map.overlays.add(0, it) // Add below marker
+            addOverlayAboveTiles(map, it)
             polyline = it
         }
 
+        // Ensure polyline remains above any dynamically loaded tile overlays
+        addOverlayAboveTiles(map, line)
         line.setPoints(trackPoints)
         map.invalidate()
     }
@@ -749,7 +774,7 @@ fun OsmMapView(
                     setOnClickListener { _, _, _ -> true }
                     setPoints(trip.points)
                 }
-                map.overlays.add(0, line)
+                addOverlayAboveTiles(map, line)
                 newLines.add(line)
             }
         }
@@ -842,7 +867,8 @@ fun OsmMapView(
             isFollowing = false
             snapHandler.removeCallbacks(snapRunnable)
             if (allShownPoints.size == 1) {
-                map.controller.animateTo(allShownPoints.first())
+                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.animateTo(centerGp)
                 map.controller.setZoom(16.0)
             } else {
                 val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
@@ -857,7 +883,10 @@ fun OsmMapView(
                     centerLat - latSpan / 2.0,
                     centerLon - lonSpan / 2.0
                 )
-                map.zoomToBoundingBox(paddedBox, true, 120)
+                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
+                map.zoomToBoundingBox(paddedBox, false, borderPadding)
+                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.animateTo(opticalCenter)
             }
             currentZoom = map.zoomLevelDouble
         }
@@ -870,12 +899,16 @@ fun OsmMapView(
             isFollowing = false
             snapHandler.removeCallbacks(snapRunnable)
             if (savedPlaces.size == 1) {
-                map.controller.animateTo(savedPlaces.first().geoPoint)
+                val centerGp = getOpticalCenter(map, savedPlaces.first().geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.animateTo(centerGp)
                 map.controller.setZoom(16.0)
                 currentZoom = 16.0
             } else {
                 val box = BoundingBox.fromGeoPoints(savedPlaces.map { it.geoPoint })
-                map.zoomToBoundingBox(box, true, 120)
+                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
+                map.zoomToBoundingBox(box, false, borderPadding)
+                val opticalCenter = getOpticalCenter(map, box.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.animateTo(opticalCenter)
                 currentZoom = map.zoomLevelDouble
             }
         }
@@ -903,6 +936,27 @@ fun OsmMapView(
                     maxZoomLevel = maxZoom
                     controller.setZoom(16.0)
                     currentZoom = 16.0
+
+                    // Initialize camera center immediately so map never opens on blank ocean (0,0)
+                    val initialLat = locationFix?.lat ?: latLng?.first ?: run {
+                        val locPrefs = ctx.getSharedPreferences("janush.tech.whereami.loc_prefs", Context.MODE_PRIVATE)
+                        val savedLat = locPrefs.getFloat("cached_lat", Float.NaN)
+                        if (!savedLat.isNaN()) savedLat.toDouble() else 52.0693
+                    }
+                    val initialLon = locationFix?.lng ?: latLng?.second ?: run {
+                        val locPrefs = ctx.getSharedPreferences("janush.tech.whereami.loc_prefs", Context.MODE_PRIVATE)
+                        val savedLon = locPrefs.getFloat("cached_lon", Float.NaN)
+                        if (!savedLon.isNaN()) savedLon.toDouble() else 19.4803
+                    }
+                    val initialOpticalCenter = calculateOpticalCenter(
+                        lat = initialLat,
+                        lon = initialLon,
+                        zoom = 16.0,
+                        mapOrientation = 0f,
+                        offsetPixelsY = effectiveOpticalOffsetY,
+                        offsetPixelsX = effectiveOpticalOffsetX
+                    )
+                    controller.setCenter(initialOpticalCenter)
                     // Disable blur-inducing tile upscaling; render crisp 1:1 pixel native tiles
                     isTilesScaledToDpi = false
                     zoomController.setVisibility(
@@ -1067,7 +1121,8 @@ fun OsmMapView(
                         isFollowing = false
                         snapHandler.removeCallbacks(snapRunnable)
                         if (allShownPoints.size == 1) {
-                            map.controller.animateTo(allShownPoints.first())
+                            val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                            map.controller.animateTo(centerGp)
                             map.controller.setZoom(16.0)
                         } else {
                             val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
@@ -1082,7 +1137,10 @@ fun OsmMapView(
                                 centerLat - latSpan / 2.0,
                                 centerLon - lonSpan / 2.0
                             )
-                            map.zoomToBoundingBox(paddedBox, true, 120)
+                            val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
+                            map.zoomToBoundingBox(paddedBox, false, borderPadding)
+                            val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                            map.controller.animateTo(opticalCenter)
                         }
                     },
                     modifier = Modifier

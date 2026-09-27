@@ -44,11 +44,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isCharging: StateFlow<Boolean> = appStateManager.isCharging
     val lifecycleMode: StateFlow<AppLifecycleMode> = appStateManager.currentMode
 
+    private val initialCoords: Triple<Double, Double, Float?>? = run {
+        if (locPrefs.contains("lat") && locPrefs.contains("lng")) {
+            val lat = locPrefs.getFloat("lat", 0f).toDouble()
+            val lng = locPrefs.getFloat("lng", 0f).toDouble()
+            if (lat != 0.0 && lng != 0.0) Triple(lat, lng, null) else null
+        } else null
+    }
+
     /** Latest GPS coordinates for the map composable (lat, lng, bearing?). */
-    private val _currentLatLng = MutableStateFlow<Triple<Double, Double, Float?>?>(null)
+    private val _currentLatLng = MutableStateFlow<Triple<Double, Double, Float?>?>(initialCoords)
     val currentLatLng: StateFlow<Triple<Double, Double, Float?>?> = _currentLatLng.asStateFlow()
 
-    private val _currentLocationFix = MutableStateFlow<LocationFix?>(null)
+    private val _currentLocationFix = MutableStateFlow<LocationFix?>(
+        initialCoords?.let {
+            val speed = if (locPrefs.contains("speed")) locPrefs.getFloat("speed", 0f) else 0f
+            LocationFix(it.first, it.second, null, speed, System.currentTimeMillis())
+        }
+    )
     val currentLocationFix: StateFlow<LocationFix?> = _currentLocationFix.asStateFlow()
 
     // Screen On Preference
@@ -446,14 +459,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedTripIds.value = ids
     }
 
-    fun mergeSelectedTrips() {
+    fun mergeSelectedTrips(customTitle: String? = null, targetProfile: ActivityProfile? = null) {
         val ids = _selectedTripIds.value.toList()
         if (ids.size < 2) return
         viewModelScope.launch(Dispatchers.IO) {
-            val newId = tripManager.mergeTrips(ids)
+            val newId = tripManager.mergeTrips(ids, customTitle, targetProfile)
             _selectedTripIds.value = setOf(newId)
             _savedTrips.value = tripManager.getAllTrips()
-            TelemetryLogger.log("TRIP", "Merged ${ids.size} trips into #$newId")
+            TelemetryLogger.log("TRIP", "Merged ${ids.size} trips into #$newId (title='$customTitle', profile=$targetProfile)")
         }
     }
 

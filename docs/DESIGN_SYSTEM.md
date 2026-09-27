@@ -124,12 +124,22 @@ Row(verticalAlignment = Alignment.CenterVertically) {
 fun EmojiText(
     emoji: String,
     fontSize: TextUnit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    yOffsetDp: Dp = Dp.Unspecified
 ) {
+    // Optical vertical alignment:
+    // Android's Noto Color Emoji font places emoji glyphs lower in the font metrics box than Latin capital letters.
+    // To align the optical center of emoji glyphs with the cap-height center and baseline of adjacent text across the app,
+    // we apply a default upward offset (-maxOf(2.5f, fontSize.value * 0.28f).dp).
+    val effectiveOffset = if (yOffsetDp != Dp.Unspecified) {
+        yOffsetDp
+    } else {
+        (-maxOf(2.5f, fontSize.value * 0.28f)).dp
+    }
     Text(
         text = emoji,
         fontSize = fontSize,
-        modifier = modifier,
+        modifier = modifier.offset(y = effectiveOffset),
         style = TextStyle(
             platformStyle = PlatformTextStyle(includeFontPadding = false),
             lineHeightStyle = LineHeightStyle(
