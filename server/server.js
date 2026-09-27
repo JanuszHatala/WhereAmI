@@ -295,6 +295,7 @@ app.post('/api/sessions/:id/status', (req, res) => {
       session.ended = false;
     }
   }
+  session.updatedAt = Date.now();
   saveSessions();
   res.json({
     success: true,

@@ -232,7 +232,7 @@ class AppStateManager private constructor(private val context: Context) {
 
                 if (policy == BatteryPowerPolicy.HIGH_PERFORMANCE || (policy == BatteryPowerPolicy.SMART_AUTO && charging)) {
                     // Relax restrictions when plugged in or performance requested
-                    interval = (interval / 2).coerceAtLeast(2000L)
+                    interval = (interval / 2).coerceAtLeast(1000L)
                     minInterval = (minInterval / 2).coerceAtLeast(1000L)
                 } else if (policy == BatteryPowerPolicy.BATTERY_SAVER) {
                     interval = (interval * 1.5).toLong()
