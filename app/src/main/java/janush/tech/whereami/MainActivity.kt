@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -188,16 +189,29 @@ fun openInGoogleMaps(context: android.content.Context, lat: Double, lng: Double,
  * Noto Color Emoji has large ascender metrics; this pattern trims the excess
  * and centers the glyph so Row(CenterVertically) actually centers the visual glyph.
  */
+/**
+ * Standard Composable for rendering emojis with guaranteed baseline alignment.
+ * Noto Color Emoji's glyph metrics sit near the bottom of its bounding box on Android,
+ * while Latin uppercase letters occupy the higher cap-height region.
+ * We apply a default upward offset (-maxOf(1.5f, fontSize.value * 0.13f).dp) so the emoji's
+ * optical center is strictly aligned with the cap-height center of adjacent Latin text.
+ */
 @Composable
 fun EmojiText(
     emoji: String,
     fontSize: TextUnit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    yOffsetDp: Dp = Dp.Unspecified
 ) {
+    val effectiveOffset = if (yOffsetDp != Dp.Unspecified) {
+        yOffsetDp
+    } else {
+        (-maxOf(1.5f, fontSize.value * 0.13f)).dp
+    }
     Text(
         text = emoji,
         fontSize = fontSize,
-        modifier = modifier,
+        modifier = modifier.offset(y = effectiveOffset),
         style = TextStyle(
             platformStyle = PlatformTextStyle(includeFontPadding = false),
             lineHeightStyle = LineHeightStyle(
@@ -273,6 +287,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var tripToRename by remember { mutableStateOf<TripRecord?>(null) }
     var renameInputText by remember { mutableStateOf("") }
     var tripToDelete by remember { mutableStateOf<TripRecord?>(null) }
+    var showMergeConfirmationDialog by remember { mutableStateOf(false) }
     var showResetDefaultsConfirm by remember { mutableStateOf(false) }
 
     // Save Place Dialog State
@@ -313,6 +328,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         showSearchDialog = false
         tripToRename = null
         tripToDelete = null
+        showMergeConfirmationDialog = false
         showResetDefaultsConfirm = false
         showSavePlaceDialog = false
         placeToSaveCoords = null
@@ -1630,7 +1646,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                                     if (selectedTripIds.size >= 2) {
                                         Button(
-                                            onClick = { viewModel.mergeSelectedTrips() },
+                                            onClick = { showMergeConfirmationDialog = true },
                                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             modifier = Modifier.height(28.dp),
@@ -1955,7 +1971,19 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             modifier = Modifier.padding(vertical = 2.dp)
                                                                         ) {
                                                                             Text(
-                                                                                text = if (isPausesExpanded) "▼ ⏸️ Rest Pauses (${trip.pauses.size})" else "▶ ⏸️ Rest Pauses (${trip.pauses.size})",
+                                                                                text = if (isPausesExpanded) "▼" else "▶",
+                                                                                fontSize = 11.sp,
+                                                                                fontWeight = FontWeight.SemiBold,
+                                                                                color = Color(0xFFF59E0B)
+                                                                            )
+                                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                                            EmojiText(
+                                                                                emoji = "⏸️",
+                                                                                fontSize = 11.sp
+                                                                            )
+                                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                                            Text(
+                                                                                text = "Rest Pauses (${trip.pauses.size})",
                                                                                 fontSize = 11.sp,
                                                                                 fontWeight = FontWeight.SemiBold,
                                                                                 color = Color(0xFFF59E0B)
@@ -3331,6 +3359,190 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { tripToDelete = null }) {
+                    Text("Cancel", color = Color.LightGray)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // ── 8a-1. Merge Trips Confirmation Dialog ────────────────────────────────
+    if (showMergeConfirmationDialog && selectedTripsList.size >= 2) {
+        val sortedSelectedTrips = remember(selectedTripsList) {
+            selectedTripsList.sortedBy { it.startTime }
+        }
+        val distinctProfiles = remember(sortedSelectedTrips) {
+            sortedSelectedTrips.map { it.activityProfile }.distinct()
+        }
+        val hasProfileMismatch = distinctProfiles.size > 1
+
+        val earliestTrip = sortedSelectedTrips.first()
+        val latestTrip = sortedSelectedTrips.last()
+        val defaultMergedTitle = remember(sortedSelectedTrips) {
+            val t1 = earliestTrip.title.ifBlank {
+                DateFormat.getDateInstance(DateFormat.SHORT).format(Date(earliestTrip.startTime))
+            }
+            val t2 = latestTrip.title.ifBlank {
+                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(latestTrip.startTime))
+            }
+            "$t1 + $t2"
+        }
+
+        var mergeTitleInput by remember(sortedSelectedTrips) { mutableStateOf(defaultMergedTitle) }
+        var chosenProfile by remember(sortedSelectedTrips) { mutableStateOf(earliestTrip.activityProfile) }
+
+        val totalPoints = remember(sortedSelectedTrips) { sortedSelectedTrips.sumOf { it.points.size } }
+        val totalDistKm = remember(sortedSelectedTrips) { sortedSelectedTrips.sumOf { it.distanceMeters } / 1000.0 }
+
+        AlertDialog(
+            onDismissRequest = { showMergeConfirmationDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CallMerge,
+                        contentDescription = null,
+                        tint = Color(0xFF8B5CF6),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Merge ${sortedSelectedTrips.size} Trips",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (hasProfileMismatch) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0x33F59E0B),
+                            border = BorderStroke(1.dp, Color(0xFFF59E0B)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    EmojiText(emoji = "⚠️", fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Activity Profile Mismatch",
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 13.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Selected trips have different activity profiles (${distinctProfiles.joinToString(", ") { "${it.iconEmoji} ${it.displayName}" }}). Choose which profile to assign to the merged trip:",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    distinctProfiles.forEach { profile ->
+                                        val isChosen = chosenProfile == profile
+                                        Surface(
+                                            onClick = { chosenProfile = profile },
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (isChosen) Color(0xFF8B5CF6) else Color(0xFF1E293B),
+                                            border = BorderStroke(1.dp, if (isChosen) Color(0xFFA78BFA) else Color(0xFF475569)),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                                horizontalArrangement = Arrangement.Center,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                EmojiText(emoji = profile.iconEmoji, fontSize = 12.sp)
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = profile.displayName,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Normal,
+                                                    color = Color.White,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Trip overview metrics
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF0F172A),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = String.format(Locale.getDefault(), "Total Distance: %.2f km • Points: %,d", totalDistKm, totalPoints),
+                                color = Color(0xFF38BDF8),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            val gapsCount = sortedSelectedTrips.size - 1
+                            Text(
+                                text = "Intermediate gaps will be converted into $gapsCount rest pause(s).",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    // Proposed Editable Title
+                    Text(
+                        text = "Merged Trip Title:",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    OutlinedTextField(
+                        value = mergeTitleInput,
+                        onValueChange = { mergeTitleInput = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF8B5CF6),
+                            unfocusedBorderColor = Color(0xFF475569)
+                        ),
+                        placeholder = { Text("Trip title...", color = Color.Gray) }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val titleToUse = mergeTitleInput.trim().ifBlank { defaultMergedTitle }
+                        viewModel.mergeSelectedTrips(
+                            customTitle = titleToUse,
+                            targetProfile = chosenProfile
+                        )
+                        showMergeConfirmationDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Merge Trips")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMergeConfirmationDialog = false }) {
                     Text("Cancel", color = Color.LightGray)
                 }
             },

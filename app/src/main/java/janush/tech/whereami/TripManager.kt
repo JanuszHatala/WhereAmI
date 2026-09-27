@@ -183,7 +183,7 @@ class TripManager private constructor(private val context: Context) {
     }
 
     fun stopManualTrip() {
-        stopTrip()
+        stopTrip(isManualStop = true)
     }
 
     private fun startTrip(isAuto: Boolean) {
@@ -224,15 +224,28 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
-    private fun stopTrip() {
+    private fun stopTrip(isManualStop: Boolean = false) {
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
 
-        // Auto-stop waiting or stopping at destination is NOT a rest pause: discard active pause
+        val updatedPauses = current.pauses.toMutableList()
+        // If the user manually stopped the trip while resting at a place, finalize the active pause
+        if (isManualStop && activePause != null && (now - activePause!!.startTime) >= 45_000L) {
+            val finalized = activePause!!.copy(
+                endTime = now,
+                durationMs = now - activePause!!.startTime
+            )
+            updatedPauses.add(finalized)
+            TelemetryLogger.logTrip("PAUSE_FINALIZED", current.id, "Finalized manual stop pause: ${finalized.durationMs / 1000}s")
+        }
         activePause = null
 
-        // Also sanitize any trailing pause that occurred at the trip destination
-        val sanitizedPauses = sanitizeTrailingPauses(current.pauses, current.points.size, now, current.points.lastOrNull())
+        // Auto-stop waiting or stopping at home is NOT a rest pause: sanitize only for auto-stop
+        val sanitizedPauses = if (isManualStop) {
+            updatedPauses
+        } else {
+            sanitizeTrailingPauses(updatedPauses, current.points.size, now, current.points.lastOrNull())
+        }
 
         val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
         dbHelper.updateTrip(finishedTrip)
@@ -595,8 +608,12 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
-    fun mergeTrips(tripIds: List<Long>): Long {
-        return dbHelper.mergeTrips(tripIds)
+    fun mergeTrips(
+        tripIds: List<Long>,
+        customTitle: String? = null,
+        targetProfile: ActivityProfile? = null
+    ): Long {
+        return dbHelper.mergeTrips(tripIds, customTitle, targetProfile)
     }
 
     fun splitTripAtPause(tripId: Long, pauseIndex: Int): Pair<Long, Long>? {

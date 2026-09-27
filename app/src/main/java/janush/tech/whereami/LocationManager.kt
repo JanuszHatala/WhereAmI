@@ -625,14 +625,16 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // When crossing into a confirmed new locality or after making a physical turn,
-        // relax threshold to adopt the new street promptly (2 confirmations / 2 seconds)
+        // When crossing into a confirmed new locality, after making a physical turn,
+        // or transitioning between village estates (osiedla/przysiółki),
+        // relax threshold to adopt the new name promptly (2 confirmations / 2 seconds)
+        val isEstateTransition = (committedStreetBase?.startsWith("os. ") == true) || rawBase.startsWith("os. ")
         val requiredCount = when {
-            isLocalityTransition || isRecentTurn -> minOf(rawRequiredCount, 2)
+            isLocalityTransition || isRecentTurn || isEstateTransition -> minOf(rawRequiredCount, 2)
             else -> rawRequiredCount
         }
         val requiredDuration = when {
-            isLocalityTransition || isRecentTurn -> minOf(rawRequiredDuration, 2_000L)
+            isLocalityTransition || isRecentTurn || isEstateTransition -> minOf(rawRequiredDuration, 2_000L)
             else -> rawRequiredDuration
         }
         val candidateDuration = now - candidateStreetFirstSeenTime
@@ -1235,8 +1237,9 @@ class LocationManager private constructor(private val context: Context) {
 
     private fun geocodeWithOsm(lat: Double, lng: Double, language: String): OsmPlaceResult? {
         val now = System.currentTimeMillis()
-        // Quantize coordinates to ~100m grid cell so local movements don't hammer Nominatim
-        val osmKey = "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}_$language"
+        // Quantize coordinates to 4 decimal places (~11m grid cell, matching spatial SQLite cache)
+        // to prevent rural hamlet/estate names from bleeding across hundreds of meters along unnamed roads
+        val osmKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}_$language"
         val cachedOsm = osmResponseCache[osmKey]
         if (cachedOsm != null && (now - cachedOsm.timestamp) < 30 * 60 * 1000L) {
             return cachedOsm.result
