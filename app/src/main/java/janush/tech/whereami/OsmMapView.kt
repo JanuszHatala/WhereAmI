@@ -726,6 +726,7 @@ fun OsmMapView(
         selectedTripPolylines.forEach { map.overlays.remove(it) }
 
         val colors = listOf(
+            "#EF4444", // Vivid Red (matches active recording track)
             "#3B82F6", // Blue
             "#10B981", // Emerald Green
             "#F59E0B", // Amber

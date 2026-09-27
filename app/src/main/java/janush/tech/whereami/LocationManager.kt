@@ -285,6 +285,7 @@ class LocationManager private constructor(private val context: Context) {
     // MAP-R03: Stationary Bearing Freeze (retains driving heading when stopped)
     @Volatile
     private var lastValidBearing: Float? = null
+    private var lastProcessedLocation: AndroidLocation? = null
 
     /**
      * Bearing Exponential Moving Average (EMA) — circular-domain low-pass filter.
@@ -743,28 +744,41 @@ class LocationManager private constructor(private val context: Context) {
                         val speedKmh = speed * 3.6f
                         val alt = if (location.hasAltitude()) location.altitude else null
 
-                        // Bearing Stability Fix: tiered minimum speed gate before accepting GPS bearing.
-                        // Raw GPS bearing is highly noisy at low speeds (< 15 km/h):
-                        //   - accuracy > 20m: require >= 8 m/s (29 km/h) to avoid urban multipath flicker
-                        //   - accuracy ≤ 20m: require >= 3.0 m/s (10.8 km/h)
-                        // Below these thresholds, we hold lastValidBearing (frozen heading).
-                        // When bearing IS accepted, it is passed through the circular EMA smoother
-                        // before being stored — this eliminates second-to-second ±50° jitter.
+                        // Bearing Stability: profile-aware speed gate & displacement bearing fallback
+                        val activeProfile = TripManager.getInstance(context).activityProfile.value
+                        val isOutdoorProfile = activeProfile != ActivityProfile.CAR
                         val rawAcc = if (location.hasAccuracy()) location.accuracy else 0f
-                        val minSpeedForBearing = when {
-                            rawAcc > 20f -> 8.0f    // poor accuracy → very high speed needed
-                            rawAcc > 15f -> 5.0f    // medium accuracy
-                            else         -> 3.0f    // good accuracy → raised from 1.2 to 3.0 m/s
+
+                        val minSpeedForBearing = if (isOutdoorProfile) {
+                            when {
+                                rawAcc > 20f -> 2.5f    // poor accuracy in outdoor profile
+                                rawAcc > 15f -> 1.5f    // medium accuracy
+                                else         -> 0.9f    // good accuracy (~3.2 km/h) enables MTB/hiking uphill heading
+                            }
+                        } else {
+                            when {
+                                rawAcc > 20f -> 8.0f    // CAR poor accuracy
+                                rawAcc > 15f -> 5.0f    // CAR medium accuracy
+                                else         -> 2.5f    // CAR good accuracy
+                            }
                         }
-                        val currentBearing = if (location.hasBearing() &&
-                            location.hasSpeed() && location.speed >= minSpeedForBearing) {
-                            // Apply circular EMA smoother before publishing (speed-adaptive α)
-                            val smoothed = smoothBearing(location.bearing, speedKmh)
+
+                        val prevLoc = lastProcessedLocation
+                        val displacement = if (prevLoc != null) prevLoc.distanceTo(location) else 0f
+                        val candidateBearing: Float? = when {
+                            location.hasBearing() && speed >= minSpeedForBearing -> location.bearing
+                            prevLoc != null && displacement >= 4.0f && speed >= 0.8f -> prevLoc.bearingTo(location)
+                            else -> null
+                        }
+
+                        val currentBearing = if (candidateBearing != null) {
+                            val smoothed = smoothBearing(candidateBearing, speedKmh)
                             lastValidBearing = smoothed
                             smoothed
                         } else {
                             lastValidBearing  // hold frozen heading when slow/stopped
                         }
+                        lastProcessedLocation = AndroidLocation(location)
 
                         // 1. Immediate TripManager kinematic notification
                         TripManager.getInstance(context).onLocationUpdate(
@@ -908,7 +922,7 @@ class LocationManager private constructor(private val context: Context) {
                 old.lat == new.lat && old.lng == new.lng && old.timestamp == new.timestamp
             }
             .map {
-                val movingBearing = if (it.speedMs >= 1.2f) it.bearing else null
+                val movingBearing = if (it.speedMs >= 0.8f) it.bearing else null
                 LocationFix(
                     lat = it.lat,
                     lng = it.lng,

@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import org.osmdroid.util.GeoPoint
 
@@ -70,10 +70,10 @@ enum class ActivityProfile(
     val gpsIntervalMs: Long,
     val minGpsIntervalMs: Long
 ) {
-    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 5, 5_000L, 2_000L),
-    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 5, 15_000L, 5_000L),
-    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 5, 15_000L, 5_000L),
-    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 10, 8_000L, 4_000L),
-    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 5, 6_000L, 3_000L),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 8_000L, 4_000L)
+    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 5, 2_000L, 1_000L),
+    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 5, 2_000L, 1_000L),
+    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 5, 2_000L, 1_000L),
+    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 10, 3_000L, 1_500L),
+    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 5, 2_000L, 1_000L),
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 3_000L, 1_500L)
 }

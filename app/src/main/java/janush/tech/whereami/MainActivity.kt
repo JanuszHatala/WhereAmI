@@ -4340,14 +4340,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
                             }
-                            Text(
-                                text = tripViewerUrl,
-                                fontSize = 11.sp,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(tripViewerUrl))
+                                            context.startActivity(browserIntent)
+                                        } catch (_: Exception) {}
+                                    }
+                            ) {
+                                Text(
+                                    text = tripViewerUrl,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF38BDF8),
+                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("↗", fontSize = 12.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -4377,13 +4393,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         android.widget.Toast.makeText(context, "Trip link copied", android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp), tint = Color.White)
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Copy", fontSize = 11.sp)
+                                    Text("Copy", fontSize = 11.sp, color = Color.White)
                                 }
                                 Button(
                                     onClick = {
@@ -4438,14 +4454,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
                             }
-                            Text(
-                                text = personalViewerUrl,
-                                fontSize = 11.sp,
-                                color = Color(0xFF10B981),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(personalViewerUrl))
+                                            context.startActivity(browserIntent)
+                                        } catch (_: Exception) {}
+                                    }
+                            ) {
+                                Text(
+                                    text = personalViewerUrl,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF10B981),
+                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("↗", fontSize = 12.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -4475,13 +4507,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         android.widget.Toast.makeText(context, "Personal link copied", android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155), contentColor = Color.White),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp), tint = Color.White)
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Copy", fontSize = 11.sp)
+                                    Text("Copy", fontSize = 11.sp, color = Color.White)
                                 }
                                 Button(
                                     onClick = {
