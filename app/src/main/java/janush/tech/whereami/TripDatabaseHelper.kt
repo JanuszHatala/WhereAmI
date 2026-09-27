@@ -385,7 +385,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return trips
     }
 
-    fun mergeTrips(tripIds: List<Long>): Long {
+    fun mergeTrips(
+        tripIds: List<Long>,
+        customTitle: String? = null,
+        targetProfile: ActivityProfile? = null
+    ): Long {
         if (tripIds.size < 2) return tripIds.firstOrNull() ?: 0L
         val tripsToMerge = getTripsByIds(tripIds)
         if (tripsToMerge.isEmpty()) return 0L
@@ -463,16 +467,19 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         val overallAvgSpeed = if (totalDurationSec > 0) (weightedSpeedSum / totalDurationSec).toFloat() else earliest.avgSpeedKmh
         val dateStr = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(earliest.startTime))
-        val mergedTitle = if (earliest.title.isNotBlank()) "${earliest.title} (Merged)" else "$dateStr • Merged Trips (${sorted.size})"
+        val defaultTitle = if (earliest.title.isNotBlank()) "${earliest.title} (Merged)" else "$dateStr • Merged Trips (${sorted.size})"
+        val finalTitle = customTitle?.takeIf { it.isNotBlank() } ?: defaultTitle
+        val finalProfile = targetProfile ?: earliest.activityProfile
 
         val mergedTrip = TripRecord(
-            title = mergedTitle,
+            title = finalTitle,
             startTime = earliest.startTime,
             endTime = latest.endTime ?: latest.startTime,
             distanceMeters = totalDist,
             maxSpeedKmh = maxSpd,
             avgSpeedKmh = overallAvgSpeed,
             isAutoDetected = earliest.isAutoDetected,
+            activityProfile = finalProfile,
             points = allPoints,
             placesVisited = allPlaces,
             pauses = allPauses.sortedBy { it.startTime }
