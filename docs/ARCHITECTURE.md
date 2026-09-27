@@ -89,16 +89,17 @@ All raw location fixes enter through `LocationManager.kt` via `masterLocationFlo
   - `getLocationUpdates(language)`: Supplies enriched place names and administrative hierarchies for the Locality Card.
   - `getLocationRaw()`: Emits lightweight `LocationFix` instances with `.distinctUntilChanged` on `(lat, lng, timestamp)` strictly for real-time map tracking.
 
-### B. 4-Stage GPS Kinematic Filter Engine (`GpsFilterEngine`)
+### B. 5-Stage GPS Kinematic Filter Engine (`GpsFilterEngine`)
 Raw mobile GPS fixes undergo rigorous validation before being passed to UI, recording, or live streams:
-1. **Horizontal Accuracy Gate**: Rejects fixes exceeding profile-specific thresholds (Driving $\le 55\text{m}$, Cycling $\le 55\text{m}$, Hiking $\le 40\text{m}$).
-2. **Kinematic Velocity Gate**: Rejects displacement exceeding profile physical maximums (Driving $> 220\text{ km/h}$, Cycling $> 90\text{ km/h}$, Hiking $> 22\text{ km/h}$) when displacement $> 30\text{m}$.
-3. **Consecutive Anomaly Recovery**: Allows instant relocation after 3 consecutive agreeing fixes (handles emerging from long tunnels or flight landings).
-4. **Stationary Jitter Dampener**: Dampens micro-oscillations when stopped. When speed $< 1.2\text{ m/s}$ ($4.3\text{ km/h}$), freezes `lastValidBearing` to prevent compass spinning.
+1. **Horizontal Accuracy Gate**: Rejects fixes exceeding profile-specific thresholds (Driving $\le 55\text{m}$, Cycling $\le 55\text{m}$, Hiking $\le 40\text{m}$). Degraded fallback fixes accepted only after 45s of signal starvation.
+2. **Kinematic Velocity Gate**: Rejects displacement exceeding profile physical maximums (Driving $> 220\text{ km/h}$, Cycling $> 90\text{ km/h}$, Hiking $> 22\text{ km/h}$) when displacement $> 10\text{m}$ or $\Delta t < 0.8\text{s}$.
+3. **Directional Projection Gate (Anti-Backward-Jump Filter)**: Evaluates vector dot product $(D \cdot V) / |D|$ against active heading. If moving forward ($\ge 1.2\text{ m/s}$) and displacement $\ge 8\text{m}$, rejects backward spikes with $\cos \theta < -0.35$ ($> 110^\circ$ reversal).
+4. **Consecutive Anomaly Recovery**: Allows instant trajectory change/recovery after 3 consecutive agreeing anomalous fixes (handles emerging from long tunnels, flight landings, or true U-turns).
+5. **Stationary Jitter Dampener**: Dampens micro-oscillations when stopped ($< 4\text{m}, < 0.5\text{ m/s}$) without wiping Doppler hardware speed. Profile-aware bearing gate retains frozen heading when moving below reliable heading speed ($0.9\text{ m/s}$ in outdoor modes).
 
 ### C. 60fps Dead-Reckoning Position Interpolation (`PositionInterpolator`)
 - Runs on the display frame clock (`withFrameNanos`) inside `OsmMapView.kt`.
-- Projects position forward along the heading vector using flat-earth trigonometric projection ($v \times \Delta t$), capped at $2.5\text{s}$ to prevent runaway extrapolation during signal loss.
+- Projects position forward along the heading vector using flat-earth trigonometric projection ($v \times \Delta t$), capped at $1.2\text{s}$ with smooth deceleration decay to prevent runaway extrapolation or rubber-banding.
 - Uses a $250\text{ms}$ ease-out blending window on new GPS fix arrivals to ensure zero visual jumping or snapping.
 - Stationary dampening: locks position when velocity $< 0.35\text{ m/s}$ and throttles redraw to $350\text{ms}$ to save battery.
 
@@ -114,7 +115,7 @@ Battery optimization is the highest engineering priority:
 - **`AppStateManager` Lifecycle States**:
   - `IDLE`: Screen off, no active trip, no live sharing. **GPS hardware is completely powered down** (`LocationManager.stopLocationUpdates()`).
   - `FOREGROUND_VIEW`: Interactive map open (1500ms sampling; 3000ms on Battery Saver).
-  - `TRIP_RECORDING`: Active trip in progress (profile-specific sampling: Car 5s/2s, Bike 15s/5s, Hike 8s/4s).
+  - `TRIP_RECORDING`: Active trip in progress (profile-specific high-fidelity sampling: Car/MTB/Cycling/Running 2000ms base / 1000ms min; Hiking/Walking 3000ms base / 1500ms min).
   - `LIVE_ONLY`: Live sharing active without local trip (12s on battery, 6s when charging).
   - `ANDROID_AUTO`: Infotainment screen active (3000ms / 1000ms).
 - **Zero-Power Motion Wake (`MotionWakeManager`)**:

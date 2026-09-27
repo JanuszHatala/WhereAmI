@@ -307,18 +307,37 @@ class LiveSharingManager private constructor(private val context: Context) {
         return session
     }
 
+    private var pausedHeartbeatJob: kotlinx.coroutines.Job? = null
+
     fun pauseSession() {
         val s = _currentSession.value ?: return
         val paused = s.copy(isPaused = true)
         prefs.edit().putBoolean(KEY_SESSION_PAUSED, true).apply()
         _currentSession.value = paused
 
-        scope.launch {
-            postStatusUpdate(s, "paused")
+        startPausedHeartbeat(s)
+    }
+
+    private fun startPausedHeartbeat(session: LiveSession) {
+        pausedHeartbeatJob?.cancel()
+        pausedHeartbeatJob = scope.launch {
+            postStatusUpdate(session, "paused")
+            while (_currentSession.value?.isPaused == true && _currentSession.value?.isActive == true) {
+                kotlinx.coroutines.delay(30_000L)
+                val current = _currentSession.value
+                if (current == null || !current.isPaused || !current.isActive) break
+                postStatusUpdate(current, "paused")
+            }
         }
     }
 
+    private fun stopPausedHeartbeat() {
+        pausedHeartbeatJob?.cancel()
+        pausedHeartbeatJob = null
+    }
+
     fun resumeSession() {
+        stopPausedHeartbeat()
         val s = _currentSession.value ?: return
         val resumed = s.copy(isPaused = false, isPersonalPaused = false, isRandomPaused = false)
         prefs.edit()
@@ -519,6 +538,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     }
 
     fun stopSession() {
+        stopPausedHeartbeat()
         val s = _currentSession.value ?: return
         val stopped = s.copy(isActive = false, isPaused = false)
         prefs.edit().putBoolean(KEY_SESSION_ACTIVE, false).putBoolean(KEY_SESSION_PAUSED, false).apply()
