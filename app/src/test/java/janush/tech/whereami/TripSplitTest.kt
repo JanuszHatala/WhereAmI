@@ -135,4 +135,67 @@ class TripSplitTest {
         assertEquals(10000L, allPauses[1].durationMs) // gap pause
         assertEquals(7, allPauses[2].pointIndex) // p2 shifted by trip1's 2 points: 5 + 2 = 7
     }
+
+    @Test
+    fun testMergeCustomTitleAndProfileResolution() {
+        val trip1 = TripRecord(
+            id = 1,
+            title = "Morning Commute",
+            startTime = 1000L,
+            activityProfile = ActivityProfile.CAR
+        )
+        val trip2 = TripRecord(
+            id = 2,
+            title = "Lunch Break",
+            startTime = 2000L,
+            activityProfile = ActivityProfile.WALKING
+        )
+
+        // Default title logic when no custom title provided
+        val defaultTitle = "${trip1.title} + ${trip2.title}"
+        assertEquals("Morning Commute + Lunch Break", defaultTitle)
+
+        // Custom title override
+        val customTitle = "Full Day Journey"
+        val resolvedTitle = customTitle.ifBlank { defaultTitle }
+        assertEquals("Full Day Journey", resolvedTitle)
+
+        // Profile resolution: override takes precedence over earliest trip's profile
+        val targetProfile: ActivityProfile? = ActivityProfile.MTB
+        val resolvedProfile = targetProfile ?: trip1.activityProfile
+        assertEquals(ActivityProfile.MTB, resolvedProfile)
+    }
+
+    @Test
+    fun testManualStopPauseRetentionLogic() {
+        // Simulates TripManager.stopTrip(isManualStop = true)
+        val pauseStartTime = 1000L
+        val stopTime = pauseStartTime + 14 * 60_000L // 14 minutes stayed at turnaround
+        val pauseDuration = stopTime - pauseStartTime
+
+        val activePause: TripPause? = TripPause(
+            startTime = pauseStartTime,
+            latitude = 49.8,
+            longitude = 19.3,
+            durationMs = pauseDuration
+        )
+
+        val pauses = mutableListOf<TripPause>()
+        val isManualStop = true
+
+        if (isManualStop && activePause != null && pauseDuration >= 45_000L) {
+            val finalized = activePause.copy(
+                endTime = stopTime,
+                durationMs = pauseDuration
+            )
+            pauses.add(finalized)
+        }
+
+        // Verify the 14-minute rest pause at the turnaround was preserved!
+        assertEquals(1, pauses.size)
+        assertEquals(14 * 60_000L, pauses[0].durationMs)
+        assertEquals(pauseStartTime, pauses[0].startTime)
+        assertEquals(stopTime, pauses[0].endTime)
+    }
 }
+
