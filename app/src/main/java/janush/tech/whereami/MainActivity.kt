@@ -1256,18 +1256,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     modifier = Modifier.size(22.dp),
                                                                     contentAlignment = Alignment.Center
                                                                 ) {
+                                                                    val emojiLift = when (place.category) {
+                                                                        PlaceCategory.WORK, PlaceCategory.SCHOOL, PlaceCategory.HOME -> (-2.2).dp
+                                                                        PlaceCategory.CUSTOM -> (-1.5).dp
+                                                                        else -> (-2.0).dp
+                                                                    }
                                                                     EmojiText(
                                                                         emoji = place.category.iconEmoji,
                                                                         fontSize = 18.sp,
-                                                                        yOffsetDp = 0.dp
-                                                                    )
-                                                                    Box(
-                                                                        modifier = Modifier
-                                                                            .align(Alignment.BottomEnd)
-                                                                            .size(8.dp)
-                                                                            .clip(CircleShape)
-                                                                            .background(pinComposeColor)
-                                                                            .border(1.dp, Color(0xFF1E293B), CircleShape)
+                                                                        yOffsetDp = emojiLift
                                                                     )
                                                                 }
                                                                 Spacer(modifier = Modifier.width(8.dp))
