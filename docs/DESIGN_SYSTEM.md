@@ -93,37 +93,57 @@ All cards, chips, and overlays use the following standardized high-contrast colo
 To permanently prevent UI alignment glitches and unwanted text wrapping across development sessions, every developer and AI agent MUST adhere to these architectural rules:
 
 ### A. Emoji & Icon Baseline Alignment Rule
-- **Never Concatenate Emoji in Raw Text Strings**: Do not write `Text("${profile.iconEmoji} ${profile.displayName}")`. In Android Compose, Emoji fonts (e.g. *Noto Color Emoji*) have vastly different ascender/descender baselines and line-height metrics compared to alphanumeric fonts. Concatenating them in a single string throws off vertical centering.
-- **Mandatory Disentanglement Pattern**: Always separate the emoji into its own composable, declare `PlatformTextStyle(includeFontPadding = false)`, and align inside a `Row(verticalAlignment = Alignment.CenterVertically)`:
+- **Never Concatenate Emoji in Raw Text Strings**: Do not write `Text("${profile.iconEmoji} ${profile.displayName}")`. In Android Compose, Emoji fonts (e.g. *Noto Color Emoji*) have vastly different ascender/descender metrics (`ascent ≈ 3× descent`) compared to alphanumeric fonts. Concatenating them in a single string throws off vertical centering completely.
+- **Why PlatformTextStyle Alone Fails**: Setting `PlatformTextStyle(includeFontPadding = false)` removes Android's legacy padding, but it does NOT fix the intrinsic font metric imbalance of Noto Color Emoji. The text bounding box center remains significantly higher than the visual glyph center. Wrapping in a `Box(Modifier.size(...))` also fails because the emoji baseline still floats inside the box.
+- **Mandatory Disentanglement & Alignment Standard**: Always use the project's standard `EmojiText` composable, and pair it with a matching `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)` and `lineHeight = fontSize` on both the emoji and any adjacent label text:
 ```kotlin
 Row(verticalAlignment = Alignment.CenterVertically) {
-    Text(
-        text = profile.iconEmoji,
-        fontSize = 13.sp,
-        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+    EmojiText(
+        emoji = profile.iconEmoji,
+        fontSize = 13.sp
     )
     Spacer(modifier = Modifier.width(4.dp))
     Text(
         text = profile.displayName,
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
-        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+        style = TextStyle(
+            platformStyle = PlatformTextStyle(includeFontPadding = false),
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.Both
+            ),
+            lineHeight = 12.sp
+        )
     )
 }
 ```
-- **List Item Icons**: In dense list cards (e.g. trip history rows), wrap the emoji in a fixed-size `Box`:
+- **Standard `EmojiText` Definition**:
 ```kotlin
-Box(
-    modifier = Modifier.size(18.dp),
-    contentAlignment = Alignment.Center
+@Composable
+fun EmojiText(
+    emoji: String,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier
 ) {
     Text(
-        text = trip.activityProfile.iconEmoji,
-        fontSize = 13.sp,
-        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+        text = emoji,
+        fontSize = fontSize,
+        modifier = modifier,
+        style = TextStyle(
+            platformStyle = PlatformTextStyle(includeFontPadding = false),
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.Both
+            ),
+            lineHeight = fontSize
+        )
     )
 }
 ```
+- **Never Use**:
+  - `Box(Modifier.size(18.dp)) { Text(emoji) }` — clips without correcting internal font metric offset.
+  - `PlatformTextStyle(includeFontPadding = false)` alone without `LineHeightStyle.Trim.Both` and `lineHeight = fontSize`.
 
 ### B. Single-Line Multi-Metric Displays & Overflow Guarding
 - **Strict Single-Line Guard**: In metric displays where multiple values are shown together (e.g. `Pace` + `Speed`, or `Distance` + `Max Speed`), every metric `Text` MUST specify:
