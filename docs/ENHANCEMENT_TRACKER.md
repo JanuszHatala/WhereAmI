@@ -17,8 +17,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 3** | Field Testing (2026-09-17 & 2026-09-18) Feedback & Enhancements | 13 | 13 | 0 | 0 |
 | **Round 4** | Field Testing (2026-09-19 – 2026-09-25) Telemetry Diagnostics, Kinematic Decoupling, Battery Optimization, Auto-Start & UI Polish | 21 | 21 | 0 | 0 |
 | **Round 5** | Field Testing (2026-09-27 MTB Ride) Kinematics Overhaul, Adaptive GPS Sampling, Directional Projection Filtering, Low-Speed Bearing Fallback, Companion Web Viewer Polish & Cache Sanitization | 6 | 6 | 0 | 0 |
+| **Round 6** | Field Testing (2026-09-27 Czaniec-Roczyny-Rzyki) Startup Centering, Optical Lift Alignment, Trip Merge Dialog, Pause Retention & Village Estate Quantization | 7 | 7 | 0 | 0 |
+| **Round 7** | Field Testing (2026-09-27 Evening) Rest Pauses Vector Alignment, Saved Places Card Centering & Bottom Bar Save Location Fix | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 7 | 0 | 0 | 7 |
-| **Total** | | **100** | **93** | **0** | **7** |
+| **Total** | | **110** | **103** | **0** | **7** |
 
 ---
 
@@ -187,7 +189,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 9. Features Inventory & Future Backlog
+## 9. Round 7: Field Testing (2026-09-27 Evening) Rest Pauses Vector Alignment, Saved Places Card Centering & Bottom Bar Save Location Fix
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT7-01** | Rest Pauses Section Header Alignment: Material Vector Icons Replacement (`KeyboardArrowDown/Right`, `PauseCircle`). | `MainActivity.kt` | **Completed** | Displaced unicode glyphs (`▼`/`▶`) and emoji (`⏸️`) with Material vector icons `Icons.Default.KeyboardArrowDown`/`Right` (14.dp) and `Icons.Default.PauseCircle` (13.dp), rendering in `Row(verticalAlignment = Alignment.CenterVertically)` alongside `Text("Rest Pauses (n)")` with `PlatformTextStyle(includeFontPadding = false)`. Vector icons and text line boxes now share the identical geometric centerline. Replaced unicode scissor in "Split Here" and route timeline pause circle with vector icons (`Icons.Default.ContentCut` and `Icons.Default.Pause`) for uniform baseline rendering. |
+| **FT7-02** | Saved Places Tile Icon Alignment: Nested Single-Row Title with Indented Subtitle. | `MainActivity.kt` | **Completed** | Outer container was previously a `Row` containing the category icon `Box` on the left and a 2-line `Column` (`[Place Name + Badge]` on line 1, and `[Address Subtitle]` on line 2) on the right, which vertically centered the icon across the whole 2-line tile. Restructured card: outer container is now `Column(modifier = Modifier.weight(1f))`. Line 1 (`Row(verticalAlignment = Alignment.CenterVertically)`) directly encapsulates `[Icon Box (22.dp) + Pin dot]`, `Spacer(8.dp)`, `[Place Name]`, `Spacer(6.dp)`, and `[Category Badge]`, strictly centering the icon against the place name. Line 2 sits cleanly underneath with `padding(start = 30.dp, top = 2.dp)` aligned with the place name text. |
+| **FT7-03** | Bottom Toolbar Save Location Bugfix & Nearby Saved Place Notification / Edit Dialog Opening. | `MainActivity.kt` | **Completed** | In bottom toolbar handler (`onSaveLocation`), `dismissAllDialogs()` was previously called *after* setting `placeToSaveCoords`, which reset `placeToSaveCoords = null` and silently blocked the modal dialog. Moved `dismissAllDialogs()` to execute first. Added spatial proximity check against `savedPlaces`: if current location is within `maxOf(sp.radiusMeters, 50f)` of an existing saved place, displays a Toast notification (`"Location already saved as \"${nearbySaved.name}\" (${nearbySaved.category.displayName})"`) and opens the Edit Saved Place modal dialog. Otherwise opens Save as My Place dialog, or displays Toast warning if GPS has no fix yet. |
+
+---
+
+## 10. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |
