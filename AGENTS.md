@@ -78,7 +78,7 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - Spatial cache falls back to cached entries indefinitely when completely offline.
 
 ### E. UI/UX Alignment, Typography & Layout Stability (`docs/DESIGN_SYSTEM.md`)
-- **Emoji/Icon Disentanglement**: Never embed emojis directly into text strings alongside labels. Separate emoji into its own composable with `PlatformTextStyle(includeFontPadding = false)` and align inside `Row(verticalAlignment = Alignment.CenterVertically)`.
+- **Emoji/Icon Baseline Alignment & Disentanglement**: Never embed emojis directly into text strings alongside labels. Always separate emojis using the project's standard `EmojiText` composable, paired with `PlatformTextStyle(includeFontPadding = false)`, `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)`, and explicit `lineHeight = fontSize` on both the emoji and the adjacent text to eliminate visual floating/misalignment caused by *Noto Color Emoji*'s asymmetric font metrics. Never wrap in `Box(Modifier.size(...))` or rely on `PlatformTextStyle` alone.
 - **Single-Line Multi-Metric Displays**: Metric displays (pace, speed, distance) must declare `maxLines = 1` and `softWrap = false` to prevent word-breaking glitches (e.g. `(5.0 km/` wrapping onto `h)`).
 - **Landscape Screen Conservation**: In landscape mode, never stack toolbars vertically. Collapse secondary toolbars to icon-only representations or position them side-by-side with the main bottom toolbar.
 
