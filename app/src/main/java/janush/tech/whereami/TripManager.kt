@@ -232,7 +232,7 @@ class TripManager private constructor(private val context: Context) {
         activePause = null
 
         // Also sanitize any trailing pause that occurred at the trip destination
-        val sanitizedPauses = sanitizeTrailingPauses(current.pauses, current.points.size, now)
+        val sanitizedPauses = sanitizeTrailingPauses(current.pauses, current.points.size, now, current.points.lastOrNull())
 
         val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
         dbHelper.updateTrip(finishedTrip)
@@ -261,13 +261,24 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
-    private fun sanitizeTrailingPauses(pauses: List<TripPause>, tripPointsCount: Int, tripEndTime: Long): List<TripPause> {
+    private fun sanitizeTrailingPauses(
+        pauses: List<TripPause>,
+        tripPointsCount: Int,
+        tripEndTime: Long,
+        destinationPoint: GeoPoint? = null
+    ): List<TripPause> {
         if (pauses.isEmpty()) return pauses
         val result = pauses.toMutableList()
         val last = result.last()
-        val isAtEnd = last.pointIndex >= (tripPointsCount - 2).coerceAtLeast(0)
-        val endsNearTripEnd = (tripEndTime - (last.endTime ?: last.startTime)) <= 45_000L || (last.endTime ?: 0L) >= tripEndTime
-        if (isAtEnd || endsNearTripEnd) {
+        val isAtEnd = last.pointIndex >= (tripPointsCount - 5).coerceAtLeast(0)
+        val endsNearTripEnd = (tripEndTime - (last.endTime ?: last.startTime)) <= 180_000L || (last.endTime ?: 0L) >= tripEndTime
+        val isNearDestination = if (destinationPoint != null) {
+            val dist = FloatArray(1)
+            Location.distanceBetween(last.latitude, last.longitude, destinationPoint.latitude, destinationPoint.longitude, dist)
+            dist[0] <= 100.0f
+        } else false
+
+        if (isAtEnd || (endsNearTripEnd && isNearDestination)) {
             TelemetryLogger.logTrip("PAUSE_TRIMMED", 0L, "Discarded trailing arrival pause at trip destination: dur=${last.durationMs / 1000}s, idx=${last.pointIndex}/$tripPointsCount")
             result.removeAt(result.size - 1)
         }

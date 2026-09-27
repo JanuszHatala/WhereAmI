@@ -132,103 +132,85 @@
       background: rgba(56, 189, 248, 0.2);
       border-color: #38bdf8;
       color: #fff;
+    .card-toggle-btn {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #94a3b8;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      margin-left: 6px;
+    }
+    .card-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+      color: #fff;
+    }
+    .top-card.collapsed {
+      padding: 10px 14px;
+    }
+    .top-card.collapsed .header-row {
+      margin-bottom: 0;
+    }
+    .top-card.collapsed .status-alert,
+    .top-card.collapsed .stats-row,
+    .top-card.collapsed .actions-row,
+    .top-card.collapsed #trekkingBadge {
+      display: none !important;
+    }
+    .top-card.collapsed .place-name {
+      font-size: 15px;
+      margin-bottom: 0;
+      margin-top: 4px;
     }
     
-    .recenter-btn {
+    .map-controls-group {
       position: absolute;
       bottom: 24px;
-      right: 20px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: #0284c7;
-      border: none;
-      color: #fff;
-      font-size: 20px;
+      right: 16px;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      flex-direction: column;
+      gap: 10px;
       z-index: 1000;
-      transition: transform 0.15s ease, background 0.2s ease;
     }
-    .recenter-btn:hover {
-      transform: scale(1.06);
-      background: #0369a1;
-    }
-
-    .recenter-visitor-btn {
-      position: absolute;
-      bottom: 80px;
-      right: 20px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: #059669;
-      border: none;
-      color: #fff;
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-      z-index: 1000;
-      transition: transform 0.15s ease, background 0.2s ease;
-    }
-    .recenter-visitor-btn:hover {
-      transform: scale(1.06);
-      background: #047857;
-    }
-
-    .fit-trip-btn {
-      position: absolute;
-      bottom: 136px;
-      right: 20px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
+    .map-ctrl-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
       background: rgba(15, 23, 42, 0.92);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.16);
       color: #38bdf8;
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-      z-index: 1000;
-      transition: transform 0.15s ease, background 0.2s ease;
-    }
-    .fit-trip-btn:hover {
-      transform: scale(1.06);
-      background: rgba(30, 41, 59, 0.98);
-      color: #fff;
-    }
-
-    .compass-widget {
-      position: absolute;
-      bottom: 192px;
-      right: 20px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: rgba(15, 23, 42, 0.92);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      font-size: 18px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      cursor: default;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-      z-index: 1000;
-      transition: transform 0.15s ease;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease;
     }
-    .compass-widget:hover {
-      transform: scale(1.04);
+    .map-ctrl-btn:hover {
+      transform: scale(1.06);
+      background: rgba(30, 41, 59, 0.98);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+    .map-ctrl-btn.active {
+      background: #0284c7;
+      color: #fff;
+      border-color: #38bdf8;
+    }
+    .map-ctrl-btn.visitor {
+      color: #10b981;
+    }
+    .map-ctrl-btn.visitor:hover {
+      border-color: #10b981;
     }
     .compass-rose {
       width: 26px;
@@ -298,7 +280,10 @@
         <div id="sessionTitle" class="session-title">Live Location</div>
       </div>
       <div class="header-right">
-        <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div> ONLINE</div>
+        <div style="display: flex; align-items: center;">
+          <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div> ONLINE</div>
+          <button id="cardToggleBtn" class="card-toggle-btn" onclick="toggleCard()" title="Collapse / Expand Info Card">▲</button>
+        </div>
         <span id="countdownChip" class="countdown-chip">Connecting...</span>
       </div>
     </div>
@@ -323,17 +308,19 @@
   </div>
 
   <div id="map"></div>
-  <div class="compass-widget" id="compassWidget" title="Compass Heading">
-    <div class="compass-rose" id="compassRose">
-      <div class="needle-north"></div>
-      <div class="needle-south"></div>
-      <div class="compass-pivot"></div>
-    </div>
-    <div class="compass-heading-text" id="compassHeadingText">N</div>
+  <div class="map-controls-group">
+    <button class="map-ctrl-btn" id="compassBtn" onclick="resetNorth()" title="Reset Map Orientation to North (0°)">
+      <div class="compass-rose" id="compassRose">
+        <div class="needle-north"></div>
+        <div class="needle-south"></div>
+        <div class="compass-pivot"></div>
+      </div>
+      <div class="compass-heading-text" id="compassHeadingText">N</div>
+    </button>
+    <button class="map-ctrl-btn" onclick="fitTripBounds()" title="Fit Complete Track & Markers">📐</button>
+    <button class="map-ctrl-btn visitor" id="visitorRecenterBtn" onclick="recenterVisitor()" title="Center on My Location (Visitor)">📍</button>
+    <button class="map-ctrl-btn active" id="hostRecenterBtn" onclick="recenterMap()" title="Center and Follow Host">🎯</button>
   </div>
-  <button class="fit-trip-btn" onclick="fitTripBounds()" title="Fit Track & You to Viewport">📐</button>
-  <button class="recenter-visitor-btn" onclick="recenterVisitor()" title="Recenter to You (Visitor)">📍</button>
-  <button class="recenter-btn" onclick="recenterMap()" title="Recenter to Host">🎯</button>
 
   <script>
     const pathParts = window.location.pathname.split('/');
@@ -345,6 +332,7 @@
 
     const map = L.map('map', { 
       zoomControl: false,
+      preferCanvas: true,
       rotate: true,
       touchRotate: true,
       rotateControl: {
@@ -358,13 +346,42 @@
     }).addTo(map);
 
     let userMarker = null;
-    let trackPolyline = L.polyline([], { color: '#0284c7', weight: 5, opacity: 0.85 }).addTo(map);
+    let trackPolyline = L.polyline([], { color: '#EF4444', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' }).addTo(map);
     let pauseMarkers = [];
     let autoFollow = true;
     let lastCoords = null;
     let currentSessionMeta = null;
 
-    map.on('dragstart', () => { autoFollow = false; });
+    map.on('dragstart', () => { 
+      autoFollow = false; 
+      document.getElementById('hostRecenterBtn')?.classList.remove('active');
+    });
+
+    function resetNorth() {
+      if (map.setBearing) {
+        map.setBearing(0);
+      }
+    }
+
+    function toggleCard() {
+      const card = document.querySelector('.top-card');
+      const btn = document.getElementById('cardToggleBtn');
+      if (!card) return;
+      const isCollapsed = card.classList.toggle('collapsed');
+      if (btn) btn.textContent = isCollapsed ? '▼' : '▲';
+      try {
+        localStorage.setItem('whereami_top_card_collapsed', isCollapsed ? '1' : '0');
+      } catch (_) {}
+    }
+
+    try {
+      if (localStorage.getItem('whereami_top_card_collapsed') === '1') {
+        const card = document.querySelector('.top-card');
+        const btn = document.getElementById('cardToggleBtn');
+        if (card) card.classList.add('collapsed');
+        if (btn) btn.textContent = '▼';
+      }
+    } catch (_) {}
 
     function renderPauses(pauses) {
       pauseMarkers.forEach(m => map.removeLayer(m));
@@ -431,6 +448,8 @@
         const offsetCenter = getOffsetCenter(lastCoords, targetZoom);
         map.setView(offsetCenter, targetZoom);
         autoFollow = true;
+        document.getElementById('hostRecenterBtn')?.classList.add('active');
+        document.getElementById('visitorRecenterBtn')?.classList.remove('active');
       }
     }
 
@@ -441,6 +460,8 @@
         const offsetCenter = getOffsetCenter(visitorCoords, targetZoom);
         map.setView(offsetCenter, targetZoom);
         autoFollow = false;
+        document.getElementById('hostRecenterBtn')?.classList.remove('active');
+        document.getElementById('visitorRecenterBtn')?.classList.add('active');
       } else if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => {
@@ -449,6 +470,8 @@
               const targetZoom = zoom || (map.getZoom() < 15 ? 15 : map.getZoom());
               map.setView(getOffsetCenter(visitorCoords, targetZoom), targetZoom);
               autoFollow = false;
+              document.getElementById('hostRecenterBtn')?.classList.remove('active');
+              document.getElementById('visitorRecenterBtn')?.classList.add('active');
             }
           },
           err => console.warn('Visitor location unavailable:', err),
@@ -480,6 +503,8 @@
           maxZoom: 16
         });
         autoFollow = false;
+        document.getElementById('hostRecenterBtn')?.classList.remove('active');
+        document.getElementById('visitorRecenterBtn')?.classList.remove('active');
       } else if (lastCoords) {
         recenterMap(15);
       } else if (visitorCoords) {
@@ -619,25 +644,21 @@
             alertBox.textContent = '📍 Live Sharing Ended. The host has completed this trip.';
             alertBox.style.display = 'block';
           }
-        } else if (agoSec >= disconnectThresholdSec) {
-          badge.textContent = 'DISCONNECTED';
-          badge.style.background = 'rgba(245, 158, 11, 0.2)';
-          badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
-          badge.style.color = '#fbbf24';
-          alertBox.className = 'status-alert alert-paused';
-          if (isSessionPaused) {
-            alertBox.textContent = `⚠️ Host disconnected (last update ${lastSeenStr} at ${lastTimeStr}, was paused). Showing last known position.`;
-          } else {
-            alertBox.textContent = `⚠️ Host disconnected (no update for ${lastSeenStr}, last seen at ${lastTimeStr}). Showing last known position.`;
-          }
-          alertBox.style.display = 'block';
         } else if (isSessionPaused) {
           badge.textContent = 'PAUSED';
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
           badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badge.style.color = '#fbbf24';
           alertBox.className = 'status-alert alert-paused';
-          alertBox.textContent = '⏸️ Live Sharing is currently paused by the host.';
+          alertBox.textContent = lastTimeStr ? `⏸️ Live Sharing is currently paused by host (last active ${lastSeenStr} at ${lastTimeStr}).` : '⏸️ Live Sharing is currently paused by the host.';
+          alertBox.style.display = 'block';
+        } else if (agoSec >= disconnectThresholdSec) {
+          badge.textContent = 'DISCONNECTED';
+          badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+          badge.style.color = '#fbbf24';
+          alertBox.className = 'status-alert alert-paused';
+          alertBox.textContent = `⚠️ Host disconnected (no update for ${lastSeenStr}, last seen at ${lastTimeStr}). Showing last known position.`;
           alertBox.style.display = 'block';
         } else {
           badge.innerHTML = '<div class="pulse-dot"></div> ONLINE';
