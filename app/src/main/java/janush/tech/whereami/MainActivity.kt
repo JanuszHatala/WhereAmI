@@ -46,9 +46,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -177,6 +181,32 @@ fun openInGoogleMaps(context: android.content.Context, lat: Double, lng: Double,
         val webUri = Uri.parse("https://maps.google.com/?q=$lat,$lng")
         context.startActivity(Intent(Intent.ACTION_VIEW, webUri))
     }
+}
+
+/**
+ * Correctly aligned emoji in a Row context.
+ * Noto Color Emoji has large ascender metrics; this pattern trims the excess
+ * and centers the glyph so Row(CenterVertically) actually centers the visual glyph.
+ */
+@Composable
+fun EmojiText(
+    emoji: String,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = emoji,
+        fontSize = fontSize,
+        modifier = modifier,
+        style = TextStyle(
+            platformStyle = PlatformTextStyle(includeFontPadding = false),
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.Both
+            ),
+            lineHeight = fontSize
+        )
+    )
 }
 
 data class LocationShareTarget(
@@ -1178,7 +1208,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             modifier = Modifier.weight(1f)
                                                         ) {
                                                             Box(contentAlignment = Alignment.BottomEnd) {
-                                                                Text(place.category.iconEmoji, fontSize = 22.sp)
+                                                                EmojiText(place.category.iconEmoji, fontSize = 22.sp)
                                                                 Box(
                                                                     modifier = Modifier
                                                                         .offset(x = 2.dp, y = 2.dp)
@@ -1365,12 +1395,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Text(
-                                                            text = activityProfile.iconEmoji,
-                                                            fontSize = 12.sp,
-                                                            style = androidx.compose.ui.text.TextStyle(
-                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                                            )
+                                                        EmojiText(
+                                                            emoji = activityProfile.iconEmoji,
+                                                            fontSize = 12.sp
                                                         )
                                                         Spacer(modifier = Modifier.width(4.dp))
                                                         Text(
@@ -1378,8 +1405,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             fontSize = 11.sp,
                                                             fontWeight = FontWeight.SemiBold,
                                                             color = Color(0xFF38BDF8),
-                                                            style = androidx.compose.ui.text.TextStyle(
-                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                            style = TextStyle(
+                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeightStyle = LineHeightStyle(
+                                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                                    trim = LineHeightStyle.Trim.Both
+                                                                ),
+                                                                lineHeight = 11.sp
                                                             )
                                                         )
                                                         Spacer(modifier = Modifier.width(2.dp))
@@ -1401,9 +1433,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         DropdownMenuItem(
                                                             text = {
                                                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                                                    Text(profile.iconEmoji, fontSize = 14.sp)
+                                                                    EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
                                                                     Spacer(modifier = Modifier.width(8.dp))
-                                                                    Text(profile.displayName, color = Color.White, fontSize = 13.sp)
+                                                                    Text(
+                                                                        text = profile.displayName,
+                                                                        color = Color.White,
+                                                                        fontSize = 13.sp,
+                                                                        style = TextStyle(
+                                                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                            lineHeightStyle = LineHeightStyle(
+                                                                                alignment = LineHeightStyle.Alignment.Center,
+                                                                                trim = LineHeightStyle.Trim.Both
+                                                                            ),
+                                                                            lineHeight = 13.sp
+                                                                        )
+                                                                    )
                                                                 }
                                                             },
                                                             onClick = {
@@ -1846,12 +1890,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                         verticalAlignment = Alignment.CenterVertically,
                                                                         modifier = Modifier.weight(1f).padding(end = 8.dp)
                                                                     ) {
-                                                                        Text(
-                                                                            text = trip.activityProfile.iconEmoji,
-                                                                            fontSize = 13.sp,
-                                                                            style = androidx.compose.ui.text.TextStyle(
-                                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                                                            )
+                                                                        EmojiText(
+                                                                            emoji = trip.activityProfile.iconEmoji,
+                                                                            fontSize = 13.sp
                                                                         )
                                                                         Spacer(modifier = Modifier.width(6.dp))
                                                                         val distKm = trip.distanceMeters / 1000.0
@@ -1862,8 +1903,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             maxLines = 1,
                                                                             softWrap = false,
                                                                             overflow = TextOverflow.Ellipsis,
-                                                                            style = androidx.compose.ui.text.TextStyle(
-                                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                                            style = TextStyle(
+                                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                lineHeightStyle = LineHeightStyle(
+                                                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                                                    trim = LineHeightStyle.Trim.Both
+                                                                                ),
+                                                                                lineHeight = 12.sp
                                                                             )
                                                                         )
                                                                     }
@@ -2356,11 +2402,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                EmojiText(emoji = activityProfile.iconEmoji, fontSize = 15.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "${activityProfile.iconEmoji}  ${activityProfile.displayName}",
+                                    text = activityProfile.displayName,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
+                                    color = Color.White,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 15.sp
+                                    )
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
@@ -2398,12 +2454,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = "${profile.iconEmoji}  ${profile.displayName}",
-                                            color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            fontSize = 15.sp
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            EmojiText(emoji = profile.iconEmoji, fontSize = 15.sp)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = profile.displayName,
+                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 15.sp,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 15.sp
+                                                )
+                                            )
+                                        }
                                         Text(
                                             text = "Auto-start: >${profile.autoStartSpeedKmh.toInt()} km/h",
                                             color = Color(0xFF64748B),
@@ -3017,13 +3085,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     horizontalArrangement = Arrangement.Center,
                                     modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp)
                                 ) {
-                                    Text(
-                                        text = cat.iconEmoji,
-                                        fontSize = 14.sp,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 16.sp
-                                        )
+                                    EmojiText(
+                                        emoji = cat.iconEmoji,
+                                        fontSize = 14.sp
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
@@ -3031,9 +3095,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         color = if (isSelected) Color.White else Color.LightGray,
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 16.sp
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 12.sp
                                         )
                                     )
                                 }
@@ -3355,13 +3423,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     horizontalArrangement = Arrangement.Center,
                                     modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp)
                                 ) {
-                                    Text(
-                                        text = cat.iconEmoji,
-                                        fontSize = 14.sp,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 16.sp
-                                        )
+                                    EmojiText(
+                                        emoji = cat.iconEmoji,
+                                        fontSize = 14.sp
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
@@ -3369,9 +3433,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         color = if (isSelected) Color.White else Color.LightGray,
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 16.sp
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 12.sp
                                         )
                                     )
                                 }
@@ -3594,12 +3662,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text(
-                                text = "🚩 Current Trip Route",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                EmojiText(emoji = "🚩", fontSize = 18.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Current Trip Route",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 18.sp
+                                    )
+                                )
+                            }
                             Text(
                                 text = "${activeTrip!!.placesVisited.size} places • ${(activeTrip!!.distanceMeters / 1000.0).let { String.format(Locale.getDefault(), "%.1f km", it) }}",
                                 fontSize = 12.sp,
@@ -3954,12 +4034,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         .background(Color(0xFF334155))
                                         .padding(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
-                                    Text(
-                                        text = "👥 ${session.viewCount} views",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        EmojiText(emoji = "👥", fontSize = 11.sp)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "${session.viewCount} views",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF38BDF8),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = 11.sp
+                                            )
+                                        )
+                                    }
                                 }
                                 Text(
                                     text = formattedRemaining,
@@ -4057,7 +4149,23 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("🗺️ Full Trail", fontSize = 11.sp, fontWeight = if (session.trailVisible) FontWeight.Bold else FontWeight.Normal)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        EmojiText(emoji = "🗺️", fontSize = 11.sp)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Full Trail",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (session.trailVisible) FontWeight.Bold else FontWeight.Normal,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = 11.sp
+                                            )
+                                        )
+                                    }
                                 }
                                 Button(
                                     onClick = {
@@ -4071,7 +4179,23 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("📍 Position Only", fontSize = 11.sp, fontWeight = if (!session.trailVisible) FontWeight.Bold else FontWeight.Normal)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        EmojiText(emoji = "📍", fontSize = 11.sp)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Position Only",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (!session.trailVisible) FontWeight.Bold else FontWeight.Normal,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = 11.sp
+                                            )
+                                        )
+                                    }
                                 }
                             }
 
@@ -4753,13 +4877,21 @@ fun LocationShareDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("📍", fontSize = 22.sp)
+                        EmojiText(emoji = "📍", fontSize = 22.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = target.title,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 18.sp
+                            )
                         )
                     }
                     IconButton(
@@ -5068,9 +5200,6 @@ private fun HeatMapSettingsDialog(
                     letterSpacing = 1.sp
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                val activitySummary = if (selectedProfiles.isEmpty()) "All Modes" else {
-                    selectedProfiles.joinToString(", ") { "${it.iconEmoji} ${it.displayName}" }
-                }
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Box(
                         modifier = Modifier
@@ -5085,15 +5214,52 @@ private fun HeatMapSettingsDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = activitySummary,
-                                color = if (selectedProfiles.isEmpty()) Color.White else Color(0xFFF97316),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
+                            if (selectedProfiles.isEmpty()) {
+                                Text(
+                                    text = "All Modes",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            } else if (selectedProfiles.size == 1) {
+                                val single = selectedProfiles.first()
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    EmojiText(emoji = single.iconEmoji, fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = single.displayName,
+                                        color = Color(0xFFF97316),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = selectedProfiles.joinToString(", ") { "${it.iconEmoji} ${it.displayName}" },
+                                    color = Color(0xFFF97316),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = null,
@@ -5157,13 +5323,21 @@ private fun HeatMapSettingsDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(profile.iconEmoji, fontSize = 14.sp)
+                                            EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                profile.displayName,
+                                                text = profile.displayName,
                                                 color = if (isChecked) Color(0xFFF97316) else Color.White,
                                                 fontSize = 13.sp,
-                                                fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
+                                                fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 13.sp
+                                                )
                                             )
                                         }
                                         Checkbox(
@@ -5694,13 +5868,25 @@ private fun LocalityCard(
                             )
                             if (activeTrip != null) {
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "🚩" + activeTrip.placesVisited.size,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8),
-                                    softWrap = false
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    EmojiText(emoji = "🚩", fontSize = 11.sp)
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(
+                                        text = "${activeTrip.placesVisited.size}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8),
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 11.sp
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
@@ -5751,16 +5937,45 @@ private fun LocalityCard(
                                     )
                                     if (liveTimerText.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        val viewsSuffix = if (liveSession.viewCount > 0) " • 👥 ${liveSession.viewCount}" else ""
                                         Text(
-                                            text = "$liveTimerText$viewsSuffix",
+                                            text = liveTimerText,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                            style = LocalTextStyle.current.copy(
-                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = 10.sp
                                             )
                                         )
+                                        if (liveSession.viewCount > 0) {
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "•",
+                                                fontSize = 10.sp,
+                                                color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            EmojiText(emoji = "👥", fontSize = 10.sp)
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text(
+                                                text = "${liveSession.viewCount}",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 10.sp
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -5793,8 +6008,8 @@ private fun LocalityCard(
                                         .fillMaxHeight()
                                         .padding(horizontal = 6.dp)
                                 ) {
-                                    Text(
-                                        text = nearbySavedPlace.category.iconEmoji,
+                                    EmojiText(
+                                        emoji = nearbySavedPlace.category.iconEmoji,
                                         fontSize = 14.sp
                                     )
                                 }
@@ -5824,12 +6039,22 @@ private fun LocalityCard(
                             .padding(vertical = 1.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        EmojiText(emoji = "📍", fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "📍 $streetOrRoad",
+                            text = streetOrRoad,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFFFBBF24), // Vivid Amber Gold
-                            maxLines = 2
+                            maxLines = 2,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 13.sp
+                            )
                         )
                     }
                 }
@@ -5873,29 +6098,29 @@ private fun LocalityCard(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = activityProfile.iconEmoji,
+                            EmojiText(
+                                emoji = activityProfile.iconEmoji,
                                 fontSize = 11.sp
                             )
                             Spacer(modifier = Modifier.width(3.dp))
-                            when (activityProfile) {
-                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> {
-                                    Text(
-                                        text = speedStr,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
-                                    )
-                                }
-                                ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
-                                    Text(
-                                        text = paceStr,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
-                                    )
-                                }
+                            val metricText = when (activityProfile) {
+                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> speedStr
+                                ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> paceStr
                             }
+                            Text(
+                                text = metricText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 11.sp
+                                )
+                            )
                         }
 
                         DropdownMenu(
@@ -5907,12 +6132,24 @@ private fun LocalityCard(
                                 val isSelected = activityProfile == profile
                                 DropdownMenuItem(
                                     text = {
-                                        Text(
-                                            text = "${profile.iconEmoji}  ${profile.displayName}",
-                                            color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            fontSize = 13.sp
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            EmojiText(emoji = profile.iconEmoji, fontSize = 13.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = profile.displayName,
+                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 13.sp,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
+                                        }
                                     },
                                     onClick = {
                                         onSetActivityProfile(profile)
@@ -5996,16 +6233,45 @@ private fun LocalityCard(
                                     )
                                     if (liveTimerText.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(5.dp))
-                                        val viewsSuffix = if (liveSession.viewCount > 0) " • 👥 ${liveSession.viewCount}" else ""
                                         Text(
-                                            text = "$liveTimerText$viewsSuffix",
+                                            text = liveTimerText,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                            style = LocalTextStyle.current.copy(
-                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = 11.sp
                                             )
                                         )
+                                        if (liveSession.viewCount > 0) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "•",
+                                                fontSize = 11.sp,
+                                                color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            EmojiText(emoji = "👥", fontSize = 11.sp)
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text(
+                                                text = "${liveSession.viewCount}",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 11.sp
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -6064,8 +6330,8 @@ private fun LocalityCard(
                                         .fillMaxHeight()
                                         .padding(horizontal = 8.dp)
                                 ) {
-                                    Text(
-                                        text = nearbySavedPlace.category.iconEmoji,
+                                    EmojiText(
+                                        emoji = nearbySavedPlace.category.iconEmoji,
                                         fontSize = 13.sp
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
@@ -6075,7 +6341,15 @@ private fun LocalityCard(
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF10B981),
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 12.sp
+                                        )
                                     )
                                 }
                             }
@@ -6115,8 +6389,8 @@ private fun LocalityCard(
                                 .fillMaxWidth()
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                text = nearbySavedPlace.category.iconEmoji,
+                            EmojiText(
+                                emoji = nearbySavedPlace.category.iconEmoji,
                                 fontSize = 13.sp
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -6127,7 +6401,15 @@ private fun LocalityCard(
                                 color = Color(0xFF10B981),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 12.sp
+                                )
                             )
                         }
                     }
@@ -6153,12 +6435,24 @@ private fun LocalityCard(
                     )
                     if (activeTrip != null) {
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "🚩" + activeTrip.placesVisited.size,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            EmojiText(emoji = "🚩", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "${activeTrip.placesVisited.size}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 14.sp
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -6239,12 +6533,9 @@ private fun LocalityCard(
                                 .padding(horizontal = 4.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = activityProfile.iconEmoji,
-                                fontSize = 13.sp,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                )
+                            EmojiText(
+                                emoji = activityProfile.iconEmoji,
+                                fontSize = 13.sp
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -6254,8 +6545,13 @@ private fun LocalityCard(
                                 color = Color(0xFFFBBF24),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 11.sp
                                 )
                             )
                             Spacer(modifier = Modifier.width(2.dp))
@@ -6277,13 +6573,21 @@ private fun LocalityCard(
                                 DropdownMenuItem(
                                     text = {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(profile.iconEmoji, fontSize = 14.sp)
+                                            EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = profile.displayName,
                                                 color = if (isSelected) Color(0xFF38BDF8) else Color.White,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                fontSize = 14.sp
+                                                fontSize = 14.sp,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 14.sp
+                                                )
                                             )
                                         }
                                     },
@@ -6308,8 +6612,13 @@ private fun LocalityCard(
                                 color = Color(0xFF38BDF8),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 15.sp
                                 )
                             )
                         }
@@ -6321,8 +6630,13 @@ private fun LocalityCard(
                                 color = Color(0xFF38BDF8),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 15.sp
                                 )
                             )
                             Spacer(modifier = Modifier.width(5.dp))
@@ -6332,8 +6646,13 @@ private fun LocalityCard(
                                 color = Color(0xFF94A3B8),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 12.sp
                                 )
                             )
                         }
@@ -6345,8 +6664,13 @@ private fun LocalityCard(
                                 color = Color(0xFF38BDF8),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 15.sp
                                 )
                             )
                             Spacer(modifier = Modifier.width(5.dp))
@@ -6356,8 +6680,13 @@ private fun LocalityCard(
                                 color = Color(0xFF94A3B8),
                                 maxLines = 1,
                                 softWrap = false,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 12.sp
                                 )
                             )
                         }
@@ -6536,8 +6865,8 @@ private fun DestinationPlaceCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     if (savedPlace != null) {
-                        Text(
-                            text = savedPlace.category.iconEmoji,
+                        EmojiText(
+                            emoji = savedPlace.category.iconEmoji,
                             fontSize = 18.sp,
                             modifier = Modifier.padding(end = 6.dp)
                         )
@@ -6825,7 +7154,6 @@ fun TripFilterDropdowns(
 
         // 2. Activity Profile Dropdown
         Box(modifier = Modifier.weight(1f)) {
-            val activityLabel = selectedActivityFilter?.let { "${it.iconEmoji} ${it.displayName}" } ?: "All Modes"
             Surface(
                 onClick = { onActivityExpandChange(true) },
                 shape = RoundedCornerShape(8.dp),
@@ -6838,15 +7166,40 @@ fun TripFilterDropdowns(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = activityLabel,
-                        color = if (selectedActivityFilter != null) Color(0xFF34D399) else Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f, fill = false)
-                    )
+                    ) {
+                        if (selectedActivityFilter != null) {
+                            EmojiText(emoji = selectedActivityFilter.iconEmoji, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = selectedActivityFilter.displayName,
+                                color = Color(0xFF34D399),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 11.sp
+                                )
+                            )
+                        } else {
+                            Text(
+                                text = "All Modes",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     Icon(
                         Icons.Default.ArrowDropDown,
                         contentDescription = null,
@@ -6862,21 +7215,35 @@ fun TripFilterDropdowns(
             ) {
                 listOf(
                     null to "All Modes",
-                    ActivityProfile.CAR to "🚗 Driving",
-                    ActivityProfile.CYCLING to "🚴 Cycling",
-                    ActivityProfile.MTB to "🚵 MTB",
-                    ActivityProfile.HIKING to "🥾 Hiking",
-                    ActivityProfile.RUNNING to "🏃 Running",
-                    ActivityProfile.WALKING to "🚶 Walking"
+                    ActivityProfile.CAR to "Driving",
+                    ActivityProfile.CYCLING to "Cycling",
+                    ActivityProfile.MTB to "MTB",
+                    ActivityProfile.HIKING to "Hiking",
+                    ActivityProfile.RUNNING to "Running",
+                    ActivityProfile.WALKING to "Walking"
                 ).forEach { (profile, label) ->
                     DropdownMenuItem(
                         text = {
-                            Text(
-                                label,
-                                color = if (selectedActivityFilter == profile) Color(0xFF10B981) else Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = if (selectedActivityFilter == profile) FontWeight.Bold else FontWeight.Normal
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (profile != null) {
+                                    EmojiText(emoji = profile.iconEmoji, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                                Text(
+                                    text = label,
+                                    color = if (selectedActivityFilter == profile) Color(0xFF10B981) else Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selectedActivityFilter == profile) FontWeight.Bold else FontWeight.Normal,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
+                                )
+                            }
                         },
                         onClick = {
                             onActivityFilterChange(profile)
@@ -7281,12 +7648,9 @@ fun TripDetailDialog(
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(
-                                                text = trip.activityProfile.iconEmoji,
-                                                fontSize = 13.sp,
-                                                style = androidx.compose.ui.text.TextStyle(
-                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                                )
+                                            EmojiText(
+                                                emoji = trip.activityProfile.iconEmoji,
+                                                fontSize = 13.sp
                                             )
                                             Spacer(modifier = Modifier.width(5.dp))
                                             Text(
@@ -7294,8 +7658,13 @@ fun TripDetailDialog(
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = Color(0xFF34D399),
-                                                style = androidx.compose.ui.text.TextStyle(
-                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 12.sp
                                                 )
                                             )
                                             Spacer(modifier = Modifier.width(2.dp))
@@ -7317,9 +7686,21 @@ fun TripDetailDialog(
                                             DropdownMenuItem(
                                                 text = {
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(profile.iconEmoji, fontSize = 14.sp)
+                                                        EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
                                                         Spacer(modifier = Modifier.width(8.dp))
-                                                        Text(profile.displayName, color = Color.White, fontSize = 13.sp)
+                                                        Text(
+                                                            text = profile.displayName,
+                                                            color = Color.White,
+                                                            fontSize = 13.sp,
+                                                            style = TextStyle(
+                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeightStyle = LineHeightStyle(
+                                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                                    trim = LineHeightStyle.Trim.Both
+                                                                ),
+                                                                lineHeight = 13.sp
+                                                            )
+                                                        )
                                                     }
                                                 },
                                                 onClick = {
