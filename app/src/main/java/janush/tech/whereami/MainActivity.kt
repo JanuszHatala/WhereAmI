@@ -823,17 +823,43 @@ fun LocationScreen(viewModel: MainViewModel) {
                     showSearchDialog = true
                 },
                 onSaveLocation = {
+                    dismissAllDialogs()
                     val lat = currentLatLng?.first
                     val lng = currentLatLng?.second
                     if (lat != null && lng != null) {
-                        val currentPlace = locationData.primaryPlace
-                        placeToSaveCoords = lat to lng
-                        placeToSaveLocality = currentPlace?.city ?: ""
-                        placeToSaveStreet = currentPlace?.street ?: ""
-                        placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
-                        placeToSaveCategory = PlaceCategory.FAVORITE
-                        dismissAllDialogs()
-                        showSavePlaceDialog = true
+                        val nearbySaved = savedPlaces
+                            .map { sp ->
+                                val results = FloatArray(1)
+                                android.location.Location.distanceBetween(lat, lng, sp.latitude, sp.longitude, results)
+                                sp to results[0]
+                            }
+                            .filter { (sp, dist) -> dist <= maxOf(sp.radiusMeters, 50f) }
+                            .minByOrNull { it.second }
+                            ?.first
+
+                        if (nearbySaved != null) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Location already saved as \"${nearbySaved.name}\" (${nearbySaved.category.displayName})",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                            editingSavedPlace = nearbySaved
+                        } else {
+                            val currentPlace = locationData.primaryPlace
+                            placeToSaveCoords = lat to lng
+                            placeToSaveLocality = currentPlace?.city ?: ""
+                            placeToSaveStreet = currentPlace?.street ?: ""
+                            placeToSaveName = currentPlace?.let { if (!it.street.isNullOrBlank()) "${it.city}, ${it.street}" else it.city } ?: "My Location"
+                            placeToSaveCategory = PlaceCategory.FAVORITE
+                            placeToSaveColor = ""
+                            showSavePlaceDialog = true
+                        }
+                    } else {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Waiting for current location fix...",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
                     }
                 },
                 onShowSettings = {
@@ -1219,77 +1245,81 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             Color(0xFF10B981)
                                                         }
 
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
+                                                        Column(
                                                             modifier = Modifier.weight(1f)
                                                         ) {
-                                                            Box(contentAlignment = Alignment.BottomEnd) {
-                                                                EmojiText(place.category.iconEmoji, fontSize = 22.sp)
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            ) {
                                                                 Box(
-                                                                    modifier = Modifier
-                                                                        .offset(x = 2.dp, y = 2.dp)
-                                                                        .size(10.dp)
-                                                                        .clip(CircleShape)
-                                                                        .background(pinComposeColor)
-                                                                        .border(1.5.dp, Color(0xFF1E293B), CircleShape)
-                                                                )
-                                                            }
-                                                            Spacer(modifier = Modifier.width(10.dp))
-                                                            Column {
-                                                                Row(
-                                                                    verticalAlignment = Alignment.CenterVertically,
-                                                                    modifier = Modifier.fillMaxWidth()
+                                                                    modifier = Modifier.size(22.dp),
+                                                                    contentAlignment = Alignment.Center
                                                                 ) {
-                                                                    Text(
-                                                                        text = place.name,
-                                                                        color = Color.White,
-                                                                        fontWeight = FontWeight.Bold,
-                                                                        fontSize = 14.sp,
-                                                                        maxLines = 1,
-                                                                        overflow = TextOverflow.Ellipsis,
-                                                                        modifier = Modifier.weight(1f, fill = false)
+                                                                    EmojiText(
+                                                                        emoji = place.category.iconEmoji,
+                                                                        fontSize = 18.sp,
+                                                                        yOffsetDp = 0.dp
                                                                     )
-                                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                                    Surface(
-                                                                        color = Color(0xFF0F172A),
-                                                                        shape = RoundedCornerShape(4.dp)
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .align(Alignment.BottomEnd)
+                                                                            .size(8.dp)
+                                                                            .clip(CircleShape)
+                                                                            .background(pinComposeColor)
+                                                                            .border(1.dp, Color(0xFF1E293B), CircleShape)
+                                                                    )
+                                                                }
+                                                                Spacer(modifier = Modifier.width(8.dp))
+                                                                Text(
+                                                                    text = place.name,
+                                                                    color = Color.White,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 14.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    modifier = Modifier.weight(1f, fill = false)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Surface(
+                                                                    color = Color(0xFF0F172A),
+                                                                    shape = RoundedCornerShape(4.dp)
+                                                                ) {
+                                                                    Row(
+                                                                        verticalAlignment = Alignment.CenterVertically,
+                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                                     ) {
-                                                                        Row(
-                                                                            verticalAlignment = Alignment.CenterVertically,
-                                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                                        ) {
-                                                                            Box(
-                                                                                modifier = Modifier
-                                                                                    .size(6.dp)
-                                                                                    .clip(CircleShape)
-                                                                                    .background(pinComposeColor)
-                                                                            )
-                                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                                            Text(
-                                                                                text = place.category.displayName,
-                                                                                color = pinComposeColor,
-                                                                                fontSize = 10.sp,
-                                                                                fontWeight = FontWeight.SemiBold,
-                                                                                maxLines = 1,
-                                                                                softWrap = false
-                                                                            )
-                                                                        }
+                                                                        Box(
+                                                                            modifier = Modifier
+                                                                                .size(6.dp)
+                                                                                .clip(CircleShape)
+                                                                                .background(pinComposeColor)
+                                                                        )
+                                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                                        Text(
+                                                                            text = place.category.displayName,
+                                                                            color = pinComposeColor,
+                                                                            fontSize = 10.sp,
+                                                                            fontWeight = FontWeight.SemiBold,
+                                                                            maxLines = 1,
+                                                                            softWrap = false
+                                                                        )
                                                                     }
                                                                 }
-                                                                val sub = listOfNotNull(
-                                                                    place.street.takeIf { it.isNotBlank() },
-                                                                    place.locality.takeIf { it.isNotBlank() }
-                                                                ).joinToString(", ")
-                                                                if (sub.isNotBlank()) {
-                                                                    Text(
-                                                                        sub,
-                                                                        color = Color(0xFF94A3B8),
-                                                                        fontSize = 11.sp,
-                                                                        maxLines = 1,
-                                                                        overflow = TextOverflow.Ellipsis,
-                                                                        modifier = Modifier.padding(top = 2.dp)
-                                                                    )
-                                                                }
+                                                            }
+                                                            val sub = listOfNotNull(
+                                                                place.street.takeIf { it.isNotBlank() },
+                                                                place.locality.takeIf { it.isNotBlank() }
+                                                            ).joinToString(", ")
+                                                            if (sub.isNotBlank()) {
+                                                                Text(
+                                                                    sub,
+                                                                    color = Color(0xFF94A3B8),
+                                                                    fontSize = 11.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    modifier = Modifier.padding(start = 30.dp, top = 2.dp)
+                                                                )
                                                             }
                                                         }
 
@@ -1970,23 +2000,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             verticalAlignment = Alignment.CenterVertically,
                                                                             modifier = Modifier.padding(vertical = 2.dp)
                                                                         ) {
-                                                                            Text(
-                                                                                text = if (isPausesExpanded) "▼" else "▶",
-                                                                                fontSize = 11.sp,
-                                                                                fontWeight = FontWeight.SemiBold,
-                                                                                color = Color(0xFFF59E0B)
+                                                                            Icon(
+                                                                                imageVector = if (isPausesExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                                                                                contentDescription = if (isPausesExpanded) "Collapse Pauses" else "Expand Pauses",
+                                                                                tint = Color(0xFFF59E0B),
+                                                                                modifier = Modifier.size(14.dp)
                                                                             )
-                                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                                            EmojiText(
-                                                                                emoji = "⏸️",
-                                                                                fontSize = 11.sp
+                                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                                            Icon(
+                                                                                imageVector = Icons.Default.PauseCircle,
+                                                                                contentDescription = null,
+                                                                                tint = Color(0xFFF59E0B),
+                                                                                modifier = Modifier.size(13.dp)
                                                                             )
                                                                             Spacer(modifier = Modifier.width(4.dp))
                                                                             Text(
                                                                                 text = "Rest Pauses (${trip.pauses.size})",
                                                                                 fontSize = 11.sp,
                                                                                 fontWeight = FontWeight.SemiBold,
-                                                                                color = Color(0xFFF59E0B)
+                                                                                color = Color(0xFFF59E0B),
+                                                                                style = TextStyle(
+                                                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                    lineHeightStyle = LineHeightStyle(
+                                                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                                                        trim = LineHeightStyle.Trim.Both
+                                                                                    ),
+                                                                                    lineHeight = 11.sp
+                                                                                )
                                                                             )
                                                                         }
                                                                     }
@@ -2017,7 +2057,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                                                                     modifier = Modifier.height(26.dp)
                                                                                 ) {
-                                                                                    Text("✂️ Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                                                                    Icon(
+                                                                                        imageVector = Icons.Default.ContentCut,
+                                                                                        contentDescription = "Split",
+                                                                                        tint = Color(0xFF38BDF8),
+                                                                                        modifier = Modifier.size(12.dp)
+                                                                                    )
+                                                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                                                    Text("Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
                                                                                 }
                                                                             }
                                                                         }
@@ -8142,14 +8189,11 @@ fun TripDetailDialog(
                                                             .background(Color(0xFFD97706), CircleShape),
                                                         contentAlignment = Alignment.Center
                                                     ) {
-                                                        Text(
-                                                            text = "⏸",
-                                                            fontSize = 11.sp,
-                                                            textAlign = TextAlign.Center,
-                                                            style = LocalTextStyle.current.copy(
-                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                                                lineHeight = 11.sp
-                                                            )
+                                                        Icon(
+                                                            imageVector = Icons.Default.Pause,
+                                                            contentDescription = "Pause",
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(13.dp)
                                                         )
                                                     }
                                                     Spacer(modifier = Modifier.width(10.dp))
