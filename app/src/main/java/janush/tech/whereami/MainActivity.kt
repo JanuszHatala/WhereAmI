@@ -193,8 +193,8 @@ fun openInGoogleMaps(context: android.content.Context, lat: Double, lng: Double,
  * Standard Composable for rendering emojis with guaranteed baseline alignment.
  * Noto Color Emoji's glyph metrics sit near the bottom of its bounding box on Android,
  * while Latin uppercase letters occupy the higher cap-height region.
- * We apply a default upward offset (-maxOf(1.5f, fontSize.value * 0.13f).dp) so the emoji's
- * optical center is strictly aligned with the cap-height center of adjacent Latin text.
+ * We apply a default upward offset (-maxOf(2.5f, fontSize.value * 0.28f).dp) so the emoji's
+ * optical center is strictly aligned with the cap-height center and baseline of adjacent Latin text.
  */
 @Composable
 fun EmojiText(
@@ -206,7 +206,7 @@ fun EmojiText(
     val effectiveOffset = if (yOffsetDp != Dp.Unspecified) {
         yOffsetDp
     } else {
-        (-maxOf(1.5f, fontSize.value * 0.13f)).dp
+        (-maxOf(2.5f, fontSize.value * 0.28f)).dp
     }
     Text(
         text = emoji,
