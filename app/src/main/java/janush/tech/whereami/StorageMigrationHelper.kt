@@ -102,15 +102,46 @@ object StorageMigrationHelper {
                 }
             }
 
-            // Always ensure poisoned loc_gmina_bielsko-biała is purged from canonical prefs if present
+            // Comprehensive gmina cache sanitization: purge autonomous county cities (UTF-8 & ASCII) and corrupt tokens
             val canonicalWhereAmIPrefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
-            if (canonicalWhereAmIPrefs.contains("loc_gmina_bielsko-biała")) {
-                val cached = canonicalWhereAmIPrefs.getString("loc_gmina_bielsko-biała", "") ?: ""
-                if (cached.contains("porąbka", ignoreCase = true)) {
-                    canonicalWhereAmIPrefs.edit().remove("loc_gmina_bielsko-biała").apply()
-                    TelemetryLogger.log("MIGRATION", "Purged poisoned loc_gmina_bielsko-biała from where_am_i_prefs")
+            val editor = canonicalWhereAmIPrefs.edit()
+            var modified = false
+            for (entry in canonicalWhereAmIPrefs.all) {
+                val key = entry.key
+                if (key.startsWith("loc_gmina_")) {
+                    val locKey = key.removePrefix("loc_gmina_").lowercase()
+                    val normalizedLoc = locKey.replace("ł", "l")
+                        .replace("ą", "a")
+                        .replace("ę", "e")
+                        .replace("ć", "c")
+                        .replace("ó", "o")
+                        .replace("ś", "s")
+                        .replace("ź", "z")
+                        .replace("ż", "z")
+                        .replace("-", " ")
+                    val isCounty = LocationManager.POLISH_COUNTY_CITIES.any {
+                        val normCity = it.replace("ł", "l")
+                            .replace("ą", "a")
+                            .replace("ę", "e")
+                            .replace("ć", "c")
+                            .replace("ó", "o")
+                            .replace("ś", "s")
+                            .replace("ź", "z")
+                            .replace("ż", "z")
+                            .replace("-", " ")
+                        it.equals(locKey, ignoreCase = true) || normCity.equals(normalizedLoc, ignoreCase = true)
+                    }
+                    val isCorrupt = locKey.contains("powiat") || locKey.contains("gmina") ||
+                            locKey.contains("wojewodztwo") || locKey.contains("województwo") ||
+                            locKey.contains("polska") || locKey.contains("poland")
+                    if (isCounty || isCorrupt) {
+                        editor.remove(key)
+                        modified = true
+                        TelemetryLogger.log("MIGRATION", "Purged invalid/county gmina cache key: $key")
+                    }
                 }
             }
+            if (modified) editor.apply()
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "Failed to migrate preferences: ${e.message}")
         }
