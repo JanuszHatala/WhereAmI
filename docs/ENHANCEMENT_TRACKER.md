@@ -20,8 +20,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 6** | Field Testing (2026-09-27 Czaniec-Roczyny-Rzyki) Startup Centering, Optical Lift Alignment, Trip Merge Dialog, Pause Retention & Village Estate Quantization | 7 | 7 | 0 | 0 |
 | **Round 7** | Field Testing (2026-09-27 Evening) Rest Pauses Vector Alignment, Saved Places Card Centering & Bottom Bar Save Location Fix | 3 | 3 | 0 | 0 |
 | **Round 8** | Field Testing (2026-09-28) Settings UI Contrast, Kinematic House Numbers & Locality Boundary Street Decoupling | 3 | 3 | 0 | 0 |
+| **Round 9** | Field Testing (2026-09-28 Afternoon) Action Icons Sizing, Trip Title Length Caps, Route Timeline Leg Metrics, Rest Pauses Layout & Web Live Sharing Polish | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **114** | **106** | **0** | **8** |
+| **Total** | | **119** | **111** | **0** | **8** |
 
 ---
 
@@ -210,7 +211,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 11. Features Inventory & Future Backlog
+## 11. Round 9: Field Testing (2026-09-28 Afternoon) Action Icons Sizing, Trip Title Length Caps, Route Timeline Leg Metrics, Rest Pauses Layout & Web Live Sharing Polish
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT9-01** | Location Panel Action Icons: Enlarged Google Maps, Live Sharing, and Collapse/Expand Buttons with Better Accessibility. | `MainActivity.kt` (`LocalityCard`) | **Completed** | In Normal mode, action buttons scaled to 40.dp tap targets with 22–24.dp icon sizes (`Icon` at 22.dp, Google Maps / Share at 24.dp) comparable to Saved Place chip. In Compact mode, scaled to 34.dp tap targets with 20–22.dp icons. Increased touch target hit areas and accessibility without crowding the header. Verified visually and in `assembleDebug`. |
+| **FT9-02** | Trip Title Length Limitation, Multi-Line Wrapped Rename Dialog & Unclipped Detail Title Display. | `TripModels.kt`, `MainActivity.kt`, `TripPauseAndTitleTest.kt` | **Completed** | Defined `MAX_TRIP_TITLE_LENGTH = 50`. Upgraded Rename Trip dialog text field with multiline visual wrapping (`minLines = 2`, `maxLines = 3`) while strictly stripping `\r`/`\n` into single logical string, keyboard `ImeAction.Done`, character counter (`${len}/50`), and an instant Clear (`Close`) button. In `TripDetailDialog`, title is rendered in full without truncation; in list cards, truncated gracefully with `TextOverflow.Ellipsis`. Covered by passing JUnit unit tests in `TripPauseAndTitleTest.kt`. |
+| **FT9-03** | Route Timeline Leg Distance ($\Delta d$) & Leg Duration ($\Delta t$) Metrics, plus Pause KM Display. | `TripModels.kt`, `MainActivity.kt` | **Completed** | Enhanced `RouteTimelineItem.Place` to compute and display leg delta distance (`+X.XX km`) and leg delta duration (`Xm Ys` / `Xh Ym`) between consecutive places. Enhanced `RouteTimelineItem.Pause` to display exact trip kilometer of the rest pause (`Paused at HH:mm:ss • at X.XX km`), resolving pause distances either from explicit `distanceMeters` or via cumulative polyline interpolation for legacy recordings. |
+| **FT9-04** | Rest Pauses in Trips List: 2-Line Responsive Layout with Pause KM and Non-Overlapping Split Button. | `TripModels.kt`, `TripDatabaseHelper.kt`, `MainActivity.kt`, `TripPauseAndTitleTest.kt` | **Completed** | Restructured rest pause list row into a responsive 2-line layout: Line 1 displays pause time and rest duration alongside "Split Here" button; Line 2 displays exact cumulative kilometer mark (`at X.XX km`). Eliminates text squashing and awkward line breaks on long timestamps. Updated SQLite serialization in `TripDatabaseHelper` to persist `"dist"` seamlessly without database migration, preserving backward compatibility. |
+| **FT9-05** | Companion Web Live Sharing Viewer Overhaul: Card Collapse Toggle Fix, Modern SVG Floating Controls, Online Directional Arrow vs Static Dot, and Hardware-Composited Drag Rendering. | `server/public/index.html` | **Completed** | Fixed broken CSS due to unclosed brace on `.gmaps-btn:hover`. Replaced raw emoji buttons with modern glassmorphism 38px FAB stack containing SVG vector icons for Compass needle, Follow Host, My Location, and Fit Route. Fixed card toggle with animated SVG chevron. Implemented dynamic Host marker rendering: green pulsing dot with SVG directional heading arrow when ONLINE, and static dot without arrow (gray when offline/ended/disconnected, amber when paused). Removed `preferCanvas: true` from Leaflet initialization, returning to hardware-composited SVG vector rendering that eliminates polyline detaching/lagging during touch drag on mobile browsers. |
+
+---
+
+## 12. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |
@@ -222,3 +235,4 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing). | Cache / Map | Future Sprint |
 | **BKL-07** | **Nearest Known Address Lookup**. When the current location doesn't yield a house number (common on rural roads, industrial zones, or GPS accuracy gaps), provide an optional "Find Nearest Address" button on the main UI. When tapped, performs a targeted Overpass/Nominatim nearby search within a ~100m radius and displays the closest numbered address result (e.g. "Klonowa 5 — 47m away") in a dismissable chip below the street name. The same lookup should be optionally triggered from the Live Sharing "current position" embed. Design notes: (a) must be on-demand only — never automatic, never on every fix; (b) result must show estimated distance to the address node; (c) must handle the case where no nearby address exists gracefully ("No address found nearby"); (d) respect Nominatim rate limits (min 1.5s between requests, use caching). | Geocoding / UI | Future Sprint |
 | **BKL-08** | **Directional Track Polyline Arrows / Chevrons**. Render periodic directional chevrons or moving direction arrows along active and historical trip polylines to clearly indicate travel direction on overlapping loops, out-and-back rides, and complex multi-pass routes. | Map / Visualization | Future Sprint |
+
