@@ -21,8 +21,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 7** | Field Testing (2026-09-27 Evening) Rest Pauses Vector Alignment, Saved Places Card Centering & Bottom Bar Save Location Fix | 3 | 3 | 0 | 0 |
 | **Round 8** | Field Testing (2026-09-28) Settings UI Contrast, Kinematic House Numbers & Locality Boundary Street Decoupling | 3 | 3 | 0 | 0 |
 | **Round 9** | Field Testing (2026-09-28 Afternoon) Action Icons Sizing, Trip Title Length Caps, Route Timeline Leg Metrics, Rest Pauses Layout & Web Live Sharing Polish | 5 | 5 | 0 | 0 |
+| **Round 10** | Field Testing (2026-09-28 Evening) Trip #69 Diagnostics: Zero-Blocking SQLite Cache, 2-Fix Driving Street Hysteresis, Locality Zero-Blanking & Modular StreetAbbreviator | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **119** | **111** | **0** | **8** |
+| **Total** | | **124** | **116** | **0** | **8** |
 
 ---
 
@@ -223,7 +224,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 12. Features Inventory & Future Backlog
+## 12. Round 10: Field Testing (2026-09-28 Evening) Trip #69 Diagnostics: Zero-Blocking SQLite Cache, 2-Fix Driving Street Hysteresis, Locality Zero-Blanking & Modular StreetAbbreviator
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT10-01** | Stale Cache Resolution Delay & Side-Street Mis-Match ("Sikornik" vs "Józefa Lompy" in Bielsko-Biała, `Screenshot_20260928-115700.png`). | `LocationManager.kt` (`resolveMultiLanguageData`) | **Completed** | Removed synchronous blocking remote HTTP call to `OsmMapMatcher.getNearestStreet()` on SQLite cache hits. In-memory and persistent SQLite cache hits now return instantly (0ms) without locking or sleep delays. |
+| **FT10-02** | Excessive Street Switch Lag on Fast Thoroughfares ("Polna" lingering on "Krakowska" / DK52, `Screenshot_20260928-122129.png`). | `LocationManager.kt` (`applyStreetHysteresis`), `StreetResolutionTest.kt` | **Completed** | When driving ($> 35\text{ km/h}$), reduced required confirmations between regular streets from 4 fixes / 4.5s to 2 fixes / 2.0s. Major corridor viaduct inertia (7 fixes / 10s) is retained strictly when currently on DK/DW/A/S. Covered by JUnit tests in `StreetResolutionTest.kt`. |
+| **FT10-03** | Blank Street Display during Locality Transition ("Bujaków" on "Bielska", `Screenshot_20260928-122929.png`). | `LocationManager.kt` (`applyStreetHysteresis`), `StreetResolutionTest.kt` | **Completed** | Locality transition now adopts the new locality's candidate street immediately on the 1st fix if present, and never falls back to `null`. Completely eliminates blank street names when crossing town borders. |
+| **FT10-04** | Excessive Street Name Update Lag Across Towns (Czaniec / Roczyny / Bielska, `Screenshot_20260928-124119.png`, `132141.png`, `132323.png`). | `LocationManager.kt` (`resolveMultiLanguageData`, `applyStreetHysteresis`) | **Completed** | Decoupled cache resolution from remote OSRM network queues and streamlined hysteresis to 2 confirmations / 2.0s, eliminating coroutine stalling and lag across municipal borders. |
+| **FT10-05** | Street Name Shortener for Android Auto and Compact Views ("Józefa Lompy" $\to$ "J. Lompy", "Generała..." $\to$ "Gen. ...", `Screenshot_20260928-115848.png`). | `StreetAbbreviator.kt`, `RoadNameNormalizer.kt`, `AutoMediaService.kt`, `MainViewModel.kt`, `MainActivity.kt`, `StreetAbbreviatorTest.kt` | **Completed** | Implemented modular, locale-aware `StreetAbbreviator` with Polish honorifics (`Gen.`, `Kard.`, `Ks.`, `Św.`, `Bp.`) and patronymic given names set. Safely preserves institutional & historical streets (`Wojska Polskiego`, `Powstańców Śląskich`, `3 Maja`). Applied automatically to Android Auto (`AutoMediaService`), with user-facing toggle in mobile Settings (`compact_street_names`). Covered by passing unit tests in `StreetAbbreviatorTest.kt`. |
+
+---
+
+## 13. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |
