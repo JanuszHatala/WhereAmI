@@ -1,31 +1,48 @@
 ---
-name: field-test-feedback
+name: jh-field-test-feedback
 description: >-
   Execute the complete end-to-end WhereAmI field test feedback and diagnostic cycle.
   Use this skill whenever the user provides field testing feedback, mentions testing results,
   uploads test screenshots, or asks to analyze device telemetry, databases, and logs.
 ---
 
-# Field Test Feedback & Diagnostic Protocol
+# Field Test Feedback & Diagnostic Protocol (`jh-field-test-feedback`)
 
 This skill standardizes the end-to-end operational procedure for receiving, diagnosing, implementing, and reporting on field testing rounds for the **WhereAmI** application.
 
-Whenever the user provides test feedback, run this exact 5-stage workflow without skipping any phase.
+Whenever the user provides test feedback, run this exact workflow.
 
 ---
 
-## Stage 1: Device Telemetry, DB & Log Extraction
+## Stage 1: Device Connection Validation & Telemetry Extraction
 
-Before formulating hypotheses or altering code, automatically pull the device telemetry, app databases, preferences, and logs from the connected phone.
+Before analyzing feedback or altering code, verify device connectivity:
 
-1. **Run the Automated Extraction Script**:
+1. **Check ADB Device Connectivity**:
+   ```bash
+   adb devices | grep -w "device"
+   ```
+
+2. **Validation Gate (Stop Condition)**:
+   - **If NO device is connected**:
+     - **STOP IMMEDIATELY**. Do not proceed to hypothesize or alter code.
+     - Inform the user:
+       > ⚠️ **No Android device detected via ADB.**  
+       > Please connect your phone via USB (with USB Debugging enabled) or Wi-Fi (`adb connect <IP>:5555`) so I can extract the latest SQLite databases (`where_am_i_trips.db`, `where_am_i_spatial_cache.db`), SharedPreferences, and logcats.  
+       >  
+       > *If you prefer to proceed without device telemetry analysis, reply: `continue without telemetry` and I will proceed with your UI/code feedback directly.*
+     - Await the user's response.
+   - **If the user instructs to continue without telemetry**:
+     - Omit Stage 1 and Stage 2.
+     - Note explicitly in the report that device telemetry extraction was bypassed per user request.
+     - Proceed directly to Stage 3 (Feedback & UI/Code Analysis).
+
+3. **If Device is Connected (Execute Extraction)**:
    ```bash
    ROUND_DIR="device_data_round_$(date +%Y%m%d_%H%M)"
-   ./.agents/skills/field-test-feedback/scripts/pull_device_data.sh "$ROUND_DIR"
+   ./.agents/skills/jh-field-test-feedback/scripts/pull_device_data.sh "$ROUND_DIR"
    ```
-   *If the phone is disconnected, politely prompt the user to connect via USB or `adb connect`.*
-
-2. **Files Captured**:
+   **Files Captured**:
    - `where_am_i_trips.db`: Trip records, breadcrumb points, pauses, velocities, and distance logs.
    - `where_am_i_spatial_cache.db`: SQLite LRU cache of resolved coordinates and street names.
    - `shared_prefs/*.xml`: User preferences, activity profiles, and last-known locations.
@@ -34,6 +51,8 @@ Before formulating hypotheses or altering code, automatically pull the device te
 ---
 
 ## Stage 2: Deep Diagnostics & Telemetry Inspection
+
+*(Omitted only if user explicitly requested to proceed without telemetry).*
 
 Inspect the downloaded data to identify anomalies, kinematic violations, or boundary misalignments:
 
@@ -60,11 +79,11 @@ Inspect the downloaded data to identify anomalies, kinematic violations, or boun
 
 1. **Inspect User Attachments**:
    - View any uploaded screenshots (`.user_uploaded/media_*.png`) using `view_file`.
-   - Cross-reference the timestamps, coordinates, and visual glitches (e.g. alignment, missing labels, color contrast) against the telemetry extracted in Stage 1 & 2.
+   - Cross-reference timestamps, coordinates, and visual discrepancies against telemetry (or code layout if telemetry was bypassed).
 
 2. **Confront Every Single Item**:
-   - For every point raised by the user, isolate the root cause in the code/database.
-   - If user asks a question (e.g. *"in what conditions do we display house numbers?"*), formulate a clear, technically sound proposal with trade-offs.
+   - For every point raised by the user, isolate the root cause in the code or database.
+   - If user asks a question or proposes a feature, formulate a technically rigorous response with trade-offs.
 
 3. **Formulate Plan**:
    - Present a concise implementation plan or use `/grill-me` / `/plan` if substantial architectural decisions are required.
@@ -102,7 +121,7 @@ Upon completing implementation, provide a structured summary adhering strictly t
      - State the status: **Implemented & Fixed**, **Design Choice / Left Untouched (with Evidence)**, or **Moved to Backlog**.
      - Detail the root cause found, the technical action taken, and github markdown links to modified files and symbols.
 2. **Additional Telemetry Findings**:
-   - Explicitly list any unprompted bugs, database anomalies, or performance leaks discovered during Stage 2 analysis and explain how they were resolved.
+   - Explicitly list any unprompted bugs, database anomalies, or performance leaks discovered during analysis.
 3. **Register Updates**:
    - Update `docs/ENHANCEMENT_TRACKER.md` with new entries, backlog items (`BKL-xx`), and incremented progress matrices.
 4. **Safeguard Reminder**:
