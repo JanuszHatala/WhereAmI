@@ -95,6 +95,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val localityCardStyle: StateFlow<LocalityCardStyle> = _localityCardStyle.asStateFlow()
 
+    // Compact Street Names Preference (abbreviates honorifics and first names)
+    private val _compactStreetNames = MutableStateFlow(appPrefs.getBoolean("compact_street_names", false))
+    val compactStreetNames: StateFlow<Boolean> = _compactStreetNames.asStateFlow()
+
+
     // Destination Pin & Details (from search)
     private val _destinationItem = MutableStateFlow<SearchResultItem?>(null)
     val destinationItem: StateFlow<SearchResultItem?> = _destinationItem.asStateFlow()
@@ -345,6 +350,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _localityCardStyle.value = style
         appPrefs.edit().putString("pref_locality_card_style", style.name).apply()
     }
+
+    fun toggleCompactStreetNames() {
+        val newVal = !_compactStreetNames.value
+        _compactStreetNames.value = newVal
+        appPrefs.edit().putBoolean("compact_street_names", newVal).apply()
+    }
+
 
     fun setAutoStopMinutes(minutes: Int) {
         tripManager.setAutoStopMinutes(minutes)
