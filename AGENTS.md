@@ -158,3 +158,18 @@ To maintain production stability on `master`, the following Git workflow is **st
 - **Do NOT install APKs to the user's phone** without explicit user instruction.
 - **Preserve Existing Code**: Do not delete unrelated comments, docstrings, or test cases.
 - **Direct & Honest Communication**: Follow core communication rules—concise, technically rigorous, actively surfacing trade-offs and risks.
+
+---
+
+## 6. Field Testing Feedback & Diagnostic Protocol (`field-test-feedback`)
+
+Whenever the user reports field testing feedback, mentions test results, or uploads test screenshots:
+1. **Mandatory Telemetry & DB Extraction**: Always run `.agents/skills/field-test-feedback/scripts/pull_device_data.sh` (or ADB commands) to pull `where_am_i_trips.db`, `where_am_i_spatial_cache.db`, `shared_prefs/`, and device logcat before proposing fixes or altering code.
+2. **Deep Diagnostics & Anomaly Hunting**: Inspect trip points, pause retention, kinematic velocity jumps, accuracy distribution, geocoding lags, and boundary transitions in SQLite and logs.
+3. **Confront Every Item & Screenshot**: Cross-reference each screenshot and comment against exact telemetry timestamps and coordinates.
+4. **Mandatory Verbatim Feedback Review**: In the final response, the agent MUST:
+   - Quote **every single item** from the user's prompt verbatim (`> ...`).
+   - State its status: **Implemented & Fixed**, **Design Choice / Left Untouched (with Evidence)**, or **Moved to Backlog**.
+   - Explain the root cause identified, technical action taken, and link to modified files/symbols.
+   - List all additional telemetry findings or unprompted bugs caught and resolved.
+   - Update `docs/ENHANCEMENT_TRACKER.md`.
