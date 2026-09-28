@@ -11,14 +11,56 @@ data class VisitedPlace(
     val distanceAtEntryMeters: Double
 )
 
+const val MAX_TRIP_TITLE_LENGTH = 50
+
 data class TripPause(
     val startTime: Long,
     val endTime: Long? = null,
     val latitude: Double,
     val longitude: Double,
     val durationMs: Long = 0L,
-    val pointIndex: Int = 0
+    val pointIndex: Int = 0,
+    val distanceMeters: Double = 0.0
 )
+
+fun geoDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return r * c
+}
+
+fun calculatePauseDistanceMeters(trip: TripRecord, pause: TripPause, cumulativeDistances: DoubleArray? = null): Double {
+    if (pause.distanceMeters > 0.0) return pause.distanceMeters
+    if (trip.points.isEmpty()) return 0.0
+    val idx = pause.pointIndex.coerceIn(0, trip.points.size - 1)
+    if (cumulativeDistances != null && idx < cumulativeDistances.size) {
+        return cumulativeDistances[idx]
+    }
+    var cum = 0.0
+    for (i in 1..idx) {
+        val p1 = trip.points[i - 1]
+        val p2 = trip.points[i]
+        cum += geoDistanceMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+    }
+    return cum
+}
+
+fun calculateCumulativeDistances(points: List<GeoPoint>): DoubleArray {
+    if (points.isEmpty()) return DoubleArray(0)
+    val arr = DoubleArray(points.size)
+    var sum = 0.0
+    arr[0] = 0.0
+    for (i in 1 until points.size) {
+        sum += geoDistanceMeters(points[i - 1].latitude, points[i - 1].longitude, points[i].latitude, points[i].longitude)
+        arr[i] = sum
+    }
+    return arr
+}
 
 data class TripRecord(
     val id: Long = 0,

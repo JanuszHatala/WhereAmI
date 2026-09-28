@@ -49,6 +49,46 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
         }
+
+        internal fun pausesToJson(pauses: List<TripPause>): String {
+            val array = JSONArray()
+            for (p in pauses) {
+                val obj = JSONObject().apply {
+                    put("start", p.startTime)
+                    if (p.endTime != null) put("end", p.endTime)
+                    put("lat", p.latitude)
+                    put("lng", p.longitude)
+                    put("dur", p.durationMs)
+                    put("idx", p.pointIndex)
+                    if (p.distanceMeters > 0.0) put("dist", p.distanceMeters)
+                }
+                array.put(obj)
+            }
+            return array.toString()
+        }
+
+        internal fun jsonToPauses(jsonStr: String): List<TripPause> {
+            val list = mutableListOf<TripPause>()
+            try {
+                val array = JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val endTime = if (obj.has("end") && !obj.isNull("end")) obj.getLong("end") else null
+                    list.add(
+                        TripPause(
+                            startTime = obj.getLong("start"),
+                            endTime = endTime,
+                            latitude = obj.getDouble("lat"),
+                            longitude = obj.getDouble("lng"),
+                            durationMs = obj.optLong("dur", 0L),
+                            pointIndex = obj.optInt("idx", 0),
+                            distanceMeters = obj.optDouble("dist", 0.0)
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+            return list
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -451,7 +491,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                             latitude = pauseLat,
                             longitude = pauseLng,
                             durationMs = gapDuration,
-                            pointIndex = junctionIndex
+                            pointIndex = junctionIndex,
+                            distanceMeters = cumulativeDistanceOffset
                         )
                     )
                 }
@@ -749,7 +790,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             latitude = (p1.latitude + p2.latitude) / 2.0,
             longitude = (p1.longitude + p2.longitude) / 2.0,
             durationMs = mergedDuration,
-            pointIndex = p1.pointIndex
+            pointIndex = p1.pointIndex,
+            distanceMeters = if (p1.distanceMeters > 0.0) p1.distanceMeters else p2.distanceMeters
         )
 
         val updatedPauses = trip.pauses.toMutableList()
@@ -758,44 +800,6 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val updatedTrip = trip.copy(pauses = updatedPauses)
         updateTrip(updatedTrip)
         return true
-    }
-
-    private fun pausesToJson(pauses: List<TripPause>): String {
-        val array = JSONArray()
-        for (p in pauses) {
-            val obj = JSONObject().apply {
-                put("start", p.startTime)
-                if (p.endTime != null) put("end", p.endTime)
-                put("lat", p.latitude)
-                put("lng", p.longitude)
-                put("dur", p.durationMs)
-                put("idx", p.pointIndex)
-            }
-            array.put(obj)
-        }
-        return array.toString()
-    }
-
-    private fun jsonToPauses(jsonStr: String): List<TripPause> {
-        val list = mutableListOf<TripPause>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val endTime = if (obj.has("end") && !obj.isNull("end")) obj.getLong("end") else null
-                list.add(
-                    TripPause(
-                        startTime = obj.getLong("start"),
-                        endTime = endTime,
-                        latitude = obj.getDouble("lat"),
-                        longitude = obj.getDouble("lng"),
-                        durationMs = obj.optLong("dur", 0L),
-                        pointIndex = obj.optInt("idx", 0)
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        return list
     }
 }
 
