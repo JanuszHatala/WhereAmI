@@ -40,17 +40,46 @@ object RoadNameNormalizer {
     }
 
     /**
+     * Determines whether house numbers should be displayed on the main UI.
+     * Allowed only when moving at slow speed (< 10 km/h) or stationary,
+     * with tight GPS horizontal accuracy (<= 12m), on non-major roads.
+     */
+    fun shouldShowHouseNumber(
+        speedKmh: Float?,
+        accuracyMeters: Float?,
+        isMajorRoad: Boolean
+    ): Boolean {
+        if (isMajorRoad) return false
+        val speed = speedKmh ?: 0f
+        val accuracy = accuracyMeters ?: Float.MAX_VALUE
+        return speed < 10.0f && accuracy <= 12.0f
+    }
+
+    /**
+     * Strips house numbers from a given street string if allowHouseNumber is false.
+     * Preserves major highway corridors and clean base street names.
+     */
+    fun sanitizeHouseNumber(street: String?, allowHouseNumber: Boolean): String? {
+        if (street.isNullOrBlank()) return street
+        if (allowHouseNumber) return street
+        if (isMajorRoad(street)) return street
+        return extractBaseStreet(street)
+    }
+
+    /**
      * Normalizes a raw street name, road reference, and optional house number.
      *
      * Rules:
      * 1. Highway numbers are normalized to canonical short form (e.g. DK52, DW946, A4, S7).
      * 2. Major roads have house numbers strictly stripped.
-     * 3. Residential streets have prefixes cleaned ("ulica " -> "ul. ") and retain house numbers.
+     * 3. Residential streets have prefixes cleaned ("ulica " -> "ul. ") and retain house numbers
+     *    only when includeHouseNumber is explicitly true.
      */
     fun normalize(
         rawStreet: String?,
         rawRef: String? = null,
-        houseNumber: String? = null
+        houseNumber: String? = null,
+        includeHouseNumber: Boolean = false
     ): String? {
         if (rawStreet.isNullOrBlank() && rawRef.isNullOrBlank()) return null
 
@@ -154,9 +183,25 @@ object RoadNameNormalizer {
         }
 
         // It's a residential or local street:
-        // Strip house numbers completely until dedicated "nearest known address" feature is implemented.
         val baseStreet = extractBaseStreet(road)
-        return cleanStreetPrefix(baseStreet)
+        val cleanStreet = cleanStreetPrefix(baseStreet)
+        val effectiveHouseNumber = houseNumber?.trim()?.takeIf { it.isNotEmpty() }
+            ?: extractHouseNumber(road)
+
+        return if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
+            "$cleanStreet $effectiveHouseNumber"
+        } else {
+            cleanStreet
+        }
+    }
+
+    /**
+     * Extracts trailing house number if present (e.g. "ul. Zdrojowa 11A" -> "11A").
+     */
+    fun extractHouseNumber(street: String?): String? {
+        if (street.isNullOrBlank()) return null
+        val match = TRAILING_HOUSE_NUM.find(street) ?: return null
+        return match.value.trim()
     }
 
     /**

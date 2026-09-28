@@ -19,8 +19,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 5** | Field Testing (2026-09-27 MTB Ride) Kinematics Overhaul, Adaptive GPS Sampling, Directional Projection Filtering, Low-Speed Bearing Fallback, Companion Web Viewer Polish & Cache Sanitization | 6 | 6 | 0 | 0 |
 | **Round 6** | Field Testing (2026-09-27 Czaniec-Roczyny-Rzyki) Startup Centering, Optical Lift Alignment, Trip Merge Dialog, Pause Retention & Village Estate Quantization | 7 | 7 | 0 | 0 |
 | **Round 7** | Field Testing (2026-09-27 Evening) Rest Pauses Vector Alignment, Saved Places Card Centering & Bottom Bar Save Location Fix | 3 | 3 | 0 | 0 |
-| **Backlog** | Platform Features Inventory Backlog | 7 | 0 | 0 | 7 |
-| **Total** | | **110** | **103** | **0** | **7** |
+| **Round 8** | Field Testing (2026-09-28) Settings UI Contrast, Kinematic House Numbers & Locality Boundary Street Decoupling | 3 | 3 | 0 | 0 |
+| **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
+| **Total** | | **114** | **106** | **0** | **8** |
 
 ---
 
@@ -199,7 +200,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 10. Features Inventory & Future Backlog
+## 10. Round 8: Field Testing (2026-09-28) Settings UI Contrast, Kinematic House Numbers & Locality Boundary Street Decoupling
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT8-01** | Settings Modal Button Contrast: Explicit High-Contrast Text Color & Slate Border for Light/Dark Mode Uniformity. | `MainActivity.kt` (`SettingsModalContent`) | **Completed** | "Trip Recording Mode" ("Manual") and "Auto-Stop Trip Timeout" ("1m", "3m", "5m") buttons rendered with low-contrast dark gray text on dark slate backgrounds in light/normal phone mode due to Material3 theme shifts. Replaced dynamic theme text styling with explicit `contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)`, added `border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569))`, and set explicit `FontWeight.SemiBold` for selected states and `FontWeight.Medium` for unselected states. High contrast preserved across day, night, and system dark modes. |
+| **FT8-02** | Kinematic House Number Display Gates: Strict Velocity (< 10 km/h) & Accuracy (<= 12m) Gating with Automatic Strip on Highways. | `RoadNameNormalizer.kt`, `LocationManager.kt`, `StreetResolutionTest.kt` | **Completed** | House numbers appeared unexpectedly during driving ("Zdrojowa 11A"). Introduced `RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMajorRoad)` requiring speed $< 10\text{ km/h}$, GPS accuracy $\le 12\text{m}$, and non-major residential road. At cruising speeds ($\ge 10\text{ km/h}$), degraded accuracy ($> 12\text{m}$), or along major traffic corridors (`DK*`, `DW*`, `A*`, `S*`, `E*`), house numbers are automatically stripped in `sanitizeMultiDataHouseNumbers()` across both disk and memory cache retrievals. |
+| **FT8-03** | Locality Boundary Street Decoupling & Dual Confirmation Street Commit: Prevent Old Town Streets from Leaking into New Town. | `LocationManager.kt` (`applyStreetHysteresis`), `StreetResolutionTest.kt` | **Completed** | When crossing from Kozy into Bielsko-Biała on DK52, `LocalityCard` temporarily displayed `Bielsko-Biała / Bielska` because street hysteresis held the old town's street name and grafted it onto the new town name. Initialized `lastCommittedStreetLocality` on initial commit. During locality transitions where candidate street has $< 2$ confirmations, hysteresis now returns canonical highway ref (e.g. `DK52`) or `null` for residential roads rather than the previous town's street name, committing the new street name upon the 2nd consecutive confirmation. |
+
+---
+
+## 11. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :---: | :---: |
@@ -208,7 +219,6 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **BKL-03** | Visitor on-demand location refresh request from web page to mobile app (Item 16). | Live Protocol | Future Sprint |
 | **BKL-04** | Historical shared routes catalog portal (Item 21c). | Web Platform | Future Sprint |
 | **BKL-05** | Redesign and overhaul Search Place functionality (better geocoding UX, instant suggestions, fuzzy matching, clean address hierarchy, and robust error handling). | Search / Geocoding | Future Sprint |
-
 | **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing). | Cache / Map | Future Sprint |
-
 | **BKL-07** | **Nearest Known Address Lookup**. When the current location doesn't yield a house number (common on rural roads, industrial zones, or GPS accuracy gaps), provide an optional "Find Nearest Address" button on the main UI. When tapped, performs a targeted Overpass/Nominatim nearby search within a ~100m radius and displays the closest numbered address result (e.g. "Klonowa 5 — 47m away") in a dismissable chip below the street name. The same lookup should be optionally triggered from the Live Sharing "current position" embed. Design notes: (a) must be on-demand only — never automatic, never on every fix; (b) result must show estimated distance to the address node; (c) must handle the case where no nearby address exists gracefully ("No address found nearby"); (d) respect Nominatim rate limits (min 1.5s between requests, use caching). | Geocoding / UI | Future Sprint |
+| **BKL-08** | **Directional Track Polyline Arrows / Chevrons**. Render periodic directional chevrons or moving direction arrows along active and historical trip polylines to clearly indicate travel direction on overlapping loops, out-and-back rides, and complex multi-pass routes. | Map / Visualization | Future Sprint |

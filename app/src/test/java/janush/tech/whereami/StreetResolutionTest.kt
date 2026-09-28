@@ -285,4 +285,171 @@ class StreetResolutionTest {
         )
         assertEquals("Czaniec", locality)
     }
+
+    // ── Locality Transition Decoupling Hysteresis Tests ─────────────────────────
+
+    /**
+     * Standalone model of the street hysteresis logic during locality transitions from LocationManager.applyStreetHysteresis.
+     */
+    private class LocalityStreetHysteresisModel {
+        var committedStreetPl: String? = null
+        var committedStreetBase: String? = null
+        var lastCommittedStreetLocality: String? = null
+        var candidateStreetPl: String? = null
+        var candidateStreetBase: String? = null
+        var candidateStreetCount = 0
+        var candidateStreetFirstSeenTime = 0L
+
+        fun processFix(
+            rawStreetPl: String?,
+            city: String,
+            roadRef: String?,
+            speedKmh: Float,
+            now: Long
+        ): String? {
+            val rawBase = RoadNameNormalizer.extractBaseStreet(rawStreetPl)
+            if (rawStreetPl.isNullOrBlank()) return committedStreetPl
+
+            // Initial commit
+            if (committedStreetPl == null || committedStreetBase == null) {
+                committedStreetPl = rawStreetPl
+                committedStreetBase = rawBase
+                lastCommittedStreetLocality = city
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return committedStreetPl
+            }
+
+            if (rawBase.equals(committedStreetBase, ignoreCase = true)) {
+                committedStreetPl = rawStreetPl
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return committedStreetPl
+            }
+
+            if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
+                candidateStreetCount++
+            } else {
+                candidateStreetPl = rawStreetPl
+                candidateStreetBase = rawBase
+                candidateStreetCount = 1
+                candidateStreetFirstSeenTime = now
+            }
+
+            val isLocalityTransition = lastCommittedStreetLocality != null &&
+                    city.isNotBlank() &&
+                    !city.equals("Unknown City", ignoreCase = true) &&
+                    !city.equals(lastCommittedStreetLocality, ignoreCase = true)
+
+            val rawRequiredCount = 4
+            val rawRequiredDuration = 4500L
+
+            val requiredCount = if (isLocalityTransition) minOf(rawRequiredCount, 2) else rawRequiredCount
+            val requiredDuration = if (isLocalityTransition) minOf(rawRequiredDuration, 2000L) else rawRequiredDuration
+            val candidateDuration = now - candidateStreetFirstSeenTime
+
+            if (candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration) {
+                committedStreetPl = candidateStreetPl
+                committedStreetBase = candidateStreetBase
+                lastCommittedStreetLocality = city
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return committedStreetPl
+            } else {
+                if (isLocalityTransition) {
+                    val fallbackStreet = if (!roadRef.isNullOrBlank()) {
+                        RoadNameNormalizer.normalize(null, roadRef, null)
+                    } else null
+                    return fallbackStreet
+                }
+                return committedStreetPl
+            }
+        }
+    }
+
+    @Test
+    fun `Locality transition does not display previous town street before confirmation`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // Step 1: Initial commit in Kozy along DK52 (ul. Bielska)
+        val initialStreet = model.processFix(
+            rawStreetPl = "ul. Bielska (DK52)",
+            city = "Kozy",
+            roadRef = "DK52",
+            speedKmh = 60f,
+            now = 1000L
+        )
+        assertEquals("ul. Bielska (DK52)", initialStreet)
+        assertEquals("Kozy", model.lastCommittedStreetLocality)
+
+        // Step 2: Cross boundary into Bielsko-Biała on DK52 (1st fix in Bielsko-Biała, raw is ul. Krakowska)
+        // Candidate count = 1 (< 2 required). Must NOT return "ul. Bielska"!
+        val fix1 = model.processFix(
+            rawStreetPl = "ul. Krakowska (DK52)",
+            city = "Bielsko-Biała",
+            roadRef = "DK52",
+            speedKmh = 60f,
+            now = 2000L
+        )
+        assertEquals(
+            "During locality transition with 1 candidate fix, must display canonical road ref 'DK52' instead of old town's 'ul. Bielska'",
+            "DK52",
+            fix1
+        )
+
+        // Step 3: Second fix in Bielsko-Biała (count = 2, elapsed >= 2000ms).
+        // Switch commits to new locality's street "ul. Krakowska (DK52)"!
+        val fix2 = model.processFix(
+            rawStreetPl = "ul. Krakowska (DK52)",
+            city = "Bielsko-Biała",
+            roadRef = "DK52",
+            speedKmh = 60f,
+            now = 4500L
+        )
+        assertEquals(
+            "After 2 confirmations, new street 'ul. Krakowska (DK52)' must commit",
+            "ul. Krakowska (DK52)",
+            fix2
+        )
+        assertEquals("Bielsko-Biała", model.lastCommittedStreetLocality)
+    }
+
+    @Test
+    fun `Locality transition on residential road without roadRef hides old street until confirmed`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // Initial commit in Town A
+        model.processFix(
+            rawStreetPl = "ul. Polna",
+            city = "Town A",
+            roadRef = null,
+            speedKmh = 30f,
+            now = 1000L
+        )
+
+        // Cross into Town B on residential road (1st fix)
+        val fix1 = model.processFix(
+            rawStreetPl = "ul. Leśna",
+            city = "Town B",
+            roadRef = null,
+            speedKmh = 30f,
+            now = 2000L
+        )
+        // Must return null (never display "ul. Polna" in Town B)
+        assertNull("Residential road without roadRef must yield null rather than leaking Town A's street into Town B", fix1)
+
+        // 2nd fix confirms
+        val fix2 = model.processFix(
+            rawStreetPl = "ul. Leśna",
+            city = "Town B",
+            roadRef = null,
+            speedKmh = 30f,
+            now = 4500L
+        )
+        assertEquals("ul. Leśna", fix2)
+        assertEquals("Town B", model.lastCommittedStreetLocality)
+    }
 }

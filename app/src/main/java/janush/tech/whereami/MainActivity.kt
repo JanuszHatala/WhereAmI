@@ -2575,23 +2575,37 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    val isManual = tripMode == TripMode.MANUAL
                     Button(
                         onClick = { viewModel.setTripMode(TripMode.MANUAL) },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (tripMode == TripMode.MANUAL) Color(0xFF0284C7) else Color(0xFF1E293B)
+                            containerColor = if (isManual) Color(0xFF0284C7) else Color(0xFF1E293B),
+                            contentColor = if (isManual) Color.White else Color(0xFFCBD5E1)
                         ),
+                        border = if (isManual) null else BorderStroke(1.dp, Color(0xFF475569)),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Manual")
+                        Text(
+                            text = "Manual",
+                            fontWeight = if (isManual) FontWeight.Bold else FontWeight.Medium
+                        )
                     }
+                    val isAuto = tripMode == TripMode.AUTO
                     Button(
                         onClick = { viewModel.setTripMode(TripMode.AUTO) },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (tripMode == TripMode.AUTO) Color(0xFF0284C7) else Color(0xFF1E293B)
+                            containerColor = if (isAuto) Color(0xFF0284C7) else Color(0xFF1E293B),
+                            contentColor = if (isAuto) Color.White else Color(0xFFCBD5E1)
                         ),
+                        border = if (isAuto) null else BorderStroke(1.dp, Color(0xFF475569)),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Automatic")
+                        Text(
+                            text = "Automatic",
+                            fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Medium
+                        )
                     }
                 }
 
@@ -2645,12 +2659,19 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Button(
                             onClick = { viewModel.setAutoStopMinutes(mins) },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)
                             ),
+                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                         ) {
-                            Text("${mins}m", fontSize = 13.sp)
+                            Text(
+                                text = "${mins}m",
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
                         }
                     }
                 }
