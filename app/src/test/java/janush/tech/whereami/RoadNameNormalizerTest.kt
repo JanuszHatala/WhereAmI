@@ -73,4 +73,43 @@ class RoadNameNormalizerTest {
         assertFalse(RoadNameNormalizer.isMajorRoad("ul. Kościuszki"))
         assertFalse(RoadNameNormalizer.isMajorRoad("Rynek"))
     }
+
+    @Test
+    fun testShouldShowHouseNumberGating() {
+        // High accuracy and low speed on residential road -> allowed
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 5.0f, accuracyMeters = 8.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 4.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = null, accuracyMeters = 10.0f, isMajorRoad = false))
+
+        // Velocity >= 10 km/h -> stripped
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 8.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 45.0f, accuracyMeters = 5.0f, isMajorRoad = false))
+
+        // Degraded accuracy > 12m -> stripped
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 2.0f, accuracyMeters = 13.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 25.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = null, isMajorRoad = false))
+
+        // Major road / corridor -> strictly stripped regardless of speed/accuracy
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 3.0f, isMajorRoad = true))
+    }
+
+    @Test
+    fun testSanitizeHouseNumber() {
+        assertEquals("ul. Zdrojowa", RoadNameNormalizer.sanitizeHouseNumber("ul. Zdrojowa 11A", allowHouseNumber = false))
+        assertEquals("ul. Zdrojowa 11A", RoadNameNormalizer.sanitizeHouseNumber("ul. Zdrojowa 11A", allowHouseNumber = true))
+        assertEquals("DK52", RoadNameNormalizer.sanitizeHouseNumber("DK52", allowHouseNumber = false))
+        assertEquals("ul. Krakowska (DK52)", RoadNameNormalizer.sanitizeHouseNumber("ul. Krakowska (DK52)", allowHouseNumber = false))
+        assertEquals("ul. Bielska", RoadNameNormalizer.sanitizeHouseNumber("ul. Bielska", allowHouseNumber = false))
+        assertEquals("os. Młocki Dolne", RoadNameNormalizer.sanitizeHouseNumber("os. Młocki Dolne", allowHouseNumber = false))
+    }
+
+    @Test
+    fun testNormalizeWithConditionalHouseNumber() {
+        assertEquals("ul. Zdrojowa 11A", RoadNameNormalizer.normalize("ulica Zdrojowa", houseNumber = "11A", includeHouseNumber = true))
+        assertEquals("ul. Zdrojowa", RoadNameNormalizer.normalize("ulica Zdrojowa", houseNumber = "11A", includeHouseNumber = false))
+        assertEquals("Zdrojowa 11A", RoadNameNormalizer.normalize("Zdrojowa 11A", includeHouseNumber = true))
+        assertEquals("Zdrojowa", RoadNameNormalizer.normalize("Zdrojowa 11A", includeHouseNumber = false))
+    }
 }
+
