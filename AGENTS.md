@@ -161,10 +161,14 @@ To maintain production stability on `master`, the following Git workflow is **st
 
 ---
 
-## 6. Field Testing Feedback & Diagnostic Protocol (`field-test-feedback`)
+## 6. Field Testing Feedback & Diagnostic Protocol (`jh-field-test-feedback`)
 
 Whenever the user reports field testing feedback, mentions test results, or uploads test screenshots:
-1. **Mandatory Telemetry & DB Extraction**: Always run `.agents/skills/field-test-feedback/scripts/pull_device_data.sh` (or ADB commands) to pull `where_am_i_trips.db`, `where_am_i_spatial_cache.db`, `shared_prefs/`, and device logcat before proposing fixes or altering code.
+1. **Device Connection Validation & Telemetry Extraction**:
+   - Check if an Android device is connected via ADB (`adb devices | grep -w "device"`).
+   - **If disconnected**: STOP and prompt the user to connect their device via USB/Wi-Fi, offering the option to reply `continue without telemetry` if they wish to skip telemetry analysis.
+   - **If user opts to bypass telemetry**: Omit database/log extraction and proceed directly with code/UI analysis.
+   - **If connected**: Automatically run `.agents/skills/jh-field-test-feedback/scripts/pull_device_data.sh` (or ADB commands) to extract `where_am_i_trips.db`, `where_am_i_spatial_cache.db`, `shared_prefs/`, and device logcat before proposing fixes or altering code.
 2. **Deep Diagnostics & Anomaly Hunting**: Inspect trip points, pause retention, kinematic velocity jumps, accuracy distribution, geocoding lags, and boundary transitions in SQLite and logs.
 3. **Confront Every Item & Screenshot**: Cross-reference each screenshot and comment against exact telemetry timestamps and coordinates.
 4. **Mandatory Verbatim Feedback Review**: In the final response, the agent MUST:
