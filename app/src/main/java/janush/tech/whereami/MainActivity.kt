@@ -259,6 +259,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
     val localityCardStyle by viewModel.localityCardStyle.collectAsState()
+    val compactStreetNames by viewModel.compactStreetNames.collectAsState()
     val orientationMode by viewModel.orientationMode.collectAsState()
     val showHeatMap by viewModel.showHeatMap.collectAsState()
     val heatMapFilterState by viewModel.heatMapFilterState.collectAsState()
@@ -598,6 +599,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         liveSession = liveSession,
                         savedPlaces = savedPlaces,
                         localityCardStyle = localityCardStyle,
+                        compactStreetNames = compactStreetNames,
                         activityProfile = activityProfile,
                         primaryPlace = primaryPlace,
                         secondaryPlace = secondaryPlace,
@@ -697,6 +699,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     liveSession = liveSession,
                     savedPlaces = savedPlaces,
                     localityCardStyle = localityCardStyle,
+                    compactStreetNames = compactStreetNames,
                     activityProfile = activityProfile,
                     primaryPlace = primaryPlace,
                     secondaryPlace = secondaryPlace,
@@ -2511,6 +2514,45 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Text(label, fontSize = 14.sp)
                         }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Compact Street Names Toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .clickable { viewModel.toggleCompactStreetNames() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Compact Street Names",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Abbreviate honorifics and first names (e.g. ul. J. Lompy). Always enabled in Android Auto.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = compactStreetNames,
+                        onCheckedChange = { viewModel.toggleCompactStreetNames() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF0284C7),
+                            uncheckedThumbColor = Color(0xFF94A3B8),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -6107,6 +6149,7 @@ private fun LocalityCard(
     liveSession: LiveSession?,
     savedPlaces: List<SavedPlace>,
     localityCardStyle: LocalityCardStyle,
+    compactStreetNames: Boolean = false,
     activityProfile: ActivityProfile,
     primaryPlace: PlaceInfo?,
     secondaryPlace: PlaceInfo?,
@@ -6192,8 +6235,13 @@ private fun LocalityCard(
                     "$primaryCity ($secondaryCity)"
                 } else primaryCity
 
+                val rawStreet = primaryPlace?.street
+                val effectiveStreet = if (compactStreetNames) {
+                    StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
+                } else rawStreet
+
                 val streetOrRoad = listOfNotNull(
-                    primaryPlace?.street?.takeIf { it.isNotBlank() },
+                    effectiveStreet?.takeIf { it.isNotBlank() },
                     primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
                 ).joinToString(" • ")
 
@@ -6846,8 +6894,13 @@ private fun LocalityCard(
                 }
 
                 // Street Name & Road Number
+                val rawStreet = primaryPlace?.street
+                val effectiveStreet = if (compactStreetNames) {
+                    StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
+                } else rawStreet
+
                 val streetOrRoad = listOfNotNull(
-                    primaryPlace?.street?.takeIf { it.isNotBlank() },
+                    effectiveStreet?.takeIf { it.isNotBlank() },
                     primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
                 ).joinToString(" • ")
 
