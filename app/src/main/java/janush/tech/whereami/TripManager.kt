@@ -395,7 +395,8 @@ class TripManager private constructor(private val context: Context) {
                         latitude = lat,
                         longitude = lng,
                         durationMs = stationaryMs,
-                        pointIndex = current.points.size
+                        pointIndex = current.points.size,
+                        distanceMeters = current.distanceMeters
                     )
                 } else {
                     activePause = activePause!!.copy(durationMs = now - activePause!!.startTime)
