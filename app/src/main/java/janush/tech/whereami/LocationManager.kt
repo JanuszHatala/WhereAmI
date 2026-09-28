@@ -551,6 +551,7 @@ class LocationManager private constructor(private val context: Context) {
         if (committedStreetPl == null || committedStreetBase == null) {
             committedStreetPl = rawStreetPl
             committedStreetBase = rawBase
+            lastCommittedStreetLocality = multiData.pl.city
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
@@ -654,6 +655,18 @@ class LocationManager private constructor(private val context: Context) {
                 native = multiData.native.copy(street = committedStreetPl)
             )
         } else {
+            // If crossing into a new locality and candidate street is not yet confirmed (e.g. 1st fix in Bielsko-Biała),
+            // NEVER display the old locality's street (e.g. "ul. Bielska" from Kozy).
+            if (isLocalityTransition) {
+                val fallbackStreet = if (!multiData.pl.roadRef.isNullOrBlank()) {
+                    RoadNameNormalizer.normalize(null, multiData.pl.roadRef, null)
+                } else null
+                return multiData.copy(
+                    en = multiData.en.copy(street = fallbackStreet),
+                    pl = multiData.pl.copy(street = fallbackStreet),
+                    native = multiData.native.copy(street = fallbackStreet)
+                )
+            }
             // Keep current committed street (filter out momentary cross-street and side-street jitter)
             return multiData.copy(
                 en = multiData.en.copy(street = committedStreetPl),
@@ -824,12 +837,14 @@ class LocationManager private constructor(private val context: Context) {
                         // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
                         val capturedBearing = currentBearing
                         val fixTimestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                        val fixAccuracy = if (location.hasAccuracy()) location.accuracy else null
                         ioScope.launch {
                             val rawMultiData = resolveMultiLanguageData(
                                 lat = location.latitude,
                                 lng = location.longitude,
                                 bearing = capturedBearing,
-                                speedKmh = speedKmh
+                                speedKmh = speedKmh,
+                                accuracyMeters = fixAccuracy
                             )
                             synchronized(geocodeLock) {
                                 // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
@@ -961,8 +976,14 @@ class LocationManager private constructor(private val context: Context) {
                                 .putFloat("speed", speed)
                                 .apply()
 
+                            val rawAccuracy = if (location.hasAccuracy()) location.accuracy else null
                             ioScope.launch {
-                                val multiData = resolveMultiLanguageData(location.latitude, location.longitude)
+                                val multiData = resolveMultiLanguageData(
+                                    lat = location.latitude,
+                                    lng = location.longitude,
+                                    speedKmh = speed * 3.6f,
+                                    accuracyMeters = rawAccuracy
+                                )
                                 val stabilized = applyBorderHysteresis(location.latitude, location.longitude, multiData)
                                 cont.resume(buildLocationData(stabilized, speed, displayLanguage))
                             }
@@ -1025,9 +1046,31 @@ class LocationManager private constructor(private val context: Context) {
     @Volatile
     private var osmRateLimitCooldownUntil = 0L
 
+    private fun sanitizeMultiDataHouseNumbers(
+        data: MultiLanguagePlaceInfo,
+        speedKmh: Float?,
+        accuracyMeters: Float?
+    ): MultiLanguagePlaceInfo {
+        val isMajor = RoadNameNormalizer.isMajorRoad(data.pl.street) || !data.pl.roadRef.isNullOrBlank()
+        val allowHouse = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMajor)
+        if (allowHouse) return data
+        return data.copy(
+            en = data.en.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.en.street, false)),
+            pl = data.pl.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.pl.street, false)),
+            native = data.native.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.native.street, false))
+        )
+    }
+
     // ── Place resolution ───────────────────────────────────────────────────────
 
-    fun resolveMultiLanguageData(lat: Double, lng: Double, bearing: Float? = null, speedKmh: Float? = null, forceCache: Boolean = false): MultiLanguagePlaceInfo {
+    fun resolveMultiLanguageData(
+        lat: Double,
+        lng: Double,
+        bearing: Float? = null,
+        speedKmh: Float? = null,
+        accuracyMeters: Float? = null,
+        forceCache: Boolean = false
+    ): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
         val cached = spatialPlaceCache[gridKey]
@@ -1035,7 +1078,7 @@ class LocationManager private constructor(private val context: Context) {
 
         if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
             if (!isDrivingFast || RoadNameNormalizer.isMajorRoad(cached.data.pl.street)) {
-                return cached.data
+                return sanitizeMultiDataHouseNumbers(cached.data, speedKmh, accuracyMeters)
             }
         }
 
@@ -1060,12 +1103,12 @@ class LocationManager private constructor(private val context: Context) {
                             try {
                                 SpatialCacheHelper.getInstance(context).put(lat, lng, corrected)
                             } catch (_: Exception) {}
-                            return corrected
+                            return sanitizeMultiDataHouseNumbers(corrected, speedKmh, accuracyMeters)
                         }
                     }
                 }
                 spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
-                return diskCached
+                return sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
             }
         } catch (_: Exception) {}
 
@@ -1087,9 +1130,9 @@ class LocationManager private constructor(private val context: Context) {
         val effectiveBearing = bearing ?: lastValidBearing
         val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
 
-        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet)
-        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet)
-        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm, osrmStreet)
+        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
+        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
+        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
 
         // If online geocoding failed or returned unknown (e.g. offline tunnel/cell cutout), fall back to persistent cache of any age
         if (enPlace.city == "Unknown City" && plPlace.city == "Unknown City") {
@@ -1097,7 +1140,7 @@ class LocationManager private constructor(private val context: Context) {
                 val fallbackDisk = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
                 if (fallbackDisk != null) {
                     spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, fallbackDisk)
-                    return fallbackDisk
+                    return sanitizeMultiDataHouseNumbers(fallbackDisk, speedKmh, accuracyMeters)
                 }
             } catch (_: Exception) {}
         }
@@ -1124,7 +1167,9 @@ class LocationManager private constructor(private val context: Context) {
         countryCode: String,
         prefs: SharedPreferences,
         sharedOsm: OsmPlaceResult? = null,
-        osrmStreet: String? = null
+        osrmStreet: String? = null,
+        speedKmh: Float? = null,
+        accuracyMeters: Float? = null
     ): PlaceInfo {
         val lastGood = loadLastGood(prefs, cacheKey)
         val lastGoodLat = prefs.getFloat("last_good_lat", Float.MIN_VALUE).toDouble()
@@ -1135,6 +1180,12 @@ class LocationManager private constructor(private val context: Context) {
 
         val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang)
 
+        val shouldShowHouse = RoadNameNormalizer.shouldShowHouseNumber(
+            speedKmh,
+            accuracyMeters,
+            isMajorRoad = RoadNameNormalizer.isMajorRoad(osrmStreet ?: osm?.street ?: address?.thoroughfare)
+        )
+
         // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
             val basePlace = address.toPlaceInfo(countryCode)
@@ -1142,19 +1193,19 @@ class LocationManager private constructor(private val context: Context) {
                 // 1. Highest precision: OSRM Map Matching explicitly provided the road centerline
                 !osrmStreet.isNullOrBlank() -> {
                     val houseNumber = osm?.houseNumber ?: address.subThoroughfare
-                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, houseNumber)
+                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, houseNumber, includeHouseNumber = shouldShowHouse)
                 }
                 // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
                 !osm?.street.isNullOrBlank() -> {
-                    osm.street
+                    RoadNameNormalizer.sanitizeHouseNumber(osm.street, shouldShowHouse)
                 }
                 // 3. Road ref enrichment if thoroughfare provided
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
-                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare)
+                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare, includeHouseNumber = shouldShowHouse)
                 }
                 // 4. Fallback to Android native Geocoder thoroughfare
                 else -> {
-                    basePlace.street
+                    RoadNameNormalizer.sanitizeHouseNumber(basePlace.street, shouldShowHouse)
                 }
             }
 
@@ -1214,9 +1265,20 @@ class LocationManager private constructor(private val context: Context) {
                         ?: if (lastGood?.city.equals(city, ignoreCase = true)) lastGood?.gmina else null
                 }
 
+                val osmNorm = osm.street?.let {
+                    val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
+                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
+                    RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = allowH)
+                }
+                val addrNorm = address?.thoroughfare?.let {
+                    val isMaj = RoadNameNormalizer.isMajorRoad(it)
+                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
+                    RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = allowH)
+                }
+
                 return PlaceInfo(
                     city = city,
-                    street = osm.street?.let { RoadNameNormalizer.normalize(it, osm.roadRef) } ?: address?.thoroughfare?.let { RoadNameNormalizer.normalize(it) },
+                    street = osmNorm ?: addrNorm,
                     roadRef = osm.roadRef,
                     gmina = effectiveGmina,
                     powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
@@ -1286,7 +1348,7 @@ class LocationManager private constructor(private val context: Context) {
                 val rawRef = str("ref")
 
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
-                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum)
+                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true)
 
                 val rawMunicipality = str("municipality")
                     ?: str("commune")
