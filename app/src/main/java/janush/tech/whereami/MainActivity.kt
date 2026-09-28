@@ -2029,23 +2029,45 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
 
                                                                     if (isPausesExpanded) {
+                                                                        val tripCumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
                                                                         trip.pauses.forEachIndexed { pauseIdx, pause ->
                                                                             val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pause.startTime))
                                                                             val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                                                            val pauseDistKm = calculatePauseDistanceMeters(trip, pause, tripCumulativeDistances) / 1000.0
                                                                             Row(
                                                                                 modifier = Modifier
                                                                                     .fillMaxWidth()
                                                                                     .padding(vertical = 2.dp)
                                                                                     .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
-                                                                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                                    .padding(horizontal = 8.dp, vertical = 5.dp),
                                                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                                                 verticalAlignment = Alignment.CenterVertically
                                                                             ) {
-                                                                                Text(
-                                                                                    text = "#${pauseIdx + 1} at $pauseTimeStr (${durMin} min rest)",
-                                                                                    fontSize = 11.sp,
-                                                                                    color = Color(0xFFE2E8F0)
-                                                                                )
+                                                                                Column(
+                                                                                    modifier = Modifier.weight(1f).padding(end = 6.dp)
+                                                                                ) {
+                                                                                    Row(
+                                                                                        verticalAlignment = Alignment.CenterVertically,
+                                                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                                                    ) {
+                                                                                        Text(
+                                                                                            text = "#${pauseIdx + 1} at $pauseTimeStr",
+                                                                                            fontSize = 11.sp,
+                                                                                            fontWeight = FontWeight.SemiBold,
+                                                                                            color = Color(0xFFE2E8F0)
+                                                                                        )
+                                                                                        Text(
+                                                                                            text = "($durMin min rest)",
+                                                                                            fontSize = 11.sp,
+                                                                                            color = Color(0xFFFBBF24)
+                                                                                        )
+                                                                                    }
+                                                                                    Text(
+                                                                                        text = String.format(Locale.getDefault(), "at %.2f km", pauseDistKm),
+                                                                                        fontSize = 10.sp,
+                                                                                        color = Color(0xFF38BDF8)
+                                                                                    )
+                                                                                }
                                                                                 TextButton(
                                                                                     onClick = {
                                                                                         viewModel.splitTripAtPause(trip.id, pauseIdx)
@@ -2324,31 +2346,78 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // Rename Trip Dialog
     if (tripToRename != null) {
+        val saveRenameAction = {
+            tripToRename?.let { trip ->
+                val cleaned = renameInputText.trim().replace(Regex("\\s+"), " ").take(MAX_TRIP_TITLE_LENGTH)
+                viewModel.renameTrip(trip.id, cleaned)
+            }
+            tripToRename = null
+        }
+
         AlertDialog(
             onDismissRequest = { tripToRename = null },
             title = { Text("Rename Trip", color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
-                OutlinedTextField(
-                    value = renameInputText,
-                    onValueChange = { renameInputText = it },
-                    label = { Text("Trip Title") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFF38BDF8),
-                        unfocusedBorderColor = Color(0xFF64748B)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = renameInputText,
+                        onValueChange = { input ->
+                            val sanitized = input.replace("\r", " ").replace("\n", " ")
+                            if (sanitized.length <= MAX_TRIP_TITLE_LENGTH) {
+                                renameInputText = sanitized
+                            }
+                        },
+                        label = { Text("Trip Title") },
+                        singleLine = false,
+                        minLines = 2,
+                        maxLines = 3,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                            capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onDone = { saveRenameAction() }
+                        ),
+                        trailingIcon = {
+                            if (renameInputText.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { renameInputText = "" },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.LightGray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        supportingText = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Text(
+                                    text = "${renameInputText.length} / $MAX_TRIP_TITLE_LENGTH",
+                                    fontSize = 11.sp,
+                                    color = if (renameInputText.length >= MAX_TRIP_TITLE_LENGTH) Color(0xFFF59E0B) else Color(0xFF94A3B8)
+                                )
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = Color(0xFF64748B)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
-                )
+                }
             },
             confirmButton = {
                 Button(
-                    onClick = {
-                        tripToRename?.let { trip ->
-                            viewModel.renameTrip(trip.id, renameInputText.trim())
-                        }
-                        tripToRename = null
-                    },
+                    onClick = saveRenameAction,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -6203,7 +6272,7 @@ private fun LocalityCard(
                     // Compact Action Icons: Google Maps, Live Sharing, Saved Place, Expand
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         // Open in Google Maps
                         IconButton(
@@ -6214,13 +6283,13 @@ private fun LocalityCard(
                                     openInGoogleMaps(context, lat, lng, primaryPlace?.city ?: "")
                                 }
                             },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Map,
                                 contentDescription = "Open in Google Maps",
                                 tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
@@ -6230,25 +6299,25 @@ private fun LocalityCard(
                                 onClick = onShowLiveShare,
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981),
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxHeight()
-                                        .padding(horizontal = 6.dp)
+                                        .padding(horizontal = 8.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Sensors,
                                         contentDescription = "Live Sharing Active",
                                         tint = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                        modifier = Modifier.size(15.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                     if (liveTimerText.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = liveTimerText,
-                                            fontSize = 10.sp,
+                                            fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
                                             style = TextStyle(
@@ -6257,22 +6326,22 @@ private fun LocalityCard(
                                                     alignment = LineHeightStyle.Alignment.Center,
                                                     trim = LineHeightStyle.Trim.Both
                                                 ),
-                                                lineHeight = 10.sp
+                                                lineHeight = 11.sp
                                             )
                                         )
                                         if (liveSession.viewCount > 0) {
                                             Spacer(modifier = Modifier.width(3.dp))
                                             Text(
                                                 text = "•",
-                                                fontSize = 10.sp,
+                                                fontSize = 11.sp,
                                                 color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
                                             )
                                             Spacer(modifier = Modifier.width(3.dp))
-                                            EmojiText(emoji = "👥", fontSize = 10.sp)
+                                            EmojiText(emoji = "👥", fontSize = 11.sp)
                                             Spacer(modifier = Modifier.width(2.dp))
                                             Text(
                                                 text = "${liveSession.viewCount}",
-                                                fontSize = 10.sp,
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
                                                 style = TextStyle(
@@ -6281,7 +6350,7 @@ private fun LocalityCard(
                                                         alignment = LineHeightStyle.Alignment.Center,
                                                         trim = LineHeightStyle.Trim.Both
                                                     ),
-                                                    lineHeight = 10.sp
+                                                    lineHeight = 11.sp
                                                 )
                                             )
                                         }
@@ -6292,13 +6361,13 @@ private fun LocalityCard(
                             // Permanent Live Sharing Transmission Icon when stopped / inactive (1-tap to start)
                             IconButton(
                                 onClick = onShowLiveShare,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Sensors,
                                     contentDescription = "Start Live Sharing",
                                     tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -6309,17 +6378,17 @@ private fun LocalityCard(
                                 onClick = onOpenSavedPlaces,
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0x3310B981),
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxHeight()
-                                        .padding(horizontal = 6.dp)
+                                        .padding(horizontal = 8.dp)
                                 ) {
                                     EmojiText(
                                         emoji = nearbySavedPlace.category.iconEmoji,
-                                        fontSize = 14.sp
+                                        fontSize = 15.sp
                                     )
                                 }
                             }
@@ -6328,13 +6397,13 @@ private fun LocalityCard(
                         // Direct Expand Toggle (switches to Normal mode)
                         IconButton(
                             onClick = { onSetLocalityCardStyle(LocalityCardStyle.NORMAL) },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ExpandMore,
                                 contentDescription = "Expand Locality Card",
                                 tint = Color(0xFFCBD5E1),
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
@@ -6508,7 +6577,7 @@ private fun LocalityCard(
                                 }
                             },
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF1E293B))
                         ) {
@@ -6516,7 +6585,7 @@ private fun LocalityCard(
                                 imageVector = Icons.Default.Map,
                                 contentDescription = "Open in Google Maps",
                                 tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
 
@@ -6524,9 +6593,9 @@ private fun LocalityCard(
                         if (liveSession?.isActive == true) {
                             Surface(
                                 onClick = onShowLiveShare,
-                                shape = RoundedCornerShape(18.dp),
+                                shape = RoundedCornerShape(20.dp),
                                 color = if (liveSession.isPaused) Color(0x33F59E0B) else Color(0x3310B981),
-                                modifier = Modifier.height(36.dp)
+                                modifier = Modifier.height(40.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -6538,13 +6607,13 @@ private fun LocalityCard(
                                         imageVector = Icons.Filled.Sensors,
                                         contentDescription = "Live Sharing Active",
                                         tint = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     if (liveTimerText.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(5.dp))
                                         Text(
                                             text = liveTimerText,
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
                                             style = TextStyle(
@@ -6553,22 +6622,22 @@ private fun LocalityCard(
                                                     alignment = LineHeightStyle.Alignment.Center,
                                                     trim = LineHeightStyle.Trim.Both
                                                 ),
-                                                lineHeight = 11.sp
+                                                lineHeight = 12.sp
                                             )
                                         )
                                         if (liveSession.viewCount > 0) {
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
                                                 text = "•",
-                                                fontSize = 11.sp,
+                                                fontSize = 12.sp,
                                                 color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981)
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            EmojiText(emoji = "👥", fontSize = 11.sp)
+                                            EmojiText(emoji = "👥", fontSize = 12.sp)
                                             Spacer(modifier = Modifier.width(2.dp))
                                             Text(
                                                 text = "${liveSession.viewCount}",
-                                                fontSize = 11.sp,
+                                                fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
                                                 style = TextStyle(
@@ -6577,7 +6646,7 @@ private fun LocalityCard(
                                                         alignment = LineHeightStyle.Alignment.Center,
                                                         trim = LineHeightStyle.Trim.Both
                                                     ),
-                                                    lineHeight = 11.sp
+                                                    lineHeight = 12.sp
                                                 )
                                             )
                                         }
@@ -6589,7 +6658,7 @@ private fun LocalityCard(
                             IconButton(
                                 onClick = onShowLiveShare,
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
                                     .background(Color(0xFF1E293B))
                             ) {
@@ -6597,7 +6666,7 @@ private fun LocalityCard(
                                     imageVector = Icons.Filled.Sensors,
                                     contentDescription = "Start Live Sharing",
                                     tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -6613,7 +6682,7 @@ private fun LocalityCard(
                             IconButton(
                                 onClick = onOpenSavedPlaces,
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
                                     .background(Color(0xFF1E293B))
                             ) {
@@ -6621,7 +6690,7 @@ private fun LocalityCard(
                                     imageVector = Icons.Default.BookmarkBorder,
                                     contentDescription = "Saved Places",
                                     tint = Color(0xFF10B981),
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         } else if (nearbySavedPlace.name.length <= 12) {
@@ -6631,7 +6700,7 @@ private fun LocalityCard(
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0x3310B981),
                                 border = BorderStroke(1.dp, Color(0x5510B981)),
-                                modifier = Modifier.height(36.dp).widthIn(max = 140.dp)
+                                modifier = Modifier.height(40.dp).widthIn(max = 150.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -6641,7 +6710,7 @@ private fun LocalityCard(
                                 ) {
                                     EmojiText(
                                         emoji = nearbySavedPlace.category.iconEmoji,
-                                        fontSize = 13.sp
+                                        fontSize = 15.sp
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
@@ -6668,7 +6737,7 @@ private fun LocalityCard(
                         IconButton(
                             onClick = { onSetLocalityCardStyle(LocalityCardStyle.COMPACT) },
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF1E293B))
                         ) {
@@ -6676,7 +6745,7 @@ private fun LocalityCard(
                                 imageVector = Icons.Default.ExpandLess,
                                 contentDescription = "Collapse Locality Card",
                                 tint = Color(0xFFCBD5E1),
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
@@ -7625,9 +7694,31 @@ fun TripFilterDropdowns(
     }
 }
 
+private fun formatDurationShort(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return when {
+        h > 0 -> String.format(Locale.getDefault(), "%dh %02dm", h, m)
+        m > 0 -> String.format(Locale.getDefault(), "%dm %02ds", m, s)
+        else -> String.format(Locale.getDefault(), "%ds", s)
+    }
+}
+
 private sealed class RouteTimelineItem(val timestamp: Long) {
-    data class Place(val place: VisitedPlace, val orderNumber: Int) : RouteTimelineItem(place.timestamp)
-    data class Pause(val pause: TripPause, val pauseIndex: Int) : RouteTimelineItem(pause.startTime)
+    data class Place(
+        val place: VisitedPlace,
+        val orderNumber: Int,
+        val legDistanceMeters: Double,
+        val legDurationMs: Long
+    ) : RouteTimelineItem(place.timestamp)
+
+    data class Pause(
+        val pause: TripPause,
+        val pauseIndex: Int,
+        val pauseDistanceMeters: Double
+    ) : RouteTimelineItem(pause.startTime)
 }
 
 @Composable
@@ -7663,14 +7754,29 @@ fun TripDetailDialog(
         "In Progress / Live"
     }
 
-    val timelineItems = remember(trip) {
+    val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
+
+    val timelineItems = remember(trip, cumulativeDistances) {
         val items = mutableListOf<RouteTimelineItem>()
-        var placeCounter = 1
-        trip.placesVisited.forEach { place ->
-            items.add(RouteTimelineItem.Place(place, placeCounter++))
+        val sortedPlaces = trip.placesVisited.sortedBy { it.timestamp }
+        var prevPlace: VisitedPlace? = null
+        sortedPlaces.forEachIndexed { index, place ->
+            val legDist = if (prevPlace != null) {
+                (place.distanceAtEntryMeters - prevPlace!!.distanceAtEntryMeters).coerceAtLeast(0.0)
+            } else {
+                place.distanceAtEntryMeters.coerceAtLeast(0.0)
+            }
+            val legDur = if (prevPlace != null) {
+                (place.timestamp - prevPlace!!.timestamp).coerceAtLeast(0L)
+            } else {
+                (place.timestamp - trip.startTime).coerceAtLeast(0L)
+            }
+            items.add(RouteTimelineItem.Place(place, index + 1, legDist, legDur))
+            prevPlace = place
         }
         trip.pauses.forEachIndexed { idx, pause ->
-            items.add(RouteTimelineItem.Pause(pause, idx))
+            val dist = calculatePauseDistanceMeters(trip, pause, cumulativeDistances)
+            items.add(RouteTimelineItem.Pause(pause, idx, dist))
         }
         items.sortedBy { it.timestamp }
     }
@@ -7731,9 +7837,7 @@ fun TripDetailDialog(
                                     text = if (trip.title.isNotBlank()) trip.title else "Trip Details",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = Color.White
                                 )
                                 Text(
                                     text = "$startDateStr • $startTimeStr",
@@ -8181,8 +8285,25 @@ fun TripDetailDialog(
                                                     Text(
                                                         text = String.format(Locale.getDefault(), "at %.2f km", entryDistKm),
                                                         fontSize = 10.sp,
-                                                        color = Color(0xFF64748B)
+                                                        color = Color(0xFF94A3B8)
                                                     )
+                                                    if (item.orderNumber > 1) {
+                                                        val legKm = item.legDistanceMeters / 1000.0
+                                                        val legTimeStr = formatDurationShort(item.legDurationMs)
+                                                        Text(
+                                                            text = String.format(Locale.getDefault(), "+%.2f km • %s", legKm, legTimeStr),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFF38BDF8)
+                                                        )
+                                                    } else {
+                                                        Text(
+                                                            text = "Trip Start",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFF10B981)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -8190,6 +8311,7 @@ fun TripDetailDialog(
                                             val pause = item.pause
                                             val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pause.startTime))
                                             val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                            val pauseDistKm = item.pauseDistanceMeters / 1000.0
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -8223,7 +8345,7 @@ fun TripDetailDialog(
                                                             color = Color(0xFFFBBF24)
                                                         )
                                                         Text(
-                                                            text = "Paused at $pauseTimeStr",
+                                                            text = String.format(Locale.getDefault(), "Paused at %s • at %.2f km", pauseTimeStr, pauseDistKm),
                                                             fontSize = 11.sp,
                                                             color = Color(0xFF94A3B8)
                                                         )
