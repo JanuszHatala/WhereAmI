@@ -586,6 +586,22 @@ class LocationManager private constructor(private val context: Context) {
                 !multiData.pl.city.equals("Unknown City", ignoreCase = true) &&
                 !multiData.pl.city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
+        // When crossing into a confirmed new locality, adopt the new locality's street immediately on the 1st fix
+        if (isLocalityTransition && !rawStreetPl.isNullOrBlank()) {
+            TelemetryLogger.log("STREET", "Locality transition to '${multiData.pl.city}': adopting candidate '$rawStreetPl' immediately on 1st fix")
+            committedStreetPl = rawStreetPl
+            committedStreetBase = rawBase
+            lastCommittedStreetLocality = multiData.pl.city
+            candidateStreetPl = null
+            candidateStreetBase = null
+            candidateStreetCount = 0
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        }
+
         val isRecentTurn = (now - lastTurnTimestamp) < 14_000L
 
         // Compute required confirmations based on speed and road hierarchy
@@ -605,18 +621,18 @@ class LocationManager private constructor(private val context: Context) {
                 rawRequiredCount = when {
                     isCommittedMajor && !isCandidateMajor -> 7
                     !isCommittedMajor && isCandidateMajor -> 2 // Snap onto highway corridor quickly
-                    else -> 4
+                    else -> 2 // Fast switch between regular streets when driving
                 }
                 rawRequiredDuration = when {
                     isCommittedMajor && !isCandidateMajor -> 10_000L
                     !isCommittedMajor && isCandidateMajor -> 2_000L
-                    else -> 4_500L
+                    else -> 2_000L
                 }
             }
             speedKmh > 15f -> {
                 // Moderate city driving / cycling:
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 2
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_000L
             }
             else -> {
                 // Slow driving / cycling / walking (1.2 - 15 km/h):
@@ -655,12 +671,14 @@ class LocationManager private constructor(private val context: Context) {
                 native = multiData.native.copy(street = committedStreetPl)
             )
         } else {
-            // If crossing into a new locality and candidate street is not yet confirmed (e.g. 1st fix in Bielsko-Biała),
-            // NEVER display the old locality's street (e.g. "ul. Bielska" from Kozy).
+            // If crossing into a new locality and candidate street is pending confirmation,
+            // prioritize candidate street or roadRef to never leave the road display blank!
             if (isLocalityTransition) {
                 val fallbackStreet = if (!multiData.pl.roadRef.isNullOrBlank()) {
                     RoadNameNormalizer.normalize(null, multiData.pl.roadRef, null)
-                } else null
+                } else {
+                    rawStreetPl
+                }
                 return multiData.copy(
                     en = multiData.en.copy(street = fallbackStreet),
                     pl = multiData.pl.copy(street = fallbackStreet),
@@ -1077,36 +1095,13 @@ class LocationManager private constructor(private val context: Context) {
         val isDrivingFast = speedKmh != null && speedKmh > 15f && bearing != null
 
         if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
-            if (!isDrivingFast || RoadNameNormalizer.isMajorRoad(cached.data.pl.street)) {
-                return sanitizeMultiDataHouseNumbers(cached.data, speedKmh, accuracyMeters)
-            }
+            return sanitizeMultiDataHouseNumbers(cached.data, speedKmh, accuracyMeters)
         }
 
         // Check persistent SQLite spatial cache (indefinite retention for offline-first resilience & zero network overhead on daily commutes)
         try {
             val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
-                // If heading is available and actively driving,
-                // verify against OSRM to auto-correct any legacy side-street mis-matches
-                val isActivelyDriving = speedKmh != null && speedKmh >= 10f && bearing != null
-                if (isActivelyDriving && !RoadNameNormalizer.isMajorRoad(diskCached.pl.street)) {
-                    val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, bearing)
-                    if (osrmStreet != null) {
-                        val canonical = RoadNameNormalizer.normalize(osrmStreet, diskCached.pl.roadRef, null)
-                        if (!canonical.isNullOrBlank() && canonical != diskCached.pl.street) {
-                            val corrected = diskCached.copy(
-                                en = diskCached.en.copy(street = canonical),
-                                pl = diskCached.pl.copy(street = canonical),
-                                native = diskCached.native.copy(street = canonical)
-                            )
-                            spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, corrected)
-                            try {
-                                SpatialCacheHelper.getInstance(context).put(lat, lng, corrected)
-                            } catch (_: Exception) {}
-                            return sanitizeMultiDataHouseNumbers(corrected, speedKmh, accuracyMeters)
-                        }
-                    }
-                }
                 spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                 return sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
             }

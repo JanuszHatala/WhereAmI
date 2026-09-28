@@ -230,4 +230,12 @@ object RoadNameNormalizer {
         }
         return res
     }
+
+    /**
+     * Abbreviates a street name using the modular StreetAbbreviator engine.
+     */
+    fun shortenStreetName(street: String?, countryCode: String? = null, language: String? = null): String? {
+        return StreetAbbreviator.abbreviate(street, countryCode, language)
+    }
 }
+

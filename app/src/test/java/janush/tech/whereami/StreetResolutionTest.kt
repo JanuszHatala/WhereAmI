@@ -343,11 +343,33 @@ class StreetResolutionTest {
                     !city.equals("Unknown City", ignoreCase = true) &&
                     !city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
-            val rawRequiredCount = 4
-            val rawRequiredDuration = 4500L
+            // When crossing into a confirmed new locality, adopt new locality's street immediately on 1st fix
+            if (isLocalityTransition && !rawStreetPl.isNullOrBlank()) {
+                committedStreetPl = rawStreetPl
+                committedStreetBase = rawBase
+                lastCommittedStreetLocality = city
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return committedStreetPl
+            }
 
-            val requiredCount = if (isLocalityTransition) minOf(rawRequiredCount, 2) else rawRequiredCount
-            val requiredDuration = if (isLocalityTransition) minOf(rawRequiredDuration, 2000L) else rawRequiredDuration
+            val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase)
+            val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
+
+            val rawRequiredCount = when {
+                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 7 else 2
+                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 5 else 2
+                else -> if (isCommittedMajor && !isCandidateMajor) 5 else 3
+            }
+            val rawRequiredDuration = when {
+                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 10_000L else 2_000L
+                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_000L
+                else -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
+            }
+
+            val requiredCount = rawRequiredCount
+            val requiredDuration = rawRequiredDuration
             val candidateDuration = now - candidateStreetFirstSeenTime
 
             if (candidateStreetCount >= requiredCount && candidateDuration >= requiredDuration) {
@@ -362,7 +384,7 @@ class StreetResolutionTest {
                 if (isLocalityTransition) {
                     val fallbackStreet = if (!roadRef.isNullOrBlank()) {
                         RoadNameNormalizer.normalize(null, roadRef, null)
-                    } else null
+                    } else rawStreetPl
                     return fallbackStreet
                 }
                 return committedStreetPl
@@ -371,7 +393,7 @@ class StreetResolutionTest {
     }
 
     @Test
-    fun `Locality transition does not display previous town street before confirmation`() {
+    fun `Locality transition adopts new town street on 1st fix without blanking`() {
         val model = LocalityStreetHysteresisModel()
 
         // Step 1: Initial commit in Kozy along DK52 (ul. Bielska)
@@ -386,7 +408,7 @@ class StreetResolutionTest {
         assertEquals("Kozy", model.lastCommittedStreetLocality)
 
         // Step 2: Cross boundary into Bielsko-Biała on DK52 (1st fix in Bielsko-Biała, raw is ul. Krakowska)
-        // Candidate count = 1 (< 2 required). Must NOT return "ul. Bielska"!
+        // Adopts new locality's street immediately on 1st fix! Zero blanking, zero stale street!
         val fix1 = model.processFix(
             rawStreetPl = "ul. Krakowska (DK52)",
             city = "Bielsko-Biała",
@@ -395,30 +417,15 @@ class StreetResolutionTest {
             now = 2000L
         )
         assertEquals(
-            "During locality transition with 1 candidate fix, must display canonical road ref 'DK52' instead of old town's 'ul. Bielska'",
-            "DK52",
-            fix1
-        )
-
-        // Step 3: Second fix in Bielsko-Biała (count = 2, elapsed >= 2000ms).
-        // Switch commits to new locality's street "ul. Krakowska (DK52)"!
-        val fix2 = model.processFix(
-            rawStreetPl = "ul. Krakowska (DK52)",
-            city = "Bielsko-Biała",
-            roadRef = "DK52",
-            speedKmh = 60f,
-            now = 4500L
-        )
-        assertEquals(
-            "After 2 confirmations, new street 'ul. Krakowska (DK52)' must commit",
+            "During locality transition, must adopt new town street 'ul. Krakowska (DK52)' immediately on 1st fix",
             "ul. Krakowska (DK52)",
-            fix2
+            fix1
         )
         assertEquals("Bielsko-Biała", model.lastCommittedStreetLocality)
     }
 
     @Test
-    fun `Locality transition on residential road without roadRef hides old street until confirmed`() {
+    fun `Locality transition on residential road without roadRef adopts new street immediately without blanking`() {
         val model = LocalityStreetHysteresisModel()
 
         // Initial commit in Town A
@@ -438,18 +445,44 @@ class StreetResolutionTest {
             speedKmh = 30f,
             now = 2000L
         )
-        // Must return null (never display "ul. Polna" in Town B)
-        assertNull("Residential road without roadRef must yield null rather than leaking Town A's street into Town B", fix1)
-
-        // 2nd fix confirms
-        val fix2 = model.processFix(
-            rawStreetPl = "ul. Leśna",
-            city = "Town B",
-            roadRef = null,
-            speedKmh = 30f,
-            now = 4500L
-        )
-        assertEquals("ul. Leśna", fix2)
+        // Must adopt "ul. Leśna" immediately without returning null or blanking out!
+        assertEquals("Residential road in new locality must adopt immediately without blanking", "ul. Leśna", fix1)
         assertEquals("Town B", model.lastCommittedStreetLocality)
     }
+
+    @Test
+    fun `Driving speed switch between regular streets commits after 2 confirmations and 2000ms`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // Commit on Polna
+        model.processFix(
+            rawStreetPl = "ul. Polna",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 50f,
+            now = 1000L
+        )
+
+        // Turn onto Krakowska at 60 km/h (Fix 1)
+        val fix1 = model.processFix(
+            rawStreetPl = "ul. Krakowska",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 60f,
+            now = 2000L
+        )
+        // 1st fix preserves current street (anti-jitter)
+        assertEquals("ul. Polna", fix1)
+
+        // Fix 2: 2nd agreeing fix after 2000ms -> commits to Krakowska!
+        val fix2 = model.processFix(
+            rawStreetPl = "ul. Krakowska",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 60f,
+            now = 4100L
+        )
+        assertEquals("Switch to ul. Krakowska must commit on 2nd confirmation", "ul. Krakowska", fix2)
+    }
 }
+
