@@ -32,6 +32,9 @@ class NotificationDialogNavigationTest {
     fun testIntentActionConstants() {
         assertEquals("janush.tech.whereami.ACTION_OPEN_LIVE_SHARING", LiveTrackingService.ACTION_OPEN_LIVE_SHARING)
         assertEquals("extra_open_live_sharing", LiveTrackingService.EXTRA_OPEN_LIVE_SHARING)
+        assertEquals("janush.tech.whereami.ACTION_DISABLE_AUTO_START", LiveTrackingService.ACTION_DISABLE_AUTO_START)
+        assertEquals("janush.tech.whereami.ACTION_STOP", LiveTrackingService.ACTION_STOP)
+        assertEquals("janush.tech.whereami.ACTION_ENTER_STANDBY", LiveTrackingService.ACTION_ENTER_STANDBY)
         assertEquals("janush.tech.whereami.ACTION_OPEN_CACHE_MANAGER", CacheManager.ACTION_OPEN_CACHE_MANAGER)
         assertEquals("extra_open_cache_manager", CacheManager.EXTRA_OPEN_CACHE_MANAGER)
     }
