@@ -390,6 +390,7 @@
       <div class="stat-item">Speed: <b id="speedVal">--</b></div>
       <div class="stat-item">Alt: <b id="altVal">--</b></div>
       <div class="stat-item">Battery: <b id="batteryVal">--</b></div>
+      <div class="stat-item" id="accuracyStat" style="display: none;">GPS: <b id="accuracyVal">--</b></div>
       <div class="stat-item" id="visitorDistanceStat" style="display: none;">To Host: <b id="visitorDistanceVal">--</b></div>
       <div class="stat-item">Last seen: <b id="updatedVal">Waiting...</b></div>
     </div>
@@ -461,12 +462,13 @@
     }).addTo(map);
 
     let userMarker = null;
+    let hostAccuracyCircle = null;
     let trackPolyline = L.polyline([], { color: '#EF4444', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' }).addTo(map);
     let pauseMarkers = [];
     let autoFollow = true;
     let lastCoords = null;
     let currentSessionMeta = null;
-    let lastHostState = { isOnline: true, isPaused: false, statusClass: 'online', bearing: null };
+    let lastHostState = { isOnline: true, isPaused: false, statusClass: 'online', bearing: null, accuracy: null };
 
     map.on('dragstart', () => { 
       autoFollow = false; 
@@ -513,9 +515,9 @@
       });
     }
 
-    function updateHostMarker(coords, isOnline, isPaused, statusClass, bearing) {
+    function updateHostMarker(coords, isOnline, isPaused, statusClass, bearing, accuracy) {
       if (!coords) return;
-      lastHostState = { isOnline, isPaused, statusClass, bearing };
+      lastHostState = { isOnline, isPaused, statusClass, bearing, accuracy };
       const icon = createHostIcon(isOnline, isPaused, statusClass, bearing);
       if (!userMarker) {
         userMarker = L.marker(coords, { icon, zIndexOffset: 1000 }).addTo(map);
@@ -524,13 +526,32 @@
         userMarker.setLatLng(coords);
         userMarker.setIcon(icon);
       }
+
+      if (accuracy !== null && accuracy !== undefined && accuracy > 0) {
+        if (!hostAccuracyCircle) {
+          hostAccuracyCircle = L.circle(coords, {
+            radius: accuracy,
+            color: '#3B82F6',
+            fillColor: '#3B82F6',
+            fillOpacity: 0.12,
+            weight: 1,
+            interactive: false
+          }).addTo(map);
+        } else {
+          hostAccuracyCircle.setLatLng(coords);
+          hostAccuracyCircle.setRadius(accuracy);
+        }
+      } else if (hostAccuracyCircle) {
+        map.removeLayer(hostAccuracyCircle);
+        hostAccuracyCircle = null;
+      }
     }
 
     map.on('rotate', () => {
       const b = (map.getBearing ? map.getBearing() : 0) || 0;
       updateCompassHeading(b);
       if (userMarker && lastCoords) {
-        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing);
+        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing, lastHostState.accuracy);
       }
     });
 
@@ -540,7 +561,7 @@
       }
       updateCompassHeading(0);
       if (userMarker && lastCoords) {
-        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing);
+        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing, lastHostState.accuracy);
       }
     }
 
@@ -866,7 +887,7 @@
         }
 
         if (data.current) {
-          const { lat, lng, spd, alt, place, trekking, battery, t } = data.current;
+          const { lat, lng, spd, alt, place, trekking, battery, t, acc } = data.current;
           lastCoords = [lat, lng];
           updateVisitorDistance();
 
@@ -875,6 +896,17 @@
           document.getElementById('altVal').textContent = alt ? (Math.round(alt) + ' m ASL') : '--';
           document.getElementById('batteryVal').textContent = battery >= 0 ? ('🔋' + battery + '%') : '--';
           
+          const accEl = document.getElementById('accuracyStat');
+          const accVal = document.getElementById('accuracyVal');
+          if (accEl && accVal) {
+            if (acc !== null && acc !== undefined && acc > 0) {
+              accVal.textContent = `±${Math.round(acc)} m`;
+              accEl.style.display = 'inline-block';
+            } else {
+              accEl.style.display = 'none';
+            }
+          }
+
           const agoSec = Math.max(0, Math.round((Date.now() - t) / 1000));
           document.getElementById('updatedVal').textContent = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago');
 
@@ -902,7 +934,7 @@
             }
           }
 
-          updateHostMarker([lat, lng], isOnline, isSessionPaused, statusClass, bearing);
+          updateHostMarker([lat, lng], isOnline, isSessionPaused, statusClass, bearing, acc);
           if (autoFollow) {
             const currentZoom = map.getZoom() || 15;
             const offsetCenter = getOffsetCenter([lat, lng], currentZoom);
