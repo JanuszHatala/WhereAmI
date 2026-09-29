@@ -135,6 +135,7 @@ class TripManager private constructor(private val context: Context) {
     }
 
     fun setTripMode(mode: TripMode) {
+        if (_tripMode.value == mode) return
         _tripMode.value = mode
         prefs.edit().putString(KEY_TRIP_MODE, mode.name).apply()
         TelemetryLogger.log("SETTINGS", "TripMode changed to ${mode.name}")
