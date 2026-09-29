@@ -28,7 +28,8 @@ data class LivePoint(
     val lng: Double,
     val speedKmh: Float,
     val altitude: Double?,
-    val timestamp: Long
+    val timestamp: Long,
+    val accuracy: Float? = null
 )
 
 data class LiveSession(
@@ -159,6 +160,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     private var lastRecordedLat: Double = 0.0
     private var lastRecordedLng: Double = 0.0
     private var lastRecordedBearing: Float? = null
+    private var lastRecordedAccuracy: Float? = null
 
     init {
         loadSavedSession()
@@ -572,7 +574,8 @@ class LiveSharingManager private constructor(private val context: Context) {
         altitude: Double?,
         bearing: Float? = null,
         placeName: String?,
-        trekkingBadge: String?
+        trekkingBadge: String?,
+        accuracy: Float? = null
     ) {
         val session = _currentSession.value ?: return
         if (!session.isActive || session.isExpired || session.isPaused) {
@@ -595,13 +598,15 @@ class LiveSharingManager private constructor(private val context: Context) {
         lastRecordedLat = lat
         lastRecordedLng = lng
         if (bearing != null) lastRecordedBearing = bearing
+        if (accuracy != null) lastRecordedAccuracy = accuracy
 
         val point = LivePoint(
             lat = lat,
             lng = lng,
             speedKmh = speedKmh,
             altitude = altitude,
-            timestamp = now
+            timestamp = now,
+            accuracy = accuracy
         )
 
         synchronized(memoryPointsQueue) {
@@ -615,7 +620,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
 
         if (shouldSync) {
-            flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge)
+            flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
         }
     }
 
@@ -626,12 +631,13 @@ class LiveSharingManager private constructor(private val context: Context) {
         currentAlt: Double? = null,
         currentBearing: Float? = null,
         placeName: String? = null,
-        trekkingBadge: String? = null
+        trekkingBadge: String? = null,
+        currentAccuracy: Float? = null
     ) {
         val lat = currentLat ?: lastRecordedLat
         val lng = currentLng ?: lastRecordedLng
         if (lat == 0.0 && lng == 0.0) return
-        flushPointsToServer(lat, lng, currentSpeed ?: 0f, currentAlt, currentBearing ?: lastRecordedBearing, placeName, trekkingBadge)
+        flushPointsToServer(lat, lng, currentSpeed ?: 0f, currentAlt, currentBearing ?: lastRecordedBearing, placeName, trekkingBadge, currentAccuracy ?: lastRecordedAccuracy)
     }
 
     private fun flushPointsToServer(
@@ -641,7 +647,8 @@ class LiveSharingManager private constructor(private val context: Context) {
         altitude: Double?,
         bearing: Float?,
         placeName: String?,
-        trekkingBadge: String?
+        trekkingBadge: String?,
+        accuracy: Float? = null
     ) {
         val session = _currentSession.value ?: return
         if (!session.isActive) return
@@ -653,7 +660,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         scope.launch {
             val battery = getBatteryPercentage()
-            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery)
+            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy)
             if (ok) {
                 val now = System.currentTimeMillis()
                 val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
@@ -735,7 +742,8 @@ class LiveSharingManager private constructor(private val context: Context) {
         bearing: Float?,
         place: String?,
         trekking: String?,
-        battery: Int
+        battery: Int,
+        accuracy: Float? = null
     ): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
             val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}/points"
@@ -753,6 +761,7 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("lng", p.lng)
                     put("spd", p.speedKmh)
                     put("alt", p.altitude ?: JSONObject.NULL)
+                    put("acc", if (p.accuracy != null) Math.round(p.accuracy) else JSONObject.NULL)
                     put("t", p.timestamp)
                 })
             }
@@ -784,6 +793,7 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("spd", speed)
                     put("alt", altitude ?: JSONObject.NULL)
                     put("bearing", bearing ?: JSONObject.NULL)
+                    put("acc", if (accuracy != null) Math.round(accuracy) else JSONObject.NULL)
                     put("place", place ?: "")
                     put("trekking", trekking ?: "")
                     put("battery", battery)
