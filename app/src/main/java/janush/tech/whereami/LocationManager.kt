@@ -834,7 +834,8 @@ class LocationManager private constructor(private val context: Context) {
                             altitude = alt,
                             bearing = currentBearing,
                             placeName = immediatePlaceName,
-                            trekkingBadge = null
+                            trekkingBadge = null,
+                            accuracy = if (location.hasAccuracy()) location.accuracy else null
                         )
 
                         // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
