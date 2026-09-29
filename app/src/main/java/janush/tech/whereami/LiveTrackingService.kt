@@ -29,6 +29,7 @@ class LiveTrackingService : Service() {
         const val ACTION_PAUSE_RESUME = "janush.tech.whereami.ACTION_PAUSE_RESUME"
         const val ACTION_SYNC_NOW = "janush.tech.whereami.ACTION_SYNC_NOW"
         const val ACTION_STOP = "janush.tech.whereami.ACTION_STOP"
+        const val ACTION_DISABLE_AUTO_START = "janush.tech.whereami.ACTION_DISABLE_AUTO_START"
         const val ACTION_ENTER_STANDBY = "janush.tech.whereami.ACTION_ENTER_STANDBY"
         const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
         const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
@@ -84,13 +85,25 @@ class LiveTrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_DISABLE_AUTO_START -> {
+                TripManager.getInstance(this).setTripMode(TripMode.MANUAL)
+                LiveSharingManager.getInstance(this).stopSession()
+                updateWakeLock(false)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            }
             "STOP_TRACKING", ACTION_STOP -> {
                 LiveSharingManager.getInstance(this).stopSession()
                 val hasTrip = TripManager.getInstance(this).activeTrip.value != null
                 if (hasTrip) {
                     updateNotification()
                 } else {
-                    TripManager.getInstance(this).setTripMode(TripMode.MANUAL)
                     updateWakeLock(false)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -260,7 +273,7 @@ class LiveTrackingService : Service() {
             val stopIntent = android.app.PendingIntent.getService(
                 this,
                 3,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_DISABLE_AUTO_START },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             builder.addAction(0, formatActionTitle("🛑 Disable Auto-start", "#EF4444"), stopIntent)
