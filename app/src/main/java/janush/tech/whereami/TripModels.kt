@@ -2,13 +2,22 @@ package janush.tech.whereami
 
 import org.osmdroid.util.GeoPoint
 
+enum class PlaceKind(val iconEmoji: String, val displayName: String) {
+    LOCALITY("🏙️", "Locality"),
+    TRAIL("🥾", "Trail"),
+    MOUNTAIN_PASS("🏔️", "Mountain Pass"),
+    PEAK("⛰️", "Peak"),
+    POI("📍", "Point of Interest")
+}
+
 data class VisitedPlace(
     val placeName: String,
     val hierarchySubtitle: String,
     val timestamp: Long,
     val latitude: Double,
     val longitude: Double,
-    val distanceAtEntryMeters: Double
+    val distanceAtEntryMeters: Double,
+    val placeKind: PlaceKind = PlaceKind.LOCALITY
 )
 
 const val MAX_TRIP_TITLE_LENGTH = 50

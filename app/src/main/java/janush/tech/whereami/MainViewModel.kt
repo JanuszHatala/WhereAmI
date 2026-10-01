@@ -198,15 +198,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadSavedTrips()
         loadSavedPlaces()
 
-        // Automatically reload trips when a trip completes (manual or auto-stop)
+        // Automatically reload trips when a trip completes (manual or auto-stop) and keep last recorded trip selected
         viewModelScope.launch {
-            var hadActive = false
+            var lastActiveTripId: Long? = null
             tripManager.activeTrip.collect { active ->
                 if (active != null) {
-                    hadActive = true
-                } else if (hadActive) {
-                    hadActive = false
-                    loadSavedTrips()
+                    lastActiveTripId = active.id
+                } else if (lastActiveTripId != null) {
+                    val finishedId = lastActiveTripId
+                    lastActiveTripId = null
+                    val trips = kotlinx.coroutines.withContext(Dispatchers.IO) { tripManager.getAllTrips() }
+                    _savedTrips.value = trips
+                    if (finishedId != null && trips.any { t -> t.id == finishedId }) {
+                        _selectedTripIds.value = setOf(finishedId)
+                        _fitTrackTrigger.value = System.currentTimeMillis()
+                    }
                 }
             }
         }
@@ -360,6 +366,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAutoStopMinutes(minutes: Int) {
         tripManager.setAutoStopMinutes(minutes)
+    }
+
+    fun getAutoStartSecondsForProfile(profile: ActivityProfile): Int {
+        return tripManager.getAutoStartSecondsForProfile(profile)
+    }
+
+    fun setAutoStartSecondsForProfile(profile: ActivityProfile, seconds: Int) {
+        tripManager.setAutoStartSecondsForProfile(profile, seconds)
+    }
+
+    fun getAutoStopMinutesForProfile(profile: ActivityProfile): Int {
+        return tripManager.getAutoStopMinutesForProfile(profile)
+    }
+
+    fun setAutoStopMinutesForProfile(profile: ActivityProfile, minutes: Int) {
+        tripManager.setAutoStopMinutesForProfile(profile, minutes)
     }
 
     fun startManualTrip() {

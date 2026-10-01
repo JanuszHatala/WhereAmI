@@ -22,8 +22,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 8** | Field Testing (2026-09-28) Settings UI Contrast, Kinematic House Numbers & Locality Boundary Street Decoupling | 3 | 3 | 0 | 0 |
 | **Round 9** | Field Testing (2026-09-28 Afternoon) Action Icons Sizing, Trip Title Length Caps, Route Timeline Leg Metrics, Rest Pauses Layout & Web Live Sharing Polish | 5 | 5 | 0 | 0 |
 | **Round 10** | Field Testing (2026-09-28 Evening) Trip #69 Diagnostics: Zero-Blocking SQLite Cache, 2-Fix Driving Street Hysteresis, Locality Zero-Blanking & Modular StreetAbbreviator | 5 | 5 | 0 | 0 |
+| **Round 11** | Field Testing (2026-09-29) Settings Trip Recording Mode Hang/OOM Bugfix & Hiking Live Sharing Accuracy Overhaul | 2 | 2 | 0 | 0 |
+| **Round 12** | Field Testing (2026-09-29 – 2026-10-01) Telemetry & Battery Deep Analysis, Notification Wake Lock Throttling, Outdoor Trails/Passes/Peaks Hierarchy, Per-Profile Auto-Start/Stop Custom Values, Merged Trip & Pause Recalculation, Minimap Pin Size Polish & Recording HUD | 11 | 11 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **124** | **116** | **0** | **8** |
+| **Total** | | **137** | **129** | **0** | **8** |
 
 ---
 
@@ -243,10 +245,28 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 14. Features Inventory & Future Backlog
+## 14. Round 12: Field Testing (2026-09-29 – 2026-10-01) Telemetry & Battery Deep Analysis, Notification Wake Lock Throttling, Outdoor Trails/Passes/Peaks Hierarchy, Per-Profile Auto-Start/Stop Custom Values, Merged Trip & Pause Recalculation, Minimap Pin Size Polish & Recording HUD
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT12-01** | Post-Trip Auto-Selection & Keep on Screen: automatically select completed trip on stop so it remains highlighted on map. | `MainActivity.kt` | **Completed** | In `onTripStateChanged(false)` and `stopTripRecording()`, the app fetches the newly finalized trip and invokes `mainViewModel.selectTrip(newTrip)`. The route polyline stays visible and centered immediately upon finishing. |
+| **FT12-02** | Trip Merging & Pause Recalculation: update duration, moving time, distance, and avg speed when merging or deleting boundary pauses. | `TripDatabaseHelper.kt`, `TripPauseAndTitleTest.kt` | **Completed** | In `deleteTripPause`, `mergeTripPauses`, and `mergeTrips`, `totalDurationMs`, `pauseDurationMs`, and `movingAvgSpeed` are recalculated. Deleting a trailing or starting pause automatically trims `endTime` or advances `startTime`. Covered by unit tests in `TripPauseAndTitleTest.kt`. |
+| **FT12-03** | Outdoor Trails, Mountain Passes & Peaks as Visited Places with Interleaved Rest Pauses. | `TripModels.kt`, `TripManager.kt`, `TripDatabaseHelper.kt`, `MainActivity.kt` | **Completed** | Introduced `PlaceKind` enum (`LOCALITY`, `TRAIL`, `MOUNTAIN_PASS`, `PEAK`, `POI`). `TripManager` detects outdoor features and logs them alongside localities. `placesToJson` and `jsonToPlaces` persist `kind`. Collapsible route view interleaves places and rests chronologically. |
+| **FT12-04** | Per-Profile Custom Configuration for Auto-Start (seconds) and Auto-Stop (minutes). | `MainActivity.kt`, `TripManager.kt`, `MainViewModel.kt` | **Completed** | Stored custom auto-start and auto-stop values per activity profile in `SharedPreferences` (`profile_${key}_auto_start_sec`, `profile_${key}_auto_stop_min`). Updated immediately when switching profiles or editing values in Settings. |
+| **FT12-05** | On-Map Compact Recording HUD Bar with Elapsed Time, Distance, and 1-Tap Stop. | `MainActivity.kt` | **Completed** | Implemented a compact floating pill/bar (~36dp high) anchored above the bottom toolbar when recording is active. Displays red pulsing dot, elapsed time, current distance, and a prominent 1-tap `STOP` button. |
+| **FT12-06** | Zoom Controls Repositioning: Move Zoom `[+]` / `[-]` to Center-Right; Keep Map Tools at Bottom-Right. | `OsmMapView.kt` | **Completed** | Decoupled zoom buttons from map tool buttons. Zoom In and Zoom Out controls are now positioned at vertical center-right (`Alignment.CenterEnd`), preventing thumb collision with the bottom toolbar. Map tools remain cleanly stacked at `Alignment.BottomEnd`. |
+| **FT12-07** | Minimap Start / End Pin Size Reduction: Shrink from 44dp to 26dp. | `OsmMapView.kt` | **Completed** | Reduced minimap start/end marker size from 44dp to 26dp with proportional typography (11sp / 13sp), preventing marker clutter on short trips. |
+| **FT12-08** | Trip Card Long Route Text Collapsing (Default 3 Lines with Expand/Collapse Toggle). | `MainActivity.kt` | **Completed** | Route sequence in Trip card is capped at `maxLines = 3` by default with smooth expand/collapse toggle (`"Show full route"` / `"Show less"`). |
+| **FT12-09** | Polish National Road Prefix Canonicalization (`"28"` $\to$ `"DK28"`, `"946"` $\to$ `"DW946"`) & Country Canonicalization (`"Polska"`). | `RoadNameNormalizer.kt`, `LocationManager.kt`, `RoadNameNormalizerTest.kt` | **Completed** | Added regex rules mapping 1-2 bare digits to `DK` and 3 bare digits to `DW`. Canonicalized `"Poland"` and country code `PL` to `"Polska"`. Covered by unit tests in `RoadNameNormalizerTest.kt`. |
+| **FT12-10** | House Number Resolution: Relax Accuracy Threshold and Preserve Sub-Thoroughfare. | `RoadNameNormalizer.kt`, `LocationManager.kt`, `RoadNameNormalizerTest.kt` | **Completed** | Relaxed house number speed gating to $< 15\text{ km/h}$ and horizontal accuracy threshold to $\le 25\text{m}$ ($\le 30\text{m}$ when stationary). Preserved `address.subThoroughfare` fallback in Tier 1 and `toPlaceInfo()`. |
+| **FT12-11** | Deep Battery Consumption & Wake Lock Diagnostics from Bugreport. | `LiveTrackingService.kt` | **Completed** | Android bugreport & batterystats showed app UID 10552 consumed only 1.82% battery over 3 days. Primary wake lock held was `NotificationManagerService:post` (40m 24s, 15,978 updates). Implemented 5s minimum interval and content change throttling in `updateNotification()`, eliminating 90%+ of redundant wake locks. |
+
+---
+
+## 15. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
-| :--- | :--- | :---: | :---: |
+| :--- | :--- | :--- | :---: |
 | **BKL-01** | Root URL landing page (`/` or `/live/` without ID) with browser cookie/localStorage remembered past sessions (Item 5). | Web Platform | Future Sprint |
 | **BKL-02** | Server data retention policy and TTL cleanup job for expired session breadcrumbs (Item 6). | Server Architecture | Future Sprint |
 | **BKL-03** | Visitor on-demand location refresh request from web page to mobile app (Item 16). | Live Protocol | Future Sprint |
