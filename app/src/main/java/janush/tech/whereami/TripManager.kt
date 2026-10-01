@@ -28,20 +28,12 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
         private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
+        private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
     }
 
     private val dbHelper = TripDatabaseHelper(context)
     private val scope = CoroutineScope(Dispatchers.IO)
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    private val _tripMode = MutableStateFlow(
-        try {
-            TripMode.valueOf(prefs.getString(KEY_TRIP_MODE, TripMode.MANUAL.name) ?: TripMode.MANUAL.name)
-        } catch (_: Exception) {
-            TripMode.MANUAL
-        }
-    )
-    val tripMode: StateFlow<TripMode> = _tripMode.asStateFlow()
 
     private val _activityProfile = MutableStateFlow(
         try {
@@ -52,11 +44,40 @@ class TripManager private constructor(private val context: Context) {
     )
     val activityProfile: StateFlow<ActivityProfile> = _activityProfile.asStateFlow()
 
+    private val _tripMode = MutableStateFlow(getTripModeForProfile(_activityProfile.value))
+    val tripMode: StateFlow<TripMode> = _tripMode.asStateFlow()
+
     private val _autoStopMinutes = MutableStateFlow(
-        prefs.getInt(KEY_AUTO_STOP_PREFIX + (prefs.getString(KEY_ACTIVITY_PROFILE, ActivityProfile.CAR.name) ?: ActivityProfile.CAR.name), 
-            prefs.getInt(KEY_AUTO_STOP_MINUTES, 5))
+        prefs.getInt(KEY_AUTO_STOP_PREFIX + _activityProfile.value.name, 
+            prefs.getInt(KEY_AUTO_STOP_MINUTES, _activityProfile.value.autoStopMinutesDefault))
     )
     val autoStopMinutes: StateFlow<Int> = _autoStopMinutes.asStateFlow()
+
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    fun getTripModeForProfile(profile: ActivityProfile): TripMode {
+        val saved = prefs.getString(KEY_TRIP_MODE_PREFIX + profile.name, null)
+        if (saved != null) {
+            try { return TripMode.valueOf(saved) } catch (_: Exception) {}
+        }
+        val legacy = prefs.getString(KEY_TRIP_MODE, null)
+        if (legacy != null) {
+            try { return TripMode.valueOf(legacy) } catch (_: Exception) {}
+        }
+        return when (profile) {
+            ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> TripMode.AUTO
+            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING -> TripMode.MANUAL
+        }
+    }
+
+    fun setTripModeForProfile(profile: ActivityProfile, mode: TripMode) {
+        prefs.edit().putString(KEY_TRIP_MODE_PREFIX + profile.name, mode.name).apply()
+        if (_activityProfile.value == profile) {
+            setTripMode(mode)
+        }
+        TelemetryLogger.log("SETTINGS", "TripMode for ${profile.name} changed to ${mode.name}")
+    }
 
     fun getAutoStartSecondsForProfile(profile: ActivityProfile): Int {
         val defaultSec = (profile.autoStartDurationMs / 1000L).toInt()
@@ -64,7 +85,7 @@ class TripManager private constructor(private val context: Context) {
     }
 
     fun setAutoStartSecondsForProfile(profile: ActivityProfile, seconds: Int) {
-        val clamped = seconds.coerceIn(3, 120)
+        val clamped = seconds.coerceIn(3, 86400) // up to 24 hours
         prefs.edit().putInt(KEY_AUTO_START_PREFIX + profile.name, clamped).apply()
         TelemetryLogger.log("SETTINGS", "AutoStartSeconds for ${profile.name} changed to $clamped")
     }
@@ -75,7 +96,7 @@ class TripManager private constructor(private val context: Context) {
     }
 
     fun setAutoStopMinutesForProfile(profile: ActivityProfile, minutes: Int) {
-        val clamped = minutes.coerceIn(1, 60)
+        val clamped = minutes.coerceIn(1, 1440) // up to 24 hours (1440 min)
         prefs.edit().putInt(KEY_AUTO_STOP_PREFIX + profile.name, clamped).apply()
         if (_activityProfile.value == profile) {
             _autoStopMinutes.value = clamped
@@ -85,6 +106,43 @@ class TripManager private constructor(private val context: Context) {
 
     private val _activeTrip = MutableStateFlow<TripRecord?>(null)
     val activeTrip: StateFlow<TripRecord?> = _activeTrip.asStateFlow()
+
+    fun pauseTrip() {
+        val current = _activeTrip.value ?: return
+        if (_isPaused.value) return
+        _isPaused.value = true
+        val now = System.currentTimeMillis()
+        val loc = lastLocation
+        val lat = loc?.latitude ?: current.points.lastOrNull()?.latitude ?: 0.0
+        val lng = loc?.longitude ?: current.points.lastOrNull()?.longitude ?: 0.0
+        activePause = TripPause(
+            startTime = now,
+            latitude = lat,
+            longitude = lng,
+            pointIndex = current.points.size,
+            distanceMeters = current.distanceMeters
+        )
+        TelemetryLogger.logTrip("PAUSE_MANUAL", current.id, "Trip paused manually at point ${current.points.size}")
+    }
+
+    fun resumeTrip() {
+        val current = _activeTrip.value ?: return
+        if (!_isPaused.value) return
+        _isPaused.value = false
+        val now = System.currentTimeMillis()
+        if (activePause != null) {
+            val finalized = activePause!!.copy(
+                endTime = now,
+                durationMs = (now - activePause!!.startTime).coerceAtLeast(1000L)
+            )
+            val updatedPauses = current.pauses.toMutableList()
+            updatedPauses.add(finalized)
+            _activeTrip.value = current.copy(pauses = updatedPauses)
+            TelemetryLogger.logTrip("RESUME_MANUAL", current.id, "Trip resumed manually after ${finalized.durationMs / 1000}s")
+            activePause = null
+        }
+        lastMovingTimestamp = now
+    }
 
     // Internal state for auto-start / auto-stop
     private var lastMovingTimestamp: Long? = null
@@ -195,6 +253,8 @@ class TripManager private constructor(private val context: Context) {
         _activityProfile.value = profile
         prefs.edit().putString(KEY_ACTIVITY_PROFILE, profile.name).apply()
         _autoStopMinutes.value = getAutoStopMinutesForProfile(profile)
+        val profileTripMode = getTripModeForProfile(profile)
+        setTripMode(profileTripMode)
         val current = _activeTrip.value
         if (current != null) {
             val updated = current.copy(activityProfile = profile)
@@ -203,7 +263,7 @@ class TripManager private constructor(private val context: Context) {
                 dbHelper.updateTripActivityProfile(current.id, profile)
             }
         }
-        TelemetryLogger.log("SETTINGS", "ActivityProfile changed to ${profile.displayName}")
+        TelemetryLogger.log("SETTINGS", "ActivityProfile changed to ${profile.displayName} with mode=${profileTripMode.name}")
     }
 
     fun setAutoStopMinutes(minutes: Int) {
@@ -283,6 +343,7 @@ class TripManager private constructor(private val context: Context) {
         dbHelper.updateTrip(finishedTrip)
         TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
         _activeTrip.value = null
+        _isPaused.value = false
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
@@ -402,6 +463,14 @@ class TripManager private constructor(private val context: Context) {
 
         // ── Active Trip Tracking ───────────────────────────────────────────────
         val current = _activeTrip.value ?: return
+
+        // If trip is manually paused, keep activePause duration updated and do not accumulate points/distance
+        if (_isPaused.value) {
+            if (activePause != null) {
+                activePause = activePause!!.copy(durationMs = (now - activePause!!.startTime).coerceAtLeast(1000L))
+            }
+            return
+        }
 
         // ── Pause Detection & Tracking ─────────────────────────────────────────
         val updatedPauses = current.pauses.toMutableList()

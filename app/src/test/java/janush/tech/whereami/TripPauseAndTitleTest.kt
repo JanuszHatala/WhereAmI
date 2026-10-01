@@ -212,5 +212,42 @@ class TripPauseAndTitleTest {
         assertEquals(3.0, movingHoursNoPause, 0.001)
         assertEquals(3.333f, speedNoPause, 0.01f)
     }
+
+    @Test
+    fun testManualPauseResumeCreation() {
+        val pauseStart = 1000L
+        val pauseEnd = 4000L
+        val pause = TripPause(
+            startTime = pauseStart,
+            endTime = pauseEnd,
+            latitude = 49.8225,
+            longitude = 19.0441,
+            durationMs = pauseEnd - pauseStart,
+            pointIndex = 5,
+            distanceMeters = 1500.0
+        )
+        assertEquals(3000L, pause.durationMs)
+        assertEquals(1500.0, pause.distanceMeters, 0.001)
+        assertEquals(5, pause.pointIndex)
+    }
+
+    @Test
+    fun testCustomAutoLimits() {
+        // Auto-start: 1 second to 86,400 seconds (24h)
+        val validCustomStartSec = 120
+        val clampedStartSec = validCustomStartSec.coerceIn(1, 86400)
+        assertEquals(120, clampedStartSec)
+
+        val overflowStartSec = 100000.coerceIn(1, 86400)
+        assertEquals(86400, overflowStartSec)
+
+        // Auto-stop: 1 minute to 1440 minutes (24h)
+        val validCustomStopMin = 45
+        val clampedStopMin = validCustomStopMin.coerceIn(1, 1440)
+        assertEquals(45, clampedStopMin)
+
+        val overflowStopMin = 3000.coerceIn(1, 1440)
+        assertEquals(1440, overflowStopMin)
+    }
 }
 

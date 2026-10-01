@@ -95,4 +95,7 @@ dependencies {
 
   // Media
   implementation(libs.androidx.media)
+
+  // QR Code Generation
+  implementation("com.google.zxing:core:3.5.3")
 }
