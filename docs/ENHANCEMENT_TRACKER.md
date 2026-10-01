@@ -24,8 +24,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 10** | Field Testing (2026-09-28 Evening) Trip #69 Diagnostics: Zero-Blocking SQLite Cache, 2-Fix Driving Street Hysteresis, Locality Zero-Blanking & Modular StreetAbbreviator | 5 | 5 | 0 | 0 |
 | **Round 11** | Field Testing (2026-09-29) Settings Trip Recording Mode Hang/OOM Bugfix & Hiking Live Sharing Accuracy Overhaul | 2 | 2 | 0 | 0 |
 | **Round 12** | Field Testing (2026-09-29 – 2026-10-01) Telemetry & Battery Deep Analysis, Notification Wake Lock Throttling, Outdoor Trails/Passes/Peaks Hierarchy, Per-Profile Auto-Start/Stop Custom Values, Merged Trip & Pause Recalculation, Minimap Pin Size Polish & Recording HUD | 11 | 11 | 0 | 0 |
+| **Round 13** | Field Testing (2026-10-01 Evening) HUD Bar Pause/Resume, Per-Profile Trip Mode & Custom Auto Times, Map Controls Spacing, Trips History Route Overflow & Live Sharing Quick Share Modal with QR Code | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **137** | **129** | **0** | **8** |
+| **Total** | | **142** | **134** | **0** | **8** |
 
 ---
 
@@ -263,7 +264,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 15. Features Inventory & Future Backlog
+## 15. Round 13: Field Testing (2026-10-01 Evening) HUD Bar Pause/Resume, Per-Profile Trip Mode & Custom Auto Times, Map Controls Spacing, Trips History Route Overflow & Live Sharing Quick Share Modal with QR Code
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT13-01** | Recording HUD Bar Pause/Resume Button: Replace duplicate STOP button with Pause/Resume toggle button. | `TripManager.kt`, `MainViewModel.kt`, `MainActivity.kt` | **Completed** | Replaced duplicate STOP button in the Recording HUD with an interactive Pause/Resume button. Tracks `isTripPaused` state; pauses create a formal `TripPause` in database without distance accumulation while stationary, and toggle icon between Pause and Resume with distinct visual styles (amber vs red). |
+| **FT13-02** | Activity Profile Auto-Start & Auto-Stop Configuration Overhaul with Custom User Entry (up to 24h) and Per-Profile Mode Persistence. | `TripManager.kt`, `MainActivity.kt`, `TripPauseAndTitleTest.kt` | **Completed** | Reverted default auto-start/stop thresholds to optimal values. Added dropdown/preset chip options plus a dedicated "Custom..." entry dialog allowing users to enter custom durations in minutes (up to 1,440 minutes / 24h). Saved `tripMode` (MANUAL vs AUTO), `autoStartSeconds`, and `autoStopMinutes` per activity profile in `SharedPreferences`. |
+| **FT13-03** | Map Controls Overlap: Stacked 5 Map Tools Overlapping +/- Zoom Controls. | `OsmMapView.kt` | **Completed** | Repositioned the 5 bottom-right map tools closer to the bottom toolbar (`bottomPadding = 74.dp` portrait / `64.dp` landscape) and raised the vertical zoom controls offset (`offsetY = -40.dp`), creating a clean 180dp+ vertical separation between zoom buttons and tool icons. |
+| **FT13-04** | Trips History List Route Overflow: Hide "Show full route" / "Show less" when text fits within 3 lines. | `MainActivity.kt` | **Completed** | Replaced character count heuristic in `TripHistoryCard` with precise Compose text measurement (`onTextLayout`). The toggle is only rendered if `textLayoutResult.hasVisualOverflow || textLayoutResult.lineCount > 3`. |
+| **FT13-05** | Live Sharing Quick Share Modal & Offline QR Code Generator. | `QrCodeHelper.kt`, `app/build.gradle.kts`, `MainActivity.kt` | **Completed** | Integrated `com.google.zxing:core:3.5.3` and built `QrCodeHelper`. Added `LiveQuickShareModal` bottom sheet with 1-tap options: Share Trip Link, Share Personal Link, Copy Link, and View QR Code. Implemented `LiveQrCodeDialog` rendering crisp, offline-generated QR codes on-device. |
+
+---
+
+## 16. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
