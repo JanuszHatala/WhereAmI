@@ -1,12 +1,18 @@
 package janush.tech.whereami
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
+import android.widget.Toast
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -317,8 +323,13 @@ fun LocationScreen(viewModel: MainViewModel) {
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
     val usbConnectionManager = remember { UsbConnectionManager.getInstance(context) }
     val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
+    val isTripPaused by viewModel.isTripPaused.collectAsState()
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
+    var showLiveQuickShareModal by remember { mutableStateOf(false) }
+    var showLiveQrCodeModal by remember { mutableStateOf(false) }
+    var qrCodeTargetUrl by remember { mutableStateOf("") }
+    var qrCodeTargetTitle by remember { mutableStateOf("") }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
@@ -339,6 +350,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         showDestinationDetailsCard = false
         showActiveTripRouteDialog = false
         showLiveShareDialog = false
+        showLiveQuickShareModal = false
+        showLiveQrCodeModal = false
         showHeatMapSettingsDialog = false
         activeLocationShareTarget = null
         viewModel.dismissCacheManager()
@@ -611,7 +624,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         onShowLiveShare = {
                             dismissAllDialogs()
-                            showLiveShareDialog = true
+                            if (liveSession?.isActive == true) {
+                                showLiveQuickShareModal = true
+                            } else {
+                                showLiveShareDialog = true
+                            }
                         },
                         onOpenSavedPlaces = {
                             dismissAllDialogs()
@@ -711,7 +728,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onShowLiveShare = {
                         dismissAllDialogs()
-                        showLiveShareDialog = true
+                        if (liveSession?.isActive == true) {
+                            showLiveQuickShareModal = true
+                        } else {
+                            showLiveShareDialog = true
+                        }
                     },
                     onOpenSavedPlaces = {
                         dismissAllDialogs()
@@ -842,7 +863,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     .fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xF20F172A),
-                border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                border = BorderStroke(1.dp, if (isTripPaused) Color(0xFFF59E0B) else Color(0xFFEF4444)),
                 shadowElevation = 8.dp
             ) {
                 Row(
@@ -858,14 +879,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                             modifier = Modifier
                                 .size(9.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFEF4444))
+                                .background(if (isTripPaused) Color(0xFFF59E0B) else Color(0xFFEF4444))
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         EmojiText(emoji = recTrip.activityProfile.iconEmoji, fontSize = 13.sp)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = elapsedStr,
-                            color = Color.White,
+                            text = if (isTripPaused) "PAUSED" else elapsedStr,
+                            color = if (isTripPaused) Color(0xFFFBBF24) else Color.White,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -898,16 +919,29 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
 
-                    // Direct Stop Button
+                    // Direct Pause / Resume Button (Replaced duplicate STOP button)
                     Button(
-                        onClick = { viewModel.stopManualTrip() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        onClick = {
+                            if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isTripPaused) Color(0xFFD97706) else Color(0xFF334155),
+                            contentColor = Color.White
+                        ),
+                        border = if (isTripPaused) null else BorderStroke(1.dp, Color(0xFFF59E0B)),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
+                        Icon(
+                            imageVector = if (isTripPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isTripPaused) "Resume" else "Pause",
+                            modifier = Modifier.size(13.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "STOP",
+                            text = if (isTripPaused) "RESUME" else "PAUSE",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -2098,12 +2132,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     if (routeItems.isNotEmpty()) {
                                                                         val isRouteExpanded = expandedRouteTripIds.contains(trip.id)
                                                                         val fullRouteText = "Route: " + routeItems.joinToString(" → ")
+                                                                        var hasRouteOverflow by remember(trip.id, fullRouteText) { mutableStateOf(false) }
 
                                                                         Column(
                                                                             modifier = Modifier
                                                                                 .fillMaxWidth()
                                                                                 .padding(top = 4.dp)
-                                                                                .clickable {
+                                                                                .clickable(enabled = hasRouteOverflow || isRouteExpanded) {
                                                                                     expandedRouteTripIds = if (isRouteExpanded) {
                                                                                         expandedRouteTripIds - trip.id
                                                                                     } else {
@@ -2117,9 +2152,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                                 fontSize = 11.sp,
                                                                                 maxLines = if (isRouteExpanded) Int.MAX_VALUE else 3,
                                                                                 overflow = TextOverflow.Ellipsis,
-                                                                                lineHeight = 15.sp
+                                                                                lineHeight = 15.sp,
+                                                                                onTextLayout = { textLayoutResult ->
+                                                                                    if (!isRouteExpanded) {
+                                                                                        if (textLayoutResult.hasVisualOverflow || textLayoutResult.lineCount > 3) {
+                                                                                            hasRouteOverflow = true
+                                                                                        }
+                                                                                    }
+                                                                                }
                                                                             )
-                                                                            if (fullRouteText.length > 100 || routeItems.size > 4) {
+                                                                            if (hasRouteOverflow || isRouteExpanded) {
                                                                                 Text(
                                                                                     text = if (isRouteExpanded) "▲ Show less" else "▼ Show full route (${routeItems.size} stops)",
                                                                                     color = Color(0xFF38BDF8),
@@ -2824,9 +2866,14 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Trip Recording Mode (Manual vs Auto)
+                // Trip Recording Mode (Saved Per Activity Profile)
+                val profileTripMode = remember(activityProfile, tripMode) {
+                    viewModel.getTripModeForProfile(activityProfile)
+                }
+                var currentTripMode by remember(activityProfile, tripMode) { mutableStateOf(profileTripMode) }
+
                 Text(
-                    text = "Trip Recording Mode",
+                    text = "Trip Recording Mode (${activityProfile.displayName})",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White
@@ -2837,9 +2884,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val isManual = tripMode == TripMode.MANUAL
+                    val isManual = currentTripMode == TripMode.MANUAL
                     Button(
-                        onClick = { viewModel.setTripMode(TripMode.MANUAL) },
+                        onClick = {
+                            currentTripMode = TripMode.MANUAL
+                            viewModel.setTripModeForProfile(activityProfile, TripMode.MANUAL)
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isManual) Color(0xFF0284C7) else Color(0xFF1E293B),
                             contentColor = if (isManual) Color.White else Color(0xFFCBD5E1)
@@ -2853,9 +2903,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                             fontWeight = if (isManual) FontWeight.Bold else FontWeight.Medium
                         )
                     }
-                    val isAuto = tripMode == TripMode.AUTO
+                    val isAuto = currentTripMode == TripMode.AUTO
                     Button(
-                        onClick = { viewModel.setTripMode(TripMode.AUTO) },
+                        onClick = {
+                            currentTripMode = TripMode.AUTO
+                            viewModel.setTripModeForProfile(activityProfile, TripMode.AUTO)
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isAuto) Color(0xFF0284C7) else Color(0xFF1E293B),
                             contentColor = if (isAuto) Color.White else Color(0xFFCBD5E1)
@@ -2871,7 +2924,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                if (tripMode == TripMode.AUTO) {
+                if (currentTripMode == TripMode.AUTO) {
                     val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
                         ">${activityProfile.autoStartSpeedKmh.toInt()}"
                     } else {
@@ -2879,6 +2932,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                     val currentAutoStartSec = remember(activityProfile) { viewModel.getAutoStartSecondsForProfile(activityProfile) }
                     var autoStartSec by remember(activityProfile) { mutableStateOf(currentAutoStartSec) }
+                    var showCustomAutoStartDialog by remember { mutableStateOf(false) }
+                    var customAutoStartInput by remember { mutableStateOf("") }
 
                     Surface(
                         modifier = Modifier
@@ -2893,8 +2948,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                         ) {
                             Text("⚡", fontSize = 14.sp)
                             Spacer(modifier = Modifier.width(8.dp))
+                            val durDisplay = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60} min" else "${autoStartSec}s"
                             Text(
-                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for ${autoStartSec}s (hardware motion wake for battery optimization)",
+                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for $durDisplay (hardware motion wake for battery optimization)",
                                 fontSize = 12.sp,
                                 color = Color(0xFF94A3B8),
                                 lineHeight = 16.sp
@@ -2904,32 +2960,38 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Per-Profile Auto-Start Delay (Seconds)
+                    // Per-Profile Auto-Start Delay
+                    val autoStartPresetOptions = listOf(10 to "10s", 15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m")
+                    val isCustomAutoStart = autoStartPresetOptions.none { it.first == autoStartSec }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Auto-Start Movement Delay (${activityProfile.displayName})",
+                            text = "Auto-Start Delay (${activityProfile.displayName})",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
                         )
+                        val headerLabel = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60}m" else "${autoStartSec}s"
                         Text(
-                            text = "${autoStartSec}s",
+                            text = headerLabel,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8)
                         )
                     }
+
+                    // Row 1 of auto-start presets
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf(5, 10, 15, 20, 30).forEach { sec ->
+                        autoStartPresetOptions.take(4).forEach { (sec, label) ->
                             val isSelected = autoStartSec == sec
                             Button(
                                 onClick = {
@@ -2943,15 +3005,119 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    text = "${sec}s",
+                                    text = label,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                 )
                             }
                         }
+                    }
+
+                    // Row 2 of auto-start presets + Custom
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        autoStartPresetOptions.drop(4).forEach { (sec, label) ->
+                            val isSelected = autoStartSec == sec
+                            Button(
+                                onClick = {
+                                    autoStartSec = sec
+                                    viewModel.setAutoStartSecondsForProfile(activityProfile, sec)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                    contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)
+                                ),
+                                border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                customAutoStartInput = if (autoStartSec >= 60) (autoStartSec / 60).toString() else "1"
+                                showCustomAutoStartDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isCustomAutoStart) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = if (isCustomAutoStart) Color.White else Color(0xFFCBD5E1)
+                            ),
+                            border = if (isCustomAutoStart) null else BorderStroke(1.dp, Color(0xFF475569)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1.5f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (isCustomAutoStart) "Custom (${if (autoStartSec >= 60) "${autoStartSec / 60}m" else "${autoStartSec}s"})" else "Custom...",
+                                fontSize = 11.sp,
+                                fontWeight = if (isCustomAutoStart) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    if (showCustomAutoStartDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showCustomAutoStartDialog = false },
+                            title = { Text("Custom Auto-Start Delay", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column {
+                                    Text("Enter movement delay in minutes (1 to 1440 min / max 24h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = customAutoStartInput,
+                                        onValueChange = { input ->
+                                            if (input.all { it.isDigit() } && input.length <= 5) {
+                                                customAutoStartInput = input
+                                            }
+                                        },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = Color(0xFF38BDF8),
+                                            unfocusedBorderColor = Color(0xFF64748B)
+                                        ),
+                                        suffix = { Text("min", color = Color(0xFF94A3B8)) }
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
+                                        val secVal = minVal * 60
+                                        autoStartSec = secVal
+                                        viewModel.setAutoStartSecondsForProfile(activityProfile, secVal)
+                                        showCustomAutoStartDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                ) {
+                                    Text("Set")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCustomAutoStartDialog = false }) {
+                                    Text("Cancel", color = Color(0xFF94A3B8))
+                                }
+                            },
+                            containerColor = Color(0xFF0F172A)
+                        )
                     }
                 }
 
@@ -2960,6 +3126,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                 // Auto-Stop Stationary Timeout (Per Profile)
                 val currentAutoStopMin = remember(activityProfile) { viewModel.getAutoStopMinutesForProfile(activityProfile) }
                 var autoStopMin by remember(activityProfile) { mutableStateOf(currentAutoStopMin) }
+                var showCustomAutoStopDialog by remember { mutableStateOf(false) }
+                var customAutoStopInput by remember { mutableStateOf("") }
+                val autoStopPresetOptions = listOf(1 to "1m", 3 to "3m", 5 to "5m", 10 to "10m", 15 to "15m", 20 to "20m")
+                val isCustomAutoStop = autoStopPresetOptions.none { it.first == autoStopMin }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2979,13 +3149,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                         color = Color(0xFF10B981)
                     )
                 }
+
+                // Row 1 of auto-stop presets
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(1, 3, 5, 10, 15).forEach { mins ->
+                    autoStopPresetOptions.take(4).forEach { (mins, label) ->
                         val isSelected = autoStopMin == mins
                         Button(
                             onClick = {
@@ -2999,15 +3171,118 @@ fun LocationScreen(viewModel: MainViewModel) {
                             border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = "${mins}m",
+                                text = label,
                                 fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
+                }
+
+                // Row 2 of auto-stop presets + Custom
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    autoStopPresetOptions.drop(4).forEach { (mins, label) ->
+                        val isSelected = autoStopMin == mins
+                        Button(
+                            onClick = {
+                                autoStopMin = mins
+                                viewModel.setAutoStopMinutesForProfile(activityProfile, mins)
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)
+                            ),
+                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            customAutoStopInput = autoStopMin.toString()
+                            showCustomAutoStopDialog = true
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isCustomAutoStop) Color(0xFF0284C7) else Color(0xFF1E293B),
+                            contentColor = if (isCustomAutoStop) Color.White else Color(0xFFCBD5E1)
+                        ),
+                        border = if (isCustomAutoStop) null else BorderStroke(1.dp, Color(0xFF475569)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1.5f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (isCustomAutoStop) "Custom (${autoStopMin}m)" else "Custom...",
+                            fontSize = 11.sp,
+                            fontWeight = if (isCustomAutoStop) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                if (showCustomAutoStopDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showCustomAutoStopDialog = false },
+                        title = { Text("Custom Auto-Stop Timeout", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                Text("Enter stationary timeout in minutes (1 to 1440 min / max 24h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = customAutoStopInput,
+                                    onValueChange = { input ->
+                                        if (input.all { it.isDigit() } && input.length <= 5) {
+                                            customAutoStopInput = input
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = Color(0xFF38BDF8),
+                                        unfocusedBorderColor = Color(0xFF64748B)
+                                    ),
+                                    suffix = { Text("min", color = Color(0xFF94A3B8)) }
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
+                                    autoStopMin = minVal
+                                    viewModel.setAutoStopMinutesForProfile(activityProfile, minVal)
+                                    showCustomAutoStopDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                            ) {
+                                Text("Set")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showCustomAutoStopDialog = false }) {
+                                Text("Cancel", color = Color(0xFF94A3B8))
+                            }
+                        },
+                        containerColor = Color(0xFF0F172A)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -5197,6 +5472,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 customSlug = upcomingSessionId
                             )
                             upcomingSessionId = LiveSharingManager.generate10CharSlug()
+                            showLiveShareDialog = false
+                            showLiveQuickShareModal = true
                             android.widget.Toast.makeText(context, "Started Live Share: ${s.id}", android.widget.Toast.LENGTH_SHORT).show()
                         },
                         shape = RoundedCornerShape(10.dp),
@@ -5474,6 +5751,239 @@ fun LocationScreen(viewModel: MainViewModel) {
                 viewModel.resetHeatMapFilter()
             },
             onDismiss = { showHeatMapSettingsDialog = false }
+        )
+    }
+
+    // ── Live Sharing Quick Share 1-Tap Modal ─────────────────────────────────
+    if (showLiveQuickShareModal && liveSession != null && liveSession!!.isActive) {
+        val session = liveSession!!
+        val tripViewerUrl = session.getViewerUrl(useStatic = false)
+        val personalViewerUrl = session.getViewerUrl(useStatic = true, staticId = staticLiveId)
+
+        ModalBottomSheet(
+            onDismissRequest = { showLiveQuickShareModal = false },
+            containerColor = Color(0xFF0F172A),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .navigationBarsPadding()
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📡", fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Live Sharing Active",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = session.title,
+                                fontSize = 13.sp,
+                                color = Color(0xFF38BDF8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { showLiveQuickShareModal = false },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Action 1: 1-Tap Share Trip Link
+                Button(
+                    onClick = {
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "Live Trip: ${session.title}")
+                            putExtra(Intent.EXTRA_TEXT, "Follow my live trip \"${session.title}\": $tripViewerUrl")
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Live Trip Link"))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Share Trip Link (Single-Use)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Action 2: 1-Tap Share Personal Permanent Link
+                Button(
+                    onClick = {
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "My Live Location")
+                            putExtra(Intent.EXTRA_TEXT, "Follow my live location: $personalViewerUrl")
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Personal Link"))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                ) {
+                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Share Personal Link (Permanent)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Action 3 & 4: Copy Trip Link & Show QR Code
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Live Trip URL", tripViewerUrl))
+                            Toast.makeText(context, "Trip URL copied to clipboard!", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                        border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).height(44.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Copy Link", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            qrCodeTargetUrl = tripViewerUrl
+                            qrCodeTargetTitle = session.title
+                            showLiveQrCodeModal = true
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFBBF24)),
+                        border = BorderStroke(1.dp, Color(0xFFFBBF24)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).height(44.dp)
+                    ) {
+                        Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("QR Code", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Secondary Actions: Manage Session & Stop Session
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = {
+                            showLiveQuickShareModal = false
+                            showLiveShareDialog = true
+                        }
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF94A3B8))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Manage Session", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                    }
+
+                    TextButton(
+                        onClick = {
+                            liveSharingManager.stopSession()
+                            showLiveQuickShareModal = false
+                            Toast.makeText(context, "Live sharing stopped", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Text("Stop Sharing", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Live QR Code Dialog (Offline-Generated via QrCodeHelper) ─────────────
+    if (showLiveQrCodeModal && qrCodeTargetUrl.isNotBlank()) {
+        val qrBitmap = remember(qrCodeTargetUrl) {
+            QrCodeHelper.generateQrBitmap(qrCodeTargetUrl, 512)
+        }
+        AlertDialog(
+            onDismissRequest = { showLiveQrCodeModal = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.QrCode, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Scan to Follow Live", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (qrCodeTargetTitle.isNotBlank()) {
+                        Text(
+                            text = qrCodeTargetTitle,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(240.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.foundation.Image(
+                            bitmap = qrBitmap.asImageBitmap(),
+                            contentDescription = "QR Code",
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = qrCodeTargetUrl,
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showLiveQrCodeModal = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                ) {
+                    Text("Done")
+                }
+            },
+            containerColor = Color(0xFF0F172A)
         )
     }
 }
