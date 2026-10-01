@@ -808,6 +808,115 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
 
+        // ── Floating Compact Recording HUD Bar (Above Bottom Controls) ────────
+        if (!showTripsSheet && activeTrip != null) {
+            val recTrip = activeTrip!!
+            var recTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(recTrip.startTime) {
+                while (true) {
+                    recTickerNow = System.currentTimeMillis()
+                    kotlinx.coroutines.delay(1000L)
+                }
+            }
+            val elapsedMs = maxOf(0L, recTickerNow - recTrip.startTime)
+            val elapsedSec = elapsedMs / 1000L
+            val recHrs = elapsedSec / 3600L
+            val recMins = (elapsedSec % 3600L) / 60L
+            val recSecs = elapsedSec % 60L
+            val elapsedStr = if (recHrs > 0) {
+                String.format(Locale.getDefault(), "%d:%02d:%02d", recHrs, recMins, recSecs)
+            } else {
+                String.format(Locale.getDefault(), "%02d:%02d", recMins, recSecs)
+            }
+            val recDistKm = recTrip.distanceMeters / 1000.0
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = if (isLandscape) 70.dp else 82.dp
+                    )
+                    .widthIn(max = if (isLandscape) 420.dp else 440.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xF20F172A),
+                border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Recording indicator dot + Activity Emoji + Elapsed Time + Distance
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEF4444))
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        EmojiText(emoji = recTrip.activityProfile.iconEmoji, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = elapsedStr,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 13.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = String.format(Locale.getDefault(), "• %.2f km", recDistKm),
+                            color = Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 12.sp
+                            )
+                        )
+                    }
+
+                    // Direct Stop Button
+                    Button(
+                        onClick = { viewModel.stopManualTrip() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text(
+                            text = "STOP",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
         // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
         if (!showTripsSheet) {
             MainBottomControlsCard(
@@ -900,6 +1009,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             var tripGroupBy by remember { mutableStateOf(TripGroupBy.DATE) }
             var collapsedGroupIds by remember { mutableStateOf<Set<String>>(emptySet()) }
             var expandedPauseTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+            var expandedRouteTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
             var selectedTripForDetail by remember { mutableStateOf<TripRecord?>(null) }
             // Dropdown expanded states for compact filter row
             var dateFilterExpanded by remember { mutableStateOf(false) }
@@ -1971,14 +2081,55 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
                                                                 }
 
-                                                                if (trip.placesVisited.isNotEmpty()) {
-                                                                    val placesSummary = trip.placesVisited.joinToString(" → ") { it.placeName }
-                                                                    Text(
-                                                                        text = "Route: $placesSummary",
-                                                                        color = Color(0xFFCBD5E1),
-                                                                        fontSize = 11.sp,
-                                                                        modifier = Modifier.padding(top = 4.dp)
-                                                                    )
+                                                                if (trip.placesVisited.isNotEmpty() || trip.pauses.isNotEmpty()) {
+                                                                    val routeItems = remember(trip.id, trip.placesVisited, trip.pauses) {
+                                                                        val combined = mutableListOf<Pair<Long, String>>()
+                                                                        trip.placesVisited.forEach { place ->
+                                                                            val icon = if (place.placeKind != PlaceKind.LOCALITY) "${place.placeKind.iconEmoji} " else ""
+                                                                            combined.add(place.timestamp to "$icon${place.placeName}")
+                                                                        }
+                                                                        trip.pauses.forEach { pause ->
+                                                                            val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
+                                                                            combined.add(pause.startTime to "⏸️ Rest (${durMin}m)")
+                                                                        }
+                                                                        combined.sortedBy { it.first }.map { it.second }
+                                                                    }
+
+                                                                    if (routeItems.isNotEmpty()) {
+                                                                        val isRouteExpanded = expandedRouteTripIds.contains(trip.id)
+                                                                        val fullRouteText = "Route: " + routeItems.joinToString(" → ")
+
+                                                                        Column(
+                                                                            modifier = Modifier
+                                                                                .fillMaxWidth()
+                                                                                .padding(top = 4.dp)
+                                                                                .clickable {
+                                                                                    expandedRouteTripIds = if (isRouteExpanded) {
+                                                                                        expandedRouteTripIds - trip.id
+                                                                                    } else {
+                                                                                        expandedRouteTripIds + trip.id
+                                                                                    }
+                                                                                }
+                                                                        ) {
+                                                                            Text(
+                                                                                text = fullRouteText,
+                                                                                color = Color(0xFFCBD5E1),
+                                                                                fontSize = 11.sp,
+                                                                                maxLines = if (isRouteExpanded) Int.MAX_VALUE else 3,
+                                                                                overflow = TextOverflow.Ellipsis,
+                                                                                lineHeight = 15.sp
+                                                                            )
+                                                                            if (fullRouteText.length > 100 || routeItems.size > 4) {
+                                                                                Text(
+                                                                                    text = if (isRouteExpanded) "▲ Show less" else "▼ Show full route (${routeItems.size} stops)",
+                                                                                    color = Color(0xFF38BDF8),
+                                                                                    fontSize = 10.sp,
+                                                                                    fontWeight = FontWeight.SemiBold,
+                                                                                    modifier = Modifier.padding(top = 2.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
 
                                                                 // Pauses & Trip Splitting
@@ -2726,7 +2877,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                     } else {
                         ">%.1f".format(activityProfile.autoStartSpeedKmh)
                     }
-                    val autoDurationSec = activityProfile.autoStartDurationMs / 1000L
+                    val currentAutoStartSec = remember(activityProfile) { viewModel.getAutoStartSecondsForProfile(activityProfile) }
+                    var autoStartSec by remember(activityProfile) { mutableStateOf(currentAutoStartSec) }
+
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2741,34 +2894,104 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Text("⚡", fontSize = 14.sp)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for ${autoDurationSec}s (hardware motion wake for battery optimization)",
+                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for ${autoStartSec}s (hardware motion wake for battery optimization)",
                                 fontSize = 12.sp,
                                 color = Color(0xFF94A3B8),
                                 lineHeight = 16.sp
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Per-Profile Auto-Start Delay (Seconds)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Auto-Start Movement Delay (${activityProfile.displayName})",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "${autoStartSec}s",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(5, 10, 15, 20, 30).forEach { sec ->
+                            val isSelected = autoStartSec == sec
+                            Button(
+                                onClick = {
+                                    autoStartSec = sec
+                                    viewModel.setAutoStartSecondsForProfile(activityProfile, sec)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                    contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)
+                                ),
+                                border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "${sec}s",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Auto-Stop Stationary Timeout
-                Text(
-                    text = "Auto-Stop Trip Timeout (stationary)",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
+                // Auto-Stop Stationary Timeout (Per Profile)
+                val currentAutoStopMin = remember(activityProfile) { viewModel.getAutoStopMinutesForProfile(activityProfile) }
+                var autoStopMin by remember(activityProfile) { mutableStateOf(currentAutoStopMin) }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Auto-Stop Stationary Timeout (${activityProfile.displayName})",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "${autoStopMin} min",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF10B981)
+                    )
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(1, 3, 5, 10).forEach { mins ->
-                        val isSelected = autoStopMinutes == mins
+                    listOf(1, 3, 5, 10, 15).forEach { mins ->
+                        val isSelected = autoStopMin == mins
                         Button(
-                            onClick = { viewModel.setAutoStopMinutes(mins) },
+                            onClick = {
+                                autoStopMin = mins
+                                viewModel.setAutoStopMinutesForProfile(activityProfile, mins)
+                            },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
                                 contentColor = if (isSelected) Color.White else Color(0xFFCBD5E1)
@@ -2776,11 +2999,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                             border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "${mins}m",
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
@@ -7846,6 +8069,19 @@ fun TripDetailDialog(
         else -> "N/A"
     }
 
+    val totalPauseDurationMs = trip.pauses.sumOf { it.durationMs }
+    val movingDurationMs = (durationMs - totalPauseDurationMs).coerceAtLeast(0L)
+    val movingSec = movingDurationMs / 1000L
+    val movHours = movingSec / 3600L
+    val movMinutes = (movingSec % 3600L) / 60L
+    val movSeconds = movingSec % 60L
+    val movingFormatted = when {
+        movHours > 0 -> String.format(Locale.getDefault(), "%dh %02dm %02ds", movHours, movMinutes, movSeconds)
+        movMinutes > 0 -> String.format(Locale.getDefault(), "%dm %02ds", movMinutes, movSeconds)
+        movingSec > 0 -> String.format(Locale.getDefault(), "%ds", movingSec)
+        else -> "N/A"
+    }
+
     var showProfileMenu by remember { mutableStateOf(false) }
     var pauseToDeleteIndex by remember { mutableStateOf<Int?>(null) }
     var pauseToMergeIndex by remember { mutableStateOf<Int?>(null) }
@@ -8054,20 +8290,27 @@ fun TripDetailDialog(
                             }
                         }
 
-                        // Duration Card
+                        // Duration Card (Total & Moving Time)
                         Card(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Text("TOTAL DURATION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                                Text("TOTAL / MOVING TIME", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = durationFormatted,
-                                    fontSize = 18.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF10B981)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Moving: $movingFormatted",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF38BDF8)
                                 )
                             }
                         }

@@ -89,6 +89,47 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             } catch (_: Exception) {}
             return list
         }
+
+        internal fun placesToJson(places: List<VisitedPlace>): String {
+            val array = JSONArray()
+            for (p in places) {
+                val obj = JSONObject().apply {
+                    put("name", p.placeName)
+                    put("sub", p.hierarchySubtitle)
+                    put("time", p.timestamp)
+                    put("lat", p.latitude)
+                    put("lng", p.longitude)
+                    put("dist", p.distanceAtEntryMeters)
+                    put("kind", p.placeKind.name)
+                }
+                array.put(obj)
+            }
+            return array.toString()
+        }
+
+        internal fun jsonToPlaces(jsonStr: String): List<VisitedPlace> {
+            val list = mutableListOf<VisitedPlace>()
+            try {
+                val array = JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val kindStr = obj.optString("kind", PlaceKind.LOCALITY.name)
+                    val kind = try { PlaceKind.valueOf(kindStr) } catch (_: Exception) { PlaceKind.LOCALITY }
+                    list.add(
+                        VisitedPlace(
+                            placeName = obj.getString("name"),
+                            hierarchySubtitle = obj.optString("sub", ""),
+                            timestamp = obj.getLong("time"),
+                            latitude = obj.getDouble("lat"),
+                            longitude = obj.getDouble("lng"),
+                            distanceAtEntryMeters = obj.getDouble("dist"),
+                            placeKind = kind
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+            return list
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -506,7 +547,17 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             weightedSpeedSum += (trip.avgSpeedKmh * dur)
         }
 
-        val overallAvgSpeed = if (totalDurationSec > 0) (weightedSpeedSum / totalDurationSec).toFloat() else earliest.avgSpeedKmh
+        val totalDurationMs = ((latest.endTime ?: latest.startTime) - earliest.startTime).coerceAtLeast(0L)
+        val pauseDurationMs = allPauses.sumOf { it.durationMs }
+        val movingDurationHours = (totalDurationMs - pauseDurationMs).coerceAtLeast(1_000L) / 3600000.0
+        val overallAvgSpeed = if (movingDurationHours > 0.0 && totalDist > 0.0) {
+            ((totalDist / 1000.0) / movingDurationHours).toFloat().coerceIn(0f, 250f)
+        } else if (totalDurationSec > 0) {
+            (weightedSpeedSum / totalDurationSec).toFloat()
+        } else {
+            earliest.avgSpeedKmh
+        }
+
         val dateStr = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(earliest.startTime))
         val defaultTitle = if (earliest.title.isNotBlank()) "${earliest.title} (Merged)" else "$dateStr • Merged Trips (${sorted.size})"
         val finalTitle = customTitle?.takeIf { it.isNotBlank() } ?: defaultTitle
@@ -648,43 +699,6 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return list
     }
 
-    private fun placesToJson(places: List<VisitedPlace>): String {
-        val array = JSONArray()
-        for (p in places) {
-            val obj = JSONObject().apply {
-                put("name", p.placeName)
-                put("sub", p.hierarchySubtitle)
-                put("time", p.timestamp)
-                put("lat", p.latitude)
-                put("lng", p.longitude)
-                put("dist", p.distanceAtEntryMeters)
-            }
-            array.put(obj)
-        }
-        return array.toString()
-    }
-
-    private fun jsonToPlaces(jsonStr: String): List<VisitedPlace> {
-        val list = mutableListOf<VisitedPlace>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(
-                    VisitedPlace(
-                        placeName = obj.getString("name"),
-                        hierarchySubtitle = obj.optString("sub", ""),
-                        timestamp = obj.getLong("time"),
-                        latitude = obj.getDouble("lat"),
-                        longitude = obj.getDouble("lng"),
-                        distanceAtEntryMeters = obj.getDouble("dist")
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        return list
-    }
-
     fun splitTripAtPause(tripId: Long, pauseIndex: Int): Pair<Long, Long>? {
         val trip = getTripsByIds(listOf(tripId)).firstOrNull() ?: return null
         if (pauseIndex !in trip.pauses.indices) return null
@@ -769,9 +783,46 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     fun deleteTripPause(tripId: Long, pauseIndex: Int): Boolean {
         val trip = getTrip(tripId) ?: return false
         if (pauseIndex < 0 || pauseIndex >= trip.pauses.size) return false
+        val removedPause = trip.pauses[pauseIndex]
         val updatedPauses = trip.pauses.toMutableList()
         updatedPauses.removeAt(pauseIndex)
-        val updatedTrip = trip.copy(pauses = updatedPauses)
+
+        var newStartTime = trip.startTime
+        var newEndTime = trip.endTime
+
+        // If deleting the ending pause, trim trip endTime back to pause.startTime or the last point before the pause
+        if (pauseIndex == trip.pauses.size - 1) {
+            val lastPointTime = if (removedPause.pointIndex in trip.points.indices) {
+                // If pointIndex is valid, use the timestamp if known or pause.startTime
+                removedPause.startTime
+            } else {
+                removedPause.startTime
+            }
+            newEndTime = lastPointTime
+        }
+
+        // If deleting the starting pause, advance trip startTime to pause.endTime
+        if (pauseIndex == 0 && (removedPause.pointIndex <= 1 || removedPause.startTime <= trip.startTime + 15_000L)) {
+            val pauseEnd = removedPause.endTime ?: (removedPause.startTime + removedPause.durationMs)
+            newStartTime = pauseEnd
+        }
+
+        // Recalculate moving time and average speed
+        val totalDurationMs = ((newEndTime ?: trip.startTime) - newStartTime).coerceAtLeast(0L)
+        val pauseDurationMs = updatedPauses.sumOf { it.durationMs }
+        val movingDurationHours = (totalDurationMs - pauseDurationMs).coerceAtLeast(1_000L) / 3600000.0
+        val newAvgSpeed = if (movingDurationHours > 0.0 && trip.distanceMeters > 0.0) {
+            ((trip.distanceMeters / 1000.0) / movingDurationHours).toFloat().coerceIn(0f, 250f)
+        } else {
+            trip.avgSpeedKmh
+        }
+
+        val updatedTrip = trip.copy(
+            startTime = newStartTime,
+            endTime = newEndTime,
+            avgSpeedKmh = newAvgSpeed,
+            pauses = updatedPauses
+        )
         updateTrip(updatedTrip)
         return true
     }
@@ -797,7 +848,20 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val updatedPauses = trip.pauses.toMutableList()
         updatedPauses[pauseIndex] = mergedPause
         updatedPauses.removeAt(pauseIndex + 1)
-        val updatedTrip = trip.copy(pauses = updatedPauses)
+
+        val totalDurationMs = ((trip.endTime ?: trip.startTime) - trip.startTime).coerceAtLeast(0L)
+        val pauseDurationMs = updatedPauses.sumOf { it.durationMs }
+        val movingDurationHours = (totalDurationMs - pauseDurationMs).coerceAtLeast(1_000L) / 3600000.0
+        val newAvgSpeed = if (movingDurationHours > 0.0 && trip.distanceMeters > 0.0) {
+            ((trip.distanceMeters / 1000.0) / movingDurationHours).toFloat().coerceIn(0f, 250f)
+        } else {
+            trip.avgSpeedKmh
+        }
+
+        val updatedTrip = trip.copy(
+            avgSpeedKmh = newAvgSpeed,
+            pauses = updatedPauses
+        )
         updateTrip(updatedTrip)
         return true
     }
