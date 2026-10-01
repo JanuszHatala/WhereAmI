@@ -132,4 +132,85 @@ class TripPauseAndTitleTest {
         val dist3 = calculatePauseDistanceMeters(emptyTrip, legacyPause)
         assertEquals(0.0, dist3, 0.0001)
     }
+
+    @Test
+    fun testVisitedPlaceKindSerialization() {
+        val places = listOf(
+            VisitedPlace(
+                placeName = "Kęty",
+                hierarchySubtitle = "gm. Kęty, pow. oświęcimski",
+                timestamp = 1727500000000L,
+                latitude = 49.88,
+                longitude = 19.22,
+                distanceAtEntryMeters = 1200.0,
+                placeKind = PlaceKind.LOCALITY
+            ),
+            VisitedPlace(
+                placeName = "Orla Perć",
+                hierarchySubtitle = "Szlak czerwony",
+                timestamp = 1727503600000L,
+                latitude = 49.23,
+                longitude = 20.02,
+                distanceAtEntryMeters = 5400.0,
+                placeKind = PlaceKind.TRAIL
+            ),
+            VisitedPlace(
+                placeName = "Przełęcz Zawrat",
+                hierarchySubtitle = "Tatry Wysokie",
+                timestamp = 1727507200000L,
+                latitude = 49.21,
+                longitude = 20.01,
+                distanceAtEntryMeters = 7800.0,
+                placeKind = PlaceKind.MOUNTAIN_PASS
+            ),
+            VisitedPlace(
+                placeName = "Kozi Wierch",
+                hierarchySubtitle = "2291 m n.p.m.",
+                timestamp = 1727510800000L,
+                latitude = 49.215,
+                longitude = 20.025,
+                distanceAtEntryMeters = 9200.0,
+                placeKind = PlaceKind.PEAK
+            )
+        )
+
+        val jsonStr = TripDatabaseHelper.placesToJson(places)
+        assertTrue(jsonStr.contains("\"kind\":\"TRAIL\""))
+        assertTrue(jsonStr.contains("\"kind\":\"MOUNTAIN_PASS\""))
+        assertTrue(jsonStr.contains("\"kind\":\"PEAK\""))
+        assertTrue(jsonStr.contains("\"name\":\"Orla Perć\""))
+
+        val restored = TripDatabaseHelper.jsonToPlaces(jsonStr)
+        assertEquals(4, restored.size)
+        assertEquals(PlaceKind.LOCALITY, restored[0].placeKind)
+        assertEquals(PlaceKind.TRAIL, restored[1].placeKind)
+        assertEquals("Orla Perć", restored[1].placeName)
+        assertEquals(PlaceKind.MOUNTAIN_PASS, restored[2].placeKind)
+        assertEquals(PlaceKind.PEAK, restored[3].placeKind)
+    }
+
+    @Test
+    fun testPauseRecalculationFormulas() {
+        // Simulating a trip: 10km distance, 3 hours total, 1 hour pause
+        val distanceMeters = 10000.0
+        val startTime = 1000000L
+        val endTime = startTime + 3 * 3600 * 1000L // 3h = 10800000 ms
+        val pauseDurationMs = 1 * 3600 * 1000L    // 1h = 3600000 ms
+
+        val totalDurationMs = ((endTime) - startTime).coerceAtLeast(0L)
+        val movingDurationHours = (totalDurationMs - pauseDurationMs).coerceAtLeast(1000L) / 3600000.0
+        val movingAvgSpeed = ((distanceMeters / 1000.0) / movingDurationHours).toFloat()
+
+        // 10 km in 2 hours moving = 5.0 km/h
+        assertEquals(2.0, movingDurationHours, 0.001)
+        assertEquals(5.0f, movingAvgSpeed, 0.01f)
+
+        // If pause is removed, moving time becomes 3 hours, moving speed becomes 3.33 km/h
+        val totalNoPauseDurationMs = totalDurationMs
+        val movingHoursNoPause = (totalNoPauseDurationMs - 0L).coerceAtLeast(1000L) / 3600000.0
+        val speedNoPause = ((distanceMeters / 1000.0) / movingHoursNoPause).toFloat()
+        assertEquals(3.0, movingHoursNoPause, 0.001)
+        assertEquals(3.333f, speedNoPause, 0.01f)
+    }
 }
+

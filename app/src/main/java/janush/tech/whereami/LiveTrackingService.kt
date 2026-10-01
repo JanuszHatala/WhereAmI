@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -282,7 +283,14 @@ class LiveTrackingService : Service() {
         return builder.build()
     }
 
-    private fun updateNotification(overrideText: String? = null) {
+    @Volatile
+    private var lastNotificationPostTime = 0L
+    @Volatile
+    private var lastNotificationTitle: String? = null
+    @Volatile
+    private var lastNotificationText: String? = null
+
+    private fun updateNotification(overrideText: String? = null, force: Boolean = false) {
         val activeTrip = TripManager.getInstance(this).activeTrip.value
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val isLiveActive = liveSession != null && liveSession.isActive
@@ -327,9 +335,18 @@ class LiveTrackingService : Service() {
             else -> "Recording trip & background location active"
         }
 
-        val notification = buildNotification(title, text)
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIF_ID, notification)
+        val now = SystemClock.elapsedRealtime()
+        val contentChanged = title != lastNotificationTitle || text != lastNotificationText
+        val timeElapsed = (now - lastNotificationPostTime) >= 5_000L
+
+        if (force || (contentChanged && timeElapsed)) {
+            val notification = buildNotification(title, text)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIF_ID, notification)
+            lastNotificationPostTime = now
+            lastNotificationTitle = title
+            lastNotificationText = text
+        }
     }
 
     private fun startTracking() {
@@ -355,10 +372,10 @@ class LiveTrackingService : Service() {
 
                 if (trip != null || hasLive) {
                     updateWakeLock(true)
-                    updateNotification()
+                    updateNotification(force = true)
                 } else if (isAuto) {
                     updateWakeLock(false)
-                    updateNotification()
+                    updateNotification(force = true)
                 } else {
                     updateWakeLock(false)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -381,10 +398,10 @@ class LiveTrackingService : Service() {
 
                 if (trip != null || hasLive) {
                     updateWakeLock(true)
-                    updateNotification()
+                    updateNotification(force = true)
                 } else if (isAuto) {
                     updateWakeLock(false)
-                    updateNotification()
+                    updateNotification(force = true)
                 } else {
                     updateWakeLock(false)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

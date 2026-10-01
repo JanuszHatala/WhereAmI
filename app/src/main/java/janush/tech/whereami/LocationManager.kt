@@ -1193,7 +1193,8 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
                 !osm?.street.isNullOrBlank() -> {
-                    RoadNameNormalizer.sanitizeHouseNumber(osm.street, shouldShowHouse)
+                    val houseNumber = osm.houseNumber ?: address.subThoroughfare
+                    RoadNameNormalizer.normalize(osm.street, osm.roadRef, houseNumber, includeHouseNumber = shouldShowHouse)
                 }
                 // 3. Road ref enrichment if thoroughfare provided
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
@@ -1201,7 +1202,7 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 // 4. Fallback to Android native Geocoder thoroughfare
                 else -> {
-                    RoadNameNormalizer.sanitizeHouseNumber(basePlace.street, shouldShowHouse)
+                    RoadNameNormalizer.normalize(address.thoroughfare, null, address.subThoroughfare, includeHouseNumber = shouldShowHouse)
                 }
             }
 
@@ -1271,6 +1272,9 @@ class LocationManager private constructor(private val context: Context) {
                     val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
                     RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = allowH)
                 }
+                val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
+                val cc = osm.countryCode?.uppercase() ?: countryCode
+                val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
 
                 return PlaceInfo(
                     city = city,
@@ -1279,8 +1283,8 @@ class LocationManager private constructor(private val context: Context) {
                     gmina = effectiveGmina,
                     powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
                     voivodeship = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region",
-                    country = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country",
-                    countryCode = osm.countryCode ?: countryCode
+                    country = resolvedCountry,
+                    countryCode = cc
                 )
             }
         }
@@ -1468,13 +1472,14 @@ class LocationManager private constructor(private val context: Context) {
         val cityName = locality ?: subLocality ?: subAdminArea ?: "--"
         val thoroughfare = this.thoroughfare
         val houseNum = this.subThoroughfare
-        val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum)
+        val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true)
         val gminaName = subLocality
         val powiatName = subAdminArea
         val stateName = adminArea ?: "Unknown Region"
-        val countryName = this.countryName ?: "Unknown Country"
+        val rawCountry = this.countryName ?: "Unknown Country"
         val cc = this.countryCode?.uppercase() ?: countryCode
-        return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, countryName, cc)
+        val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+        return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, resolvedCountry, cc)
     }
 }
 
