@@ -1020,7 +1020,7 @@ fun OsmMapView(
         )
 
         // Floating Zoom Controls [ + ] and [ - ] at Vertical Center-Right (Alignment.CenterEnd)
-        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
+        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else (-40).dp
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -1071,8 +1071,8 @@ fun OsmMapView(
         }
 
         // Floating Map Tools (Recenter/Refresh, Layers/Settings, Instant Share, Fit Track, Clear Selected Trips)
-        // Positioned at Bottom-Right (Alignment.BottomEnd) above bottom toolbar & destination card
-        val mapToolsBottomPadding = if (isLandscape) 70.dp else 125.dp
+        // Positioned at Bottom-Right (Alignment.BottomEnd) directly above bottom toolbar
+        val mapToolsBottomPadding = if (isLandscape) 64.dp else 74.dp
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
