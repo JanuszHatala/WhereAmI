@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -341,18 +342,20 @@ fun OsmMapView(
         context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
     }
 
-    var baseLayer by remember {
-        val saved = prefs.getString("base_layer", MapBaseLayer.STANDARD.name) ?: MapBaseLayer.STANDARD.name
-        mutableStateOf(try { MapBaseLayer.valueOf(saved) } catch (_: Exception) { MapBaseLayer.STANDARD })
+    val initialProfileConfig = remember(activityProfile) {
+        MapProfileConfigHelper.getConfig(context, activityProfile)
     }
 
-    var showHikingOverlay by remember {
-        mutableStateOf(prefs.getBoolean("hiking_overlay", false))
+    var baseLayer by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.baseLayer)
     }
 
-    var fontScale by remember {
-        val saved = prefs.getString("font_scale", MapFontScale.NORMAL.name) ?: MapFontScale.NORMAL.name
-        mutableStateOf(try { MapFontScale.valueOf(saved) } catch (_: Exception) { MapFontScale.NORMAL })
+    var showHikingOverlay by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.showHikingOverlay)
+    }
+
+    var fontScale by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.fontScale)
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -389,14 +392,18 @@ fun OsmMapView(
             MapBaseLayer.SATELLITE -> EsriSatelliteSource
         }
         map.setTileSource(tileSource)
-        prefs.edit().putString("base_layer", baseLayer.name).apply()
+        MapProfileConfigHelper.setBaseLayer(context, activityProfile, baseLayer)
         map.invalidate()
     }
 
-    // Auto-recommend Freemap Outdoor when switching to Hiking profile if base layer is still STANDARD
+    // Sync Profile-Specific Map Settings when ActivityProfile switches
     LaunchedEffect(activityProfile) {
-        if (activityProfile == ActivityProfile.HIKING && baseLayer == MapBaseLayer.STANDARD) {
-            baseLayer = MapBaseLayer.FREEMAP_OUTDOOR
+        val config = MapProfileConfigHelper.getConfig(context, activityProfile)
+        baseLayer = config.baseLayer
+        showHikingOverlay = config.showHikingOverlay
+        fontScale = config.fontScale
+        if (orientationMode != config.orientationMode) {
+            onOrientationModeChange?.invoke(config.orientationMode)
         }
     }
 
@@ -404,14 +411,14 @@ fun OsmMapView(
     LaunchedEffect(fontScale, mapView) {
         val map = mapView ?: return@LaunchedEffect
         map.tilesScaleFactor = fontScale.scaleFactor
-        prefs.edit().putString("font_scale", fontScale.name).apply()
+        MapProfileConfigHelper.setFontScale(context, activityProfile, fontScale)
         map.invalidate()
     }
 
     // Dynamic Hiking / Tourist Trail Overlay
     LaunchedEffect(showHikingOverlay, mapView) {
         val map = mapView ?: return@LaunchedEffect
-        prefs.edit().putBoolean("hiking_overlay", showHikingOverlay).apply()
+        MapProfileConfigHelper.setHikingOverlay(context, activityProfile, showHikingOverlay)
         if (showHikingOverlay) {
             if (hikingOverlayRef == null) {
                 val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
@@ -1020,7 +1027,8 @@ fun OsmMapView(
         )
 
         // Floating Zoom Controls [ + ] and [ - ] at Vertical Center-Right (Alignment.CenterEnd)
-        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else (-40).dp
+        // Maintained at the optical center of the visible map aperture
+        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -1071,8 +1079,8 @@ fun OsmMapView(
         }
 
         // Floating Map Tools (Recenter/Refresh, Layers/Settings, Instant Share, Fit Track, Clear Selected Trips)
-        // Positioned at Bottom-Right (Alignment.BottomEnd) directly above bottom toolbar
-        val mapToolsBottomPadding = if (isLandscape) 64.dp else 74.dp
+        // Positioned at Bottom-Right (Alignment.BottomEnd) with clean clearance above the bottom toolbar
+        val mapToolsBottomPadding = if (isLandscape) 68.dp else 88.dp
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -1599,6 +1607,7 @@ fun OsmMapView(
 
     if (showSettingsDialog) {
         MapSettingsDialog(
+            activityProfile = activityProfile,
             currentBaseLayer = baseLayer,
             onBaseLayerChange = { baseLayer = it },
             hikingOverlayEnabled = showHikingOverlay,
@@ -1631,6 +1640,24 @@ fun OsmMapView(
                 showSettingsDialog = false
                 onOpenCacheManager?.invoke()
             },
+            onResetProfileDefaults = {
+                MapProfileConfigHelper.resetProfileDefaults(context, activityProfile)
+                val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
+                baseLayer = cfg.baseLayer
+                showHikingOverlay = cfg.showHikingOverlay
+                fontScale = cfg.fontScale
+                currentOnOrientationChange?.invoke(cfg.orientationMode)
+                Toast.makeText(context, "Reset defaults for ${activityProfile.displayName}", Toast.LENGTH_SHORT).show()
+            },
+            onResetAllProfileDefaults = {
+                MapProfileConfigHelper.resetAllProfileDefaults(context)
+                val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
+                baseLayer = cfg.baseLayer
+                showHikingOverlay = cfg.showHikingOverlay
+                fontScale = cfg.fontScale
+                currentOnOrientationChange?.invoke(cfg.orientationMode)
+                Toast.makeText(context, "Reset all profile defaults", Toast.LENGTH_SHORT).show()
+            },
             onDismiss = { showSettingsDialog = false }
         )
     }
@@ -1647,6 +1674,7 @@ fun OsmMapView(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MapSettingsDialog(
+    activityProfile: ActivityProfile,
     currentBaseLayer: MapBaseLayer,
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     hikingOverlayEnabled: Boolean,
@@ -1658,6 +1686,8 @@ private fun MapSettingsDialog(
     currentLatLng: Triple<Double, Double, Float?>? = null,
     onClearCache: () -> Unit,
     onOpenCacheManager: () -> Unit,
+    onResetProfileDefaults: () -> Unit,
+    onResetAllProfileDefaults: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1916,6 +1946,73 @@ private fun MapSettingsDialog(
                         fontSize = 11.sp,
                         color = ComposeColor(0xFF94A3B8),
                         lineHeight = 15.sp
+                    )
+                }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Profile Map Defaults & Reset Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Profile Defaults (${activityProfile.displayName})",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Text(
+                    text = "Saved Automatically",
+                    fontSize = 11.sp,
+                    color = ComposeColor(0xFF10B981),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Text(
+                text = "Map type, orientation, trail overlays, and label size are remembered separately for ${activityProfile.displayName}.",
+                fontSize = 11.sp,
+                color = ComposeColor(0xFF64748B),
+                lineHeight = 15.sp
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onResetProfileDefaults,
+                    colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF334155)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Reset ${activityProfile.displayName}",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFFE2E8F0),
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+
+                Button(
+                    onClick = onResetAllProfileDefaults,
+                    colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF1E293B)),
+                    border = BorderStroke(1.dp, ComposeColor(0xFF475569)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Reset All Profiles",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFFCBD5E1),
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
