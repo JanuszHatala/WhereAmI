@@ -29,6 +29,7 @@ object RoadNameNormalizer {
         if (name.isNullOrBlank()) return false
         val trimmed = name.trim().uppercase(Locale.ROOT)
         return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
+                trimmed.matches(Regex("""^\d{1,3}$""")) ||
                 trimmed.contains(Regex("""\((DK|DW|A|S|E)\s*\d+.*\)""")) ||
                 trimmed.startsWith("DROGA KRAJOWA") ||
                 trimmed.startsWith("KRAJOWA") ||
@@ -41,8 +42,9 @@ object RoadNameNormalizer {
 
     /**
      * Determines whether house numbers should be displayed on the main UI.
-     * Allowed only when moving at slow speed (< 10 km/h) or stationary,
-     * with tight GPS horizontal accuracy (<= 12m), on non-major roads.
+     * Allowed only when moving at slow speed (< 15 km/h) or stationary,
+     * with acceptable GPS horizontal accuracy (<= 25m, or <= 30m when stationary),
+     * on non-major roads.
      */
     fun shouldShowHouseNumber(
         speedKmh: Float?,
@@ -52,7 +54,8 @@ object RoadNameNormalizer {
         if (isMajorRoad) return false
         val speed = speedKmh ?: 0f
         val accuracy = accuracyMeters ?: Float.MAX_VALUE
-        return speed < 10.0f && accuracy <= 12.0f
+        val maxAccuracy = if (speed < 1.2f) 30.0f else 25.0f
+        return speed < 15.0f && accuracy <= maxAccuracy
     }
 
     /**
@@ -129,6 +132,16 @@ object RoadNameNormalizer {
             E_ROUTE_REGEX.matches(road) -> {
                 val match = E_ROUTE_REGEX.find(road)!!
                 normalizedHighway = "E${match.groupValues[1]}"
+                isRoadSelfHighway = true
+            }
+            road.matches(Regex("""^\d{1,2}$""")) -> {
+                // 1-2 digits in Poland designate DK (e.g. "28" -> DK28, "47" -> DK47)
+                normalizedHighway = "DK$road"
+                isRoadSelfHighway = true
+            }
+            road.matches(Regex("""^\d{3}$""")) -> {
+                // 3 digits in Poland designate DW (e.g. "946" -> DW946)
+                normalizedHighway = "DW$road"
                 isRoadSelfHighway = true
             }
         }

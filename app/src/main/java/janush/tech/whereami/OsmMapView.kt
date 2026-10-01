@@ -1019,17 +1019,64 @@ fun OsmMapView(
             update = { }
         )
 
-        // Floating Map Controls (Recenter/Refresh, Layers/Settings, Fit Track, Hide Shown Trips, Instant Share)
-        // Positioned vertically centered in the clear map aperture (CenterEnd):
-        // In landscape: exactly centered (offset 0dp).
-        // In portrait: offset downwards to center cleanly between top card and bottom toolbar.
-        // It never shifts or collides with the destination/saved place bottom card!
-        val mapControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
+        // Floating Zoom Controls [ + ] and [ - ] at Vertical Center-Right (Alignment.CenterEnd)
+        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .offset(y = mapControlsApertureOffsetY)
+                .offset(y = zoomControlsApertureOffsetY)
                 .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Zoom In [+] Button
+            IconButton(
+                onClick = {
+                    val map = mapView ?: return@IconButton
+                    map.controller.zoomIn()
+                    currentZoom = map.zoomLevelDouble
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(ComposeColor(0xCC1E293B))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Zoom In",
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            // Zoom Out [-] Button
+            IconButton(
+                onClick = {
+                    val map = mapView ?: return@IconButton
+                    map.controller.zoomOut()
+                    currentZoom = map.zoomLevelDouble
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(ComposeColor(0xCC1E293B))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Remove,
+                    contentDescription = "Zoom Out",
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        // Floating Map Tools (Recenter/Refresh, Layers/Settings, Instant Share, Fit Track, Clear Selected Trips)
+        // Positioned at Bottom-Right (Alignment.BottomEnd) above bottom toolbar & destination card
+        val mapToolsBottomPadding = if (isLandscape) 70.dp else 125.dp
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = mapToolsBottomPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -2165,7 +2212,7 @@ internal fun makePauseIcon(context: Context, durText: String): android.graphics.
  */
 internal fun makeStartMarkerIcon(context: Context): android.graphics.drawable.BitmapDrawable {
     val density = context.resources.displayMetrics.density
-    val size = (44f * density).toInt()
+    val size = (26f * density).toInt().coerceAtLeast(1)
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
@@ -2177,11 +2224,11 @@ internal fun makeStartMarkerIcon(context: Context): android.graphics.drawable.Bi
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = 1.5f * density
     }
     val cx = size / 2f
     val cy = size / 2f
-    val radius = (size / 2f) - (2f * density)
+    val radius = (size / 2f) - (1.5f * density)
     canvas.drawCircle(cx, cy, radius, circlePaint)
     canvas.drawCircle(cx, cy, radius, strokePaint)
 
@@ -2207,7 +2254,7 @@ internal fun makeStartMarkerIcon(context: Context): android.graphics.drawable.Bi
  */
 internal fun makeEndMarkerIcon(context: Context): android.graphics.drawable.BitmapDrawable {
     val density = context.resources.displayMetrics.density
-    val size = (44f * density).toInt()
+    val size = (26f * density).toInt().coerceAtLeast(1)
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
@@ -2219,11 +2266,11 @@ internal fun makeEndMarkerIcon(context: Context): android.graphics.drawable.Bitm
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = 1.5f * density
     }
     val cx = size / 2f
     val cy = size / 2f
-    val radius = (size / 2f) - (2f * density)
+    val radius = (size / 2f) - (1.5f * density)
     canvas.drawCircle(cx, cy, radius, circlePaint)
     canvas.drawCircle(cx, cy, radius, strokePaint)
 
