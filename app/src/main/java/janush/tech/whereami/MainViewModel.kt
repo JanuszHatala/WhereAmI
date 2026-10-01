@@ -626,6 +626,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         TelemetryLogger.log("SETTINGS", "All settings reset to canonical defaults")
     }
+
+    val isTripPaused: StateFlow<Boolean> = tripManager.isPaused
+
+    fun pauseTrip() {
+        tripManager.pauseTrip()
+    }
+
+    fun resumeTrip() {
+        tripManager.resumeTrip()
+    }
+
+    fun getTripModeForProfile(profile: ActivityProfile): TripMode {
+        return tripManager.getTripModeForProfile(profile)
+    }
+
+    fun setTripModeForProfile(profile: ActivityProfile, mode: TripMode) {
+        tripManager.setTripModeForProfile(profile, mode)
+    }
 }
 
 
