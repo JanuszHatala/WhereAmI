@@ -15,6 +15,8 @@ class RoadNameNormalizerTest {
         assertEquals("DK52", RoadNameNormalizer.normalize("DK 52"))
         assertEquals("DK52", RoadNameNormalizer.normalize("DK52"))
         assertEquals("DK28", RoadNameNormalizer.normalize("Droga Krajowa 28"))
+        assertEquals("DK28", RoadNameNormalizer.normalize("28"))
+        assertEquals("DK47", RoadNameNormalizer.normalize("47"))
     }
 
     @Test
@@ -23,6 +25,7 @@ class RoadNameNormalizerTest {
         assertEquals("DW946", RoadNameNormalizer.normalize("Wojewódzka 946"))
         assertEquals("DW946", RoadNameNormalizer.normalize("DW 946"))
         assertEquals("DW948", RoadNameNormalizer.normalize("Droga Wojewódzka nr 948"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("946"))
     }
 
     @Test
@@ -67,6 +70,8 @@ class RoadNameNormalizerTest {
         assertTrue(RoadNameNormalizer.isMajorRoad("A4"))
         assertTrue(RoadNameNormalizer.isMajorRoad("S7"))
         assertTrue(RoadNameNormalizer.isMajorRoad("S1"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("28"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("946"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Aleje świętego Jana Pawła II (S1)"))
         assertTrue(RoadNameNormalizer.isMajorRoad("ul. Wadowicka (DK52)"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Droga Krajowa 28"))
@@ -80,14 +85,16 @@ class RoadNameNormalizerTest {
         assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 5.0f, accuracyMeters = 8.0f, isMajorRoad = false))
         assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 4.0f, isMajorRoad = false))
         assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = null, accuracyMeters = 10.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 12.0f, accuracyMeters = 15.0f, isMajorRoad = false))
 
-        // Velocity >= 10 km/h -> stripped
-        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 8.0f, isMajorRoad = false))
+        // Velocity >= 15 km/h -> stripped
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 15.0f, accuracyMeters = 8.0f, isMajorRoad = false))
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 45.0f, accuracyMeters = 5.0f, isMajorRoad = false))
 
-        // Degraded accuracy > 12m -> stripped
-        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 2.0f, accuracyMeters = 13.0f, isMajorRoad = false))
-        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 25.0f, isMajorRoad = false))
+        // Degraded accuracy > 25m (moving) / > 30m (stationary) -> stripped
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 5.0f, accuracyMeters = 26.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 28.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 35.0f, isMajorRoad = false))
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = null, isMajorRoad = false))
 
         // Major road / corridor -> strictly stripped regardless of speed/accuracy

@@ -26,6 +26,8 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_TRIP_MODE = "pref_trip_mode"
         private const val KEY_ACTIVITY_PROFILE = "pref_activity_profile"
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
+        private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
+        private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
     }
 
     private val dbHelper = TripDatabaseHelper(context)
@@ -50,8 +52,36 @@ class TripManager private constructor(private val context: Context) {
     )
     val activityProfile: StateFlow<ActivityProfile> = _activityProfile.asStateFlow()
 
-    private val _autoStopMinutes = MutableStateFlow(prefs.getInt(KEY_AUTO_STOP_MINUTES, 5))
+    private val _autoStopMinutes = MutableStateFlow(
+        prefs.getInt(KEY_AUTO_STOP_PREFIX + (prefs.getString(KEY_ACTIVITY_PROFILE, ActivityProfile.CAR.name) ?: ActivityProfile.CAR.name), 
+            prefs.getInt(KEY_AUTO_STOP_MINUTES, 5))
+    )
     val autoStopMinutes: StateFlow<Int> = _autoStopMinutes.asStateFlow()
+
+    fun getAutoStartSecondsForProfile(profile: ActivityProfile): Int {
+        val defaultSec = (profile.autoStartDurationMs / 1000L).toInt()
+        return prefs.getInt(KEY_AUTO_START_PREFIX + profile.name, defaultSec)
+    }
+
+    fun setAutoStartSecondsForProfile(profile: ActivityProfile, seconds: Int) {
+        val clamped = seconds.coerceIn(3, 120)
+        prefs.edit().putInt(KEY_AUTO_START_PREFIX + profile.name, clamped).apply()
+        TelemetryLogger.log("SETTINGS", "AutoStartSeconds for ${profile.name} changed to $clamped")
+    }
+
+    fun getAutoStopMinutesForProfile(profile: ActivityProfile): Int {
+        val defaultMin = profile.autoStopMinutesDefault
+        return prefs.getInt(KEY_AUTO_STOP_PREFIX + profile.name, defaultMin)
+    }
+
+    fun setAutoStopMinutesForProfile(profile: ActivityProfile, minutes: Int) {
+        val clamped = minutes.coerceIn(1, 60)
+        prefs.edit().putInt(KEY_AUTO_STOP_PREFIX + profile.name, clamped).apply()
+        if (_activityProfile.value == profile) {
+            _autoStopMinutes.value = clamped
+        }
+        TelemetryLogger.log("SETTINGS", "AutoStopMinutes for ${profile.name} changed to $clamped")
+    }
 
     private val _activeTrip = MutableStateFlow<TripRecord?>(null)
     val activeTrip: StateFlow<TripRecord?> = _activeTrip.asStateFlow()
@@ -67,6 +97,8 @@ class TripManager private constructor(private val context: Context) {
     // Intentional Visit Filter state (Item 9: penetrate > 150m OR stay > 45s)
     private data class PendingPlaceCandidate(
         val place: PlaceInfo,
+        val placeName: String,
+        val placeKind: PlaceKind,
         val firstSeenTimestamp: Long,
         val entryLatitude: Double,
         val entryLongitude: Double,
@@ -162,6 +194,7 @@ class TripManager private constructor(private val context: Context) {
     fun setActivityProfile(profile: ActivityProfile) {
         _activityProfile.value = profile
         prefs.edit().putString(KEY_ACTIVITY_PROFILE, profile.name).apply()
+        _autoStopMinutes.value = getAutoStopMinutesForProfile(profile)
         val current = _activeTrip.value
         if (current != null) {
             val updated = current.copy(activityProfile = profile)
@@ -174,9 +207,7 @@ class TripManager private constructor(private val context: Context) {
     }
 
     fun setAutoStopMinutes(minutes: Int) {
-        _autoStopMinutes.value = minutes
-        prefs.edit().putInt(KEY_AUTO_STOP_MINUTES, minutes).apply()
-        TelemetryLogger.log("SETTINGS", "AutoStopMinutes changed to $minutes")
+        setAutoStopMinutesForProfile(_activityProfile.value, minutes)
     }
 
     fun startManualTrip() {
@@ -335,7 +366,8 @@ class TripManager private constructor(private val context: Context) {
                     } else {
                         val elapsed = now - autoStartFirstTime
                         val distMoved = autoStartFirstLocation!!.distanceTo(newLoc)
-                        if ((speedKmh >= currentProfile.autoStartSpeedKmh && elapsed >= currentProfile.autoStartDurationMs) ||
+                        val autoStartDurationMs = getAutoStartSecondsForProfile(currentProfile) * 1000L
+                        if ((speedKmh >= currentProfile.autoStartSpeedKmh && elapsed >= autoStartDurationMs) ||
                             (distMoved >= 25.0 && elapsed >= 8_000L && speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f))
                         ) {
                             startTrip(isAuto = true)
@@ -520,6 +552,17 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
+    private fun detectOutdoorPlaceKind(name: String): PlaceKind {
+        val lower = name.lowercase(java.util.Locale.ROOT)
+        return when {
+            lower.contains("przełęcz") || lower.contains("pass") || lower.contains("siodło") || lower.contains("karb") -> PlaceKind.MOUNTAIN_PASS
+            lower.contains("szczyt") || lower.contains("wierch") || lower.contains("turnia") || lower.contains("kopa") || lower.contains("góra") || lower.contains("peak") -> PlaceKind.PEAK
+            lower.contains("perć") || lower.contains("szlak") || lower.contains("ścieżka") || lower.contains("trail") -> PlaceKind.TRAIL
+            lower.contains("dolina") || lower.contains("polana") || lower.contains("hala") || lower.contains("schronisko") || lower.contains("staw") || lower.contains("betlejemka") -> PlaceKind.POI
+            else -> PlaceKind.LOCALITY
+        }
+    }
+
     private fun updateVisitedPlaces(
         lat: Double,
         lng: Double,
@@ -529,24 +572,43 @@ class TripManager private constructor(private val context: Context) {
         tripId: Long,
         now: Long
     ): Boolean {
-        if (currentPlace == null || currentPlace.city == "Unknown City" || currentPlace.city == "--") return false
-        val candidateCity = currentPlace.city
-        val isImmediateLast = placesList.lastOrNull()?.placeName.equals(candidateCity, ignoreCase = true)
+        if (currentPlace == null) return false
+
+        val isOutdoorProfile = _activityProfile.value in setOf(ActivityProfile.HIKING, ActivityProfile.WALKING, ActivityProfile.MTB)
+        val streetCandidate = currentPlace.street?.trim()?.takeIf {
+            it.isNotBlank() &&
+            !it.startsWith("ul. ") && !it.startsWith("al. ") && !it.startsWith("pl. ") && !it.startsWith("os. ") &&
+            detectOutdoorPlaceKind(it) != PlaceKind.LOCALITY
+        }
+
+        val candidateName: String
+        val candidateKind: PlaceKind
+        if (isOutdoorProfile && streetCandidate != null) {
+            candidateName = streetCandidate
+            candidateKind = detectOutdoorPlaceKind(streetCandidate)
+        } else {
+            if (currentPlace.city == "Unknown City" || currentPlace.city == "--") return false
+            candidateName = currentPlace.city
+            candidateKind = detectOutdoorPlaceKind(currentPlace.city)
+        }
+
+        val isImmediateLast = placesList.lastOrNull()?.placeName.equals(candidateName, ignoreCase = true)
 
         if (isImmediateLast) {
             pendingCandidate = null
             return false
         }
         if (placesList.isEmpty()) {
-            TelemetryLogger.logTrip("LOCALITY_INITIAL", tripId, "Initial trip start at $candidateCity")
+            TelemetryLogger.logTrip("LOCALITY_INITIAL", tripId, "Initial trip start at $candidateName ($candidateKind)")
             placesList.add(
                 VisitedPlace(
-                    placeName = candidateCity,
+                    placeName = candidateName,
                     hierarchySubtitle = LocationManager.formatHierarchy(currentPlace),
                     timestamp = now,
                     latitude = lat,
                     longitude = lng,
-                    distanceAtEntryMeters = currentDistance
+                    distanceAtEntryMeters = currentDistance,
+                    placeKind = candidateKind
                 )
             )
             pendingCandidate = null
@@ -554,7 +616,7 @@ class TripManager private constructor(private val context: Context) {
         }
 
         val candidate = pendingCandidate
-        if (candidate != null && candidate.place.city.equals(candidateCity, ignoreCase = true)) {
+        if (candidate != null && candidate.placeName.equals(candidateName, ignoreCase = true)) {
             val distResults = FloatArray(1)
             Location.distanceBetween(candidate.entryLatitude, candidate.entryLongitude, lat, lng, distResults)
             val displacementMeters = distResults[0]
@@ -563,7 +625,7 @@ class TripManager private constructor(private val context: Context) {
             val isPenetrated = displacementMeters >= 150f
             val isSustainedStay = durationMs >= 45_000L
 
-            val recentMatch = placesList.takeLast(4).find { it.placeName.equals(candidateCity, ignoreCase = true) }
+            val recentMatch = placesList.takeLast(4).find { it.placeName.equals(candidateName, ignoreCase = true) }
             val isRecentPingPong = recentMatch != null && (
                 (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
                 (currentDistance - recentMatch.distanceAtEntryMeters < 2500.0)
@@ -573,16 +635,17 @@ class TripManager private constructor(private val context: Context) {
                 TelemetryLogger.logTrip(
                     "LOCALITY_COMMITTED",
                     tripId,
-                    "Intentional visit to $candidateCity committed: disp=${displacementMeters.toInt()}m, dur=${durationMs / 1000}s"
+                    "Intentional visit to $candidateName ($candidateKind) committed: disp=${displacementMeters.toInt()}m, dur=${durationMs / 1000}s"
                 )
                 placesList.add(
                     VisitedPlace(
-                        placeName = candidateCity,
+                        placeName = candidateName,
                         hierarchySubtitle = LocationManager.formatHierarchy(candidate.place),
                         timestamp = candidate.firstSeenTimestamp,
                         latitude = candidate.entryLatitude,
                         longitude = candidate.entryLongitude,
-                        distanceAtEntryMeters = candidate.entryDistanceMeters
+                        distanceAtEntryMeters = candidate.entryDistanceMeters,
+                        placeKind = candidateKind
                     )
                 )
                 pendingCandidate = null
@@ -594,6 +657,8 @@ class TripManager private constructor(private val context: Context) {
         } else {
             pendingCandidate = PendingPlaceCandidate(
                 place = currentPlace,
+                placeName = candidateName,
+                placeKind = candidateKind,
                 firstSeenTimestamp = now,
                 entryLatitude = lat,
                 entryLongitude = lng,
