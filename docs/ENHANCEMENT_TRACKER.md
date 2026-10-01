@@ -25,8 +25,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 11** | Field Testing (2026-09-29) Settings Trip Recording Mode Hang/OOM Bugfix & Hiking Live Sharing Accuracy Overhaul | 2 | 2 | 0 | 0 |
 | **Round 12** | Field Testing (2026-09-29 – 2026-10-01) Telemetry & Battery Deep Analysis, Notification Wake Lock Throttling, Outdoor Trails/Passes/Peaks Hierarchy, Per-Profile Auto-Start/Stop Custom Values, Merged Trip & Pause Recalculation, Minimap Pin Size Polish & Recording HUD | 11 | 11 | 0 | 0 |
 | **Round 13** | Field Testing (2026-10-01 Evening) HUD Bar Pause/Resume, Per-Profile Trip Mode & Custom Auto Times, Map Controls Spacing, Trips History Route Overflow & Live Sharing Quick Share Modal with QR Code | 5 | 5 | 0 | 0 |
+| **Round 14** | Field Testing (2026-10-01 Night) Map & Zoom Controls Placement, Trips List Route Rest Separation, Auto-Start/Stop Dropdowns, Per-Profile Map Defaults & Customization Memory | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **142** | **134** | **0** | **8** |
+| **Total** | | **146** | **138** | **0** | **8** |
 
 ---
 
@@ -276,7 +277,18 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 16. Features Inventory & Future Backlog
+## 16. Round 14: Field Testing (2026-10-01 Night) Map & Zoom Controls Placement, Trips List Route Rest Separation, Auto-Start/Stop Dropdowns, Per-Profile Map Defaults & Customization Memory
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT14-01** | Map Controls Height & Zoom Controls Centering: Raise bottom-right map tools by 14dp so they do not touch the bottom toolbar; restore Zoom controls `[+]`/`[-]` centered in visible map aperture. | `OsmMapView.kt` | **Completed** | Increased `mapToolsBottomPadding` to `88.dp` (portrait) / `68.dp` (landscape), providing a clean 12dp clearance above the bottom toolbar. Restored `zoomControlsApertureOffsetY` to `if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp`, keeping zoom controls centered in the visible map aperture. |
+| **FT14-02** | Recorded Trips List Route Rest Separation: Remove rest stops from the route line under the trip name in trip cards; keep rest pauses strictly in their own expandable section, and interleave chronologically only in Trip Details view. | `MainActivity.kt` (`PlacesTripsDialog`) | **Completed** | In the trip history card route summary, only `trip.placesVisited` is rendered (`places` count and place names). Rest stops are excluded from the main route line and remain in their dedicated rest stops list. In `TripDetailDialog`, places and rest stops remain interleaved chronologically in the Route Timeline. |
+| **FT14-03** | Auto-Start and Auto-Stop Dropdown Controls: Replace chip/button rows with clean Compose Dropdown menu controls with preset options and "Custom...". | `MainActivity.kt` (`SettingsSheet`) | **Completed** | Replaced the 2-row button grids with interactive Compose `DropdownMenu` controls with current selection display, dropdown icon, preset options, and "Custom..." launching custom minutes dialog. |
+| **FT14-04** | Per-Activity Profile Map Defaults, Customization Memory & Reset Actions: Maintain default map layer, orientation, trail overlays, and label scale per activity profile; automatically switch when profile changes; remember user customizations; provide reset defaults for selected profile or all profiles. | `MapProfileConfigHelper.kt`, `OsmMapView.kt`, `MainViewModel.kt`, `MainActivity.kt`, `MapProfileConfigTest.kt` | **Completed** | Created `MapProfileConfigHelper` defining built-in defaults for all 6 profiles (e.g. Hiking/MTB: Freemap Outdoor, Course-Up, Trails Overlay true; Driving/Cycling: Standard OSM, Course-Up, Trails Overlay false; Running/Walking: Standard OSM, North-Up). Automatically loads and applies map layer, orientation, trail overlays, and label scale on profile change. Remembers user customizations per profile in `SharedPreferences`. Added "Reset [Profile] Defaults" and "Reset All Profiles" in both Map Settings dialog and main Settings Sheet. Verified with unit tests in `MapProfileConfigTest.kt`. |
+
+---
+
+## 17. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |

@@ -220,6 +220,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setActivityProfile(profile: ActivityProfile) {
         tripManager.setActivityProfile(profile)
+        val config = MapProfileConfigHelper.getConfig(getApplication(), profile)
+        _orientationMode.value = config.orientationMode
     }
 
     fun setDestination(item: SearchResultItem?) {
@@ -446,8 +448,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setOrientationMode(mode: MapOrientationMode) {
         _orientationMode.value = mode
+        val currentProfile = tripManager.activityProfile.value
+        MapProfileConfigHelper.setOrientationMode(getApplication(), currentProfile, mode)
         appPrefs.edit().putString("pref_map_orientation_mode", mode.name).apply()
-        TelemetryLogger.log("SETTINGS", "MapOrientationMode changed to ${mode.name}")
+        TelemetryLogger.log("SETTINGS", "MapOrientationMode changed to ${mode.name} for ${currentProfile.name}")
+    }
+
+    fun resetMapProfileDefaults(profile: ActivityProfile) {
+        MapProfileConfigHelper.resetProfileDefaults(getApplication(), profile)
+        val config = MapProfileConfigHelper.getConfig(getApplication(), profile)
+        if (tripManager.activityProfile.value == profile) {
+            _orientationMode.value = config.orientationMode
+        }
+        TelemetryLogger.log("SETTINGS", "Reset map defaults for profile: ${profile.name}")
+    }
+
+    fun resetAllMapProfileDefaults() {
+        MapProfileConfigHelper.resetAllProfileDefaults(getApplication())
+        val currentProfile = tripManager.activityProfile.value
+        val config = MapProfileConfigHelper.getConfig(getApplication(), currentProfile)
+        _orientationMode.value = config.orientationMode
+        TelemetryLogger.log("SETTINGS", "Reset map defaults for all profiles")
     }
 
     fun toggleShowHeatMap() {
