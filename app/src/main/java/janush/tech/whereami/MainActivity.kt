@@ -270,6 +270,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val showHeatMap by viewModel.showHeatMap.collectAsState()
     val heatMapFilterState by viewModel.heatMapFilterState.collectAsState()
     var showHeatMapSettingsDialog by remember { mutableStateOf(false) }
+    var fitHeatMapTrigger by remember { mutableStateOf(0L) }
 
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
@@ -564,6 +565,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             heatMapConsolidate = heatMapFilterState.consolidateCorridors,
             heatMapMinVisits = heatMapFilterState.minVisits,
             fitTrackTrigger = fitTrackTrigger,
+            fitHeatMapTrigger = fitHeatMapTrigger,
             fitPlacesTrigger = fitPlacesTrigger,
             destinationPoint = destinationPoint,
             selectedSavedPlace = selectedSavedPlace,
@@ -609,40 +611,51 @@ fun LocationScreen(viewModel: MainViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top
             ) {
-                if (!showTripsSheet) {
-                    LocalityCard(
-                        locationData = locationData,
-                        activeTrip = activeTrip,
-                        liveSession = liveSession,
-                        savedPlaces = savedPlaces,
-                        localityCardStyle = localityCardStyle,
-                        compactStreetNames = compactStreetNames,
-                        activityProfile = activityProfile,
-                        primaryPlace = primaryPlace,
-                        secondaryPlace = secondaryPlace,
-                        hierarchySubtitle = hierarchySubtitle,
-                        currentLatLng = currentLatLng,
-                        onShowActiveTripRoute = {
-                            dismissAllDialogs()
-                            showActiveTripRouteDialog = true
-                        },
-                        onShowLiveShare = {
-                            dismissAllDialogs()
-                            if (liveSession?.isActive == true) {
-                                showLiveQuickShareModal = true
-                            } else {
-                                showLiveShareDialog = true
-                            }
-                        },
-                        onOpenSavedPlaces = {
-                            dismissAllDialogs()
-                            sheetTab = 1
-                            showTripsSheet = true
-                        },
-                        onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
-                        onSetActivityProfile = { viewModel.setActivityProfile(it) },
-                        modifier = Modifier.widthIn(max = 360.dp)
-                    )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    if (!showTripsSheet) {
+                        LocalityCard(
+                            locationData = locationData,
+                            activeTrip = activeTrip,
+                            liveSession = liveSession,
+                            savedPlaces = savedPlaces,
+                            localityCardStyle = localityCardStyle,
+                            compactStreetNames = compactStreetNames,
+                            activityProfile = activityProfile,
+                            primaryPlace = primaryPlace,
+                            secondaryPlace = secondaryPlace,
+                            hierarchySubtitle = hierarchySubtitle,
+                            currentLatLng = currentLatLng,
+                            onShowActiveTripRoute = {
+                                dismissAllDialogs()
+                                showActiveTripRouteDialog = true
+                            },
+                            onShowLiveShare = {
+                                dismissAllDialogs()
+                                if (liveSession?.isActive == true) {
+                                    showLiveQuickShareModal = true
+                                } else {
+                                    showLiveShareDialog = true
+                                }
+                            },
+                            onOpenSavedPlaces = {
+                                dismissAllDialogs()
+                                sheetTab = 1
+                                showTripsSheet = true
+                            },
+                            onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
+                            onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                            modifier = Modifier.widthIn(max = 360.dp)
+                        )
+                    }
+
+                    if (showHeatMap) {
+                        HeatMapLegend(
+                            onOpenHeatMapSettings = { showHeatMapSettingsDialog = true }
+                        )
+                    }
                 }
 
                 val activeTargetPoint = selectedSavedPlace?.geoPoint ?: destinationPoint
@@ -1046,6 +1059,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onLandscapePauseResume = {
                     if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
                 },
+                landscapeShowHeatMap = isLandscape && showHeatMap,
+                heatMapFilterActive = heatMapFilterState.hasActiveFilter,
+                onToggleHeatMap = { viewModel.toggleShowHeatMap() },
+                onOpenHeatMapSettings = { showHeatMapSettingsDialog = true },
+                onFitHeatMap = { fitHeatMapTrigger = System.currentTimeMillis() },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(
@@ -1053,7 +1071,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                         end = 12.dp,
                         bottom = if (isLandscape) 12.dp else 20.dp
                     )
-                    .widthIn(max = if (isLandscape) (if (activeTrip != null) 580.dp else 420.dp) else 440.dp)
+                    .widthIn(max = if (isLandscape) {
+                        when {
+                            showHeatMap && activeTrip != null -> 700.dp
+                            showHeatMap -> 520.dp
+                            activeTrip != null -> 580.dp
+                            else -> 420.dp
+                        }
+                    } else 440.dp)
                     .fillMaxWidth()
                     .onGloballyPositioned {
                         bottomControlsTopPx = it.positionInRoot().y.toInt()
@@ -6974,7 +6999,7 @@ private fun LocalityCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 10.dp),
+                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -7653,11 +7678,18 @@ private fun LocalityCard(
                 ) {
                     Text(
                         text = primaryCity,
-                        fontSize = 30.sp,
+                        fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         textAlign = TextAlign.Center,
-                        lineHeight = 36.sp
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 30.sp
+                        )
                     )
                     if (activeTrip != null) {
                         Spacer(modifier = Modifier.width(10.dp))
@@ -7685,11 +7717,19 @@ private fun LocalityCard(
                 if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
                     Text(
                         text = "($secondaryCity)",
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF94A3B8),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 1.dp)
+                        modifier = Modifier.padding(top = 0.dp),
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 16.sp
+                        )
                     )
                 }
 
@@ -7707,11 +7747,19 @@ private fun LocalityCard(
                 if (streetOrRoad.isNotEmpty()) {
                     Text(
                         text = streetOrRoad,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFFFBBF24), // Amber gold for street
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 1.dp)
+                        modifier = Modifier.padding(top = 1.dp),
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 15.sp
+                        )
                     )
                 }
 
@@ -7728,11 +7776,19 @@ private fun LocalityCard(
                 if (fullHierarchyNormal.isNotEmpty()) {
                     Text(
                         text = fullHierarchyNormal,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF38BDF8),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 1.dp),
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 13.sp
+                        )
                     )
                 }
 
@@ -7749,10 +7805,10 @@ private fun LocalityCard(
 
                 Row(
                     modifier = Modifier
-                        .padding(top = 4.dp)
+                        .padding(top = 3.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Compact Dropdown Trigger Pill
@@ -7943,6 +7999,11 @@ private fun MainBottomControlsCard(
     landscapeHudDistKm: Double? = null,
     landscapeIsPaused: Boolean = false,
     onLandscapePauseResume: (() -> Unit)? = null,
+    landscapeShowHeatMap: Boolean = false,
+    heatMapFilterActive: Boolean = false,
+    onToggleHeatMap: (() -> Unit)? = null,
+    onOpenHeatMapSettings: (() -> Unit)? = null,
+    onFitHeatMap: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -8055,31 +8116,38 @@ private fun MainBottomControlsCard(
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF1E293B))
                     .clickable { onShowMapSettings() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Layers,
-                    contentDescription = "Map Settings",
-                    tint = Color(0xFF38BDF8),
-                    modifier = Modifier.size(20.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(Color(0xFF1E293B)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = "Map Settings",
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .offset(x = 2.dp, y = 2.dp)
-                        .size(14.dp)
+                        .offset(x = 1.dp, y = 1.dp)
+                        .size(16.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF0F172A)),
+                        .background(Color(0xFF0F172A))
+                        .border(1.dp, Color(0xFF334155), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = null,
                         tint = Color(0xFFFBBF24),
-                        modifier = Modifier.size(10.dp)
+                        modifier = Modifier.size(11.dp)
                     )
                 }
             }
@@ -8101,7 +8169,88 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 8. Landscape Inline HUD (shown directly inside bottom toolbar in landscape recording)
+            // 8. Landscape Heat Map Inline Controls (shown directly inside bottom toolbar in landscape)
+            if (landscapeShowHeatMap) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xF20F172A),
+                    border = BorderStroke(1.dp, Color(0xFFF97316))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Heat Map icon
+                        Icon(
+                            imageVector = Icons.Default.Whatshot,
+                            contentDescription = "Heat Map",
+                            tint = Color(0xFFF97316),
+                            modifier = Modifier.size(16.dp)
+                        )
+
+                        // Filter button
+                        if (onOpenHeatMapSettings != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (heatMapFilterActive) Color(0xFFEA580C) else Color(0xFF1E293B))
+                                    .clickable { onOpenHeatMapSettings() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Heat Map Filter",
+                                    tint = if (heatMapFilterActive) Color.White else Color(0xFFF97316),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+
+                        // Fit All button
+                        if (onFitHeatMap != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1E293B))
+                                    .clickable { onFitHeatMap() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CropFree,
+                                    contentDescription = "Fit Heat Map",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+
+                        // Close button
+                        if (onToggleHeatMap != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF7F1D1D))
+                                    .clickable { onToggleHeatMap() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Heat Map",
+                                    tint = Color(0xFFFCA5A5),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 9. Landscape Inline HUD (shown on the very right inside bottom toolbar in landscape recording)
             if (landscapeHudElapsed != null && landscapeHudDistKm != null) {
                 Spacer(modifier = Modifier.width(4.dp))
                 Surface(
