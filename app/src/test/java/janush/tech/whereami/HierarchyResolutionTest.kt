@@ -120,4 +120,35 @@ class HierarchyResolutionTest {
         assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("poznań"))
         assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("łódź"))
     }
+
+    @Test
+    fun testCanonicalizePolishVoivodeshipEnglishAndPolish() {
+        assertEquals("małopolskie", LocationManager.canonicalizePolishVoivodeship("Lesser Poland Voivodeship"))
+        assertEquals("małopolskie", LocationManager.canonicalizePolishVoivodeship("województwo małopolskie"))
+        assertEquals("śląskie", LocationManager.canonicalizePolishVoivodeship("Silesian Voivodeship"))
+        assertEquals("śląskie", LocationManager.canonicalizePolishVoivodeship("województwo śląskie"))
+        assertEquals("dolnośląskie", LocationManager.canonicalizePolishVoivodeship("Lower Silesian Voivodeship"))
+        assertEquals("wielkopolskie", LocationManager.canonicalizePolishVoivodeship("Greater Poland Voivodeship"))
+        assertEquals("mazowieckie", LocationManager.canonicalizePolishVoivodeship("Masovian Voivodeship"))
+        assertEquals("podkarpackie", LocationManager.canonicalizePolishVoivodeship("Subcarpathian Voivodeship"))
+        assertEquals("zachodniopomorskie", LocationManager.canonicalizePolishVoivodeship("West Pomeranian Voivodeship"))
+        assertEquals("kujawsko-pomorskie", LocationManager.canonicalizePolishVoivodeship("Kuyavian-Pomeranian Voivodeship"))
+        assertEquals("świętokrzyskie", LocationManager.canonicalizePolishVoivodeship("Holy Cross Voivodeship"))
+    }
+
+    @Test
+    fun testFormatHierarchyWithEnglishVoivodeshipInPoland() {
+        val place = PlaceInfo(
+            city = "Wadowice",
+            street = "ul. Lwowska",
+            roadRef = "DK52",
+            gmina = "Wadowice",
+            powiat = "powiat wadowicki",
+            voivodeship = "Lesser Poland Voivodeship",
+            country = "Polska",
+            countryCode = "PL"
+        )
+        val hierarchy = LocationManager.formatHierarchy(place)
+        assertEquals("pow. wadowicki • woj. małopolskie", hierarchy)
+    }
 }

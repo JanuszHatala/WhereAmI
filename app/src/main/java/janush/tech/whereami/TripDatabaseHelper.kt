@@ -492,21 +492,23 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             val trip = sorted[i]
             val pointOffset = allPoints.size
 
-            // 1. Preserve existing pauses from this trip, shifting pointIndex by pointOffset
+            // 1. Preserve existing pauses from this trip, shifting pointIndex by pointOffset AND shifting distanceMeters
             for (pause in trip.pauses) {
-                allPauses.add(pause.copy(pointIndex = pause.pointIndex + pointOffset))
+                allPauses.add(
+                    pause.copy(
+                        pointIndex = pause.pointIndex + pointOffset,
+                        distanceMeters = cumulativeDistanceOffset + pause.distanceMeters
+                    )
+                )
             }
 
             allPoints.addAll(trip.points)
 
             // 2. Add visited places with recalculated distance from the start of the merged trip
             for (p in trip.placesVisited) {
-                val last = allPlaces.lastOrNull()?.placeName
-                if (last == null || !last.equals(p.placeName, ignoreCase = true)) {
-                    allPlaces.add(
-                        p.copy(distanceAtEntryMeters = cumulativeDistanceOffset + p.distanceAtEntryMeters)
-                    )
-                }
+                allPlaces.add(
+                    p.copy(distanceAtEntryMeters = cumulativeDistanceOffset + p.distanceAtEntryMeters)
+                )
             }
 
             // 3. Mark the inter-trip time gap as a rest stop (TripPause)
@@ -533,7 +535,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                             longitude = pauseLng,
                             durationMs = gapDuration,
                             pointIndex = junctionIndex,
-                            distanceMeters = cumulativeDistanceOffset
+                            distanceMeters = cumulativeDistanceOffset + trip.distanceMeters
                         )
                     )
                 }
