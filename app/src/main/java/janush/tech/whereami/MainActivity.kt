@@ -859,7 +859,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         end = 16.dp,
                         bottom = if (isLandscape) 70.dp else 82.dp
                     )
-                    .widthIn(max = if (isLandscape) 420.dp else 440.dp)
+                    .widthIn(max = if (isLandscape) 360.dp else 380.dp)
                     .fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xF20F172A),
@@ -873,7 +873,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Recording indicator dot + Activity Emoji + Elapsed Time + Distance
+                    // Recording indicator dot + Elapsed Time + Distance
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
@@ -881,9 +881,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 .clip(CircleShape)
                                 .background(if (isTripPaused) Color(0xFFF59E0B) else Color(0xFFEF4444))
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        EmojiText(emoji = recTrip.activityProfile.iconEmoji, fontSize = 13.sp)
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (isTripPaused) "PAUSED" else elapsedStr,
                             color = if (isTripPaused) Color(0xFFFBBF24) else Color.White,
@@ -2616,7 +2614,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { tripToRename = null }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -2694,11 +2692,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Button(
                             onClick = { viewModel.setLocalityCardStyle(style) },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = Color.White
                             ),
+                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(label, fontSize = 14.sp)
+                            Text(label, fontSize = 14.sp, color = Color.White)
                         }
                     }
                 }
@@ -2886,7 +2886,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isManual) Color(0xFF0284C7) else Color(0xFF1E293B),
-                            contentColor = if (isManual) Color.White else Color(0xFFCBD5E1)
+                            contentColor = Color.White
                         ),
                         border = if (isManual) null else BorderStroke(1.dp, Color(0xFF475569)),
                         shape = RoundedCornerShape(10.dp),
@@ -2894,6 +2894,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     ) {
                         Text(
                             text = "Manual",
+                            color = Color.White,
                             fontWeight = if (isManual) FontWeight.Bold else FontWeight.Medium
                         )
                     }
@@ -2905,7 +2906,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isAuto) Color(0xFF0284C7) else Color(0xFF1E293B),
-                            contentColor = if (isAuto) Color.White else Color(0xFFCBD5E1)
+                            contentColor = Color.White
                         ),
                         border = if (isAuto) null else BorderStroke(1.dp, Color(0xFF475569)),
                         shape = RoundedCornerShape(10.dp),
@@ -2913,6 +2914,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     ) {
                         Text(
                             text = "Automatic",
+                            color = Color.White,
                             fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Medium
                         )
                     }
@@ -2957,9 +2959,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                     // Per-Profile Auto-Start Delay
                     val autoStartPresetOptions = listOf(10 to "10s", 15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m")
                     val isCustomAutoStart = autoStartPresetOptions.none { it.first == autoStartSec }
+                    var autoStartDropdownExpanded by remember { mutableStateOf(false) }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -2967,88 +2972,113 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Auto-Start Delay (${activityProfile.displayName})",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            modifier = Modifier.weight(1f).padding(end = 12.dp)
                         )
-                        val headerLabel = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60}m" else "${autoStartSec}s"
-                        Text(
-                            text = headerLabel,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
-                    }
 
-                    var autoStartDropdownExpanded by remember { mutableStateOf(false) }
-
-                    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Surface(
-                            onClick = { autoStartDropdownExpanded = true },
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFF1E293B),
-                            border = BorderStroke(1.dp, Color(0xFF475569)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        Box {
+                            val selectedLabel = autoStartPresetOptions.firstOrNull { it.first == autoStartSec }?.second
+                                ?: (if (autoStartSec >= 60 && autoStartSec % 60 == 0) "Custom: ${autoStartSec / 60}m" else "Custom: ${autoStartSec}s")
+                            Surface(
+                                onClick = { autoStartDropdownExpanded = true },
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF1E293B),
+                                border = BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.width(115.dp).height(40.dp)
                             ) {
-                                val selectedLabel = autoStartPresetOptions.firstOrNull { it.first == autoStartSec }?.second
-                                    ?: (if (autoStartSec >= 60 && autoStartSec % 60 == 0) "Custom: ${autoStartSec / 60} min" else "Custom: ${autoStartSec}s")
-                                Text(
-                                    text = selectedLabel,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = "Select Auto-Start Delay",
-                                    tint = Color(0xFF38BDF8)
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = selectedLabel,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        maxLines = 1
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Select Auto-Start Delay",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
-                        }
 
-                        DropdownMenu(
-                            expanded = autoStartDropdownExpanded,
-                            onDismissRequest = { autoStartDropdownExpanded = false },
-                            modifier = Modifier.background(Color(0xFF0F172A))
-                        ) {
-                            autoStartPresetOptions.forEach { (sec, label) ->
+                            DropdownMenu(
+                                expanded = autoStartDropdownExpanded,
+                                onDismissRequest = { autoStartDropdownExpanded = false },
+                                modifier = Modifier.background(Color(0xFF0F172A))
+                            ) {
+                                autoStartPresetOptions.forEach { (sec, label) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = label,
+                                                color = if (autoStartSec == sec) Color(0xFF38BDF8) else Color.White,
+                                                fontWeight = if (autoStartSec == sec) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            autoStartSec = sec
+                                            viewModel.setAutoStartSecondsForProfile(activityProfile, sec)
+                                            autoStartDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                                HorizontalDivider(color = Color(0xFF334155))
                                 DropdownMenuItem(
                                     text = {
+                                        val customLabel = if (isCustomAutoStart) "Custom (${if (autoStartSec >= 60) "${autoStartSec / 60}m" else "${autoStartSec}s"})..." else "Custom..."
                                         Text(
-                                            text = label,
-                                            color = if (autoStartSec == sec) Color(0xFF38BDF8) else Color.White,
-                                            fontWeight = if (autoStartSec == sec) FontWeight.Bold else FontWeight.Normal
+                                            text = customLabel,
+                                            color = if (isCustomAutoStart) Color(0xFF38BDF8) else Color.White,
+                                            fontWeight = if (isCustomAutoStart) FontWeight.Bold else FontWeight.Normal
                                         )
                                     },
                                     onClick = {
-                                        autoStartSec = sec
-                                        viewModel.setAutoStartSecondsForProfile(activityProfile, sec)
                                         autoStartDropdownExpanded = false
+                                        customAutoStartInput = if (autoStartSec >= 60) (autoStartSec / 60).toString() else "1"
+                                        showCustomAutoStartDialog = true
                                     }
                                 )
                             }
-                            HorizontalDivider(color = Color(0xFF334155))
-                            DropdownMenuItem(
-                                text = {
-                                    val customLabel = if (isCustomAutoStart) "Custom (${if (autoStartSec >= 60) "${autoStartSec / 60}m" else "${autoStartSec}s"})..." else "Custom..."
-                                    Text(
-                                        text = customLabel,
-                                        color = if (isCustomAutoStart) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
-                                        fontWeight = if (isCustomAutoStart) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                onClick = {
-                                    autoStartDropdownExpanded = false
-                                    customAutoStartInput = if (autoStartSec >= 60) (autoStartSec / 60).toString() else "1"
-                                    showCustomAutoStartDialog = true
-                                }
+                        }
+                    }
+
+                    val autoResumeOnMotion by viewModel.autoResumeOnMotion.collectAsState()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = "Auto-resume on motion when paused",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Automatically continues recording if motion detected while paused",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
                             )
                         }
+                        Switch(
+                            checked = autoResumeOnMotion,
+                            onCheckedChange = { viewModel.setAutoResumeOnMotion(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF0284C7),
+                                uncheckedThumbColor = Color(0xFF94A3B8),
+                                uncheckedTrackColor = Color(0xFF334155)
+                            )
+                        )
                     }
 
                     if (showCustomAutoStartDialog) {
@@ -3094,7 +3124,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             dismissButton = {
                                 TextButton(onClick = { showCustomAutoStartDialog = false }) {
-                                    Text("Cancel", color = Color(0xFF94A3B8))
+                                    Text("Cancel", color = Color.White)
                                 }
                             },
                             containerColor = Color(0xFF0F172A)
@@ -3112,8 +3142,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                 val autoStopPresetOptions = listOf(1 to "1m", 3 to "3m", 5 to "5m", 10 to "10m", 15 to "15m", 20 to "20m")
                 val isCustomAutoStop = autoStopPresetOptions.none { it.first == autoStopMin }
 
+                var autoStopDropdownExpanded by remember { mutableStateOf(false) }
+
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -3121,86 +3155,79 @@ fun LocationScreen(viewModel: MainViewModel) {
                         text = "Auto-Stop Stationary Timeout (${activityProfile.displayName})",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = Color.White,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp)
                     )
-                    Text(
-                        text = "${autoStopMin} min",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF10B981)
-                    )
-                }
 
-                var autoStopDropdownExpanded by remember { mutableStateOf(false) }
-
-                Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    Surface(
-                        onClick = { autoStopDropdownExpanded = true },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF1E293B),
-                        border = BorderStroke(1.dp, Color(0xFF475569)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Box {
+                        val selectedLabel = autoStopPresetOptions.firstOrNull { it.first == autoStopMin }?.second
+                            ?: "Custom: ${autoStopMin}m"
+                        Surface(
+                            onClick = { autoStopDropdownExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF1E293B),
+                            border = BorderStroke(1.dp, Color(0xFF475569)),
+                            modifier = Modifier.width(115.dp).height(40.dp)
                         ) {
-                            val selectedLabel = autoStopPresetOptions.firstOrNull { it.first == autoStopMin }?.second
-                                ?: "Custom: $autoStopMin min"
-                            Text(
-                                text = selectedLabel,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Select Auto-Stop Timeout",
-                                tint = Color(0xFF10B981)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedLabel,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Auto-Stop Timeout",
+                                    tint = Color(0xFF10B981),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                    }
 
-                    DropdownMenu(
-                        expanded = autoStopDropdownExpanded,
-                        onDismissRequest = { autoStopDropdownExpanded = false },
-                        modifier = Modifier.background(Color(0xFF0F172A))
-                    ) {
-                        autoStopPresetOptions.forEach { (mins, label) ->
+                        DropdownMenu(
+                            expanded = autoStopDropdownExpanded,
+                            onDismissRequest = { autoStopDropdownExpanded = false },
+                            modifier = Modifier.background(Color(0xFF0F172A))
+                        ) {
+                            autoStopPresetOptions.forEach { (mins, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
+                                            fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        autoStopMin = mins
+                                        viewModel.setAutoStopMinutesForProfile(activityProfile, mins)
+                                        autoStopDropdownExpanded = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = Color(0xFF334155))
                             DropdownMenuItem(
                                 text = {
+                                    val customLabel = if (isCustomAutoStop) "Custom (${autoStopMin}m)..." else "Custom..."
                                     Text(
-                                        text = label,
-                                        color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
-                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
+                                        text = customLabel,
+                                        color = if (isCustomAutoStop) Color(0xFF10B981) else Color.White,
+                                        fontWeight = if (isCustomAutoStop) FontWeight.Bold else FontWeight.Normal
                                     )
                                 },
                                 onClick = {
-                                    autoStopMin = mins
-                                    viewModel.setAutoStopMinutesForProfile(activityProfile, mins)
                                     autoStopDropdownExpanded = false
+                                    customAutoStopInput = autoStopMin.toString()
+                                    showCustomAutoStopDialog = true
                                 }
                             )
                         }
-                        HorizontalDivider(color = Color(0xFF334155))
-                        DropdownMenuItem(
-                            text = {
-                                val customLabel = if (isCustomAutoStop) "Custom (${autoStopMin}m)..." else "Custom..."
-                                Text(
-                                    text = customLabel,
-                                    color = if (isCustomAutoStop) Color(0xFF10B981) else Color(0xFFCBD5E1),
-                                    fontWeight = if (isCustomAutoStop) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            onClick = {
-                                autoStopDropdownExpanded = false
-                                customAutoStopInput = autoStopMin.toString()
-                                showCustomAutoStopDialog = true
-                            }
-                        )
                     }
                 }
 
@@ -3246,7 +3273,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         dismissButton = {
                             TextButton(onClick = { showCustomAutoStopDialog = false }) {
-                                Text("Cancel", color = Color(0xFF94A3B8))
+                                Text("Cancel", color = Color.White)
                             }
                         },
                         containerColor = Color(0xFF0F172A)
@@ -3476,11 +3503,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Button(
                             onClick = { viewModel.setDisplayLanguage(lang) },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = Color.White
                             ),
+                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(label)
+                            Text(label, color = Color.White)
                         }
                     }
                 }
@@ -3716,7 +3745,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         viewModel.clearSearch()
                     }
                 ) {
-                    Text("Close", color = Color.LightGray)
+                    Text("Close", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -3796,7 +3825,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = cat.displayName,
-                                        color = if (isSelected) Color.White else Color.LightGray,
+                                        color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                         style = TextStyle(
@@ -3858,13 +3887,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Box(
                                         modifier = Modifier
                                             .size(12.dp)
-                                            .clip(CircleShape)
+                                             .clip(CircleShape)
                                             .background(chipBg)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = opt.label,
-                                        color = if (isColorSelected) Color.White else Color.LightGray,
+                                        color = Color.White,
                                         fontSize = 11.sp,
                                         fontWeight = if (isColorSelected) FontWeight.Bold else FontWeight.Normal,
                                         style = androidx.compose.ui.text.TextStyle(
@@ -3965,7 +3994,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showSavePlaceDialog = false }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -3999,7 +4028,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { placeToDelete = null }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -4035,7 +4064,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { tripToDelete = null }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -4219,7 +4248,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showMergeConfirmationDialog = false }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -4254,7 +4283,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showResetDefaultsConfirm = false }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -4318,7 +4347,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = cat.displayName,
-                                        color = if (isSelected) Color.White else Color.LightGray,
+                                        color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                         style = TextStyle(
@@ -4386,7 +4415,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = opt.label,
-                                        color = if (isColorSelected) Color.White else Color.LightGray,
+                                        color = Color.White,
                                         fontSize = 11.sp,
                                         fontWeight = if (isColorSelected) FontWeight.Bold else FontWeight.Normal,
                                         style = androidx.compose.ui.text.TextStyle(
@@ -4479,7 +4508,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "${r.toInt()}m",
                                         fontSize = 11.sp,
-                                        color = if (isRadSelected) Color.White else Color.LightGray,
+                                        color = Color.White,
                                         fontWeight = if (isRadSelected) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
@@ -4520,7 +4549,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { editingSavedPlace = null }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -8505,8 +8534,15 @@ private sealed class RouteTimelineItem(val timestamp: Long) {
     data class Pause(
         val pause: TripPause,
         val pauseIndex: Int,
-        val pauseDistanceMeters: Double
+        val pauseDistanceMeters: Double,
+        val legDistanceMeters: Double,
+        val legDurationMs: Long
     ) : RouteTimelineItem(pause.startTime)
+}
+
+private sealed class RawTimelineEvent(val startTime: Long) {
+    class Place(val place: VisitedPlace) : RawTimelineEvent(place.timestamp)
+    class Pause(val pause: TripPause, val pauseIndex: Int, val pauseDistanceMeters: Double) : RawTimelineEvent(pause.startTime)
 }
 
 @Composable
@@ -8545,28 +8581,41 @@ fun TripDetailDialog(
     val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
 
     val timelineItems = remember(trip, cumulativeDistances) {
-        val items = mutableListOf<RouteTimelineItem>()
-        val sortedPlaces = trip.placesVisited.sortedBy { it.timestamp }
-        var prevPlace: VisitedPlace? = null
-        sortedPlaces.forEachIndexed { index, place ->
-            val legDist = if (prevPlace != null) {
-                (place.distanceAtEntryMeters - prevPlace!!.distanceAtEntryMeters).coerceAtLeast(0.0)
-            } else {
-                place.distanceAtEntryMeters.coerceAtLeast(0.0)
-            }
-            val legDur = if (prevPlace != null) {
-                (place.timestamp - prevPlace!!.timestamp).coerceAtLeast(0L)
-            } else {
-                (place.timestamp - trip.startTime).coerceAtLeast(0L)
-            }
-            items.add(RouteTimelineItem.Place(place, index + 1, legDist, legDur))
-            prevPlace = place
+        val rawEvents = mutableListOf<RawTimelineEvent>()
+        trip.placesVisited.forEach { place ->
+            rawEvents.add(RawTimelineEvent.Place(place))
         }
         trip.pauses.forEachIndexed { idx, pause ->
             val dist = calculatePauseDistanceMeters(trip, pause, cumulativeDistances)
-            items.add(RouteTimelineItem.Pause(pause, idx, dist))
+            rawEvents.add(RawTimelineEvent.Pause(pause, idx, dist))
         }
-        items.sortedBy { it.timestamp }
+        rawEvents.sortBy { it.startTime }
+
+        var lastEventEndTime = trip.startTime
+        var lastEventEndDist = 0.0
+        var placeOrder = 1
+        val items = mutableListOf<RouteTimelineItem>()
+
+        rawEvents.forEach { event ->
+            when (event) {
+                is RawTimelineEvent.Place -> {
+                    val legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
+                    val legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
+                    items.add(RouteTimelineItem.Place(event.place, placeOrder++, legDist, legDur))
+                    lastEventEndTime = event.place.timestamp
+                    lastEventEndDist = event.place.distanceAtEntryMeters
+                }
+                is RawTimelineEvent.Pause -> {
+                    val legDist = (event.pauseDistanceMeters - lastEventEndDist).coerceAtLeast(0.0)
+                    val legDur = (event.pause.startTime - lastEventEndTime).coerceAtLeast(0L)
+                    items.add(RouteTimelineItem.Pause(event.pause, event.pauseIndex, event.pauseDistanceMeters, legDist, legDur))
+                    val pauseEnd = event.pause.endTime ?: (event.pause.startTime + event.pause.durationMs)
+                    lastEventEndTime = pauseEnd
+                    lastEventEndDist = event.pauseDistanceMeters
+                }
+            }
+        }
+        items
     }
 
     val durationMs = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
@@ -9118,8 +9167,12 @@ fun TripDetailDialog(
                                         is RouteTimelineItem.Pause -> {
                                             val pause = item.pause
                                             val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pause.startTime))
+                                            val pauseEndTime = pause.endTime ?: (pause.startTime + pause.durationMs)
+                                            val pauseEndTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(pauseEndTime))
                                             val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
                                             val pauseDistKm = item.pauseDistanceMeters / 1000.0
+                                            val legKm = item.legDistanceMeters / 1000.0
+                                            val legTimeStr = formatDurationShort(item.legDurationMs)
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -9153,10 +9206,18 @@ fun TripDetailDialog(
                                                             color = Color(0xFFFBBF24)
                                                         )
                                                         Text(
-                                                            text = String.format(Locale.getDefault(), "Paused at %s • at %.2f km", pauseTimeStr, pauseDistKm),
+                                                            text = String.format(Locale.getDefault(), "%s – %s • at %.2f km", pauseTimeStr, pauseEndTimeStr, pauseDistKm),
                                                             fontSize = 11.sp,
                                                             color = Color(0xFF94A3B8)
                                                         )
+                                                        if (item.legDurationMs > 0 || item.legDistanceMeters > 0) {
+                                                            Text(
+                                                                text = String.format(Locale.getDefault(), "+%.2f km • %s travel to stop", legKm, legTimeStr),
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Medium,
+                                                                color = Color(0xFF38BDF8)
+                                                            )
+                                                        }
                                                     }
                                                 }
 
@@ -9174,7 +9235,7 @@ fun TripDetailDialog(
                                                         shape = RoundedCornerShape(6.dp),
                                                         modifier = Modifier.height(28.dp)
                                                     ) {
-                                                        Text("✂️ Split", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                        Text("✂️ Split", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                                     }
 
                                                     if (item.pauseIndex < trip.pauses.size - 1) {
@@ -9185,7 +9246,7 @@ fun TripDetailDialog(
                                                             shape = RoundedCornerShape(6.dp),
                                                             modifier = Modifier.height(28.dp)
                                                         ) {
-                                                            Text("🔗 Merge", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                            Text("🔗 Merge", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                                         }
                                                     }
 
