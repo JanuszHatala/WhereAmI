@@ -48,6 +48,41 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         fun toLegacyGridKey(lat: Double, lng: Double): String {
             return "${String.format(Locale.ROOT, "%.3f", lat)}_${String.format(Locale.ROOT, "%.3f", lng)}"
         }
+
+        internal fun serializePlaceInfo(place: PlaceInfo): String {
+            return JSONObject().apply {
+                put("city", place.city)
+                put("street", place.street)
+                put("roadRef", place.roadRef)
+                put("gmina", place.gmina)
+                put("powiat", place.powiat)
+                put("voivodeship", place.voivodeship)
+                put("country", place.country)
+                put("countryCode", place.countryCode)
+            }.toString()
+        }
+
+        internal fun deserializePlaceInfo(jsonStr: String?): PlaceInfo? {
+            if (jsonStr.isNullOrBlank()) return null
+            return try {
+                val obj = JSONObject(jsonStr)
+                val rawCountry = obj.optString("country", "Unknown Country")
+                val cc = obj.optString("countryCode", "")
+                val resolvedCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                PlaceInfo(
+                    city = obj.optString("city", "Unknown City"),
+                    street = obj.optString("street").takeIf { it.isNotBlank() },
+                    roadRef = obj.optString("roadRef").takeIf { it.isNotBlank() },
+                    gmina = obj.optString("gmina").takeIf { it.isNotBlank() },
+                    powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
+                    voivodeship = obj.optString("voivodeship", "Unknown Region"),
+                    country = resolvedCountry,
+                    countryCode = cc
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -148,6 +183,19 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     db.endTransaction()
                 }
             }
+
+            // One-time canonicalization: migrate any stored "country":"Poland" to "country":"Polska" in JSON columns
+            try {
+                db.execSQL(
+                    "UPDATE $TABLE_CACHE SET " +
+                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"'), " +
+                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"'), " +
+                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"') " +
+                    "WHERE $COL_EN_JSON LIKE '%\"country\":\"Poland\"%' " +
+                    "OR $COL_PL_JSON LIKE '%\"country\":\"Poland\"%' " +
+                    "OR $COL_NATIVE_JSON LIKE '%\"country\":\"Poland\"%'"
+                )
+            } catch (_: Exception) {}
         } catch (_: Exception) {}
     }
 
@@ -285,37 +333,5 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     fun clearAll() {
         val db = writableDatabase
         db.delete(TABLE_CACHE, null, null)
-    }
-
-    private fun serializePlaceInfo(place: PlaceInfo): String {
-        return JSONObject().apply {
-            put("city", place.city)
-            put("street", place.street)
-            put("roadRef", place.roadRef)
-            put("gmina", place.gmina)
-            put("powiat", place.powiat)
-            put("voivodeship", place.voivodeship)
-            put("country", place.country)
-            put("countryCode", place.countryCode)
-        }.toString()
-    }
-
-    private fun deserializePlaceInfo(jsonStr: String?): PlaceInfo? {
-        if (jsonStr.isNullOrBlank()) return null
-        return try {
-            val obj = JSONObject(jsonStr)
-            PlaceInfo(
-                city = obj.optString("city", "Unknown City"),
-                street = obj.optString("street").takeIf { it.isNotBlank() },
-                roadRef = obj.optString("roadRef").takeIf { it.isNotBlank() },
-                gmina = obj.optString("gmina").takeIf { it.isNotBlank() },
-                powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
-                voivodeship = obj.optString("voivodeship", "Unknown Region"),
-                country = obj.optString("country", "Unknown Country"),
-                countryCode = obj.optString("countryCode", "")
-            )
-        } catch (_: Exception) {
-            null
-        }
     }
 }

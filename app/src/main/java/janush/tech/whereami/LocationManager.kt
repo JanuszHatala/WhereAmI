@@ -1459,9 +1459,10 @@ class LocationManager private constructor(private val context: Context) {
         val gmina = prefs.getString("last_good_gmina_$key", null).takeIf { !it.isNullOrEmpty() }
         val powiat = prefs.getString("last_good_powiat_$key", null).takeIf { !it.isNullOrEmpty() }
         val state = prefs.getString("last_good_state_$key", null) ?: return null
-        val country = prefs.getString("last_good_country_$key", null) ?: return null
+        val rawCountry = prefs.getString("last_good_country_$key", null) ?: return null
         val cc = prefs.getString("last_good_cc_$key", "") ?: ""
-        return PlaceInfo(city, street, roadRef, gmina, powiat, state, country, cc)
+        val canonicalCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+        return PlaceInfo(city, street, roadRef, gmina, powiat, state, canonicalCountry, cc)
     }
 
     private fun distanceBetween(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Float {

@@ -46,4 +46,14 @@ class SpatialCacheGridTest {
         assertEquals("49.822_19.245", legacyKey)
         assertEquals("49.8223_19.2451", preciseKey)
     }
+
+    @Test
+    fun testDeserializePolandCanonicalization() {
+        val legacyPolandJson = """{"city":"Czaniec","street":"Zielona","country":"Poland","countryCode":"PL","voivodeship":"śląskie"}"""
+        val place = SpatialCacheHelper.deserializePlaceInfo(legacyPolandJson)
+
+        assertEquals("Czaniec", place?.city)
+        assertEquals("Zielona", place?.street)
+        assertEquals("Polska", place?.country)
+    }
 }
