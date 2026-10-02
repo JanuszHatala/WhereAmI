@@ -282,6 +282,11 @@ class LocationManager private constructor(private val context: Context) {
     private var lastFixLng: Double = 0.0
     private var lastFixTimestamp: Long = 0L
 
+    // Cumulative displacement tracking to unblock slow-speed driving (5-10 km/h) from rest
+    private var cumulativeAnchorLat: Double = 0.0
+    private var cumulativeAnchorLng: Double = 0.0
+    private var cumulativeAnchorTime: Long = 0L
+
     // MAP-R03: Stationary Bearing Freeze (retains driving heading when stopped)
     @Volatile
     private var lastValidBearing: Float? = null
@@ -352,11 +357,26 @@ class LocationManager private constructor(private val context: Context) {
             lastFixTimestamp = timestamp
         }
 
+        // Cumulative displacement tracking: prevents getting trapped at 0.0 km/h during slow starts (5-10 km/h)
+        var cumulativeDistMoved = 0f
+        if (lat != 0.0 && lng != 0.0 && timestamp > 0L) {
+            if (cumulativeAnchorLat == 0.0 || cumulativeAnchorLng == 0.0 || (timestamp - cumulativeAnchorTime) > 20_000L) {
+                cumulativeAnchorLat = lat
+                cumulativeAnchorLng = lng
+                cumulativeAnchorTime = timestamp
+            } else {
+                val cumDist = FloatArray(1)
+                android.location.Location.distanceBetween(cumulativeAnchorLat, cumulativeAnchorLng, lat, lng, cumDist)
+                cumulativeDistMoved = cumDist[0]
+            }
+        }
+
         // Accelerometer-based physical motion check:
         // Strictly for indoor desk / resting clamp.
-        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s or ~4.3 km/h) or displacement > 3.0m!
+        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s), single fix moved > 3.0m,
+        // or cumulative displacement > 8.0m (unblocks slow driving from stop).
         // Newton's 1st Law: uniform highway cruising has zero acceleration variance by physical definition.
-        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f
+        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 8.0f
         if (!isMoving) {
             val isPhysicallyStationary = try {
                 StationaryDetector.getInstance(context).isPhysicallyStationary.value
@@ -369,7 +389,15 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        if (rawSpeed == null) {
+        // If rawSpeed is null (GPS chip Doppler cold start), use cumulative displacement speed if available
+        val effectiveRawSpeed = if (rawSpeed == null && cumulativeDistMoved > 8.0f && timestamp > cumulativeAnchorTime) {
+            val cumDtSec = (timestamp - cumulativeAnchorTime) / 1000f
+            if (cumDtSec > 0.5f) cumulativeDistMoved / cumDtSec else lastValidSpeedMs
+        } else {
+            rawSpeed
+        }
+
+        if (effectiveRawSpeed == null) {
             // Keep last valid speed rather than dropping to null or 0 (anti-flicker)
             return lastValidSpeedMs
         }
@@ -378,12 +406,13 @@ class LocationManager private constructor(private val context: Context) {
         // 1) Below physical locomotion threshold (< 0.5 m/s or ~1.8 km/h)
         // 2) Or raw speed is smaller than the GPS speed uncertainty margin (noise floor)
         // 3) Or physical position displacement over the interval confirms zero motion
-        val isStationaryNoise = rawSpeed < STATIONARY_THRESHOLD ||
-                (gpsAccuracyMps != null && gpsAccuracyMps > 0.8f && rawSpeed <= gpsAccuracyMps && rawSpeed < 1.0f) ||
-                (isStationaryDisplacement && rawSpeed < 0.8f)
+        val speedCandidate = effectiveRawSpeed
+        val isStationaryNoise = speedCandidate < STATIONARY_THRESHOLD ||
+                (gpsAccuracyMps != null && gpsAccuracyMps > 0.8f && speedCandidate <= gpsAccuracyMps && speedCandidate < 1.0f) ||
+                (isStationaryDisplacement && speedCandidate < 0.8f)
 
         // Clamp stationary noise to true 0
-        val cleanRaw = if (isStationaryNoise) 0f else rawSpeed
+        val cleanRaw = if (isStationaryNoise) 0f else speedCandidate
 
         // Instant Zero-Snap (Anti-Creep): when stopped or below snap threshold, snap directly to 0
         if (cleanRaw < ZERO_SNAP_THRESHOLD) {
@@ -1175,6 +1204,9 @@ class LocationManager private constructor(private val context: Context) {
         } else Float.MAX_VALUE
 
         val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang)
+        val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() } ?: committedPlace?.pl?.street ?: lastGood?.street
+        val osmMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
+        val thoroughfareMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
 
         val shouldShowHouse = RoadNameNormalizer.shouldShowHouseNumber(
             speedKmh,
@@ -1188,21 +1220,34 @@ class LocationManager private constructor(private val context: Context) {
             val canonicalStreet = when {
                 // 1. Highest precision: OSRM Map Matching explicitly provided the road centerline
                 !osrmStreet.isNullOrBlank() -> {
-                    val houseNumber = osm?.houseNumber ?: address.subThoroughfare
-                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, houseNumber, includeHouseNumber = shouldShowHouse)
+                    val validHouse = if (osmMatchesTrajectory) (osm?.houseNumber ?: address.subThoroughfare) else null
+                    val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
+                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, validHouse, includeHouseNumber = allowHouse)
                 }
                 // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
                 !osm?.street.isNullOrBlank() -> {
-                    val houseNumber = osm.houseNumber ?: address.subThoroughfare
-                    RoadNameNormalizer.normalize(osm.street, osm.roadRef, houseNumber, includeHouseNumber = shouldShowHouse)
+                    if (trajectoryStreet != null && !osmMatchesTrajectory && !RoadNameNormalizer.isMajorRoad(osm.street)) {
+                        // Preserve trajectory street against momentary perpendicular cross-street hits
+                        RoadNameNormalizer.normalize(trajectoryStreet, osm.roadRef, null, includeHouseNumber = false)
+                    } else {
+                        val validHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: address.subThoroughfare) else null
+                        val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
+                        RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse)
+                    }
                 }
                 // 3. Road ref enrichment if thoroughfare provided
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
-                    RoadNameNormalizer.normalize(address.thoroughfare ?: osm.street, osm.roadRef, address.subThoroughfare, includeHouseNumber = shouldShowHouse)
+                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else (address.thoroughfare ?: osm.street)
+                    val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
+                    val allowHouse = shouldShowHouse && validHouse != null && thoroughfareMatchesTrajectory
+                    RoadNameNormalizer.normalize(targetStreet, osm.roadRef, validHouse, includeHouseNumber = allowHouse)
                 }
                 // 4. Fallback to Android native Geocoder thoroughfare
                 else -> {
-                    RoadNameNormalizer.normalize(address.thoroughfare, null, address.subThoroughfare, includeHouseNumber = shouldShowHouse)
+                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else address.thoroughfare
+                    val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
+                    val allowHouse = shouldShowHouse && validHouse != null && thoroughfareMatchesTrajectory
+                    RoadNameNormalizer.normalize(targetStreet, null, validHouse, includeHouseNumber = allowHouse)
                 }
             }
 

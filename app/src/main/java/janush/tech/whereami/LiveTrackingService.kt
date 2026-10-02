@@ -148,21 +148,15 @@ class LiveTrackingService : Service() {
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
         if (!hasTrip && !hasLive) {
-            if (!isAuto) {
-                updateWakeLock(false)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
-                stopSelf()
-                return START_NOT_STICKY
+            updateWakeLock(false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
             } else {
-                updateWakeLock(false)
-                updateNotification()
-                return START_STICKY
+                @Suppress("DEPRECATION")
+                stopForeground(true)
             }
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         updateWakeLock(true)
@@ -373,9 +367,6 @@ class LiveTrackingService : Service() {
                 if (trip != null || hasLive) {
                     updateWakeLock(true)
                     updateNotification(force = true)
-                } else if (isAuto) {
-                    updateWakeLock(false)
-                    updateNotification(force = true)
                 } else {
                     updateWakeLock(false)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -394,13 +385,9 @@ class LiveTrackingService : Service() {
             LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.collectLatest { liveSession ->
                 val trip = TripManager.getInstance(this@LiveTrackingService).activeTrip.value
                 val hasLive = liveSession != null && liveSession.isActive
-                val isAuto = TripManager.getInstance(this@LiveTrackingService).tripMode.value == TripMode.AUTO
 
                 if (trip != null || hasLive) {
                     updateWakeLock(true)
-                    updateNotification(force = true)
-                } else if (isAuto) {
-                    updateWakeLock(false)
                     updateNotification(force = true)
                 } else {
                     updateWakeLock(false)
