@@ -169,6 +169,38 @@ class LocationManager private constructor(private val context: Context) {
          * - In Poland: gm. X • pow. Y • woj. Z (with smart deduplication)
          * - Outside Poland: Municipality • County • State (without Polish abbreviations)
          */
+        /**
+         * Canonicalizes Polish voivodeship names, mapping English descriptions from OpenStreetMap
+         * or Android Platform Geocoder (e.g. "Lesser Poland Voivodeship", "Silesian Voivodeship")
+         * into standardized Polish lowercase designations ("małopolskie", "śląskie").
+         */
+        fun canonicalizePolishVoivodeship(raw: String): String {
+            val clean = raw.trim()
+            val lower = clean.lowercase(Locale.ROOT)
+            return when {
+                lower.contains("lesser poland") || lower == "malopolskie" || lower == "małopolskie" -> "małopolskie"
+                lower.contains("silesian") && !lower.contains("lower") || lower == "slaskie" || lower == "śląskie" -> "śląskie"
+                lower.contains("lower silesian") || lower == "dolnoslaskie" || lower == "dolnośląskie" -> "dolnośląskie"
+                lower.contains("greater poland") || lower == "wielkopolskie" -> "wielkopolskie"
+                lower.contains("masovian") || lower == "mazowieckie" -> "mazowieckie"
+                lower.contains("lodz") || lower.contains("łódź") || lower == "lodzkie" || lower == "łódzkie" -> "łódzkie"
+                lower.contains("subcarpathian") || lower == "podkarpackie" -> "podkarpackie"
+                lower.contains("pomeranian") && !lower.contains("west") && !lower.contains("kuyavian") || lower == "pomorskie" -> "pomorskie"
+                lower.contains("west pomeranian") || lower == "zachodniopomorskie" -> "zachodniopomorskie"
+                lower.contains("kuyavian") || lower == "kujawsko-pomorskie" -> "kujawsko-pomorskie"
+                lower.contains("lublin") || lower == "lubelskie" -> "lubelskie"
+                lower.contains("lubusz") || lower == "lubuskie" -> "lubuskie"
+                lower.contains("opole") || lower == "opolskie" -> "opolskie"
+                lower.contains("podlaskie") -> "podlaskie"
+                lower.contains("holy cross") || lower == "swietokrzyskie" || lower == "świętokrzyskie" -> "świętokrzyskie"
+                lower.contains("warmian") || lower == "warminsko-mazurskie" || lower == "warmińsko-mazurskie" -> "warmińsko-mazurskie"
+                else -> clean.replace("Voivodeship", "", ignoreCase = true)
+                    .replace("województwo ", "", ignoreCase = true)
+                    .replace("województwo", "", ignoreCase = true)
+                    .trim()
+            }
+        }
+
         fun formatHierarchy(place: PlaceInfo?): String {
             if (place == null) return ""
             val countryCode = place.countryCode.uppercase()
@@ -183,10 +215,14 @@ class LocationManager private constructor(private val context: Context) {
                 ?.replace("gmina ", "", ignoreCase = true)?.trim()
             val cleanPowiat = rawPowiat?.replace("Powiat ", "", ignoreCase = true)
                 ?.replace("powiat ", "", ignoreCase = true)?.trim()
-            val voivodeship = place.voivodeship
-                .replace("województwo ", "", ignoreCase = true)
-                .replace("województwo", "", ignoreCase = true)
-                .trim()
+            val voivodeship = if (isPoland) {
+                canonicalizePolishVoivodeship(place.voivodeship)
+            } else {
+                place.voivodeship
+                    .replace("województwo ", "", ignoreCase = true)
+                    .replace("województwo", "", ignoreCase = true)
+                    .trim()
+            }
 
             val cityLower = city.lowercase(Locale.ROOT)
             val isCountyCity = POLISH_COUNTY_CITIES.contains(cityLower) ||
@@ -1274,7 +1310,10 @@ class LocationManager private constructor(private val context: Context) {
             }
 
             val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
-            val effectiveVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
+            val rawVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
+            val effectiveVoivodeship = if (basePlace.countryCode == "PL" || basePlace.country.equals("Polska", ignoreCase = true) || basePlace.country.equals("Poland", ignoreCase = true)) {
+                canonicalizePolishVoivodeship(rawVoivodeship)
+            } else rawVoivodeship
 
             return basePlace.copy(
                 city = effectiveCity,
@@ -1320,6 +1359,10 @@ class LocationManager private constructor(private val context: Context) {
                 val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
                 val cc = osm.countryCode?.uppercase() ?: countryCode
                 val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                val rawV = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region"
+                val effectiveVoivodeship = if (cc == "PL" || resolvedCountry.equals("Polska", ignoreCase = true) || resolvedCountry.equals("Poland", ignoreCase = true)) {
+                    canonicalizePolishVoivodeship(rawV)
+                } else rawV
 
                 return PlaceInfo(
                     city = city,
@@ -1327,7 +1370,7 @@ class LocationManager private constructor(private val context: Context) {
                     roadRef = osm.roadRef,
                     gmina = effectiveGmina,
                     powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
-                    voivodeship = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region",
+                    voivodeship = effectiveVoivodeship,
                     country = resolvedCountry,
                     countryCode = cc
                 )
