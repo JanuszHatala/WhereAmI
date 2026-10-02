@@ -26,8 +26,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 12** | Field Testing (2026-09-29 – 2026-10-01) Telemetry & Battery Deep Analysis, Notification Wake Lock Throttling, Outdoor Trails/Passes/Peaks Hierarchy, Per-Profile Auto-Start/Stop Custom Values, Merged Trip & Pause Recalculation, Minimap Pin Size Polish & Recording HUD | 11 | 11 | 0 | 0 |
 | **Round 13** | Field Testing (2026-10-01 Evening) HUD Bar Pause/Resume, Per-Profile Trip Mode & Custom Auto Times, Map Controls Spacing, Trips History Route Overflow & Live Sharing Quick Share Modal with QR Code | 5 | 5 | 0 | 0 |
 | **Round 14** | Field Testing (2026-10-01 Night) Map & Zoom Controls Placement, Trips List Route Rest Separation, Auto-Start/Stop Dropdowns, Per-Profile Map Defaults & Customization Memory | 4 | 4 | 0 | 0 |
+| **Round 15** | Field Testing (2026-10-02 Morning) Overnight Zero-Drain Standby, Motion Speed Trap Recovery, Trajectory Street Precedence & Strict House Numbers, Pause Auto-Stop Immunity & Auto-Resume, Chronological Timeline Calculation & Design System White Text | 10 | 10 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **146** | **138** | **0** | **8** |
+| **Total** | | **156** | **148** | **0** | **8** |
 
 ---
 
@@ -288,7 +289,24 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 17. Features Inventory & Future Backlog
+## 17. Round 15: Field Testing (2026-10-02 Morning) Overnight Zero-Drain Standby, Motion Speed Trap Recovery, Trajectory Street Precedence & Strict House Numbers, Pause Auto-Stop Immunity & Auto-Resume, Chronological Timeline Calculation & Design System White Text
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT15-01** | Overnight Battery Drain Fix: Complete background service shutdown in idle state when no active trip or live sharing session is active. | `TripManager.kt`, `AppStateManager.kt`, `LiveTrackingService.kt` | **Completed** | Ensured `LiveTrackingService` and all GPS polling stop completely in `setTripMode` and `AppLifecycleMode.IDLE` when no active trip or live sharing exists. Wake locks are released unconditionally on idle standby. Verified by zero-drain background idle state. |
+| **FT15-02** | Late Auto-Start & 0.0 km/h Speed Trap Recovery: Unblock slow start speeds from rest using cumulative position displacement. | `LocationManager.kt` (`hybridSpeedUpdate`) | **Completed** | Added cumulative displacement tracking (> 8.0m) and Doppler cold start fallback. Prevents stationary jitter clamps from trapping real physical driving between 5–15 km/h, triggering prompt auto-start. |
+| **FT15-03** | Trajectory Street Precedence & Strict House Number Matching: Enforce street continuity over momentary cross-streets and prevent house numbers from overriding corridor names. | `LocationManager.kt`, `RoadNameNormalizer.kt`, `RoadNameNormalizerTest.kt` | **Completed** | Trajectory street vector is preserved over perpendicular cross-streets. House numbers are resolved ONLY if current speed < 15 km/h, accuracy <= 20m, road is not a highway, and the resolved house number's street matches the trajectory street name. Covered by unit tests in `RoadNameNormalizerTest.kt`. |
+| **FT15-04** | Trip Pause Auto-Stop Immunity & Auto-Resume on Motion: Paused trips are immune to auto-stop timeouts, with configurable auto-resume on motion in Settings. | `TripManager.kt`, `MainViewModel.kt`, `MainActivity.kt` | **Completed** | Guarded auto-stop watchdog and inline timeout checks against `isPaused`. Added `autoResumeOnMotion` setting (default true) allowing resumed driving or locomotion to seamlessly unpause recording. |
+| **FT15-05** | Trip Details Route Timeline Chronological Calculation: Strictly compute travel legs and rest pauses sequentially from immediately preceding events. | `MainActivity.kt` (`TripDetailDialog`), `TripTimelineChronologyTest.kt` | **Completed** | Refactored `RouteTimelineItem.Pause` and `timelineItems` to merge places and pauses chronologically. Every place and pause calculates travel delta (`+%.2f km • %s travel to stop`) from the preceding event's end time, ensuring math adds up perfectly. Verified by `TripTimelineChronologyTest.kt`. |
+| **FT15-06** | Design System Contrast & White Button Text: Unselected buttons, chips, dialog controls, and Cancel buttons styled with pure white text. | `MainActivity.kt`, `CacheManagerDialog.kt` | **Completed** | Replaced dull gray (`#94A3B8`, `#CBD5E1`, `Color.LightGray`) with `Color.White` across Locality Card Layout, Trip Recording Mode, Display Language, Category/Color chips, and all dialog Cancel buttons per Design System. |
+| **FT15-07** | Dynamic HUD Bar & Map Controls Layout: Move map tools up when recording HUD is active, and hide Selected Trips button during active recording. | `OsmMapView.kt`, `MainActivity.kt` | **Completed** | Implemented dynamic bottom padding on map tools (134dp when recording vs 78dp idle) and recenter button (136dp vs 78dp). Removed activity emoji from recording HUD bar, capped width to 380dp, and hid the "Clear Selected Trips" button during recording. |
+| **FT15-08** | Compact Auto-Start Delay & Auto-Stop Timeout Dropdowns: Redesign layout into aligned inline rows with compact 115dp selector pills. | `MainActivity.kt` | **Completed** | Formatted Auto-Start and Auto-Stop controls into clean horizontal rows with unconstrained labels and 115dp wide dropdown pills, eliminating ugly multi-line text wrapping. |
+| **FT15-09** | Polish Street Abbreviator Expansion: Support feminine and genitive inflected given names (e.g. "Stefanii Sempołowskiej" $\to$ "S. Sempołowskiej"). | `StreetAbbreviator.kt`, `StreetAbbreviatorTest.kt` | **Completed** | Added inflected Polish female given names (`stefania`, `stefanii`, etc.) to `POLISH_FIRST_NAMES`. Covered by automated unit test in `StreetAbbreviatorTest.kt`. |
+| **FT15-10** | Street Abbreviation Architecture Documentation: Created comprehensive guide explaining abbreviation rules and dictionary mechanics. | `docs/STREET_ABBREVIATOR.md` | **Completed** | Documented exact architectural rules, supported languages, Android Auto auto-activation, and abbreviation precedence in `docs/STREET_ABBREVIATOR.md`. |
+
+---
+
+## 18. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
