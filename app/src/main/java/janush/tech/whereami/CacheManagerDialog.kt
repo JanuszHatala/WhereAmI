@@ -705,7 +705,7 @@ fun CacheManagerDialog(
             },
             dismissButton = {
                 TextButton(onClick = { cacheClearConfirmTarget = null }) {
-                    Text("Cancel", color = Color.LightGray)
+                    Text("Cancel", color = Color.White)
                 }
             }
         )
