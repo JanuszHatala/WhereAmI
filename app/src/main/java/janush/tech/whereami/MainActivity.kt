@@ -2176,10 +2176,15 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                                                                 if (trip.placesVisited.isNotEmpty()) {
                                                                     val routeItems = remember(trip.id, trip.placesVisited) {
-                                                                        trip.placesVisited.map { place ->
+                                                                        val items = mutableListOf<String>()
+                                                                        trip.placesVisited.forEach { place ->
                                                                             val icon = if (place.placeKind != PlaceKind.LOCALITY) "${place.placeKind.iconEmoji} " else ""
-                                                                            "$icon${place.placeName}"
+                                                                            val itemStr = "$icon${place.placeName}"
+                                                                            if (items.lastOrNull() != itemStr) {
+                                                                                items.add(itemStr)
+                                                                            }
                                                                         }
+                                                                        items
                                                                     }
 
                                                                     if (routeItems.isNotEmpty()) {
@@ -4145,13 +4150,21 @@ fun LocationScreen(viewModel: MainViewModel) {
         val earliestTrip = sortedSelectedTrips.first()
         val latestTrip = sortedSelectedTrips.last()
         val defaultMergedTitle = remember(sortedSelectedTrips) {
-            val t1 = earliestTrip.title.ifBlank {
-                DateFormat.getDateInstance(DateFormat.SHORT).format(Date(earliestTrip.startTime))
+            val dateStr = DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(earliestTrip.startTime))
+            val timeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(earliestTrip.startTime))
+            val standardTitle = "$dateStr, $timeStr"
+
+            val customTitles = sortedSelectedTrips.mapNotNull { trip ->
+                val tripDate = DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
+                val tripTime = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(trip.startTime))
+                val defaultName = "$tripDate, $tripTime"
+                if (trip.title.isNotBlank() && trip.title != defaultName) trip.title else null
             }
-            val t2 = latestTrip.title.ifBlank {
-                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(latestTrip.startTime))
+            if (customTitles.isNotEmpty()) {
+                customTitles.joinToString(" + ")
+            } else {
+                standardTitle
             }
-            "$t1 + $t2"
         }
 
         var mergeTitleInput by remember(sortedSelectedTrips) { mutableStateOf(defaultMergedTitle) }
@@ -8886,55 +8899,90 @@ fun TripDetailDialog(
     val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
 
     val timelineItems = remember(trip, cumulativeDistances) {
-        val rawEvents = mutableListOf<RawTimelineEvent>()
-        trip.placesVisited.forEach { place ->
-            rawEvents.add(RawTimelineEvent.Place(place))
-        }
-        trip.pauses.forEachIndexed { idx, pause ->
-            val dist = calculatePauseDistanceMeters(trip, pause, cumulativeDistances)
-            rawEvents.add(RawTimelineEvent.Pause(pause, idx, dist))
-        }
-        rawEvents.sortBy { it.startTime }
-
-        var lastEventEndTime = trip.startTime
-        var lastEventEndDist = 0.0
-        var placeOrder = 1
+        val totalTripDist = (cumulativeDistances.lastOrNull() ?: trip.distanceMeters).coerceAtLeast(0.0)
+        val tripEndTime = trip.endTime ?: (trip.startTime + 60_000L)
         val items = mutableListOf<RouteTimelineItem>()
 
-        rawEvents.forEachIndexed { eventIdx, event ->
-            when (event) {
-                is RawTimelineEvent.Place -> {
-                    val legDist: Double
-                    val legDur: Long
-                    if (eventIdx == 0 && rawEvents.size > 1) {
-                        val next = rawEvents[1]
-                        val nextDist = when (next) {
-                            is RawTimelineEvent.Place -> next.place.distanceAtEntryMeters
-                            is RawTimelineEvent.Pause -> next.pauseDistanceMeters
-                        }
-                        legDist = (nextDist - event.place.distanceAtEntryMeters).coerceAtLeast(0.0)
-                        legDur = (next.startTime - event.place.timestamp).coerceAtLeast(0L)
-                    } else if (eventIdx == 0 && rawEvents.size == 1) {
-                        val totalDist = cumulativeDistances.lastOrNull() ?: 0.0
-                        val totalDur = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
-                        legDist = totalDist
-                        legDur = totalDur
-                    } else {
-                        legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
-                        legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
-                    }
-                    items.add(RouteTimelineItem.Place(event.place, placeOrder++, legDist, legDur))
-                    lastEventEndTime = event.place.timestamp
-                    lastEventEndDist = event.place.distanceAtEntryMeters
+        // 1. Resolve pause distances
+        val sortedPauses = trip.pauses.sortedBy { it.startTime }.mapIndexed { idx, p ->
+            val dist = calculatePauseDistanceMeters(trip, p, cumulativeDistances)
+            p to dist
+        }
+
+        // Helper to find the active place at timestamp t
+        fun getActivePlaceAt(t: Long): VisitedPlace {
+            return trip.placesVisited.lastOrNull { it.timestamp <= t }
+                ?: trip.placesVisited.firstOrNull()
+                ?: VisitedPlace(
+                    placeName = trip.title.ifBlank { "Trip Locality" },
+                    hierarchySubtitle = "",
+                    timestamp = trip.startTime,
+                    latitude = trip.points.firstOrNull()?.latitude ?: 0.0,
+                    longitude = trip.points.firstOrNull()?.longitude ?: 0.0,
+                    distanceAtEntryMeters = 0.0
+                )
+        }
+
+        // 2. Define moving intervals bounded by pauses:
+        var placeOrder = 1
+        var curTime = trip.startTime
+        var curDist = 0.0
+
+        for (pauseIdx in 0..sortedPauses.size) {
+            val nextPause = sortedPauses.getOrNull(pauseIdx)
+            val intervalEndTime = nextPause?.first?.startTime ?: tripEndTime
+            val intervalEndDist = nextPause?.second ?: totalTripDist
+
+            // Find any places entered strictly inside (curTime, intervalEndTime]
+            val placesInInterval = trip.placesVisited.filter {
+                it.timestamp > curTime && it.timestamp <= intervalEndTime
+            }.sortedBy { it.timestamp }
+
+            var legStartTime = curTime
+            var legStartDist = curDist
+
+            if (placesInInterval.isEmpty()) {
+                // User remained in the currently active place for the entire interval
+                val activePlace = getActivePlaceAt(curTime)
+                val legDist = (intervalEndDist - legStartDist).coerceAtLeast(0.0)
+                val legDur = (intervalEndTime - legStartTime).coerceAtLeast(0L)
+                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
+                items.add(RouteTimelineItem.Place(displayPlace, placeOrder++, legDist, legDur))
+            } else {
+                // There were place transitions within this interval
+                // First leg in active place before the first transition:
+                val firstTransition = placesInInterval.first()
+                val activePlace = getActivePlaceAt(curTime)
+                val firstLegDist = (firstTransition.distanceAtEntryMeters - legStartDist).coerceAtLeast(0.0)
+                val firstLegDur = (firstTransition.timestamp - legStartTime).coerceAtLeast(0L)
+                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
+                items.add(RouteTimelineItem.Place(displayPlace, placeOrder++, firstLegDist, firstLegDur))
+
+                legStartTime = firstTransition.timestamp
+                legStartDist = firstTransition.distanceAtEntryMeters
+
+                // Intermediate transitions
+                for (pIdx in 0 until placesInInterval.size) {
+                    val p = placesInInterval[pIdx]
+                    val nextTargetTime = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].timestamp else intervalEndTime
+                    val nextTargetDist = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].distanceAtEntryMeters else intervalEndDist
+                    val pLegDist = (nextTargetDist - p.distanceAtEntryMeters).coerceAtLeast(0.0)
+                    val pLegDur = (nextTargetTime - p.timestamp).coerceAtLeast(0L)
+                    items.add(RouteTimelineItem.Place(p, placeOrder++, pLegDist, pLegDur))
                 }
-                is RawTimelineEvent.Pause -> {
-                    val legDist = (event.pauseDistanceMeters - lastEventEndDist).coerceAtLeast(0.0)
-                    val legDur = (event.pause.startTime - lastEventEndTime).coerceAtLeast(0L)
-                    items.add(RouteTimelineItem.Pause(event.pause, event.pauseIndex, event.pauseDistanceMeters, legDist, legDur))
-                    val pauseEnd = event.pause.endTime ?: (event.pause.startTime + event.pause.durationMs)
-                    lastEventEndTime = pauseEnd
-                    lastEventEndDist = event.pauseDistanceMeters
-                }
+            }
+
+            // If there is a pause at the end of this interval, emit the pause item
+            if (nextPause != null) {
+                val pause = nextPause.first
+                val pauseDist = nextPause.second
+                val travelDist = (pauseDist - curDist).coerceAtLeast(0.0)
+                val travelDur = (pause.startTime - curTime).coerceAtLeast(0L)
+                items.add(RouteTimelineItem.Pause(pause, pauseIdx, pauseDist, travelDist, travelDur))
+
+                val pauseEnd = pause.endTime ?: (pause.startTime + pause.durationMs)
+                curTime = pauseEnd
+                curDist = pauseDist
             }
         }
         items
@@ -9378,8 +9426,8 @@ fun TripDetailDialog(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            val totalPlaces = trip.placesVisited.size
-                            val totalPauses = trip.pauses.size
+                            val totalPlaces = timelineItems.count { it is RouteTimelineItem.Place }
+                            val totalPauses = timelineItems.count { it is RouteTimelineItem.Pause }
                             val timelineTitle = when {
                                 totalPauses > 0 -> "ROUTE TIMELINE ($totalPlaces ${if (totalPlaces == 1) "place" else "places"}, $totalPauses ${if (totalPauses == 1) "pause" else "pauses"})"
                                 else -> "VISITED LOCALITIES ($totalPlaces)"
@@ -9410,7 +9458,7 @@ fun TripDetailDialog(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    .padding(horizontal = 10.dp, vertical = 5.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -9433,45 +9481,81 @@ fun TripDetailDialog(
                                                             style = LocalTextStyle.current.copy(
                                                                 platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                                                 lineHeight = 11.sp
-                                                             )
+                                                            )
                                                         )
                                                     }
                                                     Spacer(modifier = Modifier.width(10.dp))
-                                                    Column {
+                                                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                                                         Text(
                                                             text = place.placeName,
                                                             fontSize = 13.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = Color.White
+                                                            color = Color.White,
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 14.sp
+                                                            )
                                                         )
                                                         if (place.hierarchySubtitle.isNotBlank()) {
                                                             Text(
                                                                 text = place.hierarchySubtitle,
                                                                 fontSize = 11.sp,
-                                                                color = Color(0xFF94A3B8)
+                                                                color = Color(0xFF94A3B8),
+                                                                style = LocalTextStyle.current.copy(
+                                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                    lineHeight = 12.sp
+                                                                )
                                                             )
                                                         }
                                                     }
                                                 }
 
-                                                Column(horizontalAlignment = Alignment.End) {
+                                                Column(
+                                                    horizontalAlignment = Alignment.End,
+                                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                                ) {
                                                     Text(
                                                         text = entryTime,
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.SemiBold,
-                                                        color = Color(0xFF38BDF8)
+                                                        color = Color(0xFF38BDF8),
+                                                        style = LocalTextStyle.current.copy(
+                                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                            lineHeight = 13.sp
+                                                        )
                                                     )
                                                     Text(
                                                         text = String.format(Locale.getDefault(), "at %.2f km", entryDistKm),
                                                         fontSize = 10.sp,
-                                                        color = Color(0xFF94A3B8)
+                                                        color = Color(0xFF94A3B8),
+                                                        style = LocalTextStyle.current.copy(
+                                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                            lineHeight = 11.sp
+                                                        )
                                                     )
+                                                    val allPlacesInTimeline = timelineItems.filterIsInstance<RouteTimelineItem.Place>()
+                                                    val isLastPlace = item == allPlacesInTimeline.lastOrNull() && allPlacesInTimeline.size > 1
                                                     if (item.orderNumber == 1) {
                                                         Text(
                                                             text = "Trip Start",
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Medium,
-                                                            color = Color(0xFF10B981)
+                                                            color = Color(0xFF10B981),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
+                                                        )
+                                                    } else if (isLastPlace) {
+                                                        Text(
+                                                            text = "Trip End",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFF38BDF8),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
                                                         )
                                                     }
                                                     if (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L) {
@@ -9481,7 +9565,11 @@ fun TripDetailDialog(
                                                             text = String.format(Locale.getDefault(), "+%.2f km • %s", legKm, legTimeStr),
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Medium,
-                                                            color = Color(0xFF38BDF8)
+                                                            color = Color(0xFF38BDF8),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
                                                         )
                                                     }
                                                 }
@@ -9501,7 +9589,7 @@ fun TripDetailDialog(
                                                     .fillMaxWidth()
                                                     .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
                                                     .border(1.dp, Color(0x66F59E0B), RoundedCornerShape(8.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp)
                                             ) {
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
@@ -9521,30 +9609,45 @@ fun TripDetailDialog(
                                                         )
                                                     }
                                                     Spacer(modifier = Modifier.width(10.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
+                                                    Column(
+                                                        modifier = Modifier.weight(1f),
+                                                        verticalArrangement = Arrangement.spacedBy(1.dp)
+                                                    ) {
                                                         Text(
                                                             text = "Stop #${item.pauseIndex + 1} ($durMin min rest)",
                                                             fontSize = 12.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = Color(0xFFFBBF24)
+                                                            color = Color(0xFFFBBF24),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 13.sp
+                                                            )
                                                         )
                                                         Text(
                                                             text = String.format(Locale.getDefault(), "%s – %s • at %.2f km", pauseTimeStr, pauseEndTimeStr, pauseDistKm),
                                                             fontSize = 11.sp,
-                                                            color = Color(0xFF94A3B8)
+                                                            color = Color(0xFF94A3B8),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 12.sp
+                                                            )
                                                         )
                                                         if (item.legDurationMs > 0 || item.legDistanceMeters > 0) {
                                                             Text(
                                                                 text = String.format(Locale.getDefault(), "+%.2f km • %s travel to stop", legKm, legTimeStr),
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.Medium,
-                                                                color = Color(0xFF38BDF8)
+                                                                color = Color(0xFF38BDF8),
+                                                                style = LocalTextStyle.current.copy(
+                                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                    lineHeight = 11.sp
+                                                                )
                                                             )
                                                         }
                                                     }
                                                 }
 
-                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Spacer(modifier = Modifier.height(4.dp))
 
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
@@ -9556,7 +9659,7 @@ fun TripDetailDialog(
                                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                                         shape = RoundedCornerShape(6.dp),
-                                                        modifier = Modifier.height(28.dp)
+                                                        modifier = Modifier.height(26.dp)
                                                     ) {
                                                         Text("✂️ Split", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                                     }

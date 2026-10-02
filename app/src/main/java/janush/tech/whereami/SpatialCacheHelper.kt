@@ -69,13 +69,17 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val rawCountry = obj.optString("country", "Unknown Country")
                 val cc = obj.optString("countryCode", "")
                 val resolvedCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                val rawVoivodeship = obj.optString("voivodeship", "Unknown Region")
+                val resolvedVoivodeship = if (resolvedCountry == "Polska" || cc.uppercase() == "PL") {
+                    LocationManager.canonicalizePolishVoivodeship(rawVoivodeship)
+                } else rawVoivodeship
                 PlaceInfo(
                     city = obj.optString("city", "Unknown City"),
                     street = obj.optString("street").takeIf { it.isNotBlank() },
                     roadRef = obj.optString("roadRef").takeIf { it.isNotBlank() },
                     gmina = obj.optString("gmina").takeIf { it.isNotBlank() },
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
-                    voivodeship = obj.optString("voivodeship", "Unknown Region"),
+                    voivodeship = resolvedVoivodeship,
                     country = resolvedCountry,
                     countryCode = cc
                 )
