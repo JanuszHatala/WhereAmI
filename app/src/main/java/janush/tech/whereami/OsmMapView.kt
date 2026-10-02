@@ -268,6 +268,7 @@ fun OsmMapView(
     heatMapConsolidate: Boolean = true,
     heatMapMinVisits: Int = 1,
     fitTrackTrigger: Long = 0L,
+    fitHeatMapTrigger: Long = 0L,
     fitPlacesTrigger: Long = 0L,
     destinationPoint: GeoPoint? = null,
     selectedSavedPlace: SavedPlace? = null,
@@ -928,6 +929,33 @@ fun OsmMapView(
         }
     }
 
+    // Fit-to-heat-map trigger
+    LaunchedEffect(fitHeatMapTrigger) {
+        if (fitHeatMapTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            isFollowing = false
+            snapHandler.removeCallbacks(snapRunnable)
+            val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
+            if (pts.isNotEmpty()) {
+                try {
+                    val rawBox = BoundingBox.fromGeoPoints(pts)
+                    val minSpan = 0.008
+                    val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                    val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                    val centerLat = rawBox.centerLatitude
+                    val centerLon = rawBox.centerLongitude
+                    val paddedBox = BoundingBox(
+                        centerLat + latSpan * 0.55,
+                        centerLon + lonSpan * 0.55,
+                        centerLat - latSpan * 0.55,
+                        centerLon - lonSpan * 0.55
+                    )
+                    map.zoomToBoundingBox(paddedBox, true, 120)
+                } catch (e: Exception) {}
+            }
+        }
+    }
+
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -1033,164 +1061,220 @@ fun OsmMapView(
             update = { }
         )
 
-        // Floating Zoom Controls [ + ] and [ - ]
-        // In portrait: Maintained at the optical center of the visible map aperture (Alignment.CenterEnd)
-        // In landscape: Positioned at Alignment.TopEnd so they NEVER collide or overlap with the right-side map tools column
-        val zoomControlsApertureOffsetY = if (isCompact) 28.dp else 68.dp
-        Column(
-            modifier = Modifier
-                .align(if (isLandscape) Alignment.TopEnd else Alignment.CenterEnd)
-                .then(
-                    if (isLandscape) Modifier.padding(top = 16.dp, end = 12.dp)
-                    else Modifier.offset(y = zoomControlsApertureOffsetY).padding(end = 12.dp)
-                ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Zoom In [+] Button
-            IconButton(
-                onClick = {
-                    val map = mapView ?: return@IconButton
-                    map.controller.zoomIn()
-                    currentZoom = map.zoomLevelDouble
-                },
+        // Floating Zoom Controls & Map Tools:
+        // In landscape: Stack Zoom Controls AND Map Tools into a single unified column, centered vertically on the screen (CenterEnd)
+        // In portrait: Zoom Controls at CenterEnd (aperture offset), Map Tools at BottomEnd (clearing active toolbars)
+        if (isLandscape) {
+            Column(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(ComposeColor(0xCC1E293B))
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Zoom In",
-                    tint = ComposeColor.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Zoom Out [-] Button
-            IconButton(
-                onClick = {
-                    val map = mapView ?: return@IconButton
-                    map.controller.zoomOut()
-                    currentZoom = map.zoomLevelDouble
-                },
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(ComposeColor(0xCC1E293B))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Remove,
-                    contentDescription = "Zoom Out",
-                    tint = ComposeColor.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-
-        // Floating Map Tools (Recenter/Refresh, Instant Share, Fit Track, Clear Selected Trips)
-        // Positioned at Bottom-Right (Alignment.BottomEnd) with dynamic clearance above toolbar / recording HUD / heat map
-        val mapToolsBottomPadding = when {
-            showHeatMap && isRecording -> if (isLandscape) 160.dp else 196.dp
-            showHeatMap               -> if (isLandscape) 124.dp else 148.dp
-            isRecording               -> if (isLandscape) 96.dp else 134.dp
-            else                      -> if (isLandscape) 64.dp else 78.dp
-        }
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 12.dp, bottom = mapToolsBottomPadding),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Unified MyLocation & Refresh Button (FT2-12)
-            IconButton(
-                onClick = {
-                    isFollowing = true
-                    snapHandler.removeCallbacks(snapRunnable)
-                    onClearDestination?.invoke()
-                    mapView?.tileProvider?.clearTileCache()
-                    hikingProviderRef?.clearTileCache()
-
-                    val targetMapOrientation = when (orientationMode) {
-                        MapOrientationMode.COURSE_UP -> {
-                            val b = effectiveLatLng?.third ?: lastFrozenBearing
-                            if (b != null) -b else 0f
-                        }
-                        MapOrientationMode.NORTH -> 0f
-                        MapOrientationMode.EAST -> 270f
-                        MapOrientationMode.SOUTH -> 180f
-                        MapOrientationMode.WEST -> 90f
-                    }
-                    mapView?.mapOrientation = targetMapOrientation
-
-                    effectiveLatLng?.let { pos ->
-                        val gp = GeoPoint(pos.first, pos.second)
-                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                        mapView?.controller?.animateTo(centerGp, null, 400L)
-                    }
-                    mapView?.invalidate()
-                },
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MyLocation,
-                    contentDescription = "Recenter & Refresh",
-                    tint = ComposeColor.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Instant Share Current Position
-            if (onInstantShare != null && effectiveLatLng != null) {
+                // Zoom In [+] Button
                 IconButton(
-                    onClick = { onInstantShare.invoke() },
+                    onClick = {
+                        val map = mapView ?: return@IconButton
+                        map.controller.zoomIn()
+                        currentZoom = map.zoomLevelDouble
+                    },
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Share Current Position",
-                        tint = ComposeColor(0xFF38BDF8),
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Zoom In",
+                        tint = ComposeColor.White,
                         modifier = Modifier.size(20.dp)
                     )
                 }
-            }
 
-            // Fit Shown Trips (if any shown points exist from recording or selected past trips)
-            if (allShownPoints.isNotEmpty()) {
+                // Zoom Out [-] Button
                 IconButton(
                     onClick = {
                         val map = mapView ?: return@IconButton
-                        isFollowing = false
+                        map.controller.zoomOut()
+                        currentZoom = map.zoomLevelDouble
+                    },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xCC1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Zoom Out",
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Unified MyLocation & Refresh Button
+                IconButton(
+                    onClick = {
+                        isFollowing = true
                         snapHandler.removeCallbacks(snapRunnable)
-                        if (allShownPoints.size == 1) {
-                            val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                            map.controller.animateTo(centerGp)
-                            map.controller.setZoom(16.0)
-                        } else {
-                            val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
-                            val minSpan = 0.005
-                            val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
-                            val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
-                            val centerLat = rawBox.centerLatitude
-                            val centerLon = rawBox.centerLongitude
-                            val paddedBox = BoundingBox(
-                                centerLat + latSpan / 2.0,
-                                centerLon + lonSpan / 2.0,
-                                centerLat - latSpan / 2.0,
-                                centerLon - lonSpan / 2.0
-                            )
-                            val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
-                            map.zoomToBoundingBox(paddedBox, false, borderPadding)
-                            val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                            map.controller.animateTo(opticalCenter)
+                        onClearDestination?.invoke()
+                        mapView?.tileProvider?.clearTileCache()
+                        hikingProviderRef?.clearTileCache()
+
+                        val targetMapOrientation = when (orientationMode) {
+                            MapOrientationMode.COURSE_UP -> {
+                                val b = effectiveLatLng?.third ?: lastFrozenBearing
+                                if (b != null) -b else 0f
+                            }
+                            MapOrientationMode.NORTH -> 0f
+                            MapOrientationMode.EAST -> 270f
+                            MapOrientationMode.SOUTH -> 180f
+                            MapOrientationMode.WEST -> 90f
                         }
+                        mapView?.mapOrientation = targetMapOrientation
+
+                        effectiveLatLng?.let { pos ->
+                            val gp = GeoPoint(pos.first, pos.second)
+                            val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                            mapView?.controller?.animateTo(centerGp, null, 400L)
+                        }
+                        mapView?.invalidate()
+                    },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = "Recenter & Refresh",
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                // Instant Share Current Position
+                if (onInstantShare != null && effectiveLatLng != null) {
+                    IconButton(
+                        onClick = { onInstantShare.invoke() },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC1E293B))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share Current Position",
+                            tint = ComposeColor(0xFF38BDF8),
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
+
+                // Fit Shown Trips
+                if (allShownPoints.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            val map = mapView ?: return@IconButton
+                            isFollowing = false
+                            snapHandler.removeCallbacks(snapRunnable)
+                            if (allShownPoints.size == 1) {
+                                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                                map.controller.animateTo(centerGp)
+                                map.controller.setZoom(16.0)
+                            } else {
+                                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
+                                val minSpan = 0.005
+                                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                                val centerLat = rawBox.centerLatitude
+                                val centerLon = rawBox.centerLongitude
+                                val paddedBox = BoundingBox(
+                                    centerLat + latSpan / 2.0,
+                                    centerLon + lonSpan / 2.0,
+                                    centerLat - latSpan / 2.0,
+                                    centerLon - lonSpan / 2.0
+                                )
+                                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
+                                map.zoomToBoundingBox(paddedBox, false, borderPadding)
+                                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                                map.controller.animateTo(opticalCenter)
+                            }
+                        },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC1E293B))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CropFree,
+                            contentDescription = "Fit Shown Trips",
+                            tint = ComposeColor(0xFF38BDF8),
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
+
+                // Hide / Unselect Shown Historical Trips
+                if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
+                    Box(contentAlignment = Alignment.TopEnd) {
+                        IconButton(
+                            onClick = { onClearSelectedTrips.invoke() },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(ComposeColor(0xCC7F1D1D))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Hide Shown Trips",
+                                tint = ComposeColor(0xFFFCA5A5),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                                .clip(CircleShape)
+                                .background(ComposeColor(0xFFEF4444))
+                                .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${selectedTrips.size}",
+                                color = ComposeColor.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                        includeFontPadding = false
+                                    )
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Portrait: Floating Zoom Controls at optical center
+            val zoomControlsApertureOffsetY = if (isCompact) 28.dp else 68.dp
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .offset(y = zoomControlsApertureOffsetY)
+                    .padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Zoom In [+] Button
+                IconButton(
+                    onClick = {
+                        val map = mapView ?: return@IconButton
+                        map.controller.zoomIn()
+                        currentZoom = map.zoomLevelDouble
                     },
                     modifier = Modifier
                         .size(40.dp)
@@ -1198,53 +1282,192 @@ fun OsmMapView(
                         .background(ComposeColor(0xCC1E293B))
                 ) {
                     Icon(
-                        imageVector = Icons.Default.CropFree,
-                        contentDescription = "Fit Shown Trips",
-                        tint = ComposeColor(0xFF38BDF8),
-                        modifier = Modifier.size(20.dp)
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Zoom In",
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                // Zoom Out [-] Button
+                IconButton(
+                    onClick = {
+                        val map = mapView ?: return@IconButton
+                        map.controller.zoomOut()
+                        currentZoom = map.zoomLevelDouble
+                    },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xCC1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Zoom Out",
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
 
-            // Hide / Unselect Shown Historical Trips (hidden during active recording to prevent overlapping in-progress trip)
-            if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
-                Box(contentAlignment = Alignment.TopEnd) {
+            // Floating Map Tools (Recenter/Refresh, Instant Share, Fit Track, Clear Selected Trips)
+            // Positioned at Bottom-Right with dynamic clearance above toolbar / recording HUD / heat map
+            val mapToolsBottomPadding = when {
+                showHeatMap && isRecording -> 184.dp
+                showHeatMap               -> 138.dp
+                isRecording               -> 134.dp
+                else                      -> 78.dp
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = mapToolsBottomPadding),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Unified MyLocation & Refresh Button (FT2-12)
+                IconButton(
+                    onClick = {
+                        isFollowing = true
+                        snapHandler.removeCallbacks(snapRunnable)
+                        onClearDestination?.invoke()
+                        mapView?.tileProvider?.clearTileCache()
+                        hikingProviderRef?.clearTileCache()
+
+                        val targetMapOrientation = when (orientationMode) {
+                            MapOrientationMode.COURSE_UP -> {
+                                val b = effectiveLatLng?.third ?: lastFrozenBearing
+                                if (b != null) -b else 0f
+                            }
+                            MapOrientationMode.NORTH -> 0f
+                            MapOrientationMode.EAST -> 270f
+                            MapOrientationMode.SOUTH -> 180f
+                            MapOrientationMode.WEST -> 90f
+                        }
+                        mapView?.mapOrientation = targetMapOrientation
+
+                        effectiveLatLng?.let { pos ->
+                            val gp = GeoPoint(pos.first, pos.second)
+                            val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                            mapView?.controller?.animateTo(centerGp, null, 400L)
+                        }
+                        mapView?.invalidate()
+                    },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = "Recenter & Refresh",
+                        tint = ComposeColor.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Instant Share Current Position
+                if (onInstantShare != null && effectiveLatLng != null) {
                     IconButton(
-                        onClick = { onClearSelectedTrips.invoke() },
+                        onClick = { onInstantShare.invoke() },
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(ComposeColor(0xCC7F1D1D))
+                            .background(ComposeColor(0xCC1E293B))
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Hide Shown Trips",
-                            tint = ComposeColor(0xFFFCA5A5),
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share Current Position",
+                            tint = ComposeColor(0xFF38BDF8),
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    Box(
+                }
+
+                // Fit Shown Trips (if any shown points exist from recording or selected past trips)
+                if (allShownPoints.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            val map = mapView ?: return@IconButton
+                            isFollowing = false
+                            snapHandler.removeCallbacks(snapRunnable)
+                            if (allShownPoints.size == 1) {
+                                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                                map.controller.animateTo(centerGp)
+                                map.controller.setZoom(16.0)
+                            } else {
+                                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
+                                val minSpan = 0.005
+                                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                                val centerLat = rawBox.centerLatitude
+                                val centerLon = rawBox.centerLongitude
+                                val paddedBox = BoundingBox(
+                                    centerLat + latSpan / 2.0,
+                                    centerLon + lonSpan / 2.0,
+                                    centerLat - latSpan / 2.0,
+                                    centerLon - lonSpan / 2.0
+                                )
+                                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
+                                map.zoomToBoundingBox(paddedBox, false, borderPadding)
+                                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                                map.controller.animateTo(opticalCenter)
+                            }
+                        },
                         modifier = Modifier
-                            .offset(x = 4.dp, y = (-4).dp)
-                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
-                            .background(ComposeColor(0xFFEF4444))
-                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
-                            .padding(horizontal = 4.dp, vertical = 1.dp),
-                        contentAlignment = Alignment.Center
+                            .background(ComposeColor(0xCC1E293B))
                     ) {
-                        Text(
-                            text = "${selectedTrips.size}",
-                            color = ComposeColor.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            style = androidx.compose.ui.text.TextStyle(
-                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
-                                    includeFontPadding = false
+                        Icon(
+                            imageVector = Icons.Default.CropFree,
+                            contentDescription = "Fit Shown Trips",
+                            tint = ComposeColor(0xFF38BDF8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // Hide / Unselect Shown Historical Trips (hidden during active recording to prevent overlapping in-progress trip)
+                if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
+                    Box(contentAlignment = Alignment.TopEnd) {
+                        IconButton(
+                            onClick = { onClearSelectedTrips.invoke() },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(ComposeColor(0xCC7F1D1D))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Hide Shown Trips",
+                                tint = ComposeColor(0xFFFCA5A5),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                                .clip(CircleShape)
+                                .background(ComposeColor(0xFFEF4444))
+                                .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${selectedTrips.size}",
+                                color = ComposeColor.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                        includeFontPadding = false
+                                    )
                                 )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -1252,10 +1475,15 @@ fun OsmMapView(
 
         // Floating "📍 Recenter" Pill when user has panned away (Option B)
         if (!isFollowing && destinationPoint == null && selectedSavedPlace == null) {
-            val recenterBottomPadding = when {
-                showHeatMap -> 150.dp
-                isRecording -> if (isLandscape) 116.dp else 136.dp
-                else -> if (isLandscape) 68.dp else 78.dp
+            val recenterBottomPadding = if (isLandscape) {
+                68.dp
+            } else {
+                when {
+                    showHeatMap && isRecording -> 180.dp
+                    showHeatMap               -> 136.dp
+                    isRecording               -> 136.dp
+                    else                      -> 78.dp
+                }
             }
             Surface(
                 onClick = {
@@ -1295,8 +1523,9 @@ fun OsmMapView(
             }
         }
 
-        // Floating Heat Map Controls — collapses to icons-only in landscape to save precious screen width
-        if (showHeatMap) {
+        // Floating Heat Map Controls — only in portrait (in landscape, it is merged into the bottom app toolbar)
+        if (showHeatMap && !isLandscape) {
+            val heatMapBottomPadding = if (isRecording) 134.dp else 84.dp
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = ComposeColor(0xF00F172A),
@@ -1304,7 +1533,7 @@ fun OsmMapView(
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 90.dp)
+                    .padding(bottom = heatMapBottomPadding)
                     .padding(horizontal = 8.dp)
             ) {
                 Row(
@@ -1312,7 +1541,7 @@ fun OsmMapView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // Heat Map label — hidden in landscape to save space
+                    // Heat Map label
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Whatshot,
@@ -1320,17 +1549,15 @@ fun OsmMapView(
                             tint = ComposeColor(0xFFF97316),
                             modifier = Modifier.size(15.dp)
                         )
-                        if (!isLandscape) {
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = if (heatMapFilterActive) "Heat Map*" else "Heat Map",
-                                color = ComposeColor.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (heatMapFilterActive) "Heat Map*" else "Heat Map",
+                            color = ComposeColor.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
 
                     // 0. Filter / Settings
@@ -1355,21 +1582,19 @@ fun OsmMapView(
                                         tint = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
                                         modifier = Modifier.size(13.dp)
                                     )
-                                    if (!isLandscape) {
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text(
-                                            text = "Filter",
-                                            color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            style = androidx.compose.ui.text.TextStyle(
-                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 11.sp
-                                            )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Filter",
+                                        color = if (heatMapFilterActive) ComposeColor.White else ComposeColor(0xFFF97316),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = androidx.compose.ui.text.TextStyle(
+                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 11.sp
                                         )
-                                    }
+                                    )
                                 }
                             }
                         }
@@ -1418,21 +1643,19 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFF38BDF8),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                if (!isLandscape) {
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Fit All",
-                                        color = ComposeColor(0xFF38BDF8),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 11.sp
-                                        )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Fit All",
+                                    color = ComposeColor(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 11.sp
                                     )
-                                }
+                                )
                             }
                         }
                     }
@@ -1458,149 +1681,34 @@ fun OsmMapView(
                                     tint = ComposeColor(0xFFFCA5A5),
                                     modifier = Modifier.size(13.dp)
                                 )
-                                if (!isLandscape) {
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Close",
-                                        color = ComposeColor(0xFFFCA5A5),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        style = androidx.compose.ui.text.TextStyle(
-                                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 11.sp
-                                        )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Close",
+                                    color = ComposeColor(0xFFFCA5A5),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 11.sp
                                     )
-                                }
+                                )
                             }
                         }
                     }
                 }
             }
+        }
 
-            // ── Floating Left-Side Thermal Color Legend ─────────────────────────
-            var showLegendDetail by remember { mutableStateOf(false) }
-
-            Surface(
-                onClick = { showLegendDetail = !showLegendDetail },
-                shape = RoundedCornerShape(12.dp),
-                color = ComposeColor(0xF00F172A),
-                border = androidx.compose.foundation.BorderStroke(1.dp, ComposeColor(0x80F97316)),
-                shadowElevation = 6.dp,
+        // Floating Left-Side Thermal Color Legend (in portrait only; in landscape it is docked beneath LocalityCard)
+        if (showHeatMap && !isLandscape) {
+            HeatMapLegend(
+                onOpenHeatMapSettings = onOpenHeatMapSettings,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 12.dp)
-            ) {
-                if (!showLegendDetail) {
-                    // Compact vertical thermometer bar
-                    Column(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Hot",
-                            color = ComposeColor(0xFFD946EF),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .width(7.dp)
-                                .height(85.dp)
-                                .clip(RoundedCornerShape(3.5.dp))
-                                .background(
-                                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                                        listOf(
-                                            ComposeColor(0xFFD946EF), // 7 Magenta
-                                            ComposeColor(0xFFEF4444), // 6 Red
-                                            ComposeColor(0xFFF97316), // 5 Orange
-                                            ComposeColor(0xFFEAB308), // 4 Yellow
-                                            ComposeColor(0xFF10B981), // 3 Green
-                                            ComposeColor(0xFF06B6D4), // 2 Cyan
-                                            ComposeColor(0xFF2563EB)  // 1 Blue
-                                        )
-                                    )
-                                )
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "1x",
-                            color = ComposeColor(0xFF60A5FA),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                } else {
-                    // Detailed tier breakdown popup on click
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.width(135.dp)
-                        ) {
-                            Text(
-                                text = "🔥 Thermal Scale",
-                                color = ComposeColor.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close Legend",
-                                tint = ComposeColor.LightGray,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        val legendTiers = listOf(
-                            ComposeColor(0xFFD946EF) to "20+ Hotspot",
-                            ComposeColor(0xFFEF4444) to "13-19 passes",
-                            ComposeColor(0xFFF97316) to "8-12 passes",
-                            ComposeColor(0xFFEAB308) to "5-7 passes",
-                            ComposeColor(0xFF10B981) to "3-4 passes",
-                            ComposeColor(0xFF06B6D4) to "2 passes",
-                            ComposeColor(0xFF2563EB) to "1 pass (Cold)"
-                        )
-                        legendTiers.forEach { (color, label) ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(width = 16.dp, height = 5.dp)
-                                        .clip(RoundedCornerShape(2.5.dp))
-                                        .background(color)
-                                )
-                                Text(
-                                    text = label,
-                                    color = ComposeColor(0xFFE2E8F0),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                        if (onOpenHeatMapSettings != null) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "⚙️ Filter / Options",
-                                color = ComposeColor(0xFFF97316),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-            }
+            )
         }
     }
 
@@ -2383,3 +2491,134 @@ internal fun makeEndMarkerIcon(context: Context): android.graphics.drawable.Bitm
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
+
+/**
+ * Reusable Heat Map Legend composable.
+ * Displays the thermal color scale / thermometer, expandable to detail tier breakdown on tap.
+ */
+@Composable
+fun HeatMapLegend(
+    onOpenHeatMapSettings: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    var showLegendDetail by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick = { showLegendDetail = !showLegendDetail },
+        shape = RoundedCornerShape(12.dp),
+        color = ComposeColor(0xF00F172A),
+        border = androidx.compose.foundation.BorderStroke(1.dp, ComposeColor(0x80F97316)),
+        shadowElevation = 6.dp,
+        modifier = modifier
+    ) {
+        if (!showLegendDetail) {
+            // Compact vertical thermometer bar
+            Column(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Hot",
+                    color = ComposeColor(0xFFD946EF),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .width(7.dp)
+                        .height(85.dp)
+                        .clip(RoundedCornerShape(3.5.dp))
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                listOf(
+                                    ComposeColor(0xFFD946EF), // 7 Magenta
+                                    ComposeColor(0xFFEF4444), // 6 Red
+                                    ComposeColor(0xFFF97316), // 5 Orange
+                                    ComposeColor(0xFFEAB308), // 4 Yellow
+                                    ComposeColor(0xFF10B981), // 3 Green
+                                    ComposeColor(0xFF06B6D4), // 2 Cyan
+                                    ComposeColor(0xFF2563EB)  // 1 Blue
+                                )
+                            )
+                        )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "1x",
+                    color = ComposeColor(0xFF60A5FA),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        } else {
+            // Detailed tier breakdown popup on click
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.width(135.dp)
+                ) {
+                    Text(
+                        text = "🔥 Thermal Scale",
+                        color = ComposeColor.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close Legend",
+                        tint = ComposeColor.LightGray,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                val legendTiers = listOf(
+                    ComposeColor(0xFFD946EF) to "20+ Hotspot",
+                    ComposeColor(0xFFEF4444) to "13-19 passes",
+                    ComposeColor(0xFFF97316) to "8-12 passes",
+                    ComposeColor(0xFFEAB308) to "5-7 passes",
+                    ComposeColor(0xFF10B981) to "3-4 passes",
+                    ComposeColor(0xFF06B6D4) to "2 passes",
+                    ComposeColor(0xFF2563EB) to "1 pass (Cold)"
+                )
+                legendTiers.forEach { (color, label) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 16.dp, height = 5.dp)
+                                .clip(RoundedCornerShape(2.5.dp))
+                                .background(color)
+                        )
+                        Text(
+                            text = label,
+                            color = ComposeColor(0xFFE2E8F0),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                if (onOpenHeatMapSettings != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "⚙️ Filter / Options",
+                        color = ComposeColor(0xFFF97316),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
