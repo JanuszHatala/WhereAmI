@@ -39,6 +39,10 @@ fun CacheManagerDialog(
 
     var allowOnBattery by remember { mutableStateOf(cacheManager.allowOnBattery) }
     var allowMobileData by remember { mutableStateOf(cacheManager.allowMobileData) }
+    var autoStartOnWifi by remember { mutableStateOf(cacheManager.autoStartOnWifi) }
+    var autoStartOnCharger by remember { mutableStateOf(cacheManager.autoStartOnCharger) }
+    var notifyWhenAvailable by remember { mutableStateOf(cacheManager.notifyWhenAvailable) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL"
 
@@ -72,14 +76,18 @@ fun CacheManagerDialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF1E293B),
-            tonalElevation = 6.dp,
+        Box(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
-                .padding(vertical = 16.dp)
+                .padding(vertical = 16.dp),
+            contentAlignment = Alignment.Center
         ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF1E293B),
+                tonalElevation = 6.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
             Column(
                 modifier = Modifier
                     .padding(20.dp)
@@ -308,7 +316,7 @@ fun CacheManagerDialog(
                             )
                         }
 
-                        Divider(color = Color(0xFF1E293B))
+                        HorizontalDivider(color = Color(0xFF1E293B))
 
                         // Mobile Data toggle
                         Row(
@@ -329,6 +337,89 @@ fun CacheManagerDialog(
                                 onCheckedChange = {
                                     allowMobileData = it
                                     cacheManager.allowMobileData = it
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        Text(
+                            text = "AUTO-UPDATE & NOTIFICATIONS",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF64748B),
+                            letterSpacing = 0.8.sp
+                        )
+
+                        // Auto-start on WiFi
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text("Auto-start on Wi-Fi", color = Color.White, fontSize = 14.sp)
+                                Text(
+                                    if (autoStartOnWifi) "Downloads begin automatically when on Wi-Fi" else "Manual start only",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = autoStartOnWifi,
+                                onCheckedChange = {
+                                    autoStartOnWifi = it
+                                    cacheManager.autoStartOnWifi = it
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // Auto-start on charger
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text("Auto-start when charging", color = Color.White, fontSize = 14.sp)
+                                Text(
+                                    if (autoStartOnCharger) "Downloads begin automatically when plugged into power" else "Manual start only",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = autoStartOnCharger,
+                                onCheckedChange = {
+                                    autoStartOnCharger = it
+                                    cacheManager.autoStartOnCharger = it
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // Notify when available
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text("Notify when updates available", color = Color.White, fontSize = 14.sp)
+                                Text(
+                                    if (notifyWhenAvailable) "System notification with Start/Pause/Stop actions shown when items need updating" else "Silent — no notification",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = notifyWhenAvailable,
+                                onCheckedChange = {
+                                    notifyWhenAvailable = it
+                                    cacheManager.notifyWhenAvailable = it
                                 }
                             )
                         }
@@ -373,6 +464,12 @@ fun CacheManagerDialog(
                                         onClick = {
                                             if (totalMissing == 0) {
                                                 cacheManager.calculateCacheDeficit()
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "✓ Cache is up to date. All routes and boundaries are cached.",
+                                                        duration = SnackbarDuration.Short
+                                                    )
+                                                }
                                             } else {
                                                 cacheManager.startPrefetch()
                                             }
@@ -663,6 +760,19 @@ fun CacheManagerDialog(
                         }
                     }
                 }
+            }
+            } // end Surface
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp)
+            ) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = Color(0xFF0F172A),
+                    contentColor = Color(0xFF10B981)
+                )
             }
         }
     }
