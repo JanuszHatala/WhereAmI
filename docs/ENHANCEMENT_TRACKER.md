@@ -28,8 +28,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 14** | Field Testing (2026-10-01 Night) Map & Zoom Controls Placement, Trips List Route Rest Separation, Auto-Start/Stop Dropdowns, Per-Profile Map Defaults & Customization Memory | 4 | 4 | 0 | 0 |
 | **Round 15** | Field Testing (2026-10-02 Morning) Overnight Zero-Drain Standby, Motion Speed Trap Recovery, Trajectory Street Precedence & Strict House Numbers, Pause Auto-Stop Immunity & Auto-Resume, Chronological Timeline Calculation & Design System White Text | 10 | 10 | 0 | 0 |
 | **Round 16** | Field Testing (2026-10-02 Afternoon) Cache Notification & Auto-Download Engine, "Polska" Spatial Cache Canonicalization, Map Settings Bottom Toolbar Button, Locality Card Spacing Condensation, Visited Localities Condensation & Trip Start Leg Attribution, Landscape Inline HUD & Right Map Controls Overlap Fix, Re-scan Tactile Feedback, Heat Map Margin Clearance | 8 | 8 | 0 | 0 |
+| **Round 17** | Field Testing (2026-10-02 Evening) Map Config Gear Badge Visibility, LocalityCard Line Spacing Condensation, Landscape Unified Bottom Toolbar (App + Heat Map + Recording HUD), Right-Side Zoom/Map Controls Centered Stack, Sticky Heat Map Legend Beneath LocalityCard & Portrait Dynamic Toolbars Stacking | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **164** | **156** | **0** | **8** |
+| **Total** | | **170** | **162** | **0** | **8** |
 
 ---
 
@@ -322,7 +323,20 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 19. Features Inventory & Future Backlog
+## 19. Round 17: Field Testing (2026-10-02 Evening) Map Config Gear Badge Visibility, LocalityCard Line Spacing Condensation, Landscape Unified Bottom Toolbar, Right-Side Centered Controls Stack, Sticky Heat Map Legend & Portrait Dynamic Toolbars Stacking
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT17-01** | **Map Config Icon Gear Badge Visibility (sc 1)**: Fix map settings button in bottom toolbar where the overlaid small gear badge was clipped and invisible. | `MainActivity.kt` (`MainBottomControlsCard`) | **Completed** | Removed `.clip(CircleShape)` from the root button `Box`, moved background clipping to an inner child, and positioned the ⚙️ gear badge (16dp circle, 1dp border, `Icons.Default.Settings` in amber gold `#FBBF24`) at `BottomEnd` offset `(1.dp, 1.dp)` with high contrast. |
+| **FT17-02** | **LocalityCard Line Spacing Condensation (sc 1)**: Condense vertical space between lines in the locality card (primary place name, secondary place, street, hierarchy, and speed pill). | `MainActivity.kt` (`LocalityCard`) | **Completed** | Applied `PlatformTextStyle(includeFontPadding = false)` and `LineHeightStyle(alignment = Center, trim = Both)` across primary city, secondary city, street, and hierarchy texts. Reduced city font size from 30sp $\to$ 28sp with 30sp line height, street top padding from 1dp $\to$ 0dp, hierarchy top padding from 2dp $\to$ 1dp, speed row top padding from 4dp $\to$ 3dp with vertical padding 4dp, and card vertical padding from 10dp $\to$ 7dp. |
+| **FT17-03** | **Landscape Unified Bottom Toolbar (sc 2, sc 4)**: Merge Heat Map toolbar and Recording HUD directly into the app bottom toolbar so all toolbars are aligned in the same single line at the bottom and enclosed in the app toolbar card (App buttons on left, Heat Map pill in middle, Recording HUD on very right). | `MainActivity.kt`, `OsmMapView.kt` | **Completed** | Added `landscapeShowHeatMap`, `heatMapFilterActive`, `onToggleHeatMap`, `onOpenHeatMapSettings`, and `onFitHeatMap` to `MainBottomControlsCard`. Rendered Heat Map controls inline right after button 7, followed by the Recording HUD on the very right. Expanded card width dynamically up to 700dp in landscape. Suppressed floating Heat Map toolbar in `OsmMapView` when in landscape. |
+| **FT17-04** | **Landscape Right-Side Zoom Controls & Map Tools Vertically Centered Stack (sc 2)**: Combine Zoom In/Out and Map Tools into a single unified column vertically centered on the right edge. | `OsmMapView.kt` | **Completed** | In landscape, unified `[+]`, `[-]`, MyLocation/Refresh, Instant Share, Fit Track, and Clear Trips into a single vertical column anchored at `Alignment.CenterEnd` with `spacedBy(6.dp)`, eliminating screen edge separation and overlaps. |
+| **FT17-05** | **Heat Map Legend Vertically Below Locality Card & Sticky to Collapsed Card (sc 2, sc 4)**: Position the Heat Map thermal legend below the locality card in landscape, anchored to its bottom so it moves up together when the locality card collapses. | `MainActivity.kt`, `OsmMapView.kt` | **Completed** | Extracted `HeatMapLegend` into a reusable `@Composable`. In landscape, placed `HeatMapLegend` in a `Column` directly beneath `LocalityCard` (`spacedBy(8.dp)`), ensuring zero overlap and automatic sticky upward translation upon card collapse. In portrait, maintained at `Alignment.CenterStart`. |
+| **FT17-06** | **Portrait Mode Dynamic Floating Toolbars Stacking (sc 3)**: Prevent floating Heat Map toolbar from overlapping the Recording HUD in portrait mode; place Heat Map toolbar above the recording toolbar dynamically. | `OsmMapView.kt` | **Completed** | Dynamic bottom padding for floating Heat Map controls in portrait: `if (isRecording) 134.dp else 84.dp` (cleanly floating above the 82dp Recording HUD). Map tools bottom padding adjusted to 184dp when both are active. |
+
+---
+
+## 20. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
