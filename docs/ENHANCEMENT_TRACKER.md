@@ -27,8 +27,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 13** | Field Testing (2026-10-01 Evening) HUD Bar Pause/Resume, Per-Profile Trip Mode & Custom Auto Times, Map Controls Spacing, Trips History Route Overflow & Live Sharing Quick Share Modal with QR Code | 5 | 5 | 0 | 0 |
 | **Round 14** | Field Testing (2026-10-01 Night) Map & Zoom Controls Placement, Trips List Route Rest Separation, Auto-Start/Stop Dropdowns, Per-Profile Map Defaults & Customization Memory | 4 | 4 | 0 | 0 |
 | **Round 15** | Field Testing (2026-10-02 Morning) Overnight Zero-Drain Standby, Motion Speed Trap Recovery, Trajectory Street Precedence & Strict House Numbers, Pause Auto-Stop Immunity & Auto-Resume, Chronological Timeline Calculation & Design System White Text | 10 | 10 | 0 | 0 |
+| **Round 16** | Field Testing (2026-10-02 Afternoon) Cache Notification & Auto-Download Engine, "Polska" Spatial Cache Canonicalization, Map Settings Bottom Toolbar Button, Locality Card Spacing Condensation, Visited Localities Condensation & Trip Start Leg Attribution, Landscape Inline HUD & Right Map Controls Overlap Fix, Re-scan Tactile Feedback, Heat Map Margin Clearance | 8 | 8 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **156** | **148** | **0** | **8** |
+| **Total** | | **164** | **156** | **0** | **8** |
 
 ---
 
@@ -306,7 +307,22 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 18. Features Inventory & Future Backlog
+## 18. Round 16: Field Testing (2026-10-02 Afternoon) Cache Notification, Country Canonicalization, Toolbar Map Settings, UI Condensation & Landscape Overlap Fixes
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **FT16-01** | **Cache Updates Notification & Auto-Download Engine**: Notify user when offline map cache updates are available, with notification action buttons to Start/Pause/Stop updating and show progress. Add auto-start downloading when on Wi-Fi and/or on charger controlled by settings. | `CacheManager.kt`, `CacheNotificationReceiver.kt`, `CacheManagerDialog.kt`, `AndroidManifest.xml` | **Completed** | Added `autoStartOnWifi`, `autoStartOnCharger`, and `notifyWhenAvailable` preferences. Added `ACTION_START` to `CacheNotificationReceiver`. `calculateCacheDeficit()` auto-starts or posts a dismissible notification with `[▶ Start Download]` action. Added 3 toggle switches in `CacheManagerDialog`. |
+| **FT16-02** | **Country "Polska" vs "Poland" Stale Cache Canonicalization**: Fix country displaying "Poland" instead of canonical "Polska" due to cached data. | `SpatialCacheHelper.kt`, `LocationManager.kt`, `SpatialCacheGridTest.kt` | **Completed** | Added canonicalization (`if (cc == "PL" || rawCountry == "Poland") "Polska"`) to `SpatialCacheHelper.deserializePlaceInfo` and `LocationManager.loadLastGood`. Executed one-time SQLite migration query in `SpatialCacheHelper.migrateLegacyKeys()` updating stored JSON columns in `where_am_i_spatial_cache.db`. Verified by `SpatialCacheGridTest.kt`. |
+| **FT16-03** | **Map Settings Button in Bottom Toolbar**: Move the map settings/layers button into the primary bottom toolbar to the left of the App Settings gear button, featuring a map layers icon with an overlaid small ⚙️ gear badge. | `MainActivity.kt`, `OsmMapView.kt` | **Completed** | Added `onShowMapSettings` to `MainBottomControlsCard`, inserted button at position 6 with `Icons.Default.Layers` and a mini `Icons.Default.Settings` badge. Hoisted state into `OsmMapView.showMapSettingsExternal`. Removed redundant floating Layers button from map tools column. |
+| **FT16-04** | **LocalityCard Normal Mode Line Spacing Condensation (sc 1)**: Condense vertical space between city name, secondary city, street name, hierarchy, and speed pill. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Decreased normal mode card vertical padding from 14dp $\to$ 10dp, street top padding 3dp $\to$ 1dp, administrative hierarchy top padding 4dp $\to$ 2dp, and speed pill top padding 8dp $\to$ 4dp. Reduced total card height by ~14dp without squashing text. |
+| **FT16-05** | **Visited Localities Condensation & Trip Start Leg Metrics (sc 2)**: Condense text line spacing inside visited localities cards and calculate/display distance and time spent in the first locality (Trip Start). | `MainActivity.kt` (`TripDetailDialog`), `TripTimelineChronologyTest.kt` | **Completed** | Tightened card row padding to `padding(horizontal = 10.dp, vertical = 6.dp)` and container `spacedBy(6.dp)`. In `timelineItems`, computed the initial leg for `rawEvents[0]` forward to `rawEvents[1]` (or trip end), displaying `Trip Start` plus `+%.2f km • %s in locality`. Verified by `TripTimelineChronologyTest.kt`. |
+| **FT16-06** | **Landscape Mode Inline HUD & Map Controls Overlap Fix (sc 3)**: Place recording HUD on the right side of the bottom toolbar centered in middle of screen; fix right-side Zoom controls and Map Tools physically overlapping in landscape. | `MainActivity.kt`, `OsmMapView.kt` | **Completed** | Integrated recording HUD directly into `MainBottomControlsCard` toolbar row when `isLandscape && activeTrip != null`, expanding card width to 580dp and hiding separate floating HUD. In `OsmMapView`, anchored Zoom controls to `Alignment.TopEnd` in landscape, completely separating them from the bottom-right Map Tools column. |
+| **FT16-07** | **Re-scan Cache Tactile & Visual Feedback (sc 4)**: Provide immediate feedback when Re-scan Cache is tapped while all data is already fully cached. | `CacheManagerDialog.kt` | **Completed** | Wrapped dialog surface in a `Box` with `SnackbarHost`. When Re-scan is clicked and `totalMissing == 0`, immediately launches a `Snackbar`: `"✓ Cache is up to date. All routes and boundaries are cached."` |
+| **FT16-08** | **Heat Map Toolbar Clearance (sc 5)**: Prevent floating Heat Map toolbar from overlapping right-side Map Tools buttons. | `OsmMapView.kt` | **Completed** | Updated `mapToolsBottomPadding` in `OsmMapView` using a 4-state `when` expression: when `showHeatMap` is active, adds 60dp clearance (idle: 124/148dp; recording: 160/196dp), cleanly lifting all right-side tools above the Heat Map toolbar. |
+
+---
+
+## 19. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
