@@ -204,6 +204,18 @@ class AppStateManager private constructor(private val context: Context) {
                 locManager.stopLocationUpdates()
 
                 val tripManager = TripManager.getInstance(context)
+                val hasTrip = tripManager.activeTrip.value != null
+                val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+                val hasLive = liveSession != null && liveSession.isActive
+                if (!hasTrip && !hasLive) {
+                    try {
+                        val intent = Intent(context, LiveTrackingService::class.java).apply {
+                            action = LiveTrackingService.ACTION_STOP
+                        }
+                        context.startService(intent)
+                    } catch (_: Exception) {}
+                }
+
                 if (tripManager.tripMode.value == TripMode.AUTO) {
                     motionManager.arm()
                     TelemetryLogger.log("POWER", "App state IDLE: GPS off, hardware MotionWakeManager armed for AUTO auto-start.")

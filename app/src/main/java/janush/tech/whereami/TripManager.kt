@@ -29,6 +29,7 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
+        private const val KEY_AUTO_RESUME_ON_MOTION = "pref_auto_resume_on_motion"
     }
 
     private val dbHelper = TripDatabaseHelper(context)
@@ -55,6 +56,15 @@ class TripManager private constructor(private val context: Context) {
 
     private val _isPaused = MutableStateFlow(false)
     val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    private val _autoResumeOnMotion = MutableStateFlow(prefs.getBoolean(KEY_AUTO_RESUME_ON_MOTION, true))
+    val autoResumeOnMotion: StateFlow<Boolean> = _autoResumeOnMotion.asStateFlow()
+
+    fun setAutoResumeOnMotion(enabled: Boolean) {
+        _autoResumeOnMotion.value = enabled
+        prefs.edit().putBoolean(KEY_AUTO_RESUME_ON_MOTION, enabled).apply()
+        TelemetryLogger.log("SETTINGS", "AutoResumeOnMotion set to $enabled")
+    }
 
     fun getTripModeForProfile(profile: ActivityProfile): TripMode {
         val saved = prefs.getString(KEY_TRIP_MODE_PREFIX + profile.name, null)
@@ -208,10 +218,10 @@ class TripManager private constructor(private val context: Context) {
         watchdogJob = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(15_000L) // check every 15s
-                // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout
+                // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout (unless paused)
                 val active = _activeTrip.value
                 val mode = _tripMode.value
-                if (active != null && mode == TripMode.AUTO && lastMovingTimestamp != null) {
+                if (active != null && mode == TripMode.AUTO && !_isPaused.value && lastMovingTimestamp != null) {
                     val now = System.currentTimeMillis()
                     val stationaryDurationMs = now - lastMovingTimestamp!!
                     val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
@@ -234,17 +244,14 @@ class TripManager private constructor(private val context: Context) {
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
 
+        // True Zero-Idle Standby: Stop background service if no active recording and no live sharing
         if (!hasTrip && !hasLive) {
-            if (mode == TripMode.MANUAL) {
-                try {
-                    val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
-                        action = LiveTrackingService.ACTION_STOP
-                    }
-                    context.startService(intent)
-                } catch (_: Exception) {}
-            } else if (mode == TripMode.AUTO) {
-                startLiveTrackingService()
-            }
+            try {
+                val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
+                    action = LiveTrackingService.ACTION_STOP
+                }
+                context.startService(intent)
+            } catch (_: Exception) {}
         }
         AppStateManager.getInstance(context).recalculateState()
     }
@@ -444,18 +451,27 @@ class TripManager private constructor(private val context: Context) {
                     movingSinceTimestamp = null
                 }
             } else {
-                // Auto-stop check: stop when stationary duration exceeds configured auto-stop timeout
-                if (speedKmh >= currentProfile.autoStopSpeedKmh) {
-                    lastMovingTimestamp = now
-                } else {
-                    if (lastMovingTimestamp == null) {
-                        lastMovingTimestamp = now
+                if (_isPaused.value) {
+                    // Suppress auto-stop completely while paused!
+                    // Check auto-resume on motion if enabled
+                    if (_autoResumeOnMotion.value && speedKmh >= currentProfile.autoStartSpeedKmh) {
+                        resumeTrip()
+                        TelemetryLogger.logTrip("AUTO_RESUME", _activeTrip.value?.id ?: 0, "Motion detected while paused: auto-resumed trip")
                     }
-                    val stationaryDurationMs = now - lastMovingTimestamp!!
-                    val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
-                    if (stationaryDurationMs >= timeoutMs) {
-                        stopTrip()
-                        return
+                } else {
+                    // Auto-stop check: stop when stationary duration exceeds configured auto-stop timeout
+                    if (speedKmh >= currentProfile.autoStopSpeedKmh) {
+                        lastMovingTimestamp = now
+                    } else {
+                        if (lastMovingTimestamp == null) {
+                            lastMovingTimestamp = now
+                        }
+                        val stationaryDurationMs = now - lastMovingTimestamp!!
+                        val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
+                        if (stationaryDurationMs >= timeoutMs) {
+                            stopTrip()
+                            return
+                        }
                     }
                 }
             }
