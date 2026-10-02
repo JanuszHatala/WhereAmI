@@ -51,6 +51,7 @@
             android:name=".CacheNotificationReceiver"
             android:exported="false">
             <intent-filter>
+                <action android:name="janush.tech.whereami.ACTION_PREFETCH_START" />
                 <action android:name="janush.tech.whereami.ACTION_PREFETCH_PAUSE" />
                 <action android:name="janush.tech.whereami.ACTION_PREFETCH_RESUME" />
                 <action android:name="janush.tech.whereami.ACTION_PREFETCH_STOP" />

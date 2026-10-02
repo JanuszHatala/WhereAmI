@@ -286,6 +286,8 @@ fun OsmMapView(
     onInstantShare: (() -> Unit)? = null,
     onClearSelectedTrips: (() -> Unit)? = null,
     onOpenCacheManager: (() -> Unit)? = null,
+    showMapSettingsExternal: Boolean = false,
+    onDismissMapSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -359,6 +361,11 @@ fun OsmMapView(
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(showMapSettingsExternal) {
+        if (showMapSettingsExternal) {
+            showSettingsDialog = true
+        }
+    }
     var hikingOverlayRef by remember { mutableStateOf<TilesOverlay?>(null) }
     var hikingProviderRef by remember { mutableStateOf<MapTileProviderBasic?>(null) }
     val currentFix = remember(locationFix, latLng) {
@@ -1026,14 +1033,17 @@ fun OsmMapView(
             update = { }
         )
 
-        // Floating Zoom Controls [ + ] and [ - ] at Vertical Center-Right (Alignment.CenterEnd)
-        // Maintained at the optical center of the visible map aperture
-        val zoomControlsApertureOffsetY = if (isLandscape) 0.dp else if (isCompact) 28.dp else 68.dp
+        // Floating Zoom Controls [ + ] and [ - ]
+        // In portrait: Maintained at the optical center of the visible map aperture (Alignment.CenterEnd)
+        // In landscape: Positioned at Alignment.TopEnd so they NEVER collide or overlap with the right-side map tools column
+        val zoomControlsApertureOffsetY = if (isCompact) 28.dp else 68.dp
         Column(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .offset(y = zoomControlsApertureOffsetY)
-                .padding(end = 12.dp),
+                .align(if (isLandscape) Alignment.TopEnd else Alignment.CenterEnd)
+                .then(
+                    if (isLandscape) Modifier.padding(top = 16.dp, end = 12.dp)
+                    else Modifier.offset(y = zoomControlsApertureOffsetY).padding(end = 12.dp)
+                ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -1078,12 +1088,13 @@ fun OsmMapView(
             }
         }
 
-        // Floating Map Tools (Recenter/Refresh, Layers/Settings, Instant Share, Fit Track, Clear Selected Trips)
-        // Positioned at Bottom-Right (Alignment.BottomEnd) with dynamic clearance above toolbar / recording HUD
-        val mapToolsBottomPadding = if (isRecording) {
-            if (isLandscape) 96.dp else 134.dp
-        } else {
-            if (isLandscape) 64.dp else 78.dp
+        // Floating Map Tools (Recenter/Refresh, Instant Share, Fit Track, Clear Selected Trips)
+        // Positioned at Bottom-Right (Alignment.BottomEnd) with dynamic clearance above toolbar / recording HUD / heat map
+        val mapToolsBottomPadding = when {
+            showHeatMap && isRecording -> if (isLandscape) 160.dp else 196.dp
+            showHeatMap               -> if (isLandscape) 124.dp else 148.dp
+            isRecording               -> if (isLandscape) 96.dp else 134.dp
+            else                      -> if (isLandscape) 64.dp else 78.dp
         }
         Column(
             modifier = Modifier
@@ -1128,27 +1139,6 @@ fun OsmMapView(
                 Icon(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "Recenter & Refresh",
-                    tint = ComposeColor.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Map Layers & Settings (MAP-R01, MAP-R02)
-            IconButton(
-                onClick = { showSettingsDialog = true },
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (showHikingOverlay || baseLayer != MapBaseLayer.STANDARD || fontScale != MapFontScale.NORMAL)
-                            ComposeColor(0xFF0284C7)
-                        else
-                            ComposeColor(0xCC1E293B)
-                    )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Layers,
-                    contentDescription = "Map Settings & Layers",
                     tint = ComposeColor.White,
                     modifier = Modifier.size(20.dp)
                 )
@@ -1667,7 +1657,10 @@ fun OsmMapView(
                 currentOnOrientationChange?.invoke(cfg.orientationMode)
                 Toast.makeText(context, "Reset all profile defaults", Toast.LENGTH_SHORT).show()
             },
-            onDismiss = { showSettingsDialog = false }
+            onDismiss = {
+                showSettingsDialog = false
+                onDismissMapSettings?.invoke()
+            }
         )
     }
 
