@@ -1062,59 +1062,65 @@ fun OsmMapView(
         )
 
         // Floating Zoom Controls & Map Tools:
-        // In landscape: Stack Zoom Controls AND Map Tools into a single unified column, centered vertically on the screen (CenterEnd)
-        // In portrait: Zoom Controls at CenterEnd (aperture offset), Map Tools at BottomEnd (clearing active toolbars)
-        if (isLandscape) {
-            Column(
+        // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
+        // Each control is an exact 38dp Box with 3dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
+        // Automatically centers vertically based on the number of currently active controls.
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Zoom In [+] Button
+            Box(
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Zoom In [+] Button
-                IconButton(
-                    onClick = {
-                        val map = mapView ?: return@IconButton
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(ComposeColor(0xCC1E293B))
+                    .clickable {
+                        val map = mapView ?: return@clickable
                         map.controller.zoomIn()
                         currentZoom = map.zoomLevelDouble
                     },
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(ComposeColor(0xCC1E293B))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Zoom In",
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Zoom In",
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
 
-                // Zoom Out [-] Button
-                IconButton(
-                    onClick = {
-                        val map = mapView ?: return@IconButton
+            // Zoom Out [-] Button
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(ComposeColor(0xCC1E293B))
+                    .clickable {
+                        val map = mapView ?: return@clickable
                         map.controller.zoomOut()
                         currentZoom = map.zoomLevelDouble
                     },
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(ComposeColor(0xCC1E293B))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Remove,
-                        contentDescription = "Zoom Out",
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Remove,
+                    contentDescription = "Zoom Out",
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
 
-                // Unified MyLocation & Refresh Button
-                IconButton(
-                    onClick = {
+            // Unified MyLocation & Refresh Button
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
+                    .clickable {
                         isFollowing = true
                         snapHandler.removeCallbacks(snapRunnable)
                         onClearDestination?.invoke()
@@ -1140,42 +1146,44 @@ fun OsmMapView(
                         }
                         mapView?.invalidate()
                     },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MyLocation,
+                    contentDescription = "Recenter & Refresh",
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            // Instant Share Current Position
+            if (onInstantShare != null && effectiveLatLng != null) {
+                Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
+                        .background(ComposeColor(0xCC1E293B))
+                        .clickable { onInstantShare.invoke() },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.MyLocation,
-                        contentDescription = "Recenter & Refresh",
-                        tint = ComposeColor.White,
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share Current Position",
+                        tint = ComposeColor(0xFF38BDF8),
                         modifier = Modifier.size(19.dp)
                     )
                 }
+            }
 
-                // Instant Share Current Position
-                if (onInstantShare != null && effectiveLatLng != null) {
-                    IconButton(
-                        onClick = { onInstantShare.invoke() },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(ComposeColor(0xCC1E293B))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share Current Position",
-                            tint = ComposeColor(0xFF38BDF8),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                }
-
-                // Fit Shown Trips
-                if (allShownPoints.isNotEmpty()) {
-                    IconButton(
-                        onClick = {
-                            val map = mapView ?: return@IconButton
+            // Fit Shown Trips
+            if (allShownPoints.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xCC1E293B))
+                        .clickable {
+                            val map = mapView ?: return@clickable
                             isFollowing = false
                             snapHandler.removeCallbacks(snapRunnable)
                             if (allShownPoints.size == 1) {
@@ -1201,273 +1209,57 @@ fun OsmMapView(
                                 map.controller.animateTo(opticalCenter)
                             }
                         },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CropFree,
+                        contentDescription = "Fit Shown Trips",
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            // Hide / Unselect Shown Historical Trips
+            if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
+                Box(contentAlignment = Alignment.TopEnd) {
+                    Box(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(ComposeColor(0xCC1E293B))
+                            .background(ComposeColor(0xCC7F1D1D))
+                            .clickable { onClearSelectedTrips.invoke() },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = "Fit Shown Trips",
-                            tint = ComposeColor(0xFF38BDF8),
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Hide Shown Trips",
+                            tint = ComposeColor(0xFFFCA5A5),
                             modifier = Modifier.size(19.dp)
                         )
                     }
-                }
-
-                // Hide / Unselect Shown Historical Trips
-                if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
-                    Box(contentAlignment = Alignment.TopEnd) {
-                        IconButton(
-                            onClick = { onClearSelectedTrips.invoke() },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(ComposeColor(0xCC7F1D1D))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Hide Shown Trips",
-                                tint = ComposeColor(0xFFFCA5A5),
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .offset(x = 4.dp, y = (-4).dp)
-                                .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
-                                .clip(CircleShape)
-                                .background(ComposeColor(0xFFEF4444))
-                                .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
-                                .padding(horizontal = 4.dp, vertical = 1.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${selectedTrips.size}",
-                                color = ComposeColor.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(
-                                        includeFontPadding = false
-                                    )
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        } else {
-            // Portrait: Floating Zoom Controls at optical center
-            val zoomControlsApertureOffsetY = if (isCompact) 28.dp else 68.dp
-            Column(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .offset(y = zoomControlsApertureOffsetY)
-                    .padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Zoom In [+] Button
-                IconButton(
-                    onClick = {
-                        val map = mapView ?: return@IconButton
-                        map.controller.zoomIn()
-                        currentZoom = map.zoomLevelDouble
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(ComposeColor(0xCC1E293B))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Zoom In",
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Zoom Out [-] Button
-                IconButton(
-                    onClick = {
-                        val map = mapView ?: return@IconButton
-                        map.controller.zoomOut()
-                        currentZoom = map.zoomLevelDouble
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(ComposeColor(0xCC1E293B))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Remove,
-                        contentDescription = "Zoom Out",
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            // Floating Map Tools (Recenter/Refresh, Instant Share, Fit Track, Clear Selected Trips)
-            // Positioned at Bottom-Right with dynamic clearance above toolbar / recording HUD / heat map
-            val mapToolsBottomPadding = when {
-                showHeatMap && isRecording -> 184.dp
-                showHeatMap               -> 138.dp
-                isRecording               -> 134.dp
-                else                      -> 78.dp
-            }
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 12.dp, bottom = mapToolsBottomPadding),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Unified MyLocation & Refresh Button (FT2-12)
-                IconButton(
-                    onClick = {
-                        isFollowing = true
-                        snapHandler.removeCallbacks(snapRunnable)
-                        onClearDestination?.invoke()
-                        mapView?.tileProvider?.clearTileCache()
-                        hikingProviderRef?.clearTileCache()
-
-                        val targetMapOrientation = when (orientationMode) {
-                            MapOrientationMode.COURSE_UP -> {
-                                val b = effectiveLatLng?.third ?: lastFrozenBearing
-                                if (b != null) -b else 0f
-                            }
-                            MapOrientationMode.NORTH -> 0f
-                            MapOrientationMode.EAST -> 270f
-                            MapOrientationMode.SOUTH -> 180f
-                            MapOrientationMode.WEST -> 90f
-                        }
-                        mapView?.mapOrientation = targetMapOrientation
-
-                        effectiveLatLng?.let { pos ->
-                            val gp = GeoPoint(pos.first, pos.second)
-                            val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                            mapView?.controller?.animateTo(centerGp, null, 400L)
-                        }
-                        mapView?.invalidate()
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MyLocation,
-                        contentDescription = "Recenter & Refresh",
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                // Instant Share Current Position
-                if (onInstantShare != null && effectiveLatLng != null) {
-                    IconButton(
-                        onClick = { onInstantShare.invoke() },
+                    Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .offset(x = 4.dp, y = (-4).dp)
+                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
                             .clip(CircleShape)
-                            .background(ComposeColor(0xCC1E293B))
+                            .background(ComposeColor(0xFFEF4444))
+                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share Current Position",
-                            tint = ComposeColor(0xFF38BDF8),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                // Fit Shown Trips (if any shown points exist from recording or selected past trips)
-                if (allShownPoints.isNotEmpty()) {
-                    IconButton(
-                        onClick = {
-                            val map = mapView ?: return@IconButton
-                            isFollowing = false
-                            snapHandler.removeCallbacks(snapRunnable)
-                            if (allShownPoints.size == 1) {
-                                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                                map.controller.animateTo(centerGp)
-                                map.controller.setZoom(16.0)
-                            } else {
-                                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
-                                val minSpan = 0.005
-                                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
-                                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
-                                val centerLat = rawBox.centerLatitude
-                                val centerLon = rawBox.centerLongitude
-                                val paddedBox = BoundingBox(
-                                    centerLat + latSpan / 2.0,
-                                    centerLon + lonSpan / 2.0,
-                                    centerLat - latSpan / 2.0,
-                                    centerLon - lonSpan / 2.0
-                                )
-                                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
-                                map.zoomToBoundingBox(paddedBox, false, borderPadding)
-                                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                                map.controller.animateTo(opticalCenter)
-                            }
-                        },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(ComposeColor(0xCC1E293B))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = "Fit Shown Trips",
-                            tint = ComposeColor(0xFF38BDF8),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                // Hide / Unselect Shown Historical Trips (hidden during active recording to prevent overlapping in-progress trip)
-                if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
-                    Box(contentAlignment = Alignment.TopEnd) {
-                        IconButton(
-                            onClick = { onClearSelectedTrips.invoke() },
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(ComposeColor(0xCC7F1D1D))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Hide Shown Trips",
-                                tint = ComposeColor(0xFFFCA5A5),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .offset(x = 4.dp, y = (-4).dp)
-                                .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
-                                .clip(CircleShape)
-                                .background(ComposeColor(0xFFEF4444))
-                                .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
-                                .padding(horizontal = 4.dp, vertical = 1.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${selectedTrips.size}",
-                                color = ComposeColor.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(
-                                        includeFontPadding = false
-                                    )
+                        Text(
+                            text = "${selectedTrips.size}",
+                            color = ComposeColor.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                    includeFontPadding = false
                                 )
                             )
-                        }
+                        )
                     }
                 }
             }
