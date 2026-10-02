@@ -1,8 +1,9 @@
-﻿package janush.tech.whereami.ui.main
+package janush.tech.whereami.ui.main
 
 import janush.tech.whereami.data.DataRepository
 import junit.framework.TestCase.assertEquals
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
@@ -12,13 +13,14 @@ class MainScreenViewModelTest {
   @Test
   fun uiState_initiallyLoading() = runTest {
     val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
+    assertEquals(MainScreenUiState.Loading, viewModel.uiState.value)
   }
 
   @Test
   fun uiState_onItemSaved_isDisplayed() = runTest {
     val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
+    val successState = viewModel.uiState.filterIsInstance<MainScreenUiState.Success>().first()
+    assertEquals(MainScreenUiState.Success(listOf("Sample")), successState)
   }
 }
 

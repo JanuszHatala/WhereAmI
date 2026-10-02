@@ -665,6 +665,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTripModeForProfile(profile: ActivityProfile, mode: TripMode) {
         tripManager.setTripModeForProfile(profile, mode)
     }
+
+    val autoResumeOnMotion: StateFlow<Boolean> = tripManager.autoResumeOnMotion
+
+    fun setAutoResumeOnMotion(enabled: Boolean) {
+        tripManager.setAutoResumeOnMotion(enabled)
+    }
 }
 
 

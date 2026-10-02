@@ -20,6 +20,8 @@ class StreetAbbreviatorTest {
         assertEquals("M. Konopnickiej", StreetAbbreviator.abbreviate("Marii Konopnickiej", countryCode = "PL"))
         assertEquals("Płk. S. Dąbka", StreetAbbreviator.abbreviate("Pułkownika Stanisława Dąbka", countryCode = "PL"))
         assertEquals("Prof. Z. Religi", StreetAbbreviator.abbreviate("Profesora Zbigniewa Religi", countryCode = "PL"))
+        assertEquals("S. Sempołowskiej", StreetAbbreviator.abbreviate("Stefanii Sempołowskiej", countryCode = "PL"))
+        assertEquals("ul. S. Sempołowskiej", StreetAbbreviator.abbreviate("ul. Stefanii Sempołowskiej", countryCode = "PL"))
     }
 
     @Test

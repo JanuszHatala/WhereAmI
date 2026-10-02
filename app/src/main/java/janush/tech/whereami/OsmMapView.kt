@@ -1079,8 +1079,12 @@ fun OsmMapView(
         }
 
         // Floating Map Tools (Recenter/Refresh, Layers/Settings, Instant Share, Fit Track, Clear Selected Trips)
-        // Positioned at Bottom-Right (Alignment.BottomEnd) with clean clearance above the bottom toolbar
-        val mapToolsBottomPadding = if (isLandscape) 68.dp else 88.dp
+        // Positioned at Bottom-Right (Alignment.BottomEnd) with dynamic clearance above toolbar / recording HUD
+        val mapToolsBottomPadding = if (isRecording) {
+            if (isLandscape) 96.dp else 134.dp
+        } else {
+            if (isLandscape) 64.dp else 78.dp
+        }
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -1212,8 +1216,8 @@ fun OsmMapView(
                 }
             }
 
-            // Hide / Unselect Shown Historical Trips
-            if (selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
+            // Hide / Unselect Shown Historical Trips (hidden during active recording to prevent overlapping in-progress trip)
+            if (!isRecording && selectedTrips.isNotEmpty() && onClearSelectedTrips != null) {
                 Box(contentAlignment = Alignment.TopEnd) {
                     IconButton(
                         onClick = { onClearSelectedTrips.invoke() },
@@ -1258,6 +1262,11 @@ fun OsmMapView(
 
         // Floating "📍 Recenter" Pill when user has panned away (Option B)
         if (!isFollowing && destinationPoint == null && selectedSavedPlace == null) {
+            val recenterBottomPadding = when {
+                showHeatMap -> 150.dp
+                isRecording -> if (isLandscape) 116.dp else 136.dp
+                else -> if (isLandscape) 68.dp else 78.dp
+            }
             Surface(
                 onClick = {
                     isFollowing = true
@@ -1273,7 +1282,7 @@ fun OsmMapView(
                 shadowElevation = 6.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (showHeatMap) 150.dp else 105.dp)
+                    .padding(bottom = recenterBottomPadding)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),

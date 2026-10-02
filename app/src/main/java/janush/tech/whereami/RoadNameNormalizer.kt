@@ -43,7 +43,7 @@ object RoadNameNormalizer {
     /**
      * Determines whether house numbers should be displayed on the main UI.
      * Allowed only when moving at slow speed (< 15 km/h) or stationary,
-     * with acceptable GPS horizontal accuracy (<= 25m, or <= 30m when stationary),
+     * with acceptable GPS horizontal accuracy (<= 20m),
      * on non-major roads.
      */
     fun shouldShowHouseNumber(
@@ -54,8 +54,18 @@ object RoadNameNormalizer {
         if (isMajorRoad) return false
         val speed = speedKmh ?: 0f
         val accuracy = accuracyMeters ?: Float.MAX_VALUE
-        val maxAccuracy = if (speed < 1.2f) 30.0f else 25.0f
-        return speed < 15.0f && accuracy <= maxAccuracy
+        return speed < 15.0f && accuracy <= 20.0f
+    }
+
+    /**
+     * Checks if two street names refer to the same street or corridor,
+     * ignoring honorifics, prefixes ("ul.", "al."), and house numbers.
+     */
+    fun streetsMatch(streetA: String?, streetB: String?): Boolean {
+        if (streetA.isNullOrBlank() || streetB.isNullOrBlank()) return false
+        val cleanA = extractBaseStreet(cleanStreetPrefix(streetA)).lowercase(Locale.ROOT)
+        val cleanB = extractBaseStreet(cleanStreetPrefix(streetB)).lowercase(Locale.ROOT)
+        return cleanA == cleanB || cleanA.contains(cleanB) || cleanB.contains(cleanA)
     }
 
     /**
