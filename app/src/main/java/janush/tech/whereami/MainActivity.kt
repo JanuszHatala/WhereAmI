@@ -8135,8 +8135,8 @@ private fun MainBottomControlsCard(
                 }
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .offset(x = 1.dp, y = 1.dp)
+                        .align(Alignment.TopStart)
+                        .offset(x = (-1).dp, y = (-1).dp)
                         .size(16.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF0F172A))
