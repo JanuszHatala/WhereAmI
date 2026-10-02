@@ -54,8 +54,8 @@ class TripSplitTest {
 
     @Test
     fun testMergeTripsPauseAndPlaceDistanceLogic() {
-        val p1 = TripPause(2000L, 2500L, 50.05, 19.05, 500L, pointIndex = 10)
-        val p2 = TripPause(11000L, 11500L, 50.15, 19.15, 500L, pointIndex = 5)
+        val p1 = TripPause(2000L, 2500L, 50.05, 19.05, 500L, pointIndex = 10, distanceMeters = 800.0)
+        val p2 = TripPause(11000L, 11500L, 50.15, 19.15, 500L, pointIndex = 5, distanceMeters = 600.0)
 
         val trip1 = TripRecord(
             id = 1,
@@ -95,15 +95,17 @@ class TripSplitTest {
             val pointOffset = allPoints.size
 
             for (pause in trip.pauses) {
-                allPauses.add(pause.copy(pointIndex = pause.pointIndex + pointOffset))
+                allPauses.add(
+                    pause.copy(
+                        pointIndex = pause.pointIndex + pointOffset,
+                        distanceMeters = cumulativeDistanceOffset + pause.distanceMeters
+                    )
+                )
             }
             allPoints.addAll(trip.points)
 
             for (p in trip.placesVisited) {
-                val last = allPlaces.lastOrNull()?.placeName
-                if (last == null || !last.equals(p.placeName, ignoreCase = true)) {
-                    allPlaces.add(p.copy(distanceAtEntryMeters = cumulativeDistanceOffset + p.distanceAtEntryMeters))
-                }
+                allPlaces.add(p.copy(distanceAtEntryMeters = cumulativeDistanceOffset + p.distanceAtEntryMeters))
             }
 
             if (i < sorted.size - 1) {
@@ -113,27 +115,40 @@ class TripSplitTest {
                 val gapDuration = (gapEnd - gapStart).coerceAtLeast(0L)
                 if (gapDuration >= 10_000L) {
                     allPauses.add(
-                        TripPause(gapStart, gapEnd, 50.1, 19.1, gapDuration, (allPoints.size - 1).coerceAtLeast(0))
+                        TripPause(
+                            gapStart,
+                            gapEnd,
+                            50.1,
+                            19.1,
+                            gapDuration,
+                            (allPoints.size - 1).coerceAtLeast(0),
+                            distanceMeters = cumulativeDistanceOffset + trip.distanceMeters
+                        )
                     )
                 }
             }
             cumulativeDistanceOffset += trip.distanceMeters
         }
 
-        // Verify places: Town B deduplicated, Town C has cumulative offset of 3000 + 1200 = 4200m
-        assertEquals(3, allPlaces.size)
+        // Verify places: Town C has cumulative offset of 3000 + 1200 = 4200m
+        assertEquals(4, allPlaces.size)
         assertEquals("Town A", allPlaces[0].placeName)
         assertEquals(0.0, allPlaces[0].distanceAtEntryMeters, 0.001)
         assertEquals("Town B", allPlaces[1].placeName)
         assertEquals(1500.0, allPlaces[1].distanceAtEntryMeters, 0.001)
-        assertEquals("Town C", allPlaces[2].placeName)
-        assertEquals(4200.0, allPlaces[2].distanceAtEntryMeters, 0.001)
+        assertEquals("Town B", allPlaces[2].placeName)
+        assertEquals(3000.0, allPlaces[2].distanceAtEntryMeters, 0.001)
+        assertEquals("Town C", allPlaces[3].placeName)
+        assertEquals(4200.0, allPlaces[3].distanceAtEntryMeters, 0.001)
 
         // Verify pauses: 3 pauses (p1, gap pause, p2)
         assertEquals(3, allPauses.size)
         assertEquals(10, allPauses[0].pointIndex) // p1 unshifted
+        assertEquals(800.0, allPauses[0].distanceMeters, 0.001)
         assertEquals(10000L, allPauses[1].durationMs) // gap pause
+        assertEquals(3000.0, allPauses[1].distanceMeters, 0.001) // at end of trip1
         assertEquals(7, allPauses[2].pointIndex) // p2 shifted by trip1's 2 points: 5 + 2 = 7
+        assertEquals(3600.0, allPauses[2].distanceMeters, 0.001) // p2 distance 600 shifted by trip1 (3000) = 3600
     }
 
     @Test
