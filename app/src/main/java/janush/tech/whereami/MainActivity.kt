@@ -289,6 +289,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showTripsSheet by remember { mutableStateOf(false) }
     var sheetTab by remember { mutableStateOf(0) } // 0: Trip History, 1: Saved Places, 2: Stats
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showMapSettingsDialog by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var tripToRename by remember { mutableStateOf<TripRecord?>(null) }
@@ -353,6 +354,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         showLiveQuickShareModal = false
         showLiveQrCodeModal = false
         showHeatMapSettingsDialog = false
+        showMapSettingsDialog = false
         activeLocationShareTarget = null
         viewModel.dismissCacheManager()
     }
@@ -593,6 +595,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                 dismissAllDialogs()
                 viewModel.openCacheManager()
             },
+            showMapSettingsExternal = showMapSettingsDialog,
+            onDismissMapSettings = { showMapSettingsDialog = false },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -829,8 +833,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
 
-        // ── Floating Compact Recording HUD Bar (Above Bottom Controls) ────────
-        if (!showTripsSheet && activeTrip != null) {
+        // ── Floating Compact Recording HUD Bar (Above Bottom Controls in Portrait only) ────
+        if (!showTripsSheet && !isLandscape && activeTrip != null) {
             val recTrip = activeTrip!!
             var recTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
             LaunchedEffect(recTrip.startTime) {
@@ -951,6 +955,28 @@ fun LocationScreen(viewModel: MainViewModel) {
 
         // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
         if (!showTripsSheet) {
+            val recTrip = activeTrip
+            var toolbarTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(recTrip?.startTime) {
+                if (recTrip != null) {
+                    while (true) {
+                        toolbarTickerNow = System.currentTimeMillis()
+                        kotlinx.coroutines.delay(1000L)
+                    }
+                }
+            }
+            val elapsedMs = if (recTrip != null) maxOf(0L, toolbarTickerNow - recTrip.startTime) else 0L
+            val elapsedSec = elapsedMs / 1000L
+            val recHrs = elapsedSec / 3600L
+            val recMins = (elapsedSec % 3600L) / 60L
+            val recSecs = elapsedSec % 60L
+            val elapsedStr = if (recHrs > 0) {
+                String.format(Locale.getDefault(), "%d:%02d:%02d", recHrs, recMins, recSecs)
+            } else {
+                String.format(Locale.getDefault(), "%02d:%02d", recMins, recSecs)
+            }
+            val recDistKm = (recTrip?.distanceMeters ?: 0.0) / 1000.0
+
             MainBottomControlsCard(
                 keepScreenOn = keepScreenOn,
                 isRecording = activeTrip != null,
@@ -1010,6 +1036,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                     dismissAllDialogs()
                     showSettingsSheet = true
                 },
+                onShowMapSettings = {
+                    dismissAllDialogs()
+                    showMapSettingsDialog = true
+                },
+                landscapeHudElapsed = if (isLandscape && activeTrip != null) elapsedStr else null,
+                landscapeHudDistKm = if (isLandscape && activeTrip != null) recDistKm else null,
+                landscapeIsPaused = isTripPaused,
+                onLandscapePauseResume = {
+                    if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(
@@ -1017,7 +1053,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         end = 12.dp,
                         bottom = if (isLandscape) 12.dp else 20.dp
                     )
-                    .widthIn(max = if (isLandscape) 420.dp else 440.dp)
+                    .widthIn(max = if (isLandscape) (if (activeTrip != null) 580.dp else 420.dp) else 440.dp)
                     .fillMaxWidth()
                     .onGloballyPositioned {
                         bottomControlsTopPx = it.positionInRoot().y.toInt()
@@ -6938,7 +6974,7 @@ private fun LocalityCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 14.dp),
+                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -7675,7 +7711,7 @@ private fun LocalityCard(
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFFFBBF24), // Amber gold for street
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 3.dp)
+                        modifier = Modifier.padding(top = 1.dp)
                     )
                 }
 
@@ -7696,7 +7732,7 @@ private fun LocalityCard(
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF38BDF8),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
@@ -7713,7 +7749,7 @@ private fun LocalityCard(
 
                 Row(
                     modifier = Modifier
-                        .padding(top = 8.dp)
+                        .padding(top = 4.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -7902,6 +7938,11 @@ private fun MainBottomControlsCard(
     onShowSearch: () -> Unit,
     onSaveLocation: () -> Unit,
     onShowSettings: () -> Unit,
+    onShowMapSettings: () -> Unit,
+    landscapeHudElapsed: String? = null,
+    landscapeHudDistKm: Double? = null,
+    landscapeIsPaused: Boolean = false,
+    onLandscapePauseResume: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -8010,7 +8051,40 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 6. Settings & Language Dialog Button (Amber Gold / Slate)
+            // 6. Map Settings Button (Layers icon with overlaid ⚙️ gear badge) — left of main Settings
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF1E293B))
+                    .clickable { onShowMapSettings() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Layers,
+                    contentDescription = "Map Settings",
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(20.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 2.dp, y = 2.dp)
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF0F172A)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        tint = Color(0xFFFBBF24),
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+
+            // 7. Settings & Language Dialog Button (Amber Gold / Slate)
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -8025,6 +8099,88 @@ private fun MainBottomControlsCard(
                     tint = Color(0xFFFBBF24),
                     modifier = Modifier.size(20.dp)
                 )
+            }
+
+            // 8. Landscape Inline HUD (shown directly inside bottom toolbar in landscape recording)
+            if (landscapeHudElapsed != null && landscapeHudDistKm != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xF20F172A),
+                    border = BorderStroke(1.dp, if (landscapeIsPaused) Color(0xFFF59E0B) else Color(0xFFEF4444))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (landscapeIsPaused) Color(0xFFF59E0B) else Color(0xFFEF4444))
+                        )
+                        Text(
+                            text = if (landscapeIsPaused) "PAUSED" else landscapeHudElapsed,
+                            color = if (landscapeIsPaused) Color(0xFFFBBF24) else Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 11.sp
+                            )
+                        )
+                        Text(
+                            text = String.format(Locale.getDefault(), "• %.2f km", landscapeHudDistKm),
+                            color = Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 10.sp
+                            )
+                        )
+                        if (onLandscapePauseResume != null) {
+                            Button(
+                                onClick = onLandscapePauseResume,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (landscapeIsPaused) Color(0xFFD97706) else Color(0xFF334155),
+                                    contentColor = Color.White
+                                ),
+                                border = if (landscapeIsPaused) null else BorderStroke(1.dp, Color(0xFFF59E0B)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (landscapeIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (landscapeIsPaused) "Resume" else "Pause",
+                                    modifier = Modifier.size(11.dp),
+                                    tint = Color.White
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = if (landscapeIsPaused) "RESUME" else "PAUSE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -8596,11 +8752,28 @@ fun TripDetailDialog(
         var placeOrder = 1
         val items = mutableListOf<RouteTimelineItem>()
 
-        rawEvents.forEach { event ->
+        rawEvents.forEachIndexed { eventIdx, event ->
             when (event) {
                 is RawTimelineEvent.Place -> {
-                    val legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
-                    val legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
+                    val legDist: Double
+                    val legDur: Long
+                    if (eventIdx == 0 && rawEvents.size > 1) {
+                        val next = rawEvents[1]
+                        val nextDist = when (next) {
+                            is RawTimelineEvent.Place -> next.place.distanceAtEntryMeters
+                            is RawTimelineEvent.Pause -> next.pauseDistanceMeters
+                        }
+                        legDist = (nextDist - event.place.distanceAtEntryMeters).coerceAtLeast(0.0)
+                        legDur = (next.startTime - event.place.timestamp).coerceAtLeast(0L)
+                    } else if (eventIdx == 0 && rawEvents.size == 1) {
+                        val totalDist = cumulativeDistances.lastOrNull() ?: 0.0
+                        val totalDur = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
+                        legDist = totalDist
+                        legDur = totalDur
+                    } else {
+                        legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
+                        legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
+                    }
                     items.add(RouteTimelineItem.Place(event.place, placeOrder++, legDist, legDur))
                     lastEventEndTime = event.place.timestamp
                     lastEventEndDist = event.place.distanceAtEntryMeters
@@ -9054,7 +9227,7 @@ fun TripDetailDialog(
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             val totalPlaces = trip.placesVisited.size
                             val totalPauses = trip.pauses.size
@@ -9088,7 +9261,7 @@ fun TripDetailDialog(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                                                    .padding(10.dp),
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -9111,7 +9284,7 @@ fun TripDetailDialog(
                                                             style = LocalTextStyle.current.copy(
                                                                 platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                                                 lineHeight = 11.sp
-                                                            )
+                                                             )
                                                         )
                                                     }
                                                     Spacer(modifier = Modifier.width(10.dp))
@@ -9144,7 +9317,15 @@ fun TripDetailDialog(
                                                         fontSize = 10.sp,
                                                         color = Color(0xFF94A3B8)
                                                     )
-                                                    if (item.orderNumber > 1) {
+                                                    if (item.orderNumber == 1) {
+                                                        Text(
+                                                            text = "Trip Start",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFF10B981)
+                                                        )
+                                                    }
+                                                    if (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L) {
                                                         val legKm = item.legDistanceMeters / 1000.0
                                                         val legTimeStr = formatDurationShort(item.legDurationMs)
                                                         Text(
@@ -9152,13 +9333,6 @@ fun TripDetailDialog(
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Medium,
                                                             color = Color(0xFF38BDF8)
-                                                        )
-                                                    } else {
-                                                        Text(
-                                                            text = "Trip Start",
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Medium,
-                                                            color = Color(0xFF10B981)
                                                         )
                                                     }
                                                 }

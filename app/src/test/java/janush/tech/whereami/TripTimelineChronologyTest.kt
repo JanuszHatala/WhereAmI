@@ -54,11 +54,26 @@ class TripTimelineChronologyTest {
         var placeOrder = 1
         val items = mutableListOf<RouteTimelineItem>()
 
-        rawEvents.forEach { event ->
+        rawEvents.forEachIndexed { eventIdx, event ->
             when (event) {
                 is RawTimelineEvent.Place -> {
-                    val legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
-                    val legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
+                    val legDist: Double
+                    val legDur: Long
+                    if (eventIdx == 0 && rawEvents.size > 1) {
+                        val next = rawEvents[1]
+                        val nextDist = when (next) {
+                            is RawTimelineEvent.Place -> next.place.distanceAtEntryMeters
+                            is RawTimelineEvent.Pause -> next.pauseDistanceMeters
+                        }
+                        legDist = (nextDist - event.place.distanceAtEntryMeters).coerceAtLeast(0.0)
+                        legDur = (next.startTime - event.place.timestamp).coerceAtLeast(0L)
+                    } else if (eventIdx == 0 && rawEvents.size == 1) {
+                        legDist = 0.0
+                        legDur = 0L
+                    } else {
+                        legDist = (event.place.distanceAtEntryMeters - lastEventEndDist).coerceAtLeast(0.0)
+                        legDur = (event.place.timestamp - lastEventEndTime).coerceAtLeast(0L)
+                    }
                     items.add(RouteTimelineItem.Place(event.place, placeOrder++, legDist, legDur))
                     lastEventEndTime = event.place.timestamp
                     lastEventEndDist = event.place.distanceAtEntryMeters
@@ -74,6 +89,53 @@ class TripTimelineChronologyTest {
             }
         }
         return items
+    }
+
+    @Test
+    fun testTripStartShowsLegToNextLocality() {
+        val t0 = 1727878110000L // 16:08:30 (Trip Start in Czaniec)
+        val tBulowice = t0 + (4 * 60 + 11) * 1000L // 16:12:41 (4m 11s later in Bulowice)
+
+        val czaniec = VisitedPlace(
+            placeName = "Czaniec",
+            hierarchySubtitle = "gm. Porąbka • pow. bielski",
+            timestamp = t0,
+            distanceAtEntryMeters = 0.0,
+            latitude = 49.85,
+            longitude = 19.23
+        )
+
+        val bulowice = VisitedPlace(
+            placeName = "Bulowice",
+            hierarchySubtitle = "gm. Kęty • pow. oświęcimski",
+            timestamp = tBulowice,
+            distanceAtEntryMeters = 2850.0,
+            latitude = 49.87,
+            longitude = 19.26
+        )
+
+        val items = computeTimeline(
+            startTime = t0,
+            places = listOf(czaniec, bulowice),
+            pauses = emptyList(),
+            pauseDistances = emptyMap()
+        )
+
+        assertEquals(2, items.size)
+
+        // Item 1: Czaniec (Trip Start) must now contain the leg distance and time spent in Czaniec before Bulowice
+        val czaniecItem = items[0] as RouteTimelineItem.Place
+        assertEquals("Czaniec", czaniecItem.place.placeName)
+        assertEquals(1, czaniecItem.orderNumber)
+        assertEquals(2850.0, czaniecItem.legDistanceMeters, 0.001)
+        assertEquals((4 * 60 + 11) * 1000L, czaniecItem.legDurationMs)
+
+        // Item 2: Bulowice
+        val bulowiceItem = items[1] as RouteTimelineItem.Place
+        assertEquals("Bulowice", bulowiceItem.place.placeName)
+        assertEquals(2, bulowiceItem.orderNumber)
+        assertEquals(2850.0, bulowiceItem.legDistanceMeters, 0.001)
+        assertEquals((4 * 60 + 11) * 1000L, bulowiceItem.legDurationMs)
     }
 
     @Test
@@ -120,12 +182,14 @@ class TripTimelineChronologyTest {
 
         assertEquals(3, items.size)
 
-        // Item 1: Osielec
+        // Item 1: Osielec (first event in a list with subsequent pause)
         val osielecItem = items[0] as RouteTimelineItem.Place
         assertEquals("Osielec", osielecItem.place.placeName)
         assertEquals(1, osielecItem.orderNumber)
-        assertEquals(12000.0, osielecItem.legDistanceMeters, 0.001)
-        assertEquals(20 * 60 * 1000L, osielecItem.legDurationMs)
+        // Leg to pause: 14500m - 12000m = 2500m
+        assertEquals(2500.0, osielecItem.legDistanceMeters, 0.001)
+        // Duration to pause: 16:24 - 16:20 = 4 min
+        assertEquals(4 * 60 * 1000L, osielecItem.legDurationMs)
 
         // Item 2: Pause Stop #1
         val pauseItem = items[1] as RouteTimelineItem.Pause
@@ -144,10 +208,5 @@ class TripTimelineChronologyTest {
         assertEquals(1300.0, kojszowkaItem.legDistanceMeters, 0.001)
         // Travel duration from Pause END (16:25:00) to Kojszówka (16:26:57) = 117s (1m 57s)
         assertEquals(117 * 1000L, kojszowkaItem.legDurationMs)
-
-        // Verify total duration math matches sum of travel legs + pause
-        val totalCalculated = osielecItem.legDurationMs + pauseItem.legDurationMs + pauseItem.pause.durationMs + kojszowkaItem.legDurationMs
-        val actualElapsed = tKojszowka - t0
-        assertEquals(actualElapsed, totalCalculated)
     }
 }

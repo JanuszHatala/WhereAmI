@@ -26,6 +26,11 @@ class CacheManager private constructor(private val context: Context) {
         const val PREFS_NAME = "where_am_i_cache_prefs"
         const val KEY_ALLOW_ON_BATTERY = "allow_prefetch_on_battery"
         const val KEY_ALLOW_MOBILE_DATA = "allow_prefetch_mobile_data"
+        const val KEY_AUTO_START_ON_WIFI = "auto_start_on_wifi"
+        const val KEY_AUTO_START_ON_CHARGER = "auto_start_on_charger"
+        const val KEY_NOTIFY_WHEN_AVAILABLE = "notify_when_available"
+        const val NOTIF_AVAILABLE_ID = 3002
+        const val NOTIF_CHANNEL_AVAILABLE = "cache_updates_available"
         const val ACTION_OPEN_CACHE_MANAGER = "janush.tech.whereami.ACTION_OPEN_CACHE_MANAGER"
         const val EXTRA_OPEN_CACHE_MANAGER = "extra_open_cache_manager"
 
@@ -48,6 +53,18 @@ class CacheManager private constructor(private val context: Context) {
     var allowMobileData: Boolean
         get() = prefs.getBoolean(KEY_ALLOW_MOBILE_DATA, false)
         set(value) = prefs.edit().putBoolean(KEY_ALLOW_MOBILE_DATA, value).apply()
+
+    var autoStartOnWifi: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_START_ON_WIFI, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_START_ON_WIFI, value).apply()
+
+    var autoStartOnCharger: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_START_ON_CHARGER, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_START_ON_CHARGER, value).apply()
+
+    var notifyWhenAvailable: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_WHEN_AVAILABLE, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_WHEN_AVAILABLE, value).apply()
 
     // ── Metric Computations ───────────────────────────────────────────────────
 
@@ -258,6 +275,9 @@ class CacheManager private constructor(private val context: Context) {
 
     fun startPrefetch() {
         if (_prefetchState.value is PrefetchState.Running) return
+
+        val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        notifManager?.cancel(NOTIF_AVAILABLE_ID)
 
         if (!allowOnBattery && !isDeviceCharging()) {
             _prefetchState.value = PrefetchState.Blocked("Device is not charging. Connect charger or enable 'Allow on battery'.")
@@ -582,12 +602,74 @@ class CacheManager private constructor(private val context: Context) {
                 dbCursor.close()
 
                 val missingBoundaries = distinctCities.count { !BoundaryHelper.hasBoundary(context, it, "pl") }
+                val deficit = CacheDeficit(missingRoutes, missingBoundaries)
+                _cacheDeficit.value = deficit
 
-                _cacheDeficit.value = CacheDeficit(missingRoutes, missingBoundaries)
+                val totalMissing = missingRoutes + missingBoundaries
+                if (totalMissing > 0 && _prefetchState.value is PrefetchState.Idle) {
+                    val canAutoWifi = autoStartOnWifi && isUnmeteredWifi()
+                    val canAutoCharger = autoStartOnCharger && isDeviceCharging()
+                    if (canAutoWifi || canAutoCharger) {
+                        startPrefetch()
+                    } else if (notifyWhenAvailable) {
+                        postUpdatesAvailableNotification(deficit)
+                    }
+                }
             } catch (e: Exception) {
                 _cacheDeficit.value = null
             }
         }
+    }
+
+    /**
+     * Posts a dismissible notification alerting the user that map cache updates are available,
+     * equipped with action buttons to Start Download directly or Open the Cache Manager dialog.
+     */
+    fun postUpdatesAvailableNotification(deficit: CacheDeficit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                NOTIF_CHANNEL_AVAILABLE,
+                "Map Cache Updates",
+                android.app.NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Notifies when offline map cache updates are available."
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            manager?.createNotificationChannel(channel)
+        }
+
+        val startIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            201,
+            Intent(context, CacheNotificationReceiver::class.java).apply {
+                action = CacheNotificationReceiver.ACTION_START
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val openIntent = android.app.PendingIntent.getActivity(
+            context,
+            202,
+            Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_CACHE_MANAGER
+                putExtra(EXTRA_OPEN_CACHE_MANAGER, true)
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val total = deficit.missingRoutes + deficit.missingBoundaries
+        val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_AVAILABLE)
+            .setContentTitle("WhereAmI — Map Cache Updates Available")
+            .setContentText("$total items need updating (${deficit.missingRoutes} routes, ${deficit.missingBoundaries} boundaries).")
+            .setSmallIcon(R.drawable.ic_stat_location)
+            .setContentIntent(openIntent)
+            .setAutoCancel(true)
+            .addAction(0, "▶ Start Download", startIntent)
+            .addAction(0, "Open Cache", openIntent)
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        manager?.notify(NOTIF_AVAILABLE_ID, builder.build())
     }
 }
 
