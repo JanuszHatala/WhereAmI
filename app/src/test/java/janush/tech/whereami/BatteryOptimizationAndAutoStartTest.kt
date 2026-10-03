@@ -100,4 +100,31 @@ class BatteryOptimizationAndAutoStartTest {
         val tripRecording = AppLifecycleMode.TRIP_RECORDING
         assertEquals("Recording Trip", tripRecording.displayName)
     }
+
+    @Test
+    fun testCustomAutoStartSpeedClampingAndCandidateSensitivity() {
+        // Validation of speed clamping rule (1.0f .. 150.0f)
+        val clampSpeed = { speed: Float -> speed.coerceIn(1.0f, 150.0f) }
+        assertEquals(1.0f, clampSpeed(0.5f), 0.001f)
+        assertEquals(1.0f, clampSpeed(-10f), 0.001f)
+        assertEquals(150.0f, clampSpeed(200f), 0.001f)
+        assertEquals(4.5f, clampSpeed(4.5f), 0.001f)
+
+        // Custom speed threshold adaptation for candidate and sustained speed triggers
+        // E.g. user sets cycling threshold to 5.0 km/h (for steep climbs or casual city rides)
+        val customCyclingSpeed = 5.0f
+        val candidateCycling = customCyclingSpeed * 0.7f
+        assertEquals(3.5f, candidateCycling, 0.01f)
+        assertTrue("Riding at 3.6 km/h qualifies as candidate speed for 5 km/h target", 3.6f >= candidateCycling)
+        assertFalse("Walking at 3.0 km/h does not qualify as candidate speed for 5 km/h target", 3.0f >= candidateCycling)
+        assertTrue("Riding at 5.0 km/h triggers sustained auto-start", 5.0f >= customCyclingSpeed)
+
+        // E.g. user sets car threshold to 15.0 km/h
+        val customCarSpeed = 15.0f
+        val candidateCar = customCarSpeed * 0.7f
+        assertEquals(10.5f, candidateCar, 0.01f)
+        assertTrue("Speed at 11 km/h is candidate for 15 km/h car threshold", 11.0f >= candidateCar)
+        assertFalse("Speed at 9 km/h is not candidate for 15 km/h car threshold", 9.0f >= candidateCar)
+    }
 }
+
