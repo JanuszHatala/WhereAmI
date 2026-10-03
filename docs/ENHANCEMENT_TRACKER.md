@@ -29,8 +29,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 15** | Field Testing (2026-10-02 Morning) Overnight Zero-Drain Standby, Motion Speed Trap Recovery, Trajectory Street Precedence & Strict House Numbers, Pause Auto-Stop Immunity & Auto-Resume, Chronological Timeline Calculation & Design System White Text | 10 | 10 | 0 | 0 |
 | **Round 16** | Field Testing (2026-10-02 Afternoon) Cache Notification & Auto-Download Engine, "Polska" Spatial Cache Canonicalization, Map Settings Bottom Toolbar Button, Locality Card Spacing Condensation, Visited Localities Condensation & Trip Start Leg Attribution, Landscape Inline HUD & Right Map Controls Overlap Fix, Re-scan Tactile Feedback, Heat Map Margin Clearance | 8 | 8 | 0 | 0 |
 | **Round 17** | Field Testing (2026-10-02 Evening) Map Config Gear Badge Visibility, LocalityCard Line Spacing Condensation, Landscape Unified Bottom Toolbar (App + Heat Map + Recording HUD), Right-Side Zoom/Map Controls Centered Stack, Sticky Heat Map Legend Beneath LocalityCard & Portrait Dynamic Toolbars Stacking | 6 | 6 | 0 | 0 |
+| **Round 18** | Field Testing (2026-10-02 Night) Route Timeline Place Repetition, Card Condensation, Merged Trip Title Standardization, Pause Distance Offset Fix & Voivodeship Canonicalization | 6 | 6 | 0 | 0 |
+| **Round 19** | Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **170** | **162** | **0** | **8** |
+| **Total** | | **179** | **171** | **0** | **8** |
 
 ---
 
@@ -351,7 +353,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 21. Features Inventory & Future Backlog
+## 21. Round 19: Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT19-01** | **Rotation-Aware & Viewport-Aware Track Fitting (sc 1)**: Fix "Fit Shown Trips" button where track was severely cropped/zoomed under LocalityCard and bottom controls, especially in COURSE_UP rotated mode. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Replaced naive osmdroid `zoomToBoundingBox` with custom `fitPointsToUnobstructedViewport()`: calculates exact unobstructed window (accounting for normal/compact LocalityCard, status bar, bottom toolbar, nav bar, and right controls), projects all points into rotated tangent coordinates using `map.mapOrientation`, computes optimal zoom level fitting both axes, and applies optical camera center offset. Verified by automated unit tests in `ViewportFitTest.kt`. |
+| **FT19-02** | **Motion Wake Scoped WakeLock & Auto-Start Reliability**: Fix background cycling auto-start failing when screen was turned off. | `AppStateManager.kt` | **Completed** | Added `motionBurstWakeLock` (`PARTIAL_WAKE_LOCK`) acquired during `handleMotionWake()` confirmation burst (`burstDurationMs + 5000L`) and released strictly upon completion or cancel. Prevents Android kernel from opportunistically suspending CPU while evaluating locomotion speed/displacement. |
+| **FT19-03** | **Low-Power Standby FGS Preservation**: Prevent Android 14+ background execution and FGS start restrictions from blocking auto-start. | `LiveTrackingService.kt`, `AppStateManager.kt`, `TripManager.kt` | **Completed** | In `TripMode.AUTO`, when the app transitions to `AppLifecycleMode.IDLE`, `LiveTrackingService` enters low-power `ACTION_ENTER_STANDBY` (releasing wake lock, zero GPS polling, minimal notification) rather than being killed. Preserves Android foreground service token so Google Play Services delivers real-time location fixes during bursts and auto-start never triggers background FGS launch denials. In `TripMode.MANUAL`, service is terminated completely (Option A). |
+
+---
+
+## 22. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |

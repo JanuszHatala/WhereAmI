@@ -119,7 +119,7 @@ class LiveTrackingService : Service() {
             ACTION_ENTER_STANDBY -> {
                 updateWakeLock(false)
                 updateNotification()
-                return START_NOT_STICKY
+                return START_STICKY
             }
             ACTION_PAUSE_RESUME -> {
                 val sharingMgr = LiveSharingManager.getInstance(this)
@@ -148,6 +148,11 @@ class LiveTrackingService : Service() {
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
         if (!hasTrip && !hasLive) {
+            if (isAuto) {
+                updateWakeLock(false)
+                updateNotification()
+                return START_STICKY
+            }
             updateWakeLock(false)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
