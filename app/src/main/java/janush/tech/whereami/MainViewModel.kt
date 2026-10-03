@@ -378,6 +378,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         tripManager.setAutoStartSecondsForProfile(profile, seconds)
     }
 
+    fun getAutoStartSpeedForProfile(profile: ActivityProfile): Float {
+        return tripManager.getAutoStartSpeedForProfile(profile)
+    }
+
+    fun setAutoStartSpeedForProfile(profile: ActivityProfile, speedKmh: Float) {
+        tripManager.setAutoStartSpeedForProfile(profile, speedKmh)
+    }
+
     fun getAutoStopMinutesForProfile(profile: ActivityProfile): Int {
         return tripManager.getAutoStopMinutesForProfile(profile)
     }
