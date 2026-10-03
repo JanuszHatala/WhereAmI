@@ -394,7 +394,15 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 24. Features Inventory & Future Backlog
+## 24. Round 22: Activity Profile Configurable Auto-Start Speed Thresholds & Dynamic Settings
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT22-01** | **Configurable Auto-Start Speed Threshold per Profile**: Allow users to customize the auto-start speed threshold per activity profile (e.g. adjust cycling threshold from default 7 km/h to 5 km/h for steep uphill climbs, or hike from 2.5 km/h to 2.0 km/h), with profile-adapted presets and custom value dialog. | `TripManager.kt`, `MainViewModel.kt`, `LiveTrackingService.kt`, `MainActivity.kt`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | Added `getAutoStartSpeedForProfile` and `setAutoStartSpeedForProfile` clamped to `1.0f..150.0f` km/h in `TripManager.kt`. Updated candidate speed sensitivity gate (`targetSpeed * 0.7f`) and sustained speed check to dynamically use configured speed. Implemented profile-adapted dropdown presets (Car: 5–30 km/h, Cycling: 3–15 km/h, MTB: 3–12 km/h, Running: 3–10 km/h, Walking/Hike: 1.5–5.0 km/h) with `(Default)` indicator and "Custom..." dialog with decimal input in `MainActivity.kt` (`TripSettingsDialog`). Updated dynamic summary card and standby notification. Verified by automated unit tests in `BatteryOptimizationAndAutoStartTest.kt`. All 170 unit tests pass, `BUILD SUCCESSFUL`. |
+
+---
+
+## 25. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |

@@ -2856,10 +2856,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     )
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
-                                    ">${activityProfile.autoStartSpeedKmh.toInt()}"
+                                val currentSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
+                                val speedFormatted = if (currentSpeed % 1f == 0f) {
+                                    ">${currentSpeed.toInt()}"
                                 } else {
-                                    ">%.1f".format(activityProfile.autoStartSpeedKmh)
+                                    ">%.1f".format(currentSpeed)
                                 }
                                 Text(
                                     text = "(auto: $speedFormatted km/h)",
@@ -2884,6 +2885,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                     ) {
                         ActivityProfile.values().forEach { profile ->
                             val isSelected = activityProfile == profile
+                            val profileSpeed = viewModel.getAutoStartSpeedForProfile(profile)
+                            val profileSpeedFormatted = if (profileSpeed % 1f == 0f) {
+                                ">${profileSpeed.toInt()}"
+                            } else {
+                                ">%.1f".format(profileSpeed)
+                            }
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -2910,7 +2917,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             )
                                         }
                                         Text(
-                                            text = "Auto-start: >${profile.autoStartSpeedKmh.toInt()} km/h",
+                                            text = "Auto-start: $profileSpeedFormatted km/h",
                                             color = Color(0xFF64748B),
                                             fontSize = 12.sp
                                         )
@@ -2988,15 +2995,34 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
 
                 if (currentTripMode == TripMode.AUTO) {
-                    val speedFormatted = if (activityProfile.autoStartSpeedKmh % 1f == 0f) {
-                        ">${activityProfile.autoStartSpeedKmh.toInt()}"
-                    } else {
-                        ">%.1f".format(activityProfile.autoStartSpeedKmh)
+                    val currentAutoStartSpeed = remember(activityProfile) { viewModel.getAutoStartSpeedForProfile(activityProfile) }
+                    var autoStartSpeed by remember(activityProfile) { mutableStateOf(currentAutoStartSpeed) }
+                    var showCustomSpeedDialog by remember { mutableStateOf(false) }
+                    var customSpeedInput by remember { mutableStateOf("") }
+                    var autoStartSpeedDropdownExpanded by remember { mutableStateOf(false) }
+
+                    val speedPresetOptions = remember(activityProfile) {
+                        when (activityProfile) {
+                            ActivityProfile.CAR -> listOf(5.0f to "5 km/h", 10.0f to "10 km/h (Default)", 15.0f to "15 km/h", 20.0f to "20 km/h", 25.0f to "25 km/h", 30.0f to "30 km/h")
+                            ActivityProfile.CYCLING -> listOf(3.0f to "3 km/h", 5.0f to "5 km/h", 7.0f to "7 km/h (Default)", 10.0f to "10 km/h", 12.0f to "12 km/h", 15.0f to "15 km/h")
+                            ActivityProfile.MTB -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 6.0f to "6 km/h (Default)", 8.0f to "8 km/h", 10.0f to "10 km/h", 12.0f to "12 km/h")
+                            ActivityProfile.RUNNING -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 5.0f to "5 km/h (Default)", 6.0f to "6 km/h", 8.0f to "8 km/h", 10.0f to "10 km/h")
+                            ActivityProfile.HIKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
+                            ActivityProfile.WALKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
+                        }
                     }
+                    val isCustomSpeed = speedPresetOptions.none { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }
+
                     val currentAutoStartSec = remember(activityProfile) { viewModel.getAutoStartSecondsForProfile(activityProfile) }
                     var autoStartSec by remember(activityProfile) { mutableStateOf(currentAutoStartSec) }
                     var showCustomAutoStartDialog by remember { mutableStateOf(false) }
                     var customAutoStartInput by remember { mutableStateOf("") }
+
+                    val currentAutoStopMin = remember(activityProfile) { viewModel.getAutoStopMinutesForProfile(activityProfile) }
+                    var autoStopMin by remember(activityProfile) { mutableStateOf(currentAutoStopMin) }
+
+                    val speedDisplay = if (autoStartSpeed % 1f == 0f) ">${autoStartSpeed.toInt()} km/h" else ">%.1f km/h".format(autoStartSpeed)
+                    val durDisplay = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60}m" else "${autoStartSec}s"
 
                     Surface(
                         modifier = Modifier
@@ -3011,9 +3037,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         ) {
                             Text("⚡", fontSize = 14.sp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            val durDisplay = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60} min" else "${autoStartSec}s"
                             Text(
-                                text = "Auto-start active: starts recording when ${activityProfile.displayName} movement exceeds $speedFormatted km/h for $durDisplay (hardware motion wake for battery optimization)",
+                                text = "Auto-start active: starts recording when ${activityProfile.displayName} speed exceeds $speedDisplay for $durDisplay (or moves >25m). Rest pauses detected after 45s stationary, auto-stops after ${autoStopMin}m.",
                                 fontSize = 12.sp,
                                 color = Color(0xFF94A3B8),
                                 lineHeight = 16.sp
@@ -3022,6 +3047,147 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    // Per-Profile Auto-Start Speed Threshold
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Auto-Start Speed (${activityProfile.displayName})",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f).padding(end = 12.dp)
+                        )
+
+                        Box {
+                            val selectedSpeedLabel = speedPresetOptions.firstOrNull { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }?.second
+                                ?: (if (autoStartSpeed % 1f == 0f) "Custom: ${autoStartSpeed.toInt()} km/h" else "Custom: %.1f km/h".format(autoStartSpeed))
+                            Surface(
+                                onClick = { autoStartSpeedDropdownExpanded = true },
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF1E293B),
+                                border = BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.width(135.dp).height(40.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = selectedSpeedLabel,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        maxLines = 1
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Select Auto-Start Speed",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = autoStartSpeedDropdownExpanded,
+                                onDismissRequest = { autoStartSpeedDropdownExpanded = false },
+                                modifier = Modifier.background(Color(0xFF0F172A))
+                            ) {
+                                speedPresetOptions.forEach { (spd, label) ->
+                                    val isMatch = kotlin.math.abs(spd - autoStartSpeed) < 0.05f
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = label,
+                                                color = if (isMatch) Color(0xFF38BDF8) else Color.White,
+                                                fontWeight = if (isMatch) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            autoStartSpeed = spd
+                                            viewModel.setAutoStartSpeedForProfile(activityProfile, spd)
+                                            autoStartSpeedDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                                HorizontalDivider(color = Color(0xFF334155))
+                                DropdownMenuItem(
+                                    text = {
+                                        val customLabel = if (isCustomSpeed) {
+                                            if (autoStartSpeed % 1f == 0f) "Custom (${autoStartSpeed.toInt()} km/h)..." else "Custom (%.1f km/h)...".format(autoStartSpeed)
+                                        } else "Custom..."
+                                        Text(
+                                            text = customLabel,
+                                            color = if (isCustomSpeed) Color(0xFF38BDF8) else Color.White,
+                                            fontWeight = if (isCustomSpeed) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        autoStartSpeedDropdownExpanded = false
+                                        customSpeedInput = if (autoStartSpeed % 1f == 0f) autoStartSpeed.toInt().toString() else "%.1f".format(autoStartSpeed)
+                                        showCustomSpeedDialog = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (showCustomSpeedDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showCustomSpeedDialog = false },
+                            title = { Text("Custom Auto-Start Speed", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column {
+                                    Text("Enter minimum speed (1.0 to 150.0 km/h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = customSpeedInput,
+                                        onValueChange = { input ->
+                                            if (input.count { it == '.' || it == ',' } <= 1 && input.all { it.isDigit() || it == '.' || it == ',' } && input.length <= 6) {
+                                                customSpeedInput = input
+                                            }
+                                        },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = Color(0xFF38BDF8),
+                                            unfocusedBorderColor = Color(0xFF64748B)
+                                        ),
+                                        suffix = { Text("km/h", color = Color(0xFF94A3B8)) }
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        val normalized = customSpeedInput.replace(',', '.')
+                                        val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: activityProfile.autoStartSpeedKmh
+                                        autoStartSpeed = speedVal
+                                        viewModel.setAutoStartSpeedForProfile(activityProfile, speedVal)
+                                        showCustomSpeedDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                ) {
+                                    Text("Set")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCustomSpeedDialog = false }) {
+                                    Text("Cancel", color = Color.White)
+                                }
+                            },
+                            containerColor = Color(0xFF0F172A)
+                        )
+                    }
 
                     // Per-Profile Auto-Start Delay
                     val autoStartPresetOptions = listOf(10 to "10s", 15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m")

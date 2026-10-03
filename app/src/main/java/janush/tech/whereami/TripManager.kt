@@ -27,6 +27,7 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_ACTIVITY_PROFILE = "pref_activity_profile"
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
         private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
+        private const val KEY_AUTO_START_SPEED_PREFIX = "pref_auto_start_speed_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
         private const val KEY_AUTO_RESUME_ON_MOTION = "pref_auto_resume_on_motion"
@@ -98,6 +99,17 @@ class TripManager private constructor(private val context: Context) {
         val clamped = seconds.coerceIn(3, 86400) // up to 24 hours
         prefs.edit().putInt(KEY_AUTO_START_PREFIX + profile.name, clamped).apply()
         TelemetryLogger.log("SETTINGS", "AutoStartSeconds for ${profile.name} changed to $clamped")
+    }
+
+    fun getAutoStartSpeedForProfile(profile: ActivityProfile): Float {
+        val defaultSpeed = profile.autoStartSpeedKmh
+        return prefs.getFloat(KEY_AUTO_START_SPEED_PREFIX + profile.name, defaultSpeed)
+    }
+
+    fun setAutoStartSpeedForProfile(profile: ActivityProfile, speedKmh: Float) {
+        val clamped = speedKmh.coerceIn(1.0f, 150.0f)
+        prefs.edit().putFloat(KEY_AUTO_START_SPEED_PREFIX + profile.name, clamped).apply()
+        TelemetryLogger.log("SETTINGS", "AutoStartSpeed for ${profile.name} changed to $clamped km/h")
     }
 
     fun getAutoStopMinutesForProfile(profile: ActivityProfile): Int {
@@ -433,7 +445,8 @@ class TripManager private constructor(private val context: Context) {
                 val isAccurate = (accuracy ?: 0f) <= 25f
                 
                 // Sensitive auto-start: triggered by sustained speed OR cumulative displacement >= 25m
-                val candidateSpeed = speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f)
+                val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
+                val candidateSpeed = speedKmh >= (targetSpeed * 0.7f)
                 if (isAccurate && candidateSpeed) {
                     if (autoStartFirstLocation == null) {
                         autoStartFirstLocation = newLoc
@@ -443,8 +456,8 @@ class TripManager private constructor(private val context: Context) {
                         val elapsed = now - autoStartFirstTime
                         val distMoved = autoStartFirstLocation!!.distanceTo(newLoc)
                         val autoStartDurationMs = getAutoStartSecondsForProfile(currentProfile) * 1000L
-                        if ((speedKmh >= currentProfile.autoStartSpeedKmh && elapsed >= autoStartDurationMs) ||
-                            (distMoved >= 25.0 && elapsed >= 8_000L && speedKmh >= (currentProfile.autoStartSpeedKmh * 0.7f))
+                        if ((speedKmh >= targetSpeed && elapsed >= autoStartDurationMs) ||
+                            (distMoved >= 25.0 && elapsed >= 8_000L && speedKmh >= (targetSpeed * 0.7f))
                         ) {
                             startTrip(isAuto = true)
                             autoStartFirstLocation = null
@@ -462,7 +475,8 @@ class TripManager private constructor(private val context: Context) {
                 if (_isPaused.value) {
                     // Suppress auto-stop completely while paused!
                     // Check auto-resume on motion if enabled
-                    if (_autoResumeOnMotion.value && speedKmh >= currentProfile.autoStartSpeedKmh) {
+                    val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
+                    if (_autoResumeOnMotion.value && speedKmh >= targetSpeed) {
                         resumeTrip()
                         TelemetryLogger.logTrip("AUTO_RESUME", _activeTrip.value?.id ?: 0, "Motion detected while paused: auto-resumed trip")
                     }
