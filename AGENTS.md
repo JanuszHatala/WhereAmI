@@ -36,6 +36,16 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
 - **Wake Lock Strict Scoping**:
   - `LiveTrackingService` wake locks MUST ONLY be acquired when an active trip is recording or live sharing is streaming.
   - Wake locks must **NEVER** be acquired in `onCreate()` or held in standby/idle. Releasing wake locks is mandatory upon trip completion or standby transition.
+- **Standby Foreground Service & Android 14+ Location FGS Invariant**:
+  - On Android 14+ (`targetSdk >= 34`), starting a ForegroundService with `foregroundServiceType="location"` from the background is forbidden and throws `ForegroundServiceStartNotAllowedException`.
+  - In `TripMode.AUTO`, `LiveTrackingService` MUST be started while the app is in the **FOREGROUND** and kept running as a **Zero-CPU Standby Foreground Service** with a persistent notification ("WhereAmI • Auto-detect Standby").
+  - In Standby mode:
+    - GPS polling MUST be completely shut down via `LocationManager.stopLocationUpdates()`.
+    - Location stream collectors in the service MUST be detached (`stopLocationTracking()`).
+    - Wake locks MUST be released (`updateWakeLock(false)`).
+    - Hardware `Sensor.TYPE_SIGNIFICANT_MOTION` is armed to trigger confirmation bursts directly within the existing FGS process.
+  - Never attempt to stop the FGS in `IDLE` expecting to restart it later from background sensors or receivers.
+  - In `TripMode.MANUAL`, when screen turns off without an active trip or live sharing, the service and notification MUST stop completely (Option A).
 - **Adaptive GPS Sampling**:
   - Recording/Charging: High frequency (~5s–6s sampling).
   - Battery/Live Tracking: Conservation frequency (10s–12s sampling).
