@@ -31,8 +31,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 17** | Field Testing (2026-10-02 Evening) Map Config Gear Badge Visibility, LocalityCard Line Spacing Condensation, Landscape Unified Bottom Toolbar (App + Heat Map + Recording HUD), Right-Side Zoom/Map Controls Centered Stack, Sticky Heat Map Legend Beneath LocalityCard & Portrait Dynamic Toolbars Stacking | 6 | 6 | 0 | 0 |
 | **Round 18** | Field Testing (2026-10-02 Night) Route Timeline Place Repetition, Card Condensation, Merged Trip Title Standardization, Pause Distance Offset Fix & Voivodeship Canonicalization | 6 | 6 | 0 | 0 |
 | **Round 19** | Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit | 3 | 3 | 0 | 0 |
+| **Round 20** | Field Testing (2026-10-03 Afternoon) Auto-Start FGS Bootstrap via BroadcastReceiver (PendingIntent path), eliminates Android 14+ startForegroundService DENIED for screen-off motion wake | 1 | 1 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **179** | **171** | **0** | **8** |
+| **Total** | | **180** | **172** | **0** | **8** |
 
 ---
 
@@ -363,7 +364,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 22. Features Inventory & Future Backlog
+## 22. Round 20: Field Testing (2026-10-03 Afternoon) — Auto-Start FGS Bootstrap via BroadcastReceiver PendingIntent Path
+
+**Telemetry Root Cause**: After fresh APK install, app immediately exits foreground. `AppStateManager.applyModeToLocationEngine(IDLE)` called `context.startForegroundService(ACTION_ENTER_STANDBY)` from a coroutine. Android 14+ (`targetSdk=36`) denied this call (`code:DENIED`, `uidState:LAST`) because the app was no longer in a foreground-exempt state. The `MotionBurstWakeLock` fix from Round 19 was correct but incomplete — the motion trigger (`TYPE_SIGNIFICANT_MOTION`) fired its `TriggerEventListener` and emitted to a `SharedFlow`, but no active coroutine collector was processing it (process had been frozen/killed). Even when the process was alive, `startForegroundService()` was being denied because it was called from background coroutine context, not from an `onReceive()` context.
+
+**Additional Root Cause**: The `ACTION_ENTER_STANDBY` `START_STICKY` service with coroutine loops caused the app to be killed at `12:59:26` by the OS with `"excessive cpu 15780 during 300089 dur=1195023 limit=2"` (adj=900 cached process).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT20-01** | **Screen-off cycling auto-start still not triggering after fresh install**: Phone in pocket, significant motion detected, but FGS start denied by Android 14+ (`code:DENIED`) because `startForegroundService` called from background coroutine context. | `MotionWakeBroadcastReceiver.kt` (new), `MotionWakeManager.kt`, `AppStateManager.kt`, `AndroidManifest.xml`, `MotionWakeFgsBroadcastTest.kt` (new) | **Completed** | **Architectural fix**: `MotionWakeManager.triggerListener.onTrigger()` now dispatches a `PendingIntent` broadcast to new `MotionWakeBroadcastReceiver` (manifest-declared, `android:exported="false"`). The receiver's `onReceive()` context has a guaranteed ~10s FGS-start exemption (`code:BROADCAST`) on Android 14+, regardless of app process state. The receiver: (1) acquires a 10s bootstrap `PARTIAL_WAKE_LOCK`, (2) calls `AppStateManager.handleMotionWakeFromBroadcast()` to set up GPS burst and burst wake lock, (3) calls `context.startForegroundService(ACTION_ENTER_STANDBY)` — which now always succeeds under `onReceive()` exemption. IDLE transition no longer calls `startForegroundService` at all; it sends `ACTION_STOP` and arms the sensor. **Additional**: Removed `START_STICKY` standby-loop pattern that caused excessive CPU kills. Verified by 13 new JUnit tests in `MotionWakeFgsBroadcastTest.kt`. All 169 unit tests pass, `BUILD SUCCESSFUL`. |
+
+---
+
+## 23. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
