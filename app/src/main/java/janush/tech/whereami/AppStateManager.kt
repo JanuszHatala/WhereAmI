@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
-import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -139,6 +138,15 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Called from [MotionWakeBroadcastReceiver] which has a guaranteed Android 14+ FGS-start
+     * exemption window (code:BROADCAST). The receiver has already started the FGS before
+     * calling this — we only need to set up the GPS burst and wake lock here.
+     */
+    fun handleMotionWakeFromBroadcast() {
+        handleMotionWake()
+    }
+
     private fun handleMotionWake() {
         val tripManager = TripManager.getInstance(context)
         if (tripManager.tripMode.value != TripMode.AUTO) return
@@ -237,22 +245,23 @@ class AppStateManager private constructor(private val context: Context) {
                 val hasLive = liveSession != null && liveSession.isActive
                 val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
+                // Stop the FGS entirely if there is no active trip or live session.
+                // In AUTO mode the FGS will be re-started by MotionWakeBroadcastReceiver
+                // under its guaranteed onReceive() FGS-start exemption window when motion fires.
+                // We must NOT call startForegroundService() here — this code runs from a coroutine
+                // (background context) and is denied by Android 14+ (code:DENIED, uidState:LAST).
                 if (!hasTrip && !hasLive) {
                     try {
-                        val intent = Intent(context, LiveTrackingService::class.java).apply {
-                            action = if (isAuto) LiveTrackingService.ACTION_ENTER_STANDBY else LiveTrackingService.ACTION_STOP
+                        val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
+                            action = LiveTrackingService.ACTION_STOP
                         }
-                        if (isAuto && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            context.startForegroundService(intent)
-                        } else {
-                            context.startService(intent)
-                        }
+                        context.startService(stopIntent)
                     } catch (_: Exception) {}
                 }
 
                 if (isAuto) {
                     motionManager.arm()
-                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, LiveTrackingService in STANDBY, hardware MotionWakeManager armed for AUTO auto-start.")
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, motion sensor armed. FGS will be bootstrapped by MotionWakeBroadcastReceiver on next motion event.")
                 } else {
                     motionManager.disarm()
                     TelemetryLogger.log("POWER", "App state IDLE: GPS powered down completely (MANUAL mode).")
