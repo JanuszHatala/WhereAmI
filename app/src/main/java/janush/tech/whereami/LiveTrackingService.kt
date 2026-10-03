@@ -320,7 +320,8 @@ class LiveTrackingService : Service() {
                 "Live Sharing Active$pauseTag • $lastPlaceName • ${liveSession.getFormattedRemaining()}"
             }
             isAuto -> {
-                val speedFormatted = if (profile.autoStartSpeedKmh % 1f == 0f) ">${profile.autoStartSpeedKmh.toInt()}" else ">%.1f".format(profile.autoStartSpeedKmh)
+                val startSpeed = TripManager.getInstance(this).getAutoStartSpeedForProfile(profile)
+                val speedFormatted = if (startSpeed % 1f == 0f) ">${startSpeed.toInt()}" else ">%.1f".format(startSpeed)
                 "Ready for ${profile.displayName} ($speedFormatted km/h) • Low power"
             }
             else -> "Recording trip & background location active"
