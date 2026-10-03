@@ -244,13 +244,21 @@ class TripManager private constructor(private val context: Context) {
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
 
-        // True Zero-Idle Standby: Stop background service if no active recording and no live sharing
+        // True Zero-Idle Standby: Transition background service to standby (AUTO) or stop completely (MANUAL)
         if (!hasTrip && !hasLive) {
             try {
                 val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
-                    action = LiveTrackingService.ACTION_STOP
+                    action = if (mode == TripMode.AUTO) {
+                        LiveTrackingService.ACTION_ENTER_STANDBY
+                    } else {
+                        LiveTrackingService.ACTION_STOP
+                    }
                 }
-                context.startService(intent)
+                if (mode == TripMode.AUTO && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
             } catch (_: Exception) {}
         }
         AppStateManager.getInstance(context).recalculateState()
