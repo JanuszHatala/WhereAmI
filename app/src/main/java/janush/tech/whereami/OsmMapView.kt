@@ -226,6 +226,146 @@ fun calculateOpticalCenter(
 }
 
 /**
+ * Fits a set of GeoPoints comfortably into the unobstructed viewport area between
+ * the top LocalityCard and bottom controls, taking map orientation (rotation) and screen insets into account.
+ */
+fun fitPointsToUnobstructedViewport(
+    map: MapView,
+    points: List<GeoPoint>,
+    density: Float,
+    isLandscape: Boolean,
+    isCompact: Boolean,
+    onZoomCalculated: ((Double) -> Unit)? = null
+) {
+    if (points.isEmpty()) return
+
+    val mapWidth = map.width.takeIf { it > 0 } ?: return
+    val mapHeight = map.height.takeIf { it > 0 } ?: return
+    val orientationDeg = map.mapOrientation
+    val thetaRad = Math.toRadians(orientationDeg.toDouble())
+
+    // 1. Calculate unobstructed viewport insets (in pixels)
+    val marginPx = (32f * density).toInt()
+    val (leftInset, rightInset, topInset, bottomInset) = if (isLandscape) {
+        val leftCardPx = (mapWidth * 0.38f).toInt()
+        val rightControlsPx = (60f * density).toInt()
+        val bottomToolbarPx = (65f * density).toInt()
+        listOf(
+            leftCardPx + marginPx,
+            rightControlsPx + marginPx,
+            marginPx,
+            bottomToolbarPx + marginPx
+        )
+    } else {
+        val topCardDp = if (isCompact) 150f else 260f
+        val statusBarDp = 36f
+        val bottomToolbarDp = 70f
+        val navBarDp = 24f
+        val rightControlsDp = 55f
+        listOf(
+            marginPx,
+            (rightControlsDp * density).toInt() + marginPx,
+            ((topCardDp + statusBarDp) * density).toInt() + marginPx,
+            ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
+        )
+    }
+
+    val availWidth = (mapWidth - leftInset - rightInset).coerceAtLeast(100)
+    val availHeight = (mapHeight - topInset - bottomInset).coerceAtLeast(100)
+
+    // Center of unobstructed viewport on screen (in screen pixels)
+    val screenCenterX = leftInset + availWidth / 2.0
+    val screenCenterY = topInset + availHeight / 2.0
+
+    // Offset of the viewport center relative to physical screen center
+    val offsetPixelsX = (mapWidth / 2.0 - screenCenterX).toInt()
+    val offsetPixelsY = (screenCenterY - mapHeight / 2.0).toInt()
+
+    if (points.size == 1) {
+        val target = points.first()
+        val cameraCenter = calculateOpticalCenter(
+            lat = target.latitude,
+            lon = target.longitude,
+            zoom = 16.0,
+            mapOrientation = orientationDeg,
+            offsetPixelsY = offsetPixelsY,
+            offsetPixelsX = offsetPixelsX
+        )
+        map.controller.setZoom(16.0)
+        map.controller.animateTo(cameraCenter)
+        onZoomCalculated?.invoke(16.0)
+        return
+    }
+
+    // 2. Project points into local tangent plane coordinates (meters) rotated by orientationDeg
+    val rEarth = 6378137.0
+    val meanLat = Math.toRadians(points.map { it.latitude }.average())
+    val meanLon = Math.toRadians(points.map { it.longitude }.average())
+    val cosMeanLat = kotlin.math.cos(meanLat)
+
+    val cosTheta = kotlin.math.cos(thetaRad)
+    val sinTheta = kotlin.math.sin(thetaRad)
+
+    var minRotX = Double.MAX_VALUE
+    var maxRotX = -Double.MAX_VALUE
+    var minRotY = Double.MAX_VALUE
+    var maxRotY = -Double.MAX_VALUE
+
+    for (p in points) {
+        val latRad = Math.toRadians(p.latitude)
+        val lonRad = Math.toRadians(p.longitude)
+        val x = (lonRad - meanLon) * rEarth * cosMeanLat
+        val y = (latRad - meanLat) * rEarth
+        // Rotate into screen-aligned coordinates
+        val rotX = x * cosTheta - y * sinTheta
+        val rotY = x * sinTheta + y * cosTheta
+
+        if (rotX < minRotX) minRotX = rotX
+        if (rotX > maxRotX) maxRotX = rotX
+        if (rotY < minRotY) minRotY = rotY
+        if (rotY > maxRotY) maxRotY = rotY
+    }
+
+    // Minimum span of 250m to avoid over-zooming on stationary points
+    val spanRotX = (maxRotX - minRotX).coerceAtLeast(250.0)
+    val spanRotY = (maxRotY - minRotY).coerceAtLeast(250.0)
+
+    // 3. Compute exact zoom fitting both rotated width and height into unobstructed window
+    val metersPerPixelX = spanRotX / availWidth
+    val metersPerPixelY = spanRotY / availHeight
+    val requiredMpp = kotlin.math.max(metersPerPixelX, metersPerPixelY)
+
+    val calculatedZoom = (kotlin.math.log2((156543.03392 * cosMeanLat) / requiredMpp))
+        .coerceIn(map.minZoomLevel, 18.0)
+
+    // 4. Center of the rotated bounding box converted back to lat/lon
+    val midRotX = (minRotX + maxRotX) / 2.0
+    val midRotY = (minRotY + maxRotY) / 2.0
+
+    // Un-rotate back to East/North tangent coordinates
+    val midX = midRotX * cosTheta + midRotY * sinTheta
+    val midY = -midRotX * sinTheta + midRotY * cosTheta
+
+    val centerLat = Math.toDegrees(meanLat + midY / rEarth)
+    val centerLon = Math.toDegrees(meanLon + midX / (rEarth * cosMeanLat))
+
+    // 5. Apply optical offset so centerLat/centerLon lands at the center of the unobstructed window
+    val cameraCenter = calculateOpticalCenter(
+        lat = centerLat,
+        lon = centerLon,
+        zoom = calculatedZoom,
+        mapOrientation = orientationDeg,
+        offsetPixelsY = offsetPixelsY,
+        offsetPixelsX = offsetPixelsX
+    )
+
+    map.controller.setZoom(calculatedZoom)
+    map.controller.animateTo(cameraCenter)
+    onZoomCalculated?.invoke(calculatedZoom)
+    map.invalidate()
+}
+
+/**
  * Places overlays (such as trip polylines) strictly above background and hiking tile overlays,
  * but below interactive pins and position tracking markers.
  */
@@ -881,29 +1021,14 @@ fun OsmMapView(
             val map = mapView ?: return@LaunchedEffect
             isFollowing = false
             snapHandler.removeCallbacks(snapRunnable)
-            if (allShownPoints.size == 1) {
-                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.animateTo(centerGp)
-                map.controller.setZoom(16.0)
-            } else {
-                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
-                val minSpan = 0.005 // ~500m
-                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
-                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
-                val centerLat = rawBox.centerLatitude
-                val centerLon = rawBox.centerLongitude
-                val paddedBox = BoundingBox(
-                    centerLat + latSpan / 2.0,
-                    centerLon + lonSpan / 2.0,
-                    centerLat - latSpan / 2.0,
-                    centerLon - lonSpan / 2.0
-                )
-                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
-                map.zoomToBoundingBox(paddedBox, false, borderPadding)
-                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.animateTo(opticalCenter)
-            }
-            currentZoom = map.zoomLevelDouble
+            fitPointsToUnobstructedViewport(
+                map = map,
+                points = allShownPoints,
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                onZoomCalculated = { currentZoom = it }
+            )
         }
     }
 
@@ -913,19 +1038,14 @@ fun OsmMapView(
             val map = mapView ?: return@LaunchedEffect
             isFollowing = false
             snapHandler.removeCallbacks(snapRunnable)
-            if (savedPlaces.size == 1) {
-                val centerGp = getOpticalCenter(map, savedPlaces.first().geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.animateTo(centerGp)
-                map.controller.setZoom(16.0)
-                currentZoom = 16.0
-            } else {
-                val box = BoundingBox.fromGeoPoints(savedPlaces.map { it.geoPoint })
-                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
-                map.zoomToBoundingBox(box, false, borderPadding)
-                val opticalCenter = getOpticalCenter(map, box.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.animateTo(opticalCenter)
-                currentZoom = map.zoomLevelDouble
-            }
+            fitPointsToUnobstructedViewport(
+                map = map,
+                points = savedPlaces.map { it.geoPoint },
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                onZoomCalculated = { currentZoom = it }
+            )
         }
     }
 
@@ -1186,28 +1306,14 @@ fun OsmMapView(
                             val map = mapView ?: return@clickable
                             isFollowing = false
                             snapHandler.removeCallbacks(snapRunnable)
-                            if (allShownPoints.size == 1) {
-                                val centerGp = getOpticalCenter(map, allShownPoints.first(), effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                                map.controller.animateTo(centerGp)
-                                map.controller.setZoom(16.0)
-                            } else {
-                                val rawBox = BoundingBox.fromGeoPoints(allShownPoints)
-                                val minSpan = 0.005
-                                val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
-                                val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
-                                val centerLat = rawBox.centerLatitude
-                                val centerLon = rawBox.centerLongitude
-                                val paddedBox = BoundingBox(
-                                    centerLat + latSpan / 2.0,
-                                    centerLon + lonSpan / 2.0,
-                                    centerLat - latSpan / 2.0,
-                                    centerLon - lonSpan / 2.0
-                                )
-                                val borderPadding = (36 * density).toInt() + kotlin.math.abs(effectiveOpticalOffsetY)
-                                map.zoomToBoundingBox(paddedBox, false, borderPadding)
-                                val opticalCenter = getOpticalCenter(map, paddedBox.centerWithDateLine, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                                map.controller.animateTo(opticalCenter)
-                            }
+                            fitPointsToUnobstructedViewport(
+                                map = map,
+                                points = allShownPoints,
+                                density = density,
+                                isLandscape = isLandscape,
+                                isCompact = isCompact,
+                                onZoomCalculated = { currentZoom = it }
+                            )
                         },
                     contentAlignment = Alignment.Center
                 ) {
