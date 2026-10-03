@@ -58,6 +58,22 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            MotionWakeBroadcastReceiver: receives the TYPE_SIGNIFICANT_MOTION PendingIntent from
+            MotionWakeManager. The onReceive() context has a guaranteed ~10 s FGS-start exemption
+            on Android 14+ (code:BROADCAST), allowing reliable Location FGS bootstrap from
+            background/screen-off state without the startForegroundService(DENIED) failure.
+            Declared in manifest (not registered at runtime) so it can receive PendingIntents
+            even when the app process is killed/frozen.
+        -->
+        <receiver
+            android:name=".MotionWakeBroadcastReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="janush.tech.whereami.ACTION_MOTION_WAKE" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
