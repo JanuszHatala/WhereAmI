@@ -89,6 +89,7 @@ class LiveTrackingService : Service() {
             ACTION_DISABLE_AUTO_START -> {
                 TripManager.getInstance(this).setTripMode(TripMode.MANUAL)
                 LiveSharingManager.getInstance(this).stopSession()
+                stopLocationTracking()
                 updateWakeLock(false)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -104,21 +105,30 @@ class LiveTrackingService : Service() {
                 val hasTrip = TripManager.getInstance(this).activeTrip.value != null
                 if (hasTrip) {
                     updateNotification()
+                    return START_STICKY
                 } else {
-                    updateWakeLock(false)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+                    if (isAuto) {
+                        stopLocationTracking()
+                        updateWakeLock(false)
+                        updateNotification(force = true)
+                        return START_STICKY
                     } else {
-                        @Suppress("DEPRECATION")
-                        stopForeground(true)
+                        stopLocationTracking()
+                        updateWakeLock(false)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(true)
+                        }
+                        stopSelf()
+                        return START_NOT_STICKY
                     }
-                    stopSelf()
                 }
-                return START_NOT_STICKY
             }
             ACTION_ENTER_STANDBY -> {
-                updateWakeLock(false)
-                updateNotification()
+                evaluateServiceState()
                 return START_STICKY
             }
             ACTION_PAUSE_RESUME -> {
@@ -142,31 +152,13 @@ class LiveTrackingService : Service() {
             }
         }
 
+        evaluateServiceState()
         val hasTrip = TripManager.getInstance(this).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
-        if (!hasTrip && !hasLive) {
-            if (isAuto) {
-                updateWakeLock(false)
-                updateNotification()
-                return START_STICKY
-            }
-            updateWakeLock(false)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
-            }
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        updateWakeLock(true)
-        updateNotification()
-        return START_STICKY
+        return if (hasTrip || hasLive || isAuto) START_STICKY else START_NOT_STICKY
     }
 
     private fun startForegroundService() {
@@ -348,68 +340,82 @@ class LiveTrackingService : Service() {
         }
     }
 
-    private fun startTracking() {
+    private var locationUpdatesJob: Job? = null
+
+    private fun startLocationTracking() {
+        if (locationUpdatesJob?.isActive == true) return
         val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
         val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
 
-        // 1. Observe location stream for real-time telemetry display
-        serviceScope.launch {
+        locationUpdatesJob = serviceScope.launch {
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
                 lastPlaceName = locationData.primaryPlace?.city ?: "In Transit"
                 lastSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 updateNotification()
             }
         }
+        TelemetryLogger.log("POWER", "LiveTrackingService: location updates collector started for notification metrics")
+    }
 
-        // 2. Observe active trip changes to maintain wake lock and notification lifecycle
+    private fun stopLocationTracking() {
+        if (locationUpdatesJob != null) {
+            locationUpdatesJob?.cancel()
+            locationUpdatesJob = null
+            TelemetryLogger.log("POWER", "LiveTrackingService: location updates collector stopped (standby/idle)")
+        }
+    }
+
+    private fun evaluateServiceState() {
+        val trip = TripManager.getInstance(this).activeTrip.value
+        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+
+        if (trip != null || hasLive) {
+            startLocationTracking()
+            updateWakeLock(true)
+            updateNotification(force = true)
+        } else if (isAuto) {
+            stopLocationTracking()
+            updateWakeLock(false)
+            updateNotification(force = true)
+        } else {
+            stopLocationTracking()
+            updateWakeLock(false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            stopSelf()
+        }
+    }
+
+    private fun startTracking() {
+        // Observe trip, live share, and tripMode changes to dynamically switch between
+        // Active Tracking, Zero-CPU Standby FGS, and Complete Stop (MANUAL mode)
         serviceScope.launch {
-            TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest { trip ->
-                val liveSession = LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.value
-                val hasLive = liveSession != null && liveSession.isActive
-                val isAuto = TripManager.getInstance(this@LiveTrackingService).tripMode.value == TripMode.AUTO
-
-                if (trip != null || hasLive) {
-                    updateWakeLock(true)
-                    updateNotification(force = true)
-                } else {
-                    updateWakeLock(false)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        stopForeground(true)
-                    }
-                    stopSelf()
-                }
+            TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest {
+                evaluateServiceState()
             }
         }
-
-        // 3. Observe live sharing changes
         serviceScope.launch {
-            LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.collectLatest { liveSession ->
-                val trip = TripManager.getInstance(this@LiveTrackingService).activeTrip.value
-                val hasLive = liveSession != null && liveSession.isActive
-
-                if (trip != null || hasLive) {
-                    updateWakeLock(true)
-                    updateNotification(force = true)
-                } else {
-                    updateWakeLock(false)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        stopForeground(true)
-                    }
-                    stopSelf()
-                }
+            LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.collectLatest {
+                evaluateServiceState()
+            }
+        }
+        serviceScope.launch {
+            TripManager.getInstance(this@LiveTrackingService).tripMode.collectLatest {
+                evaluateServiceState()
             }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        stopLocationTracking()
         serviceJob.cancel()
         updateWakeLock(false)
         val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)

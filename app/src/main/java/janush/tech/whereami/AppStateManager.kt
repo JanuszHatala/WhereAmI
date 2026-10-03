@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -103,7 +104,35 @@ class AppStateManager private constructor(private val context: Context) {
 
     fun setAppForegroundState(inForeground: Boolean) {
         isAppInForeground = inForeground
+        if (inForeground) {
+            ensureAutoStandbyServiceRunning()
+        }
         recalculateState()
+    }
+
+    fun ensureAutoStandbyServiceRunning() {
+        val tripManager = TripManager.getInstance(context)
+        val hasTrip = tripManager.activeTrip.value != null
+        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        val isAuto = tripManager.tripMode.value == TripMode.AUTO
+
+        // Only start FGS while in foreground (PROC_STATE_TOP), where Android 14+ guarantees success
+        if (isAuto && !hasTrip && !hasLive && isAppInForeground) {
+            try {
+                val intent = Intent(context, LiveTrackingService::class.java).apply {
+                    action = LiveTrackingService.ACTION_ENTER_STANDBY
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                TelemetryLogger.log("POWER", "Started LiveTrackingService in foreground standby for AUTO mode")
+            } catch (e: Exception) {
+                TelemetryLogger.log("ERROR", "Failed to start LiveTrackingService standby: ${e.message}")
+            }
+        }
     }
 
     fun setAutoMediaActive(active: Boolean) {
@@ -123,7 +152,10 @@ class AppStateManager private constructor(private val context: Context) {
             }
         }
         scope.launch {
-            TripManager.getInstance(context).tripMode.collect {
+            TripManager.getInstance(context).tripMode.collect { mode ->
+                if (mode == TripMode.AUTO && isAppInForeground) {
+                    ensureAutoStandbyServiceRunning()
+                }
                 recalculateState()
             }
         }
@@ -138,16 +170,7 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
-    /**
-     * Called from [MotionWakeBroadcastReceiver] which has a guaranteed Android 14+ FGS-start
-     * exemption window (code:BROADCAST). The receiver has already started the FGS before
-     * calling this — we only need to set up the GPS burst and wake lock here.
-     */
-    fun handleMotionWakeFromBroadcast() {
-        handleMotionWake()
-    }
-
-    private fun handleMotionWake() {
+    fun handleMotionWake() {
         val tripManager = TripManager.getInstance(context)
         if (tripManager.tripMode.value != TripMode.AUTO) return
         if (tripManager.activeTrip.value != null) return
@@ -245,12 +268,11 @@ class AppStateManager private constructor(private val context: Context) {
                 val hasLive = liveSession != null && liveSession.isActive
                 val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-                // Stop the FGS entirely if there is no active trip or live session.
-                // In AUTO mode the FGS will be re-started by MotionWakeBroadcastReceiver
-                // under its guaranteed onReceive() FGS-start exemption window when motion fires.
-                // We must NOT call startForegroundService() here — this code runs from a coroutine
-                // (background context) and is denied by Android 14+ (code:DENIED, uidState:LAST).
-                if (!hasTrip && !hasLive) {
+                // In MANUAL mode with no trip and no live share: stop the service completely.
+                // In AUTO mode: DO NOT STOP the service! LiveTrackingService stays running in
+                // zero-CPU standby mode with the persistent standby notification ("Ready to auto-record"),
+                // protecting the process from being killed and holding the FGS token for GPS bursts.
+                if (!hasTrip && !hasLive && !isAuto) {
                     try {
                         val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
                             action = LiveTrackingService.ACTION_STOP
@@ -261,15 +283,16 @@ class AppStateManager private constructor(private val context: Context) {
 
                 if (isAuto) {
                     motionManager.arm()
-                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, motion sensor armed. FGS will be bootstrapped by MotionWakeBroadcastReceiver on next motion event.")
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, LiveTrackingService standby active, motion sensor armed for AUTO auto-start.")
                 } else {
                     motionManager.disarm()
-                    TelemetryLogger.log("POWER", "App state IDLE: GPS powered down completely (MANUAL mode).")
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS and service powered down completely (MANUAL mode).")
                 }
             }
             AppLifecycleMode.FOREGROUND_VIEW -> {
                 motionBurstJob?.cancel()
                 motionManager.disarm()
+                ensureAutoStandbyServiceRunning()
                 if (policy == BatteryPowerPolicy.BATTERY_SAVER && !charging) {
                     locManager.updateSamplingInterval(3000L, 1500L)
                 } else {

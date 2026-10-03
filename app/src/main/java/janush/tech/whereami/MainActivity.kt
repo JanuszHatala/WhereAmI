@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false)
         ) {
             viewModel.startTracking()
+            AppStateManager.getInstance(this).ensureAutoStandbyServiceRunning()
         }
     }
 
