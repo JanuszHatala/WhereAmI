@@ -32,8 +32,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 18** | Field Testing (2026-10-02 Night) Route Timeline Place Repetition, Card Condensation, Merged Trip Title Standardization, Pause Distance Offset Fix & Voivodeship Canonicalization | 6 | 6 | 0 | 0 |
 | **Round 19** | Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit | 3 | 3 | 0 | 0 |
 | **Round 20** | Field Testing (2026-10-03 Afternoon) Auto-Start FGS Bootstrap via BroadcastReceiver (PendingIntent path), eliminates Android 14+ startForegroundService DENIED for screen-off motion wake | 1 | 1 | 0 | 0 |
+| **Round 21** | Field Testing (2026-10-03 Late Afternoon) Restoring Persistent Standby Notification & Zero-CPU Foreground Service for TripMode.AUTO (Android 14+ Location FGS Protection) | 1 | 1 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **180** | **172** | **0** | **8** |
+| **Total** | | **181** | **173** | **0** | **8** |
 
 ---
 
@@ -376,7 +377,24 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 23. Features Inventory & Future Backlog
+## 23. Round 21: Field Testing (2026-10-03 Late Afternoon) — Restoring Persistent Standby Notification & Zero-CPU Foreground Service for TripMode.AUTO (Android 14+ Location FGS Protection)
+
+**Telemetry Root Cause**: Telemetry from device logcat revealed `ForegroundServiceStartNotAllowedException: startForegroundService() not allowed: service janush.tech.whereami/.LiveTrackingService` causing a fatal crash inside `MotionWakeBroadcastReceiver.onReceive()` at `13:33:11` and `15:22:06`. On Android 14+ (`targetSdk=36`), an app **cannot start a ForegroundService with `foregroundServiceType="location"` from the background or from a BroadcastReceiver**. In Round 20, removing the persistent standby notification and killing the service upon IDLE entry removed the only valid Foreground Service token, forcing the app to attempt a forbidden background FGS launch upon motion, which crashed the process. Furthermore, in Round 19/20, `LiveTrackingService` was continuously collecting `locationManager.getLocationUpdates()` even in standby, which kept GPS active and caused excessive background CPU.
+
+**Architectural Fix**:
+1. **Persistent Standby FGS Launched in Foreground**: In `TripMode.AUTO`, `LiveTrackingService` is started while the app is in the **FOREGROUND** (`MainActivity.onStart()`, `checkPermissionsAndStart()`, `setTripMode()`, and `AppStateManager.ensureAutoStandbyServiceRunning()`). In foreground, `startForegroundService` is 100% permitted.
+2. **Persistent Notification Restored**: Displays "WhereAmI • Auto-detect Standby" / "Ready to auto-record (standby • low power)" with direct `[Disable Auto-detect]` button in notification shade.
+3. **Zero-CPU Standby Gating**: In standby (no active trip, no live sharing), `LiveTrackingService` stops collecting `locationManager.getLocationUpdates()` (`stopLocationTracking()`), releases wake lock (0 mW), and powers down GPS completely. Process stays alive at FGS priority (`adj 200`), completely immune to background kills and cached limits.
+4. **Direct Motion Wake Burst**: When `Sensor.TYPE_SIGNIFICANT_MOTION` fires in pocket, `MotionWakeManager` calls `AppStateManager.handleMotionWake()` directly. Since `LiveTrackingService` is already running as a valid Location FGS, GPS updates are delivered without restriction and the confirmation burst evaluates locomotion cleanly.
+5. **Clean Option A Shutdown in MANUAL Mode**: When switched to `TripMode.MANUAL` or when tapping `[Disable Auto-detect]`, `LiveTrackingService` stops completely, notification is removed, and hardware sensor is disarmed.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT21-01** | **Restore Persistent Notification & Fix Screen-Off Auto-Start**: Phone in pocket riding bike didn't auto-start. Identified missing persistent notification as the root cause. | `LiveTrackingService.kt`, `AppStateManager.kt`, `MotionWakeManager.kt`, `MainActivity.kt`, `AndroidManifest.xml`, `StandbyFgsAutoStartTest.kt` | **Completed** | Restored persistent standby FGS notification launched from foreground. Implemented dynamic location updates gating (zero CPU/GPS in standby). Eliminated crashed `MotionWakeBroadcastReceiver`. Added 14 unit tests in `StandbyFgsAutoStartTest.kt`. All 169 unit tests pass, `BUILD SUCCESSFUL`. |
+
+---
+
+## 24. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
