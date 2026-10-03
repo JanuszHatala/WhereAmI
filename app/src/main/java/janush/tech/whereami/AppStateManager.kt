@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -63,6 +64,7 @@ class AppStateManager private constructor(private val context: Context) {
     private var isAutoMediaActive = false
 
     private var motionBurstJob: Job? = null
+    private var motionBurstWakeLock: android.os.PowerManager.WakeLock? = null
 
     init {
         registerBatteryReceiver()
@@ -150,6 +152,20 @@ class AppStateManager private constructor(private val context: Context) {
         // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
         GpsFilterEngine.getInstance().reset()
 
+        // Acquire scoped wake lock for confirmation burst so CPU doesn't suspend while screen is off
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (motionBurstWakeLock == null) {
+                motionBurstWakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:MotionBurstWakeLock")
+            }
+            if (motionBurstWakeLock?.isHeld == false) {
+                motionBurstWakeLock?.acquire(burstDurationMs + 5000L)
+                TelemetryLogger.log("POWER", "MotionBurstWakeLock acquired for ${burstDurationMs / 1000}s")
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to acquire MotionBurstWakeLock: ${e.message}")
+        }
+
         val locManager = LocationManager.getInstance(context)
         // Request GPS updates during confirmation window
         locManager.updateSamplingInterval(2500L, 1000L)
@@ -164,6 +180,12 @@ class AppStateManager private constructor(private val context: Context) {
                 delay(burstDurationMs)
             } finally {
                 collectorJob.cancel()
+                if (motionBurstWakeLock?.isHeld == true) {
+                    try {
+                        motionBurstWakeLock?.release()
+                        TelemetryLogger.log("POWER", "MotionBurstWakeLock released")
+                    } catch (_: Exception) {}
+                }
             }
             // If burst expired without trip starting and app is still in IDLE, power down GPS and re-arm sensor
             if (tripManager.activeTrip.value == null && _currentMode.value == AppLifecycleMode.IDLE) {
@@ -200,6 +222,12 @@ class AppStateManager private constructor(private val context: Context) {
         when (mode) {
             AppLifecycleMode.IDLE -> {
                 motionBurstJob?.cancel()
+                if (motionBurstWakeLock?.isHeld == true) {
+                    try {
+                        motionBurstWakeLock?.release()
+                        TelemetryLogger.log("POWER", "MotionBurstWakeLock released on IDLE entry")
+                    } catch (_: Exception) {}
+                }
                 // Completely stop GPS when nothing is active in background!
                 locManager.stopLocationUpdates()
 
@@ -207,18 +235,24 @@ class AppStateManager private constructor(private val context: Context) {
                 val hasTrip = tripManager.activeTrip.value != null
                 val liveSession = LiveSharingManager.getInstance(context).currentSession.value
                 val hasLive = liveSession != null && liveSession.isActive
+                val isAuto = tripManager.tripMode.value == TripMode.AUTO
+
                 if (!hasTrip && !hasLive) {
                     try {
                         val intent = Intent(context, LiveTrackingService::class.java).apply {
-                            action = LiveTrackingService.ACTION_STOP
+                            action = if (isAuto) LiveTrackingService.ACTION_ENTER_STANDBY else LiveTrackingService.ACTION_STOP
                         }
-                        context.startService(intent)
+                        if (isAuto && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(intent)
+                        } else {
+                            context.startService(intent)
+                        }
                     } catch (_: Exception) {}
                 }
 
-                if (tripManager.tripMode.value == TripMode.AUTO) {
+                if (isAuto) {
                     motionManager.arm()
-                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, hardware MotionWakeManager armed for AUTO auto-start.")
+                    TelemetryLogger.log("POWER", "App state IDLE: GPS off, LiveTrackingService in STANDBY, hardware MotionWakeManager armed for AUTO auto-start.")
                 } else {
                     motionManager.disarm()
                     TelemetryLogger.log("POWER", "App state IDLE: GPS powered down completely (MANUAL mode).")
