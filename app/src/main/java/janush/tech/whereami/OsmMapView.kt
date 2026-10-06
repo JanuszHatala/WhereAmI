@@ -1189,19 +1189,19 @@ fun OsmMapView(
 
         // Floating Zoom Controls & Map Tools:
         // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
-        // Each control is an exact 38dp Box with 3dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
+        // Each control is an exact 42dp Box with 4dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
         // Automatically centers vertically based on the number of currently active controls.
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Zoom In [+] Button
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
@@ -1215,14 +1215,14 @@ fun OsmMapView(
                     imageVector = Icons.Default.Add,
                     contentDescription = "Zoom In",
                     tint = ComposeColor.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
             // Zoom Out [-] Button
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
@@ -1236,14 +1236,14 @@ fun OsmMapView(
                     imageVector = Icons.Default.Remove,
                     contentDescription = "Zoom Out",
                     tint = ComposeColor.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
             // Unified MyLocation & Refresh Button
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
                     .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
                     .clickable {
@@ -1278,7 +1278,7 @@ fun OsmMapView(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "Recenter & Refresh",
                     tint = ComposeColor.White,
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
@@ -1286,7 +1286,7 @@ fun OsmMapView(
             if (onInstantShare != null && effectiveLatLng != null) {
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
                         .clickable { onInstantShare.invoke() },
@@ -1296,7 +1296,7 @@ fun OsmMapView(
                         imageVector = Icons.Default.Share,
                         contentDescription = "Share Current Position",
                         tint = ComposeColor(0xFF38BDF8),
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -1305,7 +1305,7 @@ fun OsmMapView(
             if (allShownPoints.isNotEmpty()) {
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
                         .clickable {
@@ -1327,7 +1327,7 @@ fun OsmMapView(
                         imageVector = Icons.Default.CropFree,
                         contentDescription = "Fit Shown Trips",
                         tint = ComposeColor(0xFF38BDF8),
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -1337,7 +1337,7 @@ fun OsmMapView(
                 Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
                             .background(ComposeColor(0xCC7F1D1D))
                             .clickable { onClearSelectedTrips.invoke() },
@@ -1347,7 +1347,7 @@ fun OsmMapView(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Hide Shown Trips",
                             tint = ComposeColor(0xFFFCA5A5),
-                            modifier = Modifier.size(19.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                     Box(
