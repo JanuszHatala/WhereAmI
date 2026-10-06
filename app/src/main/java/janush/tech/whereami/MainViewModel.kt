@@ -203,6 +203,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var lastActiveTripId: Long? = null
             tripManager.activeTrip.collect { active ->
                 if (active != null) {
+                    if (lastActiveTripId == null) {
+                        // Invariant: When a new trip starts recording, clear any previously selected past trips
+                        _selectedTripIds.value = emptySet()
+                    }
                     lastActiveTripId = active.id
                 } else if (lastActiveTripId != null) {
                     val finishedId = lastActiveTripId

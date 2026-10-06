@@ -558,6 +558,29 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
     }
 
+    fun resetSessionTrail() {
+        synchronized(memoryPointsQueue) {
+            memoryPointsQueue.clear()
+        }
+        lastRecordedLat = 0.0
+        lastRecordedLng = 0.0
+        val s = _currentSession.value ?: return
+        if (!s.isActive) return
+        _currentSession.value = s.copy(pendingPointsCount = 0)
+
+        // Notify server to archive past trail and reset active points for the new trip
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/reset-trail"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
     fun deleteSession() {
         stopSession()
         prefs.edit().clear().apply()

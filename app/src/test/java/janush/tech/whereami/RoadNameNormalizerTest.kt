@@ -122,11 +122,23 @@ class RoadNameNormalizerTest {
     }
 
     @Test
-    fun testNormalizeWithConditionalHouseNumber() {
-        assertEquals("ul. Zdrojowa 11A", RoadNameNormalizer.normalize("ulica Zdrojowa", houseNumber = "11A", includeHouseNumber = true))
-        assertEquals("ul. Zdrojowa", RoadNameNormalizer.normalize("ulica Zdrojowa", houseNumber = "11A", includeHouseNumber = false))
-        assertEquals("Zdrojowa 11A", RoadNameNormalizer.normalize("Zdrojowa 11A", includeHouseNumber = true))
-        assertEquals("Zdrojowa", RoadNameNormalizer.normalize("Zdrojowa 11A", includeHouseNumber = false))
+    fun testInternationalAndSlovakRoadNormalization() {
+        // In Slovakia, numeric refs should never be prefixed with Polish DK or DW
+        assertEquals("I/18", RoadNameNormalizer.normalize("18", countryCode = "SK"))
+        assertEquals("Cesta slobody (I/18)", RoadNameNormalizer.normalize("Cesta slobody", rawRef = "18", countryCode = "SK"))
+        assertEquals("I/78", RoadNameNormalizer.normalize("78", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize("537", countryCode = "SK"))
+        assertEquals("Cesta slobody (II/537)", RoadNameNormalizer.normalize("Cesta slobody", rawRef = "537", countryCode = "SK"))
+        assertEquals("I/18", RoadNameNormalizer.normalize("I/18", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize("II/537", countryCode = "SK"))
+
+        // Even if rawRef mistakenly has DK18 or DW537 outside Poland, strip the Polish prefix
+        assertEquals("I/18", RoadNameNormalizer.normalize(null, rawRef = "DK18", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize(null, rawRef = "DW537", countryCode = "SK"))
+
+        // Generic other country (e.g. CZ, DE)
+        assertEquals("18", RoadNameNormalizer.normalize("18", countryCode = "CZ"))
+        assertEquals("537", RoadNameNormalizer.normalize("537", countryCode = "DE"))
     }
 }
 

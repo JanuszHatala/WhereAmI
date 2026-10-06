@@ -555,6 +555,8 @@ This section documents features that were requested, prototyped, or previously d
 | **BKL-05** | Historical shared routes catalog portal | Web Platform | Future Sprint |
 | **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing) | Cache / Map | Future Sprint |
 | **BKL-07** | **Nearest Known Address Lookup** (on-demand button when current fix lacks house number; performs ~100m targeted Overpass/Nominatim query displaying closest numbered address chip, e.g. "Klonowa 5 — 47m away") | Geocoding / UI | Future Sprint |
+| **BKL-08** | **Directional Track Polyline Arrows / Chevrons** (render periodic directional chevrons along active and historical trip polylines to indicate travel direction) | Map / Visualization | Future Sprint |
+| **BKL-09** | **3D True Ground Distance & Vertical Kinematics** (integrate vertical displacement $\Delta z$ with calibrated barometric/GNSS altimeter smoothing to compute true slope distance $\sqrt{\Delta x^2 + \Delta y^2 + \Delta z^2}$, real 3D velocity, cumulative elevation gain/loss, and grade percentage on mountain trails) | Kinematics / Analytics | Next Sprint |
 
 ---
 
