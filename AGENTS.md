@@ -74,11 +74,14 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
   - The map tracking marker and camera recentering MUST use `PositionInterpolator` on display VSYNC (`withFrameNanos`).
   - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by interpolation with a 250ms ease-out blend.
 
-### C. Geocoding Stability, Road Precedence & Boundary Integrity
+### C. Geocoding Stability, Road Precedence, International Roads & Boundary Integrity
 - **Road Precedence**: `OSRM Snapped Road` $\to$ `OSM Nominatim Vector Road` $\to$ `Android Platform Geocoder`. Always prioritize OpenStreetMap vector road designations over platform geocoders in Poland.
+- **International Road Designations**: Polish road codes (`DK*`, `DW*`) MUST ONLY be applied when `countryCode == "PL"`. For Slovak roads (`countryCode == "SK"`), format 1–2 digit roads as `I/<num>` (e.g. `I/18`) and 3-digit roads as `II/<num>` (e.g. `II/537`). All other countries must retain clean numeric or international vector refs (e.g. `18`, `E50`), never Polish `DK`.
 - **Viaduct / Overpass Inertia**: At driving speeds ($> 35\text{ km/h}$) on major corridors (`DK*`, `DW*`, `A*`, `S*`), enforce inertia: require at least 5 consecutive candidate readings AND $\ge 7.0\text{s}$ of sustained fixes before switching road names.
 - **15-Second Decay Grace Period**: If reverse geocoding temporarily returns no street during brief signal cutouts or tunnels, maintain the last confirmed street name for 15 seconds. Never flicker or blank out the display.
 - **Intentional Visit Filter**: Qualify a town/place as visited during a trip ONLY if the user penetrates $\ge 150\text{m}$ into the locality OR remains within it for $\ge 45\text{s}$. Boundary skimming along border highways must never trigger accidental visits.
+- **Rest Stop / Pause Gating**: Enforce $\ge 150\text{s}$ ($2.5\text{ min}$) stationary dwell anchored within a $\le 12\text{m}$ spatial cluster gate before creating a `TripPause`. Enforce $45\text{s}$ resume debounce before finalizing pauses, and coalesce adjacent pauses within $30\text{m}$ and $60\text{s}$.
+- **Active Trip Visual Isolation**: An active trip recording (`isRecording || trackPoints.isNotEmpty()`) MUST NEVER display historical trip tracks or historical pauses. In `OsmMapView`, historical polylines must be completely suppressed from rendering during recording. When starting a new trip, clear selected historical trip selections in `MainViewModel` and clear live share breadcrumb buffers (`resetSessionTrail()`).
 - **Rate-Limit Mutex**: Respect Nominatim & Overpass limits (minimum 1.5s mutex between boundary requests, exponential backoff on HTTP 429).
 
 ### D. Offline-First & Network Resilience
