@@ -174,6 +174,11 @@ class TripManager private constructor(private val context: Context) {
     private var lastLocation: Location? = null
     private var activePause: TripPause? = null
 
+    // Robust rest-stop cluster tracking (150s stationary dwell + 12m spatial cluster gate)
+    private var pauseAnchorLocation: Location? = null
+    private var pauseAnchorFirstStationaryTime: Long? = null
+    private var movingSinceInPauseTimestamp: Long? = null
+
     // Intentional Visit Filter state (Item 9: penetrate > 150m OR stay > 45s)
     private data class PendingPlaceCandidate(
         val place: PlaceInfo,
@@ -324,7 +329,13 @@ class TripManager private constructor(private val context: Context) {
         val started = trip.copy(id = id)
         _activeTrip.value = started
         autoStartFirstLocation = null
+        pauseAnchorLocation = null
+        pauseAnchorFirstStationaryTime = null
+        movingSinceInPauseTimestamp = null
         TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
+
+        // Clear live sharing trail buffer so new trip starts with a clean live path
+        LiveSharingManager.getInstance(context).resetSessionTrail()
 
         startLiveTrackingService()
     }
@@ -375,6 +386,9 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = null
         movingSinceTimestamp = null
         autoStartFirstLocation = null
+        pauseAnchorLocation = null
+        pauseAnchorFirstStationaryTime = null
+        movingSinceInPauseTimestamp = null
         pendingCandidate = null
 
         // Stop foreground service or transition to low-power standby
@@ -512,32 +526,108 @@ class TripManager private constructor(private val context: Context) {
 
         // ── Pause Detection & Tracking ─────────────────────────────────────────
         val updatedPauses = current.pauses.toMutableList()
-        if (isMoving) {
-            lastMovingTimestamp = now
+
+        // 1. Spatial cluster anchor maintenance:
+        // Check displacement from current pauseAnchorLocation
+        val distFromAnchor = if (pauseAnchorLocation != null) {
+            val res = FloatArray(1)
+            Location.distanceBetween(
+                pauseAnchorLocation!!.latitude,
+                pauseAnchorLocation!!.longitude,
+                lat,
+                lng,
+                res
+            )
+            res[0].toDouble()
+        } else {
+            0.0
+        }
+
+        if (isMoving || distFromAnchor > 12.0) {
+            // Speed indicates locomotion OR displacement broke out of the 12m stationary cluster
             if (activePause != null) {
-                val finalized = activePause!!.copy(
-                    endTime = now,
-                    durationMs = now - activePause!!.startTime
-                )
-                if (finalized.durationMs >= 45_000L) {
-                    updatedPauses.add(finalized)
-                    TelemetryLogger.logTrip("PAUSE_RECORDED", current.id, "Pause recorded: ${finalized.durationMs / 1000}s")
+                // Exit debounce: require sustained movement for >= 45s before finalizing the pause
+                if (movingSinceInPauseTimestamp == null) {
+                    movingSinceInPauseTimestamp = now
                 }
-                activePause = null
+                val movingDurationMs = now - movingSinceInPauseTimestamp!!
+                if (movingDurationMs >= 45_000L) {
+                    // Finalize the pause up to the start of resumed motion
+                    val pauseEndTime = movingSinceInPauseTimestamp!!
+                    val finalized = activePause!!.copy(
+                        endTime = pauseEndTime,
+                        durationMs = (pauseEndTime - activePause!!.startTime).coerceAtLeast(150_000L)
+                    )
+
+                    // Coalesce with previous pause if within 30m and 60s
+                    val prevPause = updatedPauses.lastOrNull()
+                    val canCoalesce = if (prevPause != null) {
+                        val prevEnd = prevPause.endTime ?: (prevPause.startTime + prevPause.durationMs)
+                        val gapMs = finalized.startTime - prevEnd
+                        val dPrev = FloatArray(1)
+                        Location.distanceBetween(
+                            prevPause.latitude,
+                            prevPause.longitude,
+                            finalized.latitude,
+                            finalized.longitude,
+                            dPrev
+                        )
+                        gapMs in 0L..60_000L && dPrev[0] <= 30.0f
+                    } else false
+
+                    if (canCoalesce && prevPause != null) {
+                        val merged = prevPause.copy(
+                            endTime = finalized.endTime,
+                            durationMs = ((finalized.endTime ?: now) - prevPause.startTime).coerceAtLeast(prevPause.durationMs + finalized.durationMs)
+                        )
+                        updatedPauses[updatedPauses.size - 1] = merged
+                        TelemetryLogger.logTrip("PAUSE_COALESCED", current.id, "Merged pause: ${merged.durationMs / 1000}s")
+                    } else {
+                        updatedPauses.add(finalized)
+                        TelemetryLogger.logTrip("PAUSE_RECORDED", current.id, "Pause recorded: ${finalized.durationMs / 1000}s")
+                    }
+
+                    activePause = null
+                    pauseAnchorLocation = null
+                    pauseAnchorFirstStationaryTime = null
+                    movingSinceInPauseTimestamp = null
+                    lastMovingTimestamp = now
+                }
+            } else {
+                // Not in active pause: reset anchor if moved outside 12m
+                if (distFromAnchor > 12.0) {
+                    pauseAnchorLocation = newLoc
+                    pauseAnchorFirstStationaryTime = now
+                }
+                movingSinceInPauseTimestamp = null
+                lastMovingTimestamp = now
             }
         } else {
-            if (lastMovingTimestamp == null) lastMovingTimestamp = now
-            val stationaryMs = now - lastMovingTimestamp!!
-            if (stationaryMs >= 90_000L) {
+            // Stationary: inside <= 12m cluster and speed < autoStopSpeedKmh
+            movingSinceInPauseTimestamp = null
+            if (pauseAnchorLocation == null) {
+                pauseAnchorLocation = newLoc
+                pauseAnchorFirstStationaryTime = now
+            }
+            if (lastMovingTimestamp == null) {
+                lastMovingTimestamp = now
+            }
+
+            val stationaryStartTime = pauseAnchorFirstStationaryTime ?: lastMovingTimestamp!!
+            val stationaryMs = now - stationaryStartTime
+
+            // Entry threshold: require sustained stationary dwell >= 150s (2.5 min)
+            if (stationaryMs >= 150_000L) {
                 if (activePause == null) {
                     activePause = TripPause(
-                        startTime = lastMovingTimestamp!!,
-                        latitude = lat,
-                        longitude = lng,
+                        startTime = stationaryStartTime,
+                        latitude = pauseAnchorLocation?.latitude ?: lat,
+                        longitude = pauseAnchorLocation?.longitude ?: lng,
                         durationMs = stationaryMs,
                         pointIndex = current.points.size,
                         distanceMeters = current.distanceMeters
                     )
+                    TelemetryLogger.logTrip("PAUSE_DISCOVERED", current.id, "Discovered pause after ${stationaryMs / 1000}s stationary dwell")
                 } else {
                     activePause = activePause!!.copy(durationMs = now - activePause!!.startTime)
                 }

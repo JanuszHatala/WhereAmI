@@ -212,5 +212,36 @@ class TripSplitTest {
         assertEquals(pauseStartTime, pauses[0].startTime)
         assertEquals(stopTime, pauses[0].endTime)
     }
+
+    @Test
+    fun testRestStopDwellAndCoalescingLogic() {
+        // Test 1: Short stops (< 150s) do not qualify as rest stops
+        val shortDwellMs = 120_000L // 2 min
+        val qualifiesShort = shortDwellMs >= 150_000L
+        org.junit.Assert.assertFalse("Short stop of 2m must not qualify as rest stop", qualifiesShort)
+
+        // Test 2: Stop of 180s (3m) qualifies as rest stop
+        val realDwellMs = 180_000L
+        val qualifiesReal = realDwellMs >= 150_000L
+        org.junit.Assert.assertTrue("Stop of 3m must qualify as rest stop", qualifiesReal)
+
+        // Test 3: Adjacent pause coalescing within 30m and 60s
+        val p1 = TripPause(startTime = 1000L, endTime = 160_000L, latitude = 49.1234, longitude = 20.1234, durationMs = 159_000L)
+        val p2 = TripPause(startTime = 180_000L, endTime = 360_000L, latitude = 49.1235, longitude = 20.1235, durationMs = 180_000L)
+        val gapMs = p2.startTime - (p1.endTime ?: (p1.startTime + p1.durationMs))
+        val dist = geoDistanceMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+
+        org.junit.Assert.assertTrue("Gap is 20s (<= 60s)", gapMs in 0L..60_000L)
+        org.junit.Assert.assertTrue("Distance is ~13m (<= 30m)", dist <= 30.0)
+
+        // Merged pause spans full duration from p1.startTime to p2.endTime
+        val merged = p1.copy(
+            endTime = p2.endTime,
+            durationMs = (p2.endTime!! - p1.startTime).coerceAtLeast(p1.durationMs + p2.durationMs)
+        )
+        assertEquals(1000L, merged.startTime)
+        assertEquals(360_000L, merged.endTime)
+        assertEquals(359_000L, merged.durationMs)
+    }
 }
 

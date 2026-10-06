@@ -241,3 +241,12 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 - **Context**: On Android 17 devices in deep Doze, cold GPS Time-To-First-Fix (TTFF) can require 20–45 seconds. A 35-second motion burst window occasionally expired before a valid fix was acquired, preventing auto-start from triggering when leaving from home after overnight rest.
 - **Decision**: Motion burst confirmation is extended to at least 60 seconds (`coerceAtLeast(60_000L)`). At burst start, `GpsFilterEngine.reset()` clears overnight static anchors, and an active raw location stream collector is maintained for the duration of the burst to prevent subscriber flow timeout.
 
+### ADR-06: 150s Stationary Dwell & 12m Spatial Cluster Pause Gating
+- **Context**: On slow hiking trails (e.g. climbing Kriváň in Slovakia), brief 30–60 second pauses for photo-taking or catching breath frequently triggered false rest stops, producing up to 48 phantom 1-minute pauses on a single trek.
+- **Decision**: In `TripManager.kt`, rest-stop creation enforces a 150-second (2.5 min) stationary dwell threshold anchored within a 12-meter spatial cluster gate (`distFromAnchor <= 12.0m`). Resumed motion requires a 45-second debounce window before finalizing the pause. Adjacent pauses within 30m and 60s are coalesced automatically to preserve true prolonged rest periods.
+
+### ADR-07: Invariant Active Trip Visual Isolation
+- **Context**: Stopping one activity profile (e.g. Hiking) and starting a new profile (e.g. Driving) caused the map UI and web live share to draw both the active track and previously recorded track together, creating confusion and showing merged routes.
+- **Decision**: The active recording state is an absolute boundary. In `OsmMapView.kt`, when `isRecording || trackPoints.isNotEmpty()`, historical polylines (`selectedTripPolylines`) and historical pauses are strictly suppressed from the render tree. In `MainViewModel.kt`, starting an active trip unconditionally clears `_selectedTripIds`. On the backend, starting a new trip invokes `/api/sessions/:id/reset-trail`, which archives past tracks into `pastSegments` and ensures the live broadcast only streams the active journey by default.
+
+

@@ -149,6 +149,19 @@ app.post('/api/sessions/:id', (req, res) => {
   res.json({ success: true, session });
 });
 
+app.post('/api/sessions/:id/reset-trail', (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (Array.isArray(session.points) && session.points.length > 0) {
+    if (!Array.isArray(session.pastSegments)) session.pastSegments = [];
+    session.pastSegments.push(session.points);
+  }
+  session.points = [];
+  session.pauses = [];
+  saveSessions();
+  res.json({ success: true, pastSegmentsCount: (session.pastSegments || []).length });
+});
+
 app.post('/api/sessions/:id/view-mode', (req, res) => {
   const session = sessions.get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
