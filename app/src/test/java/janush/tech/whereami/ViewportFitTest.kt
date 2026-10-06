@@ -109,12 +109,12 @@ class ViewportFitTest {
         val mapHeight = 2400
 
         // Normal mode portrait
-        val topCardDp = 260f
+        val topCardDp = 280f
         val statusBarDp = 36f
-        val bottomToolbarDp = 70f
+        val bottomToolbarDp = 76f
         val navBarDp = 24f
-        val rightControlsDp = 55f
-        val marginPx = (32f * density).toInt()
+        val rightControlsDp = 72f
+        val marginPx = (36f * density).toInt()
 
         val topInset = ((topCardDp + statusBarDp) * density).toInt() + marginPx
         val bottomInset = ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
@@ -124,8 +124,8 @@ class ViewportFitTest {
         val availWidth = mapWidth - leftInset - rightInset
         val availHeight = mapHeight - topInset - bottomInset
 
-        assertTrue("Available width ($availWidth) must leave room for map rendering", availWidth > 750)
-        assertTrue("Available height ($availHeight) must leave substantial space between cards", availHeight > 1000)
+        assertTrue("Available width ($availWidth) must leave room for map rendering", availWidth > 680)
+        assertTrue("Available height ($availHeight) must leave substantial space between cards", availHeight > 950)
 
         // Viewport center
         val screenCenterY = topInset + availHeight / 2.0

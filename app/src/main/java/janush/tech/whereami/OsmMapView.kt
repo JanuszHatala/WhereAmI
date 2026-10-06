@@ -245,11 +245,14 @@ fun fitPointsToUnobstructedViewport(
     val thetaRad = Math.toRadians(orientationDeg.toDouble())
 
     // 1. Calculate unobstructed viewport insets (in pixels)
-    val marginPx = (32f * density).toInt()
+    // Map controls: 42dp width + 12dp end padding = 54dp minimum.
+    // Adding 18dp safe boundary clearance = 72dp rightControls.
+    // Locality card: expanded card can reach ~280dp with title, chips and multi-line stats.
+    val marginPx = (36f * density).toInt()
     val (leftInset, rightInset, topInset, bottomInset) = if (isLandscape) {
         val leftCardPx = (mapWidth * 0.38f).toInt()
-        val rightControlsPx = (60f * density).toInt()
-        val bottomToolbarPx = (65f * density).toInt()
+        val rightControlsPx = (72f * density).toInt()
+        val bottomToolbarPx = (72f * density).toInt()
         listOf(
             leftCardPx + marginPx,
             rightControlsPx + marginPx,
@@ -257,11 +260,11 @@ fun fitPointsToUnobstructedViewport(
             bottomToolbarPx + marginPx
         )
     } else {
-        val topCardDp = if (isCompact) 150f else 260f
+        val topCardDp = if (isCompact) 160f else 280f
         val statusBarDp = 36f
-        val bottomToolbarDp = 70f
+        val bottomToolbarDp = 76f
         val navBarDp = 24f
-        val rightControlsDp = 55f
+        val rightControlsDp = 72f
         listOf(
             marginPx,
             (rightControlsDp * density).toInt() + marginPx,
