@@ -33,8 +33,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 19** | Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit | 3 | 3 | 0 | 0 |
 | **Round 20** | Field Testing (2026-10-03 Afternoon) Auto-Start FGS Bootstrap via BroadcastReceiver (PendingIntent path), eliminates Android 14+ startForegroundService DENIED for screen-off motion wake | 1 | 1 | 0 | 0 |
 | **Round 21** | Field Testing (2026-10-03 Late Afternoon) Restoring Persistent Standby Notification & Zero-CPU Foreground Service for TripMode.AUTO (Android 14+ Location FGS Protection) | 1 | 1 | 0 | 0 |
+| **Round 22** | Field Testing (2026-10-03 Evening) Activity Profile Configurable Auto-Start Speed Thresholds & Dynamic Settings | 1 | 1 | 0 | 0 |
+| **Round 23** | Field Testing (2026-10-05 Slovakia & Poland Trips) Stop/Continuation Separation, 150s Rest Pause Gating, Zero Past-Trip Visual Bleed, Viewport Optical Offset, International Road Canonicalization & Live Sharing Polish | 8 | 8 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **181** | **173** | **0** | **8** |
+| **Total** | | **190** | **182** | **0** | **8** |
 
 ---
 
@@ -402,7 +404,22 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 25. Features Inventory & Future Backlog
+## 25. Round 23: Field Testing (2026-10-05 Slovakia & Poland Trips) — Trip Continuity, Rest Pause Overhaul, Visual Isolation, Viewport Insets & International Road Canonicalization
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT23-01** | **International Road Numbering (Slovakia "DK" Prefix Bug)**: Slovakia roads incorrectly prefixed with "DK" (Droga Krajowa), which is strictly Polish. Fix: guard "DK"/"DW" behind country code `PL`, format Slovak roads (`I/18`, `II/537`), and fallback to clean numeric ref. | `RoadNameNormalizer.kt`, `LocationManager.kt`, `RoadNameNormalizerTest.kt` | **Completed** | Added `countryCode` support. Guarded `DK`/`DW` for `PL` only. Formatted Slovak first- and second-class roads. Verified by unit test `testInternationalAndSlovakRoadNormalization`. |
+| **FT23-02** | **Spurious 1–3 min Rest Stops on Hikes (48 False Stops)**: Hiking Kriváň recorded 48 false pauses due to micro-stops and pacing. Fix: require 150s (2.5 min) stationary dwell + 12m spatial cluster gate + 45s resume debounce. Coalesce adjacent pauses within 30m/60s. | `TripManager.kt`, `TripSplitTest.kt` | **Completed** | Implemented spatial cluster anchor and stationary dwell gating in `TripManager.kt`. Added unit test in `TripSplitTest.kt`. |
+| **FT23-03** | **Active Trip Visual Isolation (No Bleed of Finished Trips)**: Starting a new trip (e.g. driving after stopping hiking) showed the past finished trip merged on map and live share. Fix: clear `selectedTrips` on active trip start/non-null, draw ONLY active track on map and pause layer during recording, and clear live share buffer on new trip. | `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `LiveSharingManager.kt`, `server.js` | **Completed** | Invariant enforced across `OsmMapView`, `MainActivity`, and `MainViewModel`. Added `/api/sessions/:id/reset-trail` on backend. |
+| **FT23-04** | **Map "Fit to Screen" Viewport Calculation**: Fit to track was off-center and inconsistent when map was rotated or in compact/landscape modes. Fix: map screen rotation clockwise (`360 - orientation`), calculate unobscured viewport insets (`LocalityCardStyle` and bottom controls), and apply optical center shift. | `OsmMapView.kt` | **Completed** | Fixed rotation projection and screen bounds in `fitPointsToUnobstructedViewport`. |
+| **FT23-05** | **Administrative Hierarchy Subtitle Flickering & Language**: Subtitle flickered between English and native prefixes (`District of ...`, `Region of ...`). Fix: clean redundant prefixes and standardize country localization. | `LocationManager.kt` | **Completed** | Cleaned administrative prefixes and ensured stable localization in `resolvePlace`. |
+| **FT23-06** | **Live Sharing Web Viewer State & STOPPED Badge**: Ended session showed `STANDBY` instead of `STOPPED` and retained stale speeds/altitudes until refreshed. Fix: show `STOPPED` badge, blank out kinematic metrics when stopped, and add "Show Past Trips" dashed line toggle. | `index.html`, `server.js` | **Completed** | Updated live share web viewer to display `STOPPED`, hide live speeds when ended, and toggle past archived segments with a faint dashed polyline. |
+| **FT23-07** | **Gas Station Dwell Auto-Pause/Stop**: Vehicle dwell at gas station did not trigger auto-stop when stay was within timeout or auto-stop was disabled. Fix: robust 150s rest-pause cluster captures gas station dwell even if full trip auto-stop is not reached. | `TripManager.kt` | **Completed** | Gas station stops >= 2.5 min are accurately recorded as rest pauses without terminating the trip prematurely. |
+| **FT23-08** | **Full Regression & Quality Gate**: Zero compilation errors, zero test failures. | Entire project | **Completed** | Verified with `./gradlew testDebugUnitTest assembleDebug` (BUILD SUCCESSFUL, all unit tests pass). |
+
+---
+
+## 26. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
@@ -414,4 +431,6 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing). | Cache / Map | Future Sprint |
 | **BKL-07** | **Nearest Known Address Lookup**. When the current location doesn't yield a house number (common on rural roads, industrial zones, or GPS accuracy gaps), provide an optional "Find Nearest Address" button on the main UI. When tapped, performs a targeted Overpass/Nominatim nearby search within a ~100m radius and displays the closest numbered address result (e.g. "Klonowa 5 — 47m away") in a dismissable chip below the street name. The same lookup should be optionally triggered from the Live Sharing "current position" embed. Design notes: (a) must be on-demand only — never automatic, never on every fix; (b) result must show estimated distance to the address node; (c) must handle the case where no nearby address exists gracefully ("No address found nearby"); (d) respect Nominatim rate limits (min 1.5s between requests, use caching). | Geocoding / UI | Future Sprint |
 | **BKL-08** | **Directional Track Polyline Arrows / Chevrons**. Render periodic directional chevrons or moving direction arrows along active and historical trip polylines to clearly indicate travel direction on overlapping loops, out-and-back rides, and complex multi-pass routes. | Map / Visualization | Future Sprint |
+| **BKL-09** | **3D True Ground Distance & Vertical Kinematics**. Integrate vertical displacement $\Delta z$ with calibrated barometric/GNSS altimeter smoothing to compute true slope distance $\sqrt{\Delta x^2 + \Delta y^2 + \Delta z^2}$, real 3D velocity, cumulative elevation gain/loss, and grade percentage on mountain trails. | Kinematics / Analytics | Next Sprint |
+
 

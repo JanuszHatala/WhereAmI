@@ -396,6 +396,10 @@
     </div>
 
     <div class="actions-row">
+      <label id="pastTripsToggleLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; cursor: pointer; user-select: none;">
+        <input type="checkbox" id="pastTripsCheckbox" onchange="togglePastTrips(this.checked)" style="cursor: pointer; accent-color: #38bdf8;">
+        <span>Show Past Trips</span>
+      </label>
       <button class="gmaps-btn" id="gmapsBtn" onclick="openGoogleMaps()" title="Open current location in Google Maps">
         🗺️ Open in Google Maps
       </button>
@@ -464,11 +468,24 @@
     let userMarker = null;
     let hostAccuracyCircle = null;
     let trackPolyline = L.polyline([], { color: '#EF4444', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' }).addTo(map);
+    let pastSegmentsLayers = [];
+    let showPastTrips = false;
     let pauseMarkers = [];
     let autoFollow = true;
     let lastCoords = null;
     let currentSessionMeta = null;
     let lastHostState = { isOnline: true, isPaused: false, statusClass: 'online', bearing: null, accuracy: null };
+
+    function togglePastTrips(checked) {
+      showPastTrips = checked;
+      pastSegmentsLayers.forEach(l => {
+        if (showPastTrips) {
+          l.addTo(map);
+        } else {
+          map.removeLayer(l);
+        }
+      });
+    }
 
     map.on('dragstart', () => { 
       autoFollow = false; 
@@ -835,26 +852,26 @@
 
         if (!isSessionActive) {
           if (data.isStatic) {
-            statusClass = 'standby';
-            badge.textContent = 'STANDBY';
-            badge.style.background = 'rgba(59, 130, 246, 0.2)';
-            badge.style.borderColor = 'rgba(96, 165, 250, 0.4)';
-            badge.style.color = '#60a5fa';
-            alertBox.className = 'status-alert alert-paused';
-            alertBox.textContent = '📡 Personal Live Link • Host is not currently broadcasting. This page will update automatically when a new live session begins.';
-            alertBox.style.display = 'block';
-            if (!data.current) {
-              document.getElementById('placeName').textContent = 'Waiting for live broadcast...';
-              document.getElementById('countdownChip').style.display = 'none';
-            }
-          } else {
-            statusClass = 'ended';
-            badge.textContent = 'ENDED';
+            statusClass = 'stopped';
+            badge.textContent = 'STOPPED';
             badge.style.background = 'rgba(239, 68, 68, 0.2)';
             badge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
             badge.style.color = '#ef4444';
             alertBox.className = 'status-alert alert-ended';
-            alertBox.textContent = '📍 Live Sharing Ended. The host has completed this trip.';
+            alertBox.textContent = '⏹️ Live Sharing Stopped. Host has stopped broadcasting.';
+            alertBox.style.display = 'block';
+            if (!data.current) {
+              document.getElementById('placeName').textContent = 'Live broadcast stopped.';
+              document.getElementById('countdownChip').style.display = 'none';
+            }
+          } else {
+            statusClass = 'ended';
+            badge.textContent = 'STOPPED';
+            badge.style.background = 'rgba(239, 68, 68, 0.2)';
+            badge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+            badge.style.color = '#ef4444';
+            alertBox.className = 'status-alert alert-ended';
+            alertBox.textContent = '⏹️ Live Sharing Stopped. The host has completed this trip.';
             alertBox.style.display = 'block';
           }
         } else if (isSessionPaused) {
@@ -891,15 +908,15 @@
           lastCoords = [lat, lng];
           updateVisitorDistance();
 
-          document.getElementById('placeName').textContent = place || 'Active Track';
-          document.getElementById('speedVal').textContent = spd ? (spd.toFixed(1) + ' km/h') : '0.0 km/h';
-          document.getElementById('altVal').textContent = alt ? (Math.round(alt) + ' m ASL') : '--';
-          document.getElementById('batteryVal').textContent = battery >= 0 ? ('🔋' + battery + '%') : '--';
+          document.getElementById('placeName').textContent = place || (isSessionActive ? 'Active Track' : 'Stopped');
+          document.getElementById('speedVal').textContent = isSessionActive ? (spd ? (spd.toFixed(1) + ' km/h') : '0.0 km/h') : '--';
+          document.getElementById('altVal').textContent = isSessionActive ? (alt ? (Math.round(alt) + ' m ASL') : '--') : '--';
+          document.getElementById('batteryVal').textContent = isSessionActive ? (battery >= 0 ? ('🔋' + battery + '%') : '--') : '--';
           
           const accEl = document.getElementById('accuracyStat');
           const accVal = document.getElementById('accuracyVal');
           if (accEl && accVal) {
-            if (acc !== null && acc !== undefined && acc > 0) {
+            if (isSessionActive && acc !== null && acc !== undefined && acc > 0) {
               accVal.textContent = `±${Math.round(acc)} m`;
               accEl.style.display = 'inline-block';
             } else {
@@ -948,6 +965,36 @@
           trackPolyline.setLatLngs(latlngs);
         } else {
           trackPolyline.setLatLngs([]);
+        }
+
+        // Render past segments if any
+        const hasPast = Array.isArray(data.pastSegments) && data.pastSegments.length > 0;
+        const pastToggleLabel = document.getElementById('pastTripsToggleLabel');
+        if (pastToggleLabel) {
+          pastToggleLabel.style.display = hasPast ? 'inline-flex' : 'none';
+        }
+        if (hasPast) {
+          // Recreate past polylines if segment count changed
+          if (pastSegmentsLayers.length !== data.pastSegments.length) {
+            pastSegmentsLayers.forEach(l => map.removeLayer(l));
+            pastSegmentsLayers = [];
+            data.pastSegments.forEach(seg => {
+              const segLatLngs = seg.map(p => [p.lat, p.lng]);
+              const poly = L.polyline(segLatLngs, {
+                color: '#64748b',
+                weight: 3.5,
+                opacity: 0.55,
+                dashArray: '6, 8',
+                lineJoin: 'round',
+                lineCap: 'round'
+              });
+              if (showPastTrips) poly.addTo(map);
+              pastSegmentsLayers.push(poly);
+            });
+          }
+        } else {
+          pastSegmentsLayers.forEach(l => map.removeLayer(l));
+          pastSegmentsLayers = [];
         }
 
         renderPauses(data.pauses);

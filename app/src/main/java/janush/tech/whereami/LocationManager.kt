@@ -247,16 +247,26 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 return parts.joinToString(" • ")
             } else {
-                // International formatting
+                // International formatting: clean generic prefixes (e.g. "District of ", "Okres ", "Region of ", "Kraj ") to maintain stable presentation
+                val cleanInternationalPowiat = cleanPowiat
+                    ?.replace("District of ", "", ignoreCase = true)
+                    ?.replace("Okres ", "", ignoreCase = true)
+                    ?.trim()
+                val cleanInternationalVoivodeship = voivodeship
+                    .replace("Region of ", "", ignoreCase = true)
+                    .replace("Kraj ", "", ignoreCase = true)
+                    .replace("kraj", "", ignoreCase = true)
+                    .trim()
+
                 val parts = mutableListOf<String>()
                 if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
                     parts.add(cleanGmina)
                 }
-                if (!cleanPowiat.isNullOrEmpty() && !cleanPowiat.equals(city, ignoreCase = true) && !cleanPowiat.equals(cleanGmina, ignoreCase = true)) {
-                    parts.add(cleanPowiat)
+                if (!cleanInternationalPowiat.isNullOrEmpty() && !cleanInternationalPowiat.equals(city, ignoreCase = true) && !cleanInternationalPowiat.equals(cleanGmina, ignoreCase = true)) {
+                    parts.add(cleanInternationalPowiat)
                 }
-                if (voivodeship.isNotEmpty() && !voivodeship.equals("Unknown Region", ignoreCase = true)) {
-                    parts.add(voivodeship)
+                if (cleanInternationalVoivodeship.isNotEmpty() && !cleanInternationalVoivodeship.equals("Unknown Region", ignoreCase = true)) {
+                    parts.add(cleanInternationalVoivodeship)
                 }
                 return parts.joinToString(" • ")
             }
@@ -1258,17 +1268,17 @@ class LocationManager private constructor(private val context: Context) {
                 !osrmStreet.isNullOrBlank() -> {
                     val validHouse = if (osmMatchesTrajectory) (osm?.houseNumber ?: address.subThoroughfare) else null
                     val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
-                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, validHouse, includeHouseNumber = allowHouse)
+                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                 }
                 // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
                 !osm?.street.isNullOrBlank() -> {
                     if (trajectoryStreet != null && !osmMatchesTrajectory && !RoadNameNormalizer.isMajorRoad(osm.street)) {
                         // Preserve trajectory street against momentary perpendicular cross-street hits
-                        RoadNameNormalizer.normalize(trajectoryStreet, osm.roadRef, null, includeHouseNumber = false)
+                        RoadNameNormalizer.normalize(trajectoryStreet, osm.roadRef, null, includeHouseNumber = false, countryCode = countryCode)
                     } else {
                         val validHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: address.subThoroughfare) else null
                         val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
-                        RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse)
+                        RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                     }
                 }
                 // 3. Road ref enrichment if thoroughfare provided
@@ -1276,14 +1286,14 @@ class LocationManager private constructor(private val context: Context) {
                     val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else (address.thoroughfare ?: osm.street)
                     val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
                     val allowHouse = shouldShowHouse && validHouse != null && thoroughfareMatchesTrajectory
-                    RoadNameNormalizer.normalize(targetStreet, osm.roadRef, validHouse, includeHouseNumber = allowHouse)
+                    RoadNameNormalizer.normalize(targetStreet, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                 }
                 // 4. Fallback to Android native Geocoder thoroughfare
                 else -> {
                     val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else address.thoroughfare
                     val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
                     val allowHouse = shouldShowHouse && validHouse != null && thoroughfareMatchesTrajectory
-                    RoadNameNormalizer.normalize(targetStreet, null, validHouse, includeHouseNumber = allowHouse)
+                    RoadNameNormalizer.normalize(targetStreet, null, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                 }
             }
 
@@ -1315,13 +1325,20 @@ class LocationManager private constructor(private val context: Context) {
                 canonicalizePolishVoivodeship(rawVoivodeship)
             } else rawVoivodeship
 
+            val resolvedCountry = when (cacheKey) {
+                "pl" -> if (basePlace.countryCode == "PL" || basePlace.country.equals("Poland", ignoreCase = true)) "Polska" else (osm?.country ?: basePlace.country)
+                "en" -> if (basePlace.countryCode == "PL") "Poland" else (osm?.country ?: basePlace.country)
+                else -> osm?.country ?: basePlace.country
+            }
+
             return basePlace.copy(
                 city = effectiveCity,
                 street = canonicalStreet,
                 roadRef = osm?.roadRef ?: basePlace.roadRef,
                 gmina = effectiveGmina,
                 powiat = effectivePowiat,
-                voivodeship = effectiveVoivodeship
+                voivodeship = effectiveVoivodeship,
+                country = resolvedCountry
             )
         }
 
@@ -1346,19 +1363,23 @@ class LocationManager private constructor(private val context: Context) {
                         ?: if (lastGood?.city.equals(city, ignoreCase = true)) lastGood?.gmina else null
                 }
 
+                val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
+                val cc = osm.countryCode?.uppercase() ?: countryCode
                 val osmNorm = osm.street?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
                     val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
-                    RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = allowH)
+                    RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = allowH, countryCode = cc)
                 }
                 val addrNorm = address?.thoroughfare?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it)
                     val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
-                    RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = allowH)
+                    RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = allowH, countryCode = cc)
                 }
-                val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
-                val cc = osm.countryCode?.uppercase() ?: countryCode
-                val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                val resolvedCountry = when (cacheKey) {
+                    "pl" -> if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                    "en" -> if (cc == "PL") "Poland" else rawCountry
+                    else -> rawCountry
+                }
                 val rawV = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region"
                 val effectiveVoivodeship = if (cc == "PL" || resolvedCountry.equals("Polska", ignoreCase = true) || resolvedCountry.equals("Poland", ignoreCase = true)) {
                     canonicalizePolishVoivodeship(rawV)
@@ -1434,9 +1455,10 @@ class LocationManager private constructor(private val context: Context) {
                 val rawRoad = str("road") ?: str("street") ?: str("pedestrian") ?: str("footway")
                 val houseNum = str("house_number")
                 val rawRef = str("ref")
+                val osmCountryCode = str("country_code")?.uppercase()
 
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
-                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true)
+                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true, countryCode = osmCountryCode)
 
                 val rawMunicipality = str("municipality")
                     ?: str("commune")
@@ -1561,12 +1583,12 @@ class LocationManager private constructor(private val context: Context) {
         val cityName = locality ?: subLocality ?: subAdminArea ?: "--"
         val thoroughfare = this.thoroughfare
         val houseNum = this.subThoroughfare
-        val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true)
+        val cc = this.countryCode?.uppercase() ?: countryCode
+        val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true, countryCode = cc)
         val gminaName = subLocality
         val powiatName = subAdminArea
         val stateName = adminArea ?: "Unknown Region"
         val rawCountry = this.countryName ?: "Unknown Country"
-        val cc = this.countryCode?.uppercase() ?: countryCode
         val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
         return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, resolvedCountry, cc)
     }

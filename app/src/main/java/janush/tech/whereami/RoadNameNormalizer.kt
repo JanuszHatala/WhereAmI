@@ -92,9 +92,13 @@ object RoadNameNormalizer {
         rawStreet: String?,
         rawRef: String? = null,
         houseNumber: String? = null,
-        includeHouseNumber: Boolean = false
+        includeHouseNumber: Boolean = false,
+        countryCode: String? = "PL"
     ): String? {
         if (rawStreet.isNullOrBlank() && rawRef.isNullOrBlank()) return null
+
+        val isPoland = countryCode.isNullOrBlank() || countryCode.equals("PL", ignoreCase = true)
+        val isSlovakia = countryCode?.equals("SK", ignoreCase = true) == true
 
         var road = rawStreet?.trim() ?: ""
         val ref = rawRef?.trim() ?: ""
@@ -104,22 +108,22 @@ object RoadNameNormalizer {
         var normalizedHighway: String? = null
 
         when {
-            DK_REGEX.matches(road) -> {
+            isPoland && DK_REGEX.matches(road) -> {
                 val match = DK_REGEX.find(road)!!
                 normalizedHighway = "DK${match.groupValues[1]}"
                 isRoadSelfHighway = true
             }
-            DK_SHORT_REGEX.matches(road) -> {
+            isPoland && DK_SHORT_REGEX.matches(road) -> {
                 val match = DK_SHORT_REGEX.find(road)!!
                 normalizedHighway = "DK${match.groupValues[1]}"
                 isRoadSelfHighway = true
             }
-            DW_REGEX.matches(road) -> {
+            isPoland && DW_REGEX.matches(road) -> {
                 val match = DW_REGEX.find(road)!!
                 normalizedHighway = "DW${match.groupValues[1]}"
                 isRoadSelfHighway = true
             }
-            DW_SHORT_REGEX.matches(road) -> {
+            isPoland && DW_SHORT_REGEX.matches(road) -> {
                 val match = DW_SHORT_REGEX.find(road)!!
                 normalizedHighway = "DW${match.groupValues[1]}"
                 isRoadSelfHighway = true
@@ -145,13 +149,31 @@ object RoadNameNormalizer {
                 isRoadSelfHighway = true
             }
             road.matches(Regex("""^\d{1,2}$""")) -> {
-                // 1-2 digits in Poland designate DK (e.g. "28" -> DK28, "47" -> DK47)
-                normalizedHighway = "DK$road"
+                if (isPoland) {
+                    // 1-2 digits in Poland designate DK (e.g. "28" -> DK28, "47" -> DK47)
+                    normalizedHighway = "DK$road"
+                } else if (isSlovakia) {
+                    // 1-2 digits in Slovakia designate 1st class road (Cesta I. triedy, e.g. "18" -> "I/18" or "18")
+                    normalizedHighway = "I/$road"
+                } else {
+                    normalizedHighway = road
+                }
                 isRoadSelfHighway = true
             }
             road.matches(Regex("""^\d{3}$""")) -> {
-                // 3 digits in Poland designate DW (e.g. "946" -> DW946)
-                normalizedHighway = "DW$road"
+                if (isPoland) {
+                    // 3 digits in Poland designate DW (e.g. "946" -> DW946)
+                    normalizedHighway = "DW$road"
+                } else if (isSlovakia) {
+                    // 3 digits in Slovakia designate 2nd class road (Cesta II. triedy, e.g. "537" -> "II/537")
+                    normalizedHighway = "II/$road"
+                } else {
+                    normalizedHighway = road
+                }
+                isRoadSelfHighway = true
+            }
+            road.matches(Regex("""^(?:I|II|III)/\d+$""")) -> {
+                normalizedHighway = road
                 isRoadSelfHighway = true
             }
         }
@@ -159,11 +181,11 @@ object RoadNameNormalizer {
         // If road was not a highway name, check if rawRef is a highway designation (e.g. ref="52", "DK 52", "A4")
         if (normalizedHighway == null && ref.isNotEmpty()) {
             when {
-                ref.matches(Regex("""(?i)^DK\s*(\d+)$""")) -> {
+                isPoland && ref.matches(Regex("""(?i)^DK\s*(\d+)$""")) -> {
                     val num = Regex("""(?i)^DK\s*(\d+)$""").find(ref)!!.groupValues[1]
                     normalizedHighway = "DK$num"
                 }
-                ref.matches(Regex("""(?i)^DW\s*(\d+)$""")) -> {
+                isPoland && ref.matches(Regex("""(?i)^DW\s*(\d+)$""")) -> {
                     val num = Regex("""(?i)^DW\s*(\d+)$""").find(ref)!!.groupValues[1]
                     normalizedHighway = "DW$num"
                 }
@@ -175,13 +197,34 @@ object RoadNameNormalizer {
                     val num = Regex("""(?i)^S\s*(\d+)$""").find(ref)!!.groupValues[1]
                     normalizedHighway = "S$num"
                 }
+                ref.matches(Regex("""^(?:I|II|III)/\d+$""")) -> {
+                    normalizedHighway = ref
+                }
                 ref.matches(Regex("""^\d{1,2}$""")) -> {
-                    // 1-2 digits in Poland designate DK
-                    normalizedHighway = "DK$ref"
+                    if (isPoland) {
+                        normalizedHighway = "DK$ref"
+                    } else if (isSlovakia) {
+                        normalizedHighway = "I/$ref"
+                    } else {
+                        normalizedHighway = ref
+                    }
                 }
                 ref.matches(Regex("""^\d{3}$""")) -> {
-                    // 3 digits in Poland designate DW
-                    normalizedHighway = "DW$ref"
+                    if (isPoland) {
+                        normalizedHighway = "DW$ref"
+                    } else if (isSlovakia) {
+                        normalizedHighway = "II/$ref"
+                    } else {
+                        normalizedHighway = ref
+                    }
+                }
+                !isPoland && ref.matches(Regex("""(?i)^(DK|DW)\s*(\d+)$""")) -> {
+                    // If OSM has a spurious DK/DW tag outside Poland, strip the Polish prefix
+                    val match = Regex("""(?i)^(?:DK|DW)\s*(\d+)$""").find(ref)!!
+                    val num = match.groupValues[1]
+                    normalizedHighway = if (isSlovakia) {
+                        if (num.length <= 2) "I/$num" else "II/$num"
+                    } else num
                 }
             }
         }
