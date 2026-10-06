@@ -163,6 +163,14 @@ To maintain production stability on `master`, the following Git workflow is **st
 - Update `docs/FEATURES_INVENTORY.md` as features evolve or retire.
 - Update `docs/ARCHITECTURE.md` when architectural decisions (ADRs) are introduced.
 
+### 4. Mandatory Version Increment Protocol
+With **every development session, feature branch, bug fix, or round of changes** where code is modified and prepared for build/installation:
+- **`versionCode` MUST be incremented by 1** in `app/build.gradle.kts` (e.g. `37` -> `38`). Android package manager requires monotonically increasing `versionCode` to permit on-device in-place APK upgrades (`adb install -r`).
+- **`versionName` MUST be incremented** according to SemVer principles:
+  - **Patch increment** (`1.3.0` -> `1.3.1`): For bug fixes, stabilization, kinematic tweaks, and telemetry calibrations.
+  - **Minor increment** (`1.3.0` -> `1.4.0`): For new features, UX redesigns, profile additions, and layout restructuring.
+- **Always update both** before running the pre-completion build gate (`./gradlew testDebugUnitTest assembleDebug`) so the generated APK and the on-device "About / Settings" footer (`Where Am I v<versionName> (build <versionCode>)`) reflect the exact iteration being tested.
+
 ---
 
 ## 5. Deployment Safeguards & Communication Rules
