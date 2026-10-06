@@ -900,13 +900,21 @@ fun OsmMapView(
     }
 
     // Render Selected Past Trips with Distinct Colors (Phase 2)
-    LaunchedEffect(selectedTrips) {
+    // Invariant: When an active trip is actively recording or trackPoints is present,
+    // NEVER render past trips on the map.
+    LaunchedEffect(selectedTrips, isRecording, trackPoints.size) {
         val map = mapView ?: return@LaunchedEffect
         // Remove existing past trip polylines
         selectedTripPolylines.forEach { map.overlays.remove(it) }
+        selectedTripPolylines = emptyList()
+
+        if (isRecording || trackPoints.isNotEmpty() || selectedTrips.isEmpty()) {
+            map.invalidate()
+            return@LaunchedEffect
+        }
 
         val colors = listOf(
-            "#EF4444", // Vivid Red (matches active recording track)
+            "#EF4444", // Vivid Red
             "#3B82F6", // Blue
             "#10B981", // Emerald Green
             "#F59E0B", // Amber
@@ -999,18 +1007,16 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Collect all visible points (active recording track + selected past trips)
-    // If user is not recording, only fit selected past trips so current location does not distort the view
+    // Collect all visible points (active recording track OR selected past trips)
+    // Invariant: When recording, ONLY fit active track points. Do not include past trips.
     val allShownPoints = remember(trackPoints, selectedTrips, isRecording) {
         val pts = mutableListOf<GeoPoint>()
-        if (isRecording) {
+        if (isRecording || trackPoints.isNotEmpty()) {
             pts.addAll(trackPoints)
-        }
-        selectedTrips.forEach { trip ->
-            pts.addAll(trip.points)
-        }
-        if (pts.isEmpty() && trackPoints.isNotEmpty()) {
-            pts.addAll(trackPoints)
+        } else {
+            selectedTrips.forEach { trip ->
+                pts.addAll(trip.points)
+            }
         }
         pts
     }

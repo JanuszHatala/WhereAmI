@@ -281,10 +281,15 @@ fun LocationScreen(viewModel: MainViewModel) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
     }
 
+    // Invariant: When an active trip is recording, show ONLY active trip pauses.
+    // Never show past trip pauses alongside an ongoing recording.
     val allDisplayPauses = remember(activeTrip, selectedTripsList) {
         val list = mutableListOf<TripPause>()
-        activeTrip?.pauses?.let { list.addAll(it) }
-        selectedTripsList.forEach { list.addAll(it.pauses) }
+        if (activeTrip != null) {
+            list.addAll(activeTrip!!.pauses)
+        } else {
+            selectedTripsList.forEach { list.addAll(it.pauses) }
+        }
         list
     }
 
