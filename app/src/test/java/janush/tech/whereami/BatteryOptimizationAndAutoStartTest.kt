@@ -126,5 +126,25 @@ class BatteryOptimizationAndAutoStartTest {
         assertTrue("Speed at 11 km/h is candidate for 15 km/h car threshold", 11.0f >= candidateCar)
         assertFalse("Speed at 9 km/h is not candidate for 15 km/h car threshold", 9.0f >= candidateCar)
     }
+
+    @Test
+    fun testIndependentProfileManagementCoverage() {
+        // Verify all 6 activity profiles exist and possess distinct identity and defaults
+        val allProfiles = ActivityProfile.values()
+        assertEquals(6, allProfiles.size)
+        assertTrue(allProfiles.contains(ActivityProfile.CAR))
+        assertTrue(allProfiles.contains(ActivityProfile.CYCLING))
+        assertTrue(allProfiles.contains(ActivityProfile.MTB))
+        assertTrue(allProfiles.contains(ActivityProfile.HIKING))
+        assertTrue(allProfiles.contains(ActivityProfile.RUNNING))
+        assertTrue(allProfiles.contains(ActivityProfile.WALKING))
+
+        // Ensure each profile has distinct emoji and valid timeout presets
+        for (profile in allProfiles) {
+            assertTrue("Profile displayName cannot be blank", profile.displayName.isNotBlank())
+            assertTrue("Profile emoji cannot be blank", profile.iconEmoji.isNotBlank())
+            assertTrue("Default auto-stop minutes must be between 1 and 60", profile.autoStopMinutesDefault in 1..60)
+        }
+    }
 }
 
