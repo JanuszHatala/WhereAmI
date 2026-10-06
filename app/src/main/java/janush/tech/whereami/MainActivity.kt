@@ -2697,8 +2697,10 @@ fun LocationScreen(viewModel: MainViewModel) {
 
     // ── 5. Quick Settings & Options Dialog ─────────────────────────────────────
     if (showSettingsSheet) {
+        val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = { showSettingsSheet = false },
+            sheetState = settingsSheetState,
             containerColor = Color(0xFF0F172A),
             tonalElevation = 8.dp
         ) {
@@ -2739,86 +2741,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Locality Card Style (Normal vs Compact) - Promoted to Top
-                Text(
-                    text = "Locality Card Layout",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                Text(
-                    text = "Normal provides maximum readability; Compact minimizes card height on map",
-                    fontSize = 12.sp,
-                    color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    listOf(
-                        LocalityCardStyle.NORMAL to "Normal",
-                        LocalityCardStyle.COMPACT to "Compact"
-                    ).forEach { (style, label) ->
-                        val isSelected = localityCardStyle == style
-                        Button(
-                            onClick = { viewModel.setLocalityCardStyle(style) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
-                                contentColor = Color.White
-                            ),
-                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(label, fontSize = 14.sp, color = Color.White)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Compact Street Names Toggle
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1E293B))
-                        .clickable { viewModel.toggleCompactStreetNames() }
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Compact Street Names",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Abbreviate honorifics and first names (e.g. ul. J. Lompy). Always enabled in Android Auto.",
-                            fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Switch(
-                        checked = compactStreetNames,
-                        onCheckedChange = { viewModel.toggleCompactStreetNames() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF0284C7),
-                            uncheckedThumbColor = Color(0xFF94A3B8),
-                            uncheckedTrackColor = Color(0xFF334155)
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Activity Profiles Hub: Manage configurations independently of active profile
+                // Activity Profiles Hub: Manage configurations independently of active profile - Promoted to Top
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2922,6 +2845,85 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                         }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Locality Card Style (Normal vs Compact)
+                Text(
+                    text = "Locality Card Layout",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+                Text(
+                    text = "Normal provides maximum readability; Compact minimizes card height on map",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    listOf(
+                        LocalityCardStyle.NORMAL to "Normal",
+                        LocalityCardStyle.COMPACT to "Compact"
+                    ).forEach { (style, label) ->
+                        val isSelected = localityCardStyle == style
+                        Button(
+                            onClick = { viewModel.setLocalityCardStyle(style) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                contentColor = Color.White
+                            ),
+                            border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF475569)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(label, fontSize = 14.sp, color = Color.White)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Compact Street Names Toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .clickable { viewModel.toggleCompactStreetNames() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Compact Street Names",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Abbreviate honorifics and first names (e.g. ul. J. Lompy). Always enabled in Android Auto.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = compactStreetNames,
+                        onCheckedChange = { viewModel.toggleCompactStreetNames() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF0284C7),
+                            uncheckedThumbColor = Color(0xFF94A3B8),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -5908,9 +5910,11 @@ private fun ProfileConfigSheet(
     var autoStopDropdownExpanded by remember { mutableStateOf(false) }
 
     val autoResumeOnMotion by viewModel.autoResumeOnMotion.collectAsState()
+    val configSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = configSheetState,
         containerColor = Color(0xFF0F172A),
         tonalElevation = 8.dp
     ) {
@@ -7948,46 +7952,6 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Dedicated Visited Places Badge: Positioned at right margin under top controls ──
-                if (activeTrip != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 2.dp, bottom = 2.dp),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            onClick = onShowActiveTripRoute,
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0x330284C7),
-                            border = BorderStroke(1.dp, Color(0x5538BDF8))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                EmojiText(emoji = "🚩", fontSize = 12.sp)
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "${activeTrip.placesVisited.size}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8),
-                                    softWrap = false,
-                                    style = TextStyle(
-                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                        lineHeightStyle = LineHeightStyle(
-                                            alignment = LineHeightStyle.Alignment.Center,
-                                            trim = LineHeightStyle.Trim.Both
-                                        ),
-                                        lineHeight = 12.sp
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
 
                 // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width, multi-line wrap)
                 Box(
@@ -8115,6 +8079,40 @@ private fun LocalityCard(
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Visited Places Badge (Left of Activity Profile)
+                    if (activeTrip != null) {
+                        Surface(
+                            onClick = onShowActiveTripRoute,
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0x330284C7),
+                            border = BorderStroke(1.dp, Color(0x5538BDF8))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                EmojiText(emoji = "🚩", fontSize = 13.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "${activeTrip.placesVisited.size}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
                     // Compact Dropdown Trigger Pill
                     Box {
                         Row(
@@ -8434,14 +8432,14 @@ private fun MainBottomControlsCard(
                         imageVector = Icons.Default.Layers,
                         contentDescription = "Map Settings",
                         tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(x = (-2).dp, y = (-2).dp)
-                        .size(19.dp)
+                        .offset(x = (-3).dp, y = (-3).dp)
+                        .size(21.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF0F172A))
                         .border(1.2.dp, Color(0xFF334155), CircleShape),
@@ -8451,7 +8449,7 @@ private fun MainBottomControlsCard(
                         imageVector = Icons.Default.Settings,
                         contentDescription = null,
                         tint = Color(0xFFFBBF24),
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
             }
@@ -8469,7 +8467,7 @@ private fun MainBottomControlsCard(
                     imageVector = Icons.Default.Settings,
                     contentDescription = "Settings",
                     tint = Color(0xFFFBBF24),
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
