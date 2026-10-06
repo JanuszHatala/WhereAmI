@@ -407,6 +407,18 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: "App Settings" panel had no close button at all. Live Share, Instant Share, Active Trip Route dialogs used bare unstyled `IconButton` with `Color.LightGray` icons that were hard to see on dark backgrounds.
   - *Resolution*: Applied the dark circular close button pattern uniformly across all panels.
 
+### UI-09: Locality Card Visited Places Decoupling & Multi-Line Hierarchy Wrapping
+- **Core Value**: Unlocks full card width for the primary locality name (wrapping up to 3 lines) by decoupling the `🚩 N` visited places counter badge and anchoring it to the upper-right corner directly under the top panel action controls. In compact mode, the badge is gracefully relocated to the bottom row metric pill.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `MainActivity.kt` (`LocalityCard`): Moved `activeTrip.placesVisited` badge from the centered title row to an independent right-aligned pill container (`Color(0x330284C7)` with border `0x5538BDF8`) positioned below Row 1 controls. `primaryCity` was updated with `maxLines = 3, softWrap = true, overflow = TextOverflow.Ellipsis`.
+
+### UI-10: Independent Activity Profiles Hub & ProfileConfigSheet
+- **Core Value**: Decouples fast activity profile switching from deep profile parameters editing (matching Garmin/Strava/Komoot design standards). Users can customize auto-start speed thresholds, auto-stop timeouts, and recording modes for any profile without switching the currently active workout mode.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `MainActivity.kt` (`AppSettings`, `ProfileConfigSheet`): Replaced the single active profile dropdown in App Settings with a dedicated "Activity Profiles & Settings" hub listing all 6 profiles (`🚗 Driving`, `🚴 Cycling`, `🚵 MTB`, `🥾 Hiking`, `🏃 Running`, `🚶 Walking`) with status summaries. Tapping any profile opens a standalone `ProfileConfigSheet` modal to tweak parameters independently, with an optional "Set as Current Recording Profile" action.
+
 ---
 
 ## 8. Category 7: Android System Integration & Power Architecture

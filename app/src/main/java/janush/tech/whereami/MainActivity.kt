@@ -297,6 +297,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var sheetTab by remember { mutableStateOf(0) } // 0: Trip History, 1: Saved Places, 2: Stats
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showMapSettingsDialog by remember { mutableStateOf(false) }
+    var profileToConfigure by remember { mutableStateOf<ActivityProfile?>(null) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var tripToRename by remember { mutableStateOf<TripRecord?>(null) }
@@ -345,6 +346,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val dismissAllDialogs = {
         showTripsSheet = false
         showSettingsSheet = false
+        profileToConfigure = null
         showSearchDialog = false
         tripToRename = null
         tripToDelete = null
@@ -2816,706 +2818,110 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Activity Profile Selector (Driving, Cycling, Running, Walking)
-                Text(
-                    text = "Activity Profile",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                var settingsProfileMenuExpanded by remember { mutableStateOf(false) }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                ) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { settingsProfileMenuExpanded = true },
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                EmojiText(emoji = activityProfile.iconEmoji, fontSize = 15.sp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = activityProfile.displayName,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    style = TextStyle(
-                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                        lineHeightStyle = LineHeightStyle(
-                                            alignment = LineHeightStyle.Alignment.Center,
-                                            trim = LineHeightStyle.Trim.Both
-                                        ),
-                                        lineHeight = 15.sp
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                val currentSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
-                                val speedFormatted = if (currentSpeed % 1f == 0f) {
-                                    ">${currentSpeed.toInt()}"
-                                } else {
-                                    ">%.1f".format(currentSpeed)
-                                }
-                                Text(
-                                    text = "(auto: $speedFormatted km/h)",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Select Profile",
-                                tint = Color(0xFF38BDF8)
-                            )
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded = settingsProfileMenuExpanded,
-                        onDismissRequest = { settingsProfileMenuExpanded = false },
-                        modifier = Modifier
-                            .fillMaxWidth(0.9f)
-                            .background(Color(0xFF0F172A))
-                    ) {
-                        ActivityProfile.values().forEach { profile ->
-                            val isSelected = activityProfile == profile
-                            val profileSpeed = viewModel.getAutoStartSpeedForProfile(profile)
-                            val profileSpeedFormatted = if (profileSpeed % 1f == 0f) {
-                                ">${profileSpeed.toInt()}"
-                            } else {
-                                ">%.1f".format(profileSpeed)
-                            }
-                            DropdownMenuItem(
-                                text = {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            EmojiText(emoji = profile.iconEmoji, fontSize = 15.sp)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = profile.displayName,
-                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                fontSize = 15.sp,
-                                                style = TextStyle(
-                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                    lineHeightStyle = LineHeightStyle(
-                                                        alignment = LineHeightStyle.Alignment.Center,
-                                                        trim = LineHeightStyle.Trim.Both
-                                                    ),
-                                                    lineHeight = 15.sp
-                                                )
-                                            )
-                                        }
-                                        Text(
-                                            text = "Auto-start: $profileSpeedFormatted km/h",
-                                            color = Color(0xFF64748B),
-                                            fontSize = 12.sp
-                                        )
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.setActivityProfile(profile)
-                                    settingsProfileMenuExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Trip Recording Mode (Saved Per Activity Profile)
-                val profileTripMode = remember(activityProfile, tripMode) {
-                    viewModel.getTripModeForProfile(activityProfile)
-                }
-                var currentTripMode by remember(activityProfile, tripMode) { mutableStateOf(profileTripMode) }
-
-                Text(
-                    text = "Trip Recording Mode (${activityProfile.displayName})",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
+                // Activity Profiles Hub: Manage configurations independently of active profile
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val isManual = currentTripMode == TripMode.MANUAL
-                    Button(
-                        onClick = {
-                            currentTripMode = TripMode.MANUAL
-                            viewModel.setTripModeForProfile(activityProfile, TripMode.MANUAL)
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isManual) Color(0xFF0284C7) else Color(0xFF1E293B),
-                            contentColor = Color.White
-                        ),
-                        border = if (isManual) null else BorderStroke(1.dp, Color(0xFF475569)),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Manual",
-                            color = Color.White,
-                            fontWeight = if (isManual) FontWeight.Bold else FontWeight.Medium
-                        )
-                    }
-                    val isAuto = currentTripMode == TripMode.AUTO
-                    Button(
-                        onClick = {
-                            currentTripMode = TripMode.AUTO
-                            viewModel.setTripModeForProfile(activityProfile, TripMode.AUTO)
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isAuto) Color(0xFF0284C7) else Color(0xFF1E293B),
-                            contentColor = Color.White
-                        ),
-                        border = if (isAuto) null else BorderStroke(1.dp, Color(0xFF475569)),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Automatic",
-                            color = Color.White,
-                            fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Medium
-                        )
-                    }
-                }
-
-                if (currentTripMode == TripMode.AUTO) {
-                    val currentAutoStartSpeed = remember(activityProfile) { viewModel.getAutoStartSpeedForProfile(activityProfile) }
-                    var autoStartSpeed by remember(activityProfile) { mutableStateOf(currentAutoStartSpeed) }
-                    var showCustomSpeedDialog by remember { mutableStateOf(false) }
-                    var customSpeedInput by remember { mutableStateOf("") }
-                    var autoStartSpeedDropdownExpanded by remember { mutableStateOf(false) }
-
-                    val speedPresetOptions = remember(activityProfile) {
-                        when (activityProfile) {
-                            ActivityProfile.CAR -> listOf(5.0f to "5 km/h", 10.0f to "10 km/h (Default)", 15.0f to "15 km/h", 20.0f to "20 km/h", 25.0f to "25 km/h", 30.0f to "30 km/h")
-                            ActivityProfile.CYCLING -> listOf(3.0f to "3 km/h", 5.0f to "5 km/h", 7.0f to "7 km/h (Default)", 10.0f to "10 km/h", 12.0f to "12 km/h", 15.0f to "15 km/h")
-                            ActivityProfile.MTB -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 6.0f to "6 km/h (Default)", 8.0f to "8 km/h", 10.0f to "10 km/h", 12.0f to "12 km/h")
-                            ActivityProfile.RUNNING -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 5.0f to "5 km/h (Default)", 6.0f to "6 km/h", 8.0f to "8 km/h", 10.0f to "10 km/h")
-                            ActivityProfile.HIKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
-                            ActivityProfile.WALKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
-                        }
-                    }
-                    val isCustomSpeed = speedPresetOptions.none { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }
-
-                    val currentAutoStartSec = remember(activityProfile) { viewModel.getAutoStartSecondsForProfile(activityProfile) }
-                    var autoStartSec by remember(activityProfile) { mutableStateOf(currentAutoStartSec) }
-                    var showCustomAutoStartDialog by remember { mutableStateOf(false) }
-                    var customAutoStartInput by remember { mutableStateOf("") }
-
-                    val currentAutoStopMin = remember(activityProfile) { viewModel.getAutoStopMinutesForProfile(activityProfile) }
-                    var autoStopMin by remember(activityProfile) { mutableStateOf(currentAutoStopMin) }
-
-                    val speedDisplay = if (autoStartSpeed % 1f == 0f) ">${autoStartSpeed.toInt()} km/h" else ">%.1f km/h".format(autoStartSpeed)
-                    val durDisplay = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60}m" else "${autoStartSec}s"
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        color = Color(0xFF0F172A),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("⚡", fontSize = 14.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Auto-start active: starts recording when ${activityProfile.displayName} speed exceeds $speedDisplay for $durDisplay (or moves >25m). Rest pauses detected after 45s stationary, auto-stops after ${autoStopMin}m.",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8),
-                                lineHeight = 16.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Per-Profile Auto-Start Speed Threshold
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Auto-Start Speed (${activityProfile.displayName})",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                            modifier = Modifier.weight(1f).padding(end = 12.dp)
-                        )
-
-                        Box {
-                            val selectedSpeedLabel = speedPresetOptions.firstOrNull { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }?.second
-                                ?: (if (autoStartSpeed % 1f == 0f) "Custom: ${autoStartSpeed.toInt()} km/h" else "Custom: %.1f km/h".format(autoStartSpeed))
-                            Surface(
-                                onClick = { autoStartSpeedDropdownExpanded = true },
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color(0xFF1E293B),
-                                border = BorderStroke(1.dp, Color(0xFF475569)),
-                                modifier = Modifier.width(135.dp).height(40.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = selectedSpeedLabel,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White,
-                                        maxLines = 1
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = "Select Auto-Start Speed",
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = autoStartSpeedDropdownExpanded,
-                                onDismissRequest = { autoStartSpeedDropdownExpanded = false },
-                                modifier = Modifier.background(Color(0xFF0F172A))
-                            ) {
-                                speedPresetOptions.forEach { (spd, label) ->
-                                    val isMatch = kotlin.math.abs(spd - autoStartSpeed) < 0.05f
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = label,
-                                                color = if (isMatch) Color(0xFF38BDF8) else Color.White,
-                                                fontWeight = if (isMatch) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            autoStartSpeed = spd
-                                            viewModel.setAutoStartSpeedForProfile(activityProfile, spd)
-                                            autoStartSpeedDropdownExpanded = false
-                                        }
-                                    )
-                                }
-                                HorizontalDivider(color = Color(0xFF334155))
-                                DropdownMenuItem(
-                                    text = {
-                                        val customLabel = if (isCustomSpeed) {
-                                            if (autoStartSpeed % 1f == 0f) "Custom (${autoStartSpeed.toInt()} km/h)..." else "Custom (%.1f km/h)...".format(autoStartSpeed)
-                                        } else "Custom..."
-                                        Text(
-                                            text = customLabel,
-                                            color = if (isCustomSpeed) Color(0xFF38BDF8) else Color.White,
-                                            fontWeight = if (isCustomSpeed) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        autoStartSpeedDropdownExpanded = false
-                                        customSpeedInput = if (autoStartSpeed % 1f == 0f) autoStartSpeed.toInt().toString() else "%.1f".format(autoStartSpeed)
-                                        showCustomSpeedDialog = true
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    if (showCustomSpeedDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showCustomSpeedDialog = false },
-                            title = { Text("Custom Auto-Start Speed", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                            text = {
-                                Column {
-                                    Text("Enter minimum speed (1.0 to 150.0 km/h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    OutlinedTextField(
-                                        value = customSpeedInput,
-                                        onValueChange = { input ->
-                                            if (input.count { it == '.' || it == ',' } <= 1 && input.all { it.isDigit() || it == '.' || it == ',' } && input.length <= 6) {
-                                                customSpeedInput = input
-                                            }
-                                        },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedTextColor = Color.White,
-                                            unfocusedTextColor = Color.White,
-                                            focusedBorderColor = Color(0xFF38BDF8),
-                                            unfocusedBorderColor = Color(0xFF64748B)
-                                        ),
-                                        suffix = { Text("km/h", color = Color(0xFF94A3B8)) }
-                                    )
-                                }
-                            },
-                            confirmButton = {
-                                Button(
-                                    onClick = {
-                                        val normalized = customSpeedInput.replace(',', '.')
-                                        val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: activityProfile.autoStartSpeedKmh
-                                        autoStartSpeed = speedVal
-                                        viewModel.setAutoStartSpeedForProfile(activityProfile, speedVal)
-                                        showCustomSpeedDialog = false
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
-                                ) {
-                                    Text("Set")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showCustomSpeedDialog = false }) {
-                                    Text("Cancel", color = Color.White)
-                                }
-                            },
-                            containerColor = Color(0xFF0F172A)
-                        )
-                    }
-
-                    // Per-Profile Auto-Start Delay
-                    val autoStartPresetOptions = listOf(10 to "10s", 15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m")
-                    val isCustomAutoStart = autoStartPresetOptions.none { it.first == autoStartSec }
-                    var autoStartDropdownExpanded by remember { mutableStateOf(false) }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Auto-Start Delay (${activityProfile.displayName})",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                            modifier = Modifier.weight(1f).padding(end = 12.dp)
-                        )
-
-                        Box {
-                            val selectedLabel = autoStartPresetOptions.firstOrNull { it.first == autoStartSec }?.second
-                                ?: (if (autoStartSec >= 60 && autoStartSec % 60 == 0) "Custom: ${autoStartSec / 60}m" else "Custom: ${autoStartSec}s")
-                            Surface(
-                                onClick = { autoStartDropdownExpanded = true },
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color(0xFF1E293B),
-                                border = BorderStroke(1.dp, Color(0xFF475569)),
-                                modifier = Modifier.width(115.dp).height(40.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = selectedLabel,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White,
-                                        maxLines = 1
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = "Select Auto-Start Delay",
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = autoStartDropdownExpanded,
-                                onDismissRequest = { autoStartDropdownExpanded = false },
-                                modifier = Modifier.background(Color(0xFF0F172A))
-                            ) {
-                                autoStartPresetOptions.forEach { (sec, label) ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = label,
-                                                color = if (autoStartSec == sec) Color(0xFF38BDF8) else Color.White,
-                                                fontWeight = if (autoStartSec == sec) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            autoStartSec = sec
-                                            viewModel.setAutoStartSecondsForProfile(activityProfile, sec)
-                                            autoStartDropdownExpanded = false
-                                        }
-                                    )
-                                }
-                                HorizontalDivider(color = Color(0xFF334155))
-                                DropdownMenuItem(
-                                    text = {
-                                        val customLabel = if (isCustomAutoStart) "Custom (${if (autoStartSec >= 60) "${autoStartSec / 60}m" else "${autoStartSec}s"})..." else "Custom..."
-                                        Text(
-                                            text = customLabel,
-                                            color = if (isCustomAutoStart) Color(0xFF38BDF8) else Color.White,
-                                            fontWeight = if (isCustomAutoStart) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        autoStartDropdownExpanded = false
-                                        customAutoStartInput = if (autoStartSec >= 60) (autoStartSec / 60).toString() else "1"
-                                        showCustomAutoStartDialog = true
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    val autoResumeOnMotion by viewModel.autoResumeOnMotion.collectAsState()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text(
-                                text = "Auto-resume on motion when paused",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Automatically continues recording if motion detected while paused",
-                                fontSize = 11.sp,
-                                color = Color(0xFF94A3B8)
-                            )
-                        }
-                        Switch(
-                            checked = autoResumeOnMotion,
-                            onCheckedChange = { viewModel.setAutoResumeOnMotion(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = Color(0xFF0284C7),
-                                uncheckedThumbColor = Color(0xFF94A3B8),
-                                uncheckedTrackColor = Color(0xFF334155)
-                            )
-                        )
-                    }
-
-                    if (showCustomAutoStartDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showCustomAutoStartDialog = false },
-                            title = { Text("Custom Auto-Start Delay", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                            text = {
-                                Column {
-                                    Text("Enter movement delay in minutes (1 to 1440 min / max 24h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    OutlinedTextField(
-                                        value = customAutoStartInput,
-                                        onValueChange = { input ->
-                                            if (input.all { it.isDigit() } && input.length <= 5) {
-                                                customAutoStartInput = input
-                                            }
-                                        },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedTextColor = Color.White,
-                                            unfocusedTextColor = Color.White,
-                                            focusedBorderColor = Color(0xFF38BDF8),
-                                            unfocusedBorderColor = Color(0xFF64748B)
-                                        ),
-                                        suffix = { Text("min", color = Color(0xFF94A3B8)) }
-                                    )
-                                }
-                            },
-                            confirmButton = {
-                                Button(
-                                    onClick = {
-                                        val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
-                                        val secVal = minVal * 60
-                                        autoStartSec = secVal
-                                        viewModel.setAutoStartSecondsForProfile(activityProfile, secVal)
-                                        showCustomAutoStartDialog = false
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
-                                ) {
-                                    Text("Set")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showCustomAutoStartDialog = false }) {
-                                    Text("Cancel", color = Color.White)
-                                }
-                            },
-                            containerColor = Color(0xFF0F172A)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Auto-Stop Stationary Timeout (Per Profile)
-                val currentAutoStopMin = remember(activityProfile) { viewModel.getAutoStopMinutesForProfile(activityProfile) }
-                var autoStopMin by remember(activityProfile) { mutableStateOf(currentAutoStopMin) }
-                var showCustomAutoStopDialog by remember { mutableStateOf(false) }
-                var customAutoStopInput by remember { mutableStateOf("") }
-                val autoStopPresetOptions = listOf(1 to "1m", 3 to "3m", 5 to "5m", 10 to "10m", 15 to "15m", 20 to "20m")
-                val isCustomAutoStop = autoStopPresetOptions.none { it.first == autoStopMin }
-
-                var autoStopDropdownExpanded by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Auto-Stop Stationary Timeout (${activityProfile.displayName})",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp)
-                    )
-
-                    Box {
-                        val selectedLabel = autoStopPresetOptions.firstOrNull { it.first == autoStopMin }?.second
-                            ?: "Custom: ${autoStopMin}m"
-                        Surface(
-                            onClick = { autoStopDropdownExpanded = true },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E293B),
-                            border = BorderStroke(1.dp, Color(0xFF475569)),
-                            modifier = Modifier.width(115.dp).height(40.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = selectedLabel,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    maxLines = 1
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = "Select Auto-Stop Timeout",
-                                    tint = Color(0xFF10B981),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-
-                        DropdownMenu(
-                            expanded = autoStopDropdownExpanded,
-                            onDismissRequest = { autoStopDropdownExpanded = false },
-                            modifier = Modifier.background(Color(0xFF0F172A))
-                        ) {
-                            autoStopPresetOptions.forEach { (mins, label) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = label,
-                                            color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
-                                            fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        autoStopMin = mins
-                                        viewModel.setAutoStopMinutesForProfile(activityProfile, mins)
-                                        autoStopDropdownExpanded = false
-                                    }
-                                )
-                            }
-                            HorizontalDivider(color = Color(0xFF334155))
-                            DropdownMenuItem(
-                                text = {
-                                    val customLabel = if (isCustomAutoStop) "Custom (${autoStopMin}m)..." else "Custom..."
-                                    Text(
-                                        text = customLabel,
-                                        color = if (isCustomAutoStop) Color(0xFF10B981) else Color.White,
-                                        fontWeight = if (isCustomAutoStop) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                onClick = {
-                                    autoStopDropdownExpanded = false
-                                    customAutoStopInput = autoStopMin.toString()
-                                    showCustomAutoStopDialog = true
-                                }
-                            )
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Activity Profiles & Settings",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Configure auto-start, timeouts, and recording modes for each activity independently",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
                     }
                 }
 
-                if (showCustomAutoStopDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showCustomAutoStopDialog = false },
-                        title = { Text("Custom Auto-Stop Timeout", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                        text = {
-                            Column {
-                                Text("Enter stationary timeout in minutes (1 to 1440 min / max 24h) for ${activityProfile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
-                                Spacer(modifier = Modifier.height(10.dp))
-                                OutlinedTextField(
-                                    value = customAutoStopInput,
-                                    onValueChange = { input ->
-                                        if (input.all { it.isDigit() } && input.length <= 5) {
-                                            customAutoStopInput = input
-                                        }
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        focusedBorderColor = Color(0xFF38BDF8),
-                                        unfocusedBorderColor = Color(0xFF64748B)
-                                    ),
-                                    suffix = { Text("min", color = Color(0xFF94A3B8)) }
-                                )
-                            }
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
-                                    autoStopMin = minVal
-                                    viewModel.setAutoStopMinutesForProfile(activityProfile, minVal)
-                                    showCustomAutoStopDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ActivityProfile.values().forEach { profile ->
+                        val isCurrentActive = activityProfile == profile
+                        val profileMode = viewModel.getTripModeForProfile(profile)
+                        val profileSpeed = viewModel.getAutoStartSpeedForProfile(profile)
+                        val profileTimeout = viewModel.getAutoStopMinutesForProfile(profile)
+
+                        val speedFormatted = if (profileSpeed % 1f == 0f) "${profileSpeed.toInt()} km/h" else "%.1f km/h".format(profileSpeed)
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isCurrentActive) Color(0xFF1E293B) else Color(0xFF161F30),
+                            border = BorderStroke(1.dp, if (isCurrentActive) Color(0xFF0284C7) else Color(0xFF334155)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { profileToConfigure = profile }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    EmojiText(emoji = profile.iconEmoji, fontSize = 20.sp)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = profile.displayName,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                            if (isCurrentActive) {
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFF0284C7)
+                                                ) {
+                                                    Text(
+                                                        text = "ACTIVE",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = if (profileMode == TripMode.AUTO) {
+                                                "Auto-start: >$speedFormatted • Stop: ${profileTimeout}m"
+                                            } else {
+                                                "Manual recording • Stop: ${profileTimeout}m"
+                                            },
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF94A3B8)
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Configure Profile",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showCustomAutoStopDialog = false }) {
-                                Text("Cancel", color = Color.White)
-                            }
-                        },
-                        containerColor = Color(0xFF0F172A)
-                    )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -6018,6 +5424,18 @@ fun LocationScreen(viewModel: MainViewModel) {
         )
     }
 
+    if (profileToConfigure != null) {
+        ProfileConfigSheet(
+            profile = profileToConfigure!!,
+            isCurrentActive = activityProfile == profileToConfigure,
+            viewModel = viewModel,
+            onSetAsActive = {
+                viewModel.setActivityProfile(profileToConfigure!!)
+            },
+            onDismiss = { profileToConfigure = null }
+        )
+    }
+
     if (showHeatMapSettingsDialog) {
         HeatMapSettingsDialog(
             filterState = heatMapFilterState,
@@ -6439,6 +5857,680 @@ fun LocationShareDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileConfigSheet(
+    profile: ActivityProfile,
+    isCurrentActive: Boolean,
+    viewModel: MainViewModel,
+    onSetAsActive: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val initialTripMode = remember(profile) { viewModel.getTripModeForProfile(profile) }
+    var currentTripMode by remember(profile) { mutableStateOf(initialTripMode) }
+
+    val initialAutoStartSpeed = remember(profile) { viewModel.getAutoStartSpeedForProfile(profile) }
+    var autoStartSpeed by remember(profile) { mutableStateOf(initialAutoStartSpeed) }
+    var showCustomSpeedDialog by remember { mutableStateOf(false) }
+    var customSpeedInput by remember { mutableStateOf("") }
+    var autoStartSpeedDropdownExpanded by remember { mutableStateOf(false) }
+
+    val speedPresetOptions = remember(profile) {
+        when (profile) {
+            ActivityProfile.CAR -> listOf(5.0f to "5 km/h", 10.0f to "10 km/h (Default)", 15.0f to "15 km/h", 20.0f to "20 km/h", 25.0f to "25 km/h", 30.0f to "30 km/h")
+            ActivityProfile.CYCLING -> listOf(3.0f to "3 km/h", 5.0f to "5 km/h", 7.0f to "7 km/h (Default)", 10.0f to "10 km/h", 12.0f to "12 km/h", 15.0f to "15 km/h")
+            ActivityProfile.MTB -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 6.0f to "6 km/h (Default)", 8.0f to "8 km/h", 10.0f to "10 km/h", 12.0f to "12 km/h")
+            ActivityProfile.RUNNING -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 5.0f to "5 km/h (Default)", 6.0f to "6 km/h", 8.0f to "8 km/h", 10.0f to "10 km/h")
+            ActivityProfile.HIKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
+            ActivityProfile.WALKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
+        }
+    }
+    val isCustomSpeed = speedPresetOptions.none { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }
+
+    val initialAutoStartSec = remember(profile) { viewModel.getAutoStartSecondsForProfile(profile) }
+    var autoStartSec by remember(profile) { mutableStateOf(initialAutoStartSec) }
+    var showCustomAutoStartDialog by remember { mutableStateOf(false) }
+    var customAutoStartInput by remember { mutableStateOf("") }
+    val autoStartPresetOptions = listOf(10 to "10s", 15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m")
+    val isCustomAutoStart = autoStartPresetOptions.none { it.first == autoStartSec }
+    var autoStartDropdownExpanded by remember { mutableStateOf(false) }
+
+    val initialAutoStopMin = remember(profile) { viewModel.getAutoStopMinutesForProfile(profile) }
+    var autoStopMin by remember(profile) { mutableStateOf(initialAutoStopMin) }
+    var showCustomAutoStopDialog by remember { mutableStateOf(false) }
+    var customAutoStopInput by remember { mutableStateOf("") }
+    val autoStopPresetOptions = listOf(1 to "1m", 3 to "3m", 5 to "5m", 10 to "10m", 15 to "15m", 20 to "20m")
+    val isCustomAutoStop = autoStopPresetOptions.none { it.first == autoStopMin }
+    var autoStopDropdownExpanded by remember { mutableStateOf(false) }
+
+    val autoResumeOnMotion by viewModel.autoResumeOnMotion.collectAsState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F172A),
+        tonalElevation = 8.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 640.dp)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .navigationBarsPadding()
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    EmojiText(emoji = profile.iconEmoji, fontSize = 24.sp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${profile.displayName} Profile",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            if (isCurrentActive) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFF0284C7)
+                                ) {
+                                    Text(
+                                        text = "ACTIVE",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "Independent activity configuration",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1E293B))
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            if (!isCurrentActive) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        onSetAsActive()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    EmojiText(emoji = profile.iconEmoji, fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Set as Current Recording Profile", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Trip Recording Mode (Manual vs Auto)
+            Text(
+                text = "Recording Mode",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                val isManual = currentTripMode == TripMode.MANUAL
+                Button(
+                    onClick = {
+                        currentTripMode = TripMode.MANUAL
+                        viewModel.setTripModeForProfile(profile, TripMode.MANUAL)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isManual) Color(0xFF0284C7) else Color(0xFF1E293B),
+                        contentColor = Color.White
+                    ),
+                    border = if (isManual) null else BorderStroke(1.dp, Color(0xFF475569)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = "Manual",
+                        color = Color.White,
+                        fontWeight = if (isManual) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+                val isAuto = currentTripMode == TripMode.AUTO
+                Button(
+                    onClick = {
+                        currentTripMode = TripMode.AUTO
+                        viewModel.setTripModeForProfile(profile, TripMode.AUTO)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isAuto) Color(0xFF0284C7) else Color(0xFF1E293B),
+                        contentColor = Color.White
+                    ),
+                    border = if (isAuto) null else BorderStroke(1.dp, Color(0xFF475569)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = "Automatic",
+                        color = Color.White,
+                        fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+
+            if (currentTripMode == TripMode.AUTO) {
+                val speedDisplay = if (autoStartSpeed % 1f == 0f) ">${autoStartSpeed.toInt()} km/h" else ">%.1f km/h".format(autoStartSpeed)
+                val durDisplay = if (autoStartSec >= 60 && autoStartSec % 60 == 0) "${autoStartSec / 60}m" else "${autoStartSec}s"
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    color = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("⚡", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Auto-start: starts recording when speed exceeds $speedDisplay for $durDisplay (or moves >25m). Rest pauses detected after 45s stationary, auto-stops after ${autoStopMin}m.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8),
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Auto-Start Speed Threshold
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Auto-Start Speed",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp)
+                    )
+
+                    Box {
+                        val selectedSpeedLabel = speedPresetOptions.firstOrNull { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }?.second
+                            ?: (if (autoStartSpeed % 1f == 0f) "Custom: ${autoStartSpeed.toInt()} km/h" else "Custom: %.1f km/h".format(autoStartSpeed))
+                        Surface(
+                            onClick = { autoStartSpeedDropdownExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF1E293B),
+                            border = BorderStroke(1.dp, Color(0xFF475569)),
+                            modifier = Modifier.width(135.dp).height(40.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedSpeedLabel,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Auto-Start Speed",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = autoStartSpeedDropdownExpanded,
+                            onDismissRequest = { autoStartSpeedDropdownExpanded = false },
+                            modifier = Modifier.background(Color(0xFF0F172A))
+                        ) {
+                            speedPresetOptions.forEach { (spd, label) ->
+                                val isMatch = kotlin.math.abs(spd - autoStartSpeed) < 0.05f
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            color = if (isMatch) Color(0xFF38BDF8) else Color.White,
+                                            fontWeight = if (isMatch) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        autoStartSpeed = spd
+                                        viewModel.setAutoStartSpeedForProfile(profile, spd)
+                                        autoStartSpeedDropdownExpanded = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = Color(0xFF334155))
+                            DropdownMenuItem(
+                                text = {
+                                    val customLabel = if (isCustomSpeed) {
+                                        if (autoStartSpeed % 1f == 0f) "Custom (${autoStartSpeed.toInt()} km/h)..." else "Custom (%.1f km/h)...".format(autoStartSpeed)
+                                    } else "Custom..."
+                                    Text(
+                                        text = customLabel,
+                                        color = if (isCustomSpeed) Color(0xFF38BDF8) else Color.White,
+                                        fontWeight = if (isCustomSpeed) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                onClick = {
+                                    autoStartSpeedDropdownExpanded = false
+                                    customSpeedInput = if (autoStartSpeed % 1f == 0f) autoStartSpeed.toInt().toString() else "%.1f".format(autoStartSpeed)
+                                    showCustomSpeedDialog = true
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (showCustomSpeedDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showCustomSpeedDialog = false },
+                        title = { Text("Custom Auto-Start Speed", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                Text("Enter minimum speed (1.0 to 150.0 km/h) for ${profile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = customSpeedInput,
+                                    onValueChange = { input ->
+                                        if (input.count { it == '.' || it == ',' } <= 1 && input.all { it.isDigit() || it == '.' || it == ',' } && input.length <= 6) {
+                                            customSpeedInput = input
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = Color(0xFF38BDF8),
+                                        unfocusedBorderColor = Color(0xFF64748B)
+                                    ),
+                                    suffix = { Text("km/h", color = Color(0xFF94A3B8)) }
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val normalized = customSpeedInput.replace(',', '.')
+                                    val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: profile.autoStartSpeedKmh
+                                    autoStartSpeed = speedVal
+                                    viewModel.setAutoStartSpeedForProfile(profile, speedVal)
+                                    showCustomSpeedDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                            ) {
+                                Text("Set")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showCustomSpeedDialog = false }) {
+                                Text("Cancel", color = Color.White)
+                            }
+                        },
+                        containerColor = Color(0xFF0F172A)
+                    )
+                }
+
+                // Auto-Start Delay
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Auto-Start Delay",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp)
+                    )
+
+                    Box {
+                        val selectedLabel = autoStartPresetOptions.firstOrNull { it.first == autoStartSec }?.second
+                            ?: (if (autoStartSec >= 60 && autoStartSec % 60 == 0) "Custom: ${autoStartSec / 60}m" else "Custom: ${autoStartSec}s")
+                        Surface(
+                            onClick = { autoStartDropdownExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF1E293B),
+                            border = BorderStroke(1.dp, Color(0xFF475569)),
+                            modifier = Modifier.width(115.dp).height(40.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedLabel,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Auto-Start Delay",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = autoStartDropdownExpanded,
+                            onDismissRequest = { autoStartDropdownExpanded = false },
+                            modifier = Modifier.background(Color(0xFF0F172A))
+                        ) {
+                            autoStartPresetOptions.forEach { (sec, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            color = if (autoStartSec == sec) Color(0xFF38BDF8) else Color.White,
+                                            fontWeight = if (autoStartSec == sec) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        autoStartSec = sec
+                                        viewModel.setAutoStartSecondsForProfile(profile, sec)
+                                        autoStartDropdownExpanded = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = Color(0xFF334155))
+                            DropdownMenuItem(
+                                text = {
+                                    val customLabel = if (isCustomAutoStart) "Custom (${if (autoStartSec >= 60) "${autoStartSec / 60}m" else "${autoStartSec}s"})..." else "Custom..."
+                                    Text(
+                                        text = customLabel,
+                                        color = if (isCustomAutoStart) Color(0xFF38BDF8) else Color.White,
+                                        fontWeight = if (isCustomAutoStart) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                onClick = {
+                                    autoStartDropdownExpanded = false
+                                    customAutoStartInput = if (autoStartSec >= 60) (autoStartSec / 60).toString() else "1"
+                                    showCustomAutoStartDialog = true
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (showCustomAutoStartDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showCustomAutoStartDialog = false },
+                        title = { Text("Custom Auto-Start Delay", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                Text("Enter movement delay in minutes (1 to 1440 min / max 24h) for ${profile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = customAutoStartInput,
+                                    onValueChange = { input ->
+                                        if (input.all { it.isDigit() } && input.length <= 5) {
+                                            customAutoStartInput = input
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = Color(0xFF38BDF8),
+                                        unfocusedBorderColor = Color(0xFF64748B)
+                                    ),
+                                    suffix = { Text("min", color = Color(0xFF94A3B8)) }
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
+                                    val secVal = minVal * 60
+                                    autoStartSec = secVal
+                                    viewModel.setAutoStartSecondsForProfile(profile, secVal)
+                                    showCustomAutoStartDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                            ) {
+                                Text("Set")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showCustomAutoStartDialog = false }) {
+                                Text("Cancel", color = Color.White)
+                            }
+                        },
+                        containerColor = Color(0xFF0F172A)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = "Auto-resume on motion when paused",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Automatically continues recording if motion detected while paused",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                    Switch(
+                        checked = autoResumeOnMotion,
+                        onCheckedChange = { viewModel.setAutoResumeOnMotion(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF0284C7),
+                            uncheckedThumbColor = Color(0xFF94A3B8),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Auto-Stop Stationary Timeout
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Auto-Stop Timeout",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f).padding(end = 12.dp)
+                )
+
+                Box {
+                    val selectedLabel = autoStopPresetOptions.firstOrNull { it.first == autoStopMin }?.second
+                        ?: "Custom: ${autoStopMin}m"
+                    Surface(
+                        onClick = { autoStopDropdownExpanded = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF1E293B),
+                        border = BorderStroke(1.dp, Color(0xFF475569)),
+                        modifier = Modifier.width(115.dp).height(40.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = selectedLabel,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Select Auto-Stop Timeout",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = autoStopDropdownExpanded,
+                        onDismissRequest = { autoStopDropdownExpanded = false },
+                        modifier = Modifier.background(Color(0xFF0F172A))
+                    ) {
+                        autoStopPresetOptions.forEach { (mins, label) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = label,
+                                        color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
+                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                onClick = {
+                                    autoStopMin = mins
+                                    viewModel.setAutoStopMinutesForProfile(profile, mins)
+                                    autoStopDropdownExpanded = false
+                                }
+                            )
+                        }
+                        HorizontalDivider(color = Color(0xFF334155))
+                        DropdownMenuItem(
+                            text = {
+                                val customLabel = if (isCustomAutoStop) "Custom (${autoStopMin}m)..." else "Custom..."
+                                Text(
+                                    text = customLabel,
+                                    color = if (isCustomAutoStop) Color(0xFF10B981) else Color.White,
+                                    fontWeight = if (isCustomAutoStop) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                autoStopDropdownExpanded = false
+                                customAutoStopInput = autoStopMin.toString()
+                                showCustomAutoStopDialog = true
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (showCustomAutoStopDialog) {
+                AlertDialog(
+                    onDismissRequest = { showCustomAutoStopDialog = false },
+                    title = { Text("Custom Auto-Stop Timeout", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column {
+                            Text("Enter stationary timeout in minutes (1 to 1440 min / max 24h) for ${profile.displayName}:", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = customAutoStopInput,
+                                onValueChange = { input ->
+                                    if (input.all { it.isDigit() } && input.length <= 5) {
+                                        customAutoStopInput = input
+                                    }
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = Color(0xFF38BDF8),
+                                    unfocusedBorderColor = Color(0xFF64748B)
+                                ),
+                                suffix = { Text("min", color = Color(0xFF94A3B8)) }
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
+                                autoStopMin = minVal
+                                viewModel.setAutoStopMinutesForProfile(profile, minVal)
+                                showCustomAutoStopDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                        ) {
+                            Text("Set")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCustomAutoStopDialog = false }) {
+                            Text("Cancel", color = Color.White)
+                        }
+                    },
+                    containerColor = Color(0xFF0F172A)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -7283,48 +7375,21 @@ private fun LocalityCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(enabled = activeTrip != null) {
+                                onShowActiveTripRoute()
+                            },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .clickable(enabled = activeTrip != null) {
-                                    onShowActiveTripRoute()
-                                },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = displayCity,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (activeTrip != null) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    EmojiText(emoji = "🚩", fontSize = 11.sp)
-                                    Spacer(modifier = Modifier.width(2.dp))
-                                    Text(
-                                        text = "${activeTrip.placesVisited.size}",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8),
-                                        softWrap = false,
-                                        style = TextStyle(
-                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                            lineHeightStyle = LineHeightStyle(
-                                                alignment = LineHeightStyle.Alignment.Center,
-                                                trim = LineHeightStyle.Trim.Both
-                                            ),
-                                            lineHeight = 11.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
+                        Text(
+                            text = displayCity,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
 
                     // Compact Action Icons: Google Maps, Live Sharing, Saved Place, Expand
@@ -7522,7 +7587,39 @@ private fun LocalityCard(
                         modifier = Modifier.weight(1f)
                     )
 
-                    Spacer(modifier = Modifier.width(6.dp))
+                    // Visited Places Badge (Compact Mode)
+                    if (activeTrip != null) {
+                        Surface(
+                            onClick = onShowActiveTripRoute,
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0x330284C7),
+                            border = BorderStroke(1.dp, Color(0x5538BDF8))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                EmojiText(emoji = "🚩", fontSize = 11.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "${activeTrip.placesVisited.size}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
 
                     // Profile & Speed Pill
                     Box {
@@ -7851,15 +7948,55 @@ private fun LocalityCard(
                     }
                 }
 
-                // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
+                // ── Dedicated Visited Places Badge: Positioned at right margin under top controls ──
+                if (activeTrip != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            onClick = onShowActiveTripRoute,
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0x330284C7),
+                            border = BorderStroke(1.dp, Color(0x5538BDF8))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                EmojiText(emoji = "🚩", fontSize = 12.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "${activeTrip.placesVisited.size}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width, multi-line wrap)
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable(enabled = activeTrip != null) {
                             onShowActiveTripRoute()
-                        }
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = primaryCity,
@@ -7867,36 +8004,18 @@ private fun LocalityCard(
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         textAlign = TextAlign.Center,
+                        maxLines = 3,
+                        softWrap = true,
+                        overflow = TextOverflow.Ellipsis,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 30.sp
+                            lineHeight = 32.sp
                         )
                     )
-                    if (activeTrip != null) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            EmojiText(emoji = "🚩", fontSize = 14.sp)
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "${activeTrip.placesVisited.size}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 14.sp
-                                )
-                            )
-                        }
-                    }
                 }
 
                 if (!secondaryCity.isNullOrEmpty() && !secondaryCity.equals(primaryCity, ignoreCase = true)) {
@@ -8321,18 +8440,18 @@ private fun MainBottomControlsCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(x = (-1).dp, y = (-1).dp)
-                        .size(16.dp)
+                        .offset(x = (-2).dp, y = (-2).dp)
+                        .size(19.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF0F172A))
-                        .border(1.dp, Color(0xFF334155), CircleShape),
+                        .border(1.2.dp, Color(0xFF334155), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = null,
                         tint = Color(0xFFFBBF24),
-                        modifier = Modifier.size(11.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
             }
