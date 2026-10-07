@@ -7849,7 +7849,78 @@ private fun LocalityCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (nearbySavedPlace == null) {
+                        if (nearbySavedPlace != null) {
+                            // Responsive Saved Place badge in Row 1:
+                            // Try to fit the name by scaling font size, or fallback to icon-only if space is too constrained.
+                            // When Live Sharing is active, space is tighter so max width is smaller and font is more compact.
+                            val isLiveSharingActive = liveSession?.isActive == true
+                            val maxBadgeWidth = if (isLiveSharingActive) 95.dp else 140.dp
+                            val badgeFontSize = if (isLiveSharingActive) 10.sp else 11.sp
+                            val placeName = nearbySavedPlace.name.trim()
+
+                            // If name is extremely long (> 16 chars) or live sharing active with > 10 chars, display icon-only (40dp circle/square)
+                            val showIconOnly = (isLiveSharingActive && placeName.length > 10) || placeName.length > 18
+
+                            if (showIconOnly) {
+                                Surface(
+                                    onClick = onOpenSavedPlaces,
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0x3310B981),
+                                    border = BorderStroke(1.dp, Color(0x5510B981)),
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        EmojiText(
+                                            emoji = nearbySavedPlace.category.iconEmoji,
+                                            fontSize = 16.sp,
+                                            yOffsetDp = 0.dp
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    onClick = onOpenSavedPlaces,
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0x3310B981),
+                                    border = BorderStroke(1.dp, Color(0x5510B981)),
+                                    modifier = Modifier.height(40.dp).widthIn(max = maxBadgeWidth)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(horizontal = 7.dp)
+                                    ) {
+                                        EmojiText(
+                                            emoji = nearbySavedPlace.category.iconEmoji,
+                                            fontSize = if (isLiveSharingActive) 13.sp else 15.sp,
+                                            yOffsetDp = 0.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = placeName,
+                                            fontSize = badgeFontSize,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                ),
+                                                lineHeight = badgeFontSize
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
                             // Quick Access Bookmark Icon Button when no saved place nearby
                             IconButton(
                                 onClick = onOpenSavedPlaces,
@@ -7864,67 +7935,6 @@ private fun LocalityCard(
                                     tint = Color(0xFF10B981),
                                     modifier = Modifier.size(22.dp)
                                 )
-                            }
-                        } else if (liveSession?.isActive == true) {
-                            // When Live Sharing pill is active in Row 1, space is tight!
-                            // Render icon-only badge (40dp) to prevent any overflow with collapse toggle.
-                            Surface(
-                                onClick = onOpenSavedPlaces,
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color(0x3310B981),
-                                border = BorderStroke(1.dp, Color(0x5510B981)),
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    EmojiText(
-                                        emoji = nearbySavedPlace.category.iconEmoji,
-                                        fontSize = 16.sp,
-                                        yOffsetDp = 0.dp
-                                    )
-                                }
-                            }
-                        } else if (nearbySavedPlace.name.length <= 12) {
-                            // Short Place Name (<= 12 chars) with inactive live share: Fits compactly in Row 1!
-                            Surface(
-                                onClick = onOpenSavedPlaces,
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0x3310B981),
-                                border = BorderStroke(1.dp, Color(0x5510B981)),
-                                modifier = Modifier.height(40.dp).widthIn(max = 140.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 8.dp)
-                                ) {
-                                    EmojiText(
-                                        emoji = nearbySavedPlace.category.iconEmoji,
-                                        fontSize = 15.sp,
-                                        yOffsetDp = 0.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = nearbySavedPlace.name,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF10B981),
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = TextStyle(
-                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                            lineHeightStyle = LineHeightStyle(
-                                                alignment = LineHeightStyle.Alignment.Center,
-                                                trim = LineHeightStyle.Trim.Both
-                                            ),
-                                            lineHeight = 11.sp
-                                        )
-                                    )
-                                }
                             }
                         }
 
@@ -7945,53 +7955,6 @@ private fun LocalityCard(
                         }
                     }
                 }
-
-                // ── Dedicated Bookmarked Place Line: Shown if Long (>12 chars) OR when Live Sharing forced Row 1 to icon-only ──
-                val shouldShowDedicatedSavedPlaceRow = nearbySavedPlace != null && (
-                    nearbySavedPlace.name.length > 12 || liveSession?.isActive == true
-                )
-                if (shouldShowDedicatedSavedPlaceRow && nearbySavedPlace != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        onClick = onOpenSavedPlaces,
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0x3310B981),
-                        border = BorderStroke(1.dp, Color(0x5510B981)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            EmojiText(
-                                emoji = nearbySavedPlace.category.iconEmoji,
-                                fontSize = 13.sp
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = nearbySavedPlace.name,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF10B981),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 12.sp
-                                )
-                            )
-                        }
-                    }
-                }
-
 
                 // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width, multi-line wrap)
                 Box(
@@ -8116,27 +8079,31 @@ private fun LocalityCard(
                         .padding(top = 3.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
-                        .padding(horizontal = 10.dp, vertical = 3.dp)
-                        .defaultMinSize(minHeight = 28.dp),
+                        .padding(horizontal = 8.dp)
+                        .height(28.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Visited Places Badge (Left of Activity Profile)
+                    // Note: Exact height 20dp and 0 vertical padding ensures zero height expansion when toggled
                     if (activeTrip != null) {
                         Surface(
                             onClick = onShowActiveTripRoute,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(6.dp),
                             color = Color(0x330284C7),
-                            border = BorderStroke(1.dp, Color(0x5538BDF8))
+                            border = BorderStroke(1.dp, Color(0x5538BDF8)),
+                            modifier = Modifier.height(20.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)
+                                EmojiText(emoji = "🚩", fontSize = 11.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "${activeTrip.placesVisited.size}",
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF38BDF8),
                                     softWrap = false,
@@ -8146,12 +8113,12 @@ private fun LocalityCard(
                                             alignment = LineHeightStyle.Alignment.Center,
                                             trim = LineHeightStyle.Trim.Both
                                         ),
-                                        lineHeight = 12.sp
+                                        lineHeight = 11.sp
                                     )
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
 
                     // Compact Dropdown Trigger Pill
