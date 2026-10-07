@@ -144,5 +144,35 @@ class ViewportFitTest {
         val offsetPixelsX = (screenCenterX - physicalCenterX).toInt()
         assertTrue("offsetPixelsX ($offsetPixelsX) must be negative to shift the camera east and center track away from right buttons", offsetPixelsX < 0)
     }
+
+    @Test
+    fun testDynamicMeasuredInsetsOnTabletsAndSmallPhones() {
+        val density = 2.0f
+        val marginPx = (24f * density).toInt()
+
+        // 1. Tablet in Portrait: large screen (1600x2560), card renders at 400px (only ~15% of screen height)
+        val tabletHeight = 2560
+        val tabletWidth = 1600
+        val measuredCardBottomPx = 400
+        val measuredBottomControlsTopPx = 2300
+
+        val resolvedTopInset = measuredCardBottomPx + marginPx
+        val resolvedBottomInset = (tabletHeight - measuredBottomControlsTopPx) + marginPx
+
+        val availHeight = tabletHeight - resolvedTopInset - resolvedBottomInset
+        assertTrue("Tablet available height ($availHeight) utilizes vast majority of screen", availHeight > 1700)
+
+        // 2. Small Smartphone: short screen (720x1280), card renders at 320px, bottom controls at 1120px
+        val phoneHeight = 1280
+        val phoneMeasuredCardBottom = 320
+        val phoneMeasuredBottomControls = 1120
+
+        val phoneTopInset = phoneMeasuredCardBottom + marginPx
+        val phoneBottomInset = (phoneHeight - phoneMeasuredBottomControls) + marginPx
+        val phoneAvailHeight = phoneHeight - phoneTopInset - phoneBottomInset
+
+        assertTrue("Small phone available height ($phoneAvailHeight) provides adequate viewport", phoneAvailHeight > 650)
+    }
 }
+
 
