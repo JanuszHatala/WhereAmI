@@ -170,3 +170,18 @@ fun EmojiText(
   - Secondary toolbars (e.g. Heat Map controls) must collapse to icon-only representations in landscape (hiding textual labels via `LocalConfiguration.current.orientation`).
   - Where possible, place toolbars side-by-side horizontally along the bottom edge rather than vertically stacked.
 
+---
+
+## 6. High-Contrast Interactive Buttons & Controls Invariant (Non-Negotiable)
+
+- **Mandatory White Text on Buttons**:
+  - All interactive button labels (`Button`, `OutlinedButton`, `TextButton`, `Surface(onClick = ...)`, `FilterChip`) MUST use crisp, high-contrast white text (`Color.White` / `#F8FAFC`).
+  - **NEVER use gray/slate text** (`#94A3B8`, `Color.LightGray`, `Color.Gray`, `#64748B`, `#CBD5E1`) for button labels or button icons inside clickable controls.
+- **Visual Hierarchy via Backgrounds & Borders, NOT Dimmed Text**:
+  - **Primary Action**: Saturated container (e.g. `#0284C7` Sky, `#059669` Emerald, `#10B981`) with `Color.White` text.
+  - **Secondary Action**: Dark slate container (e.g. `#334155` or `#1E293B`) with `Color.White` text and optional border (`BorderStroke(1.dp, #475569)`).
+  - **Tertiary / Outlined Action**: Transparent or slate container with border, and `Color.White` or saturated accent text.
+  - **Destructive Action**: Saturated red/amber container or border with `Color.White` or `#FCA5A5` text.
+  - Dimming button text to gray to denote a "secondary" action is strictly forbidden as it degrades contrast below WCAG AA (~2.2:1) under outdoor sunlight.
+
+

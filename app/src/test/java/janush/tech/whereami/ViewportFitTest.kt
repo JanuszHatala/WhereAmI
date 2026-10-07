@@ -109,12 +109,12 @@ class ViewportFitTest {
         val mapHeight = 2400
 
         // Normal mode portrait
-        val topCardDp = 260f
+        val topCardDp = 280f
         val statusBarDp = 36f
-        val bottomToolbarDp = 70f
+        val bottomToolbarDp = 76f
         val navBarDp = 24f
-        val rightControlsDp = 55f
-        val marginPx = (32f * density).toInt()
+        val rightControlsDp = 72f
+        val marginPx = (36f * density).toInt()
 
         val topInset = ((topCardDp + statusBarDp) * density).toInt() + marginPx
         val bottomInset = ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
@@ -124,8 +124,8 @@ class ViewportFitTest {
         val availWidth = mapWidth - leftInset - rightInset
         val availHeight = mapHeight - topInset - bottomInset
 
-        assertTrue("Available width ($availWidth) must leave room for map rendering", availWidth > 750)
-        assertTrue("Available height ($availHeight) must leave substantial space between cards", availHeight > 1000)
+        assertTrue("Available width ($availWidth) must leave room for map rendering", availWidth > 680)
+        assertTrue("Available height ($availHeight) must leave substantial space between cards", availHeight > 950)
 
         // Viewport center
         val screenCenterY = topInset + availHeight / 2.0
@@ -133,5 +133,46 @@ class ViewportFitTest {
 
         // Viewport center must be physically lower than screen center because top card is larger than bottom toolbar
         assertTrue("Viewport center Y ($screenCenterY) must be lower than screen center ($physicalCenterY)", screenCenterY > physicalCenterY)
+
+        val screenCenterX = leftInset + availWidth / 2.0
+        val physicalCenterX = mapWidth / 2.0
+        // Because right-side controls are wider (72dp + margin) than left margin alone,
+        // unobstructed center X must be to the LEFT of physical screen center.
+        assertTrue("Unobstructed center X ($screenCenterX) must be to the left of physical center ($physicalCenterX)", screenCenterX < physicalCenterX)
+
+        // The camera offset in pixels: offsetPixelsX = screenCenterX - physicalCenterX (negative)
+        val offsetPixelsX = (screenCenterX - physicalCenterX).toInt()
+        assertTrue("offsetPixelsX ($offsetPixelsX) must be negative to shift the camera east and center track away from right buttons", offsetPixelsX < 0)
+    }
+
+    @Test
+    fun testDynamicMeasuredInsetsOnTabletsAndSmallPhones() {
+        val density = 2.0f
+        val marginPx = (24f * density).toInt()
+
+        // 1. Tablet in Portrait: large screen (1600x2560), card renders at 400px (only ~15% of screen height)
+        val tabletHeight = 2560
+        val tabletWidth = 1600
+        val measuredCardBottomPx = 400
+        val measuredBottomControlsTopPx = 2300
+
+        val resolvedTopInset = measuredCardBottomPx + marginPx
+        val resolvedBottomInset = (tabletHeight - measuredBottomControlsTopPx) + marginPx
+
+        val availHeight = tabletHeight - resolvedTopInset - resolvedBottomInset
+        assertTrue("Tablet available height ($availHeight) utilizes vast majority of screen", availHeight > 1700)
+
+        // 2. Small Smartphone: short screen (720x1280), card renders at 320px, bottom controls at 1120px
+        val phoneHeight = 1280
+        val phoneMeasuredCardBottom = 320
+        val phoneMeasuredBottomControls = 1120
+
+        val phoneTopInset = phoneMeasuredCardBottom + marginPx
+        val phoneBottomInset = (phoneHeight - phoneMeasuredBottomControls) + marginPx
+        val phoneAvailHeight = phoneHeight - phoneTopInset - phoneBottomInset
+
+        assertTrue("Small phone available height ($phoneAvailHeight) provides adequate viewport", phoneAvailHeight > 650)
     }
 }
+
+

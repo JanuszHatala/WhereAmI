@@ -235,6 +235,8 @@ fun fitPointsToUnobstructedViewport(
     density: Float,
     isLandscape: Boolean,
     isCompact: Boolean,
+    measuredTopInsetPx: Int? = null,
+    measuredBottomInsetPx: Int? = null,
     onZoomCalculated: ((Double) -> Unit)? = null
 ) {
     if (points.isEmpty()) return
@@ -245,11 +247,15 @@ fun fitPointsToUnobstructedViewport(
     val thetaRad = Math.toRadians(orientationDeg.toDouble())
 
     // 1. Calculate unobstructed viewport insets (in pixels)
-    val marginPx = (32f * density).toInt()
+    // Map controls: 42dp width + 12dp end padding = 54dp minimum.
+    // Adding 18dp safe boundary clearance = 72dp rightControls.
+    // In portrait, use actual measured composable bounds when available (topCardBottomPx, bottomControlsTopPx)
+    // with fallback to density-scaled dp estimates.
+    val marginPx = (24f * density).toInt()
     val (leftInset, rightInset, topInset, bottomInset) = if (isLandscape) {
         val leftCardPx = (mapWidth * 0.38f).toInt()
-        val rightControlsPx = (60f * density).toInt()
-        val bottomToolbarPx = (65f * density).toInt()
+        val rightControlsPx = (72f * density).toInt()
+        val bottomToolbarPx = (72f * density).toInt()
         listOf(
             leftCardPx + marginPx,
             rightControlsPx + marginPx,
@@ -257,16 +263,31 @@ fun fitPointsToUnobstructedViewport(
             bottomToolbarPx + marginPx
         )
     } else {
-        val topCardDp = if (isCompact) 150f else 260f
+        val topCardDp = if (isCompact) 160f else 280f
         val statusBarDp = 36f
-        val bottomToolbarDp = 70f
+        val bottomToolbarDp = 76f
         val navBarDp = 24f
-        val rightControlsDp = 55f
+        val rightControlsDp = 72f
+
+        // Dynamic measured insets: if measuredTopInsetPx > 0, use it with margin; else fallback to density dp
+        val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
+            measuredTopInsetPx + marginPx
+        } else {
+            ((topCardDp + statusBarDp) * density).toInt() + marginPx
+        }
+
+        // If bottomControlsTopPx is measured, bottomInset is mapHeight - bottomControlsTopPx
+        val resolvedBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
+            (mapHeight - measuredBottomInsetPx) + marginPx
+        } else {
+            ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
+        }
+
         listOf(
             marginPx,
             (rightControlsDp * density).toInt() + marginPx,
-            ((topCardDp + statusBarDp) * density).toInt() + marginPx,
-            ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
+            resolvedTopInset,
+            resolvedBottomInset
         )
     }
 
@@ -278,7 +299,9 @@ fun fitPointsToUnobstructedViewport(
     val screenCenterY = topInset + availHeight / 2.0
 
     // Offset of the viewport center relative to physical screen center
-    val offsetPixelsX = (mapWidth / 2.0 - screenCenterX).toInt()
+    // Positive offsetPixelsX: screenCenterX is to the right of physical center.
+    // Negative offsetPixelsX: screenCenterX is to the left of physical center (due to right-side toolbar insets).
+    val offsetPixelsX = (screenCenterX - mapWidth / 2.0).toInt()
     val offsetPixelsY = (screenCenterY - mapHeight / 2.0).toInt()
 
     if (points.size == 1) {
@@ -420,6 +443,8 @@ fun OsmMapView(
     isCompact: Boolean = true,
     opticalOffsetY: Int? = null,
     opticalOffsetX: Int? = null,
+    measuredTopInsetPx: Int? = null,
+    measuredBottomInsetPx: Int? = null,
     isRecording: Boolean = false,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
@@ -1033,6 +1058,8 @@ fun OsmMapView(
                 density = density,
                 isLandscape = isLandscape,
                 isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1050,6 +1077,8 @@ fun OsmMapView(
                 density = density,
                 isLandscape = isLandscape,
                 isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1318,6 +1347,8 @@ fun OsmMapView(
                                 density = density,
                                 isLandscape = isLandscape,
                                 isCompact = isCompact,
+                                measuredTopInsetPx = measuredTopInsetPx,
+                                measuredBottomInsetPx = measuredBottomInsetPx,
                                 onZoomCalculated = { currentZoom = it }
                             )
                         },

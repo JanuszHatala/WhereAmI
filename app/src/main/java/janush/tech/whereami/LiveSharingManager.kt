@@ -608,12 +608,37 @@ class LiveSharingManager private constructor(private val context: Context) {
             return
         }
 
-        // Distance filter: require at least 15 meters or 15 seconds between breadcrumbs
         val now = System.currentTimeMillis()
+        val intervalMs = session.syncIntervalMinutes * 60_000L
+        val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
+
+        // Architectural Invariant: Breadcrumbs are ONLY recorded when an active trip is recording!
+        // When Live Sharing is active without a trip (e.g. overnight presence or desk standby),
+        // we stream current presence (marker, speed, battery, place) WITHOUT leaving a breadcrumb trail.
+        val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
+
+        if (!isTripRecording) {
+            lastRecordedLat = lat
+            lastRecordedLng = lng
+            if (bearing != null) lastRecordedBearing = bearing
+            if (accuracy != null) lastRecordedAccuracy = accuracy
+
+            if (shouldSync) {
+                flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
+            }
+            return
+        }
+
+        // Active Trip Breadcrumb Filtering:
+        // Require at least 15 meters physical displacement from last recorded breadcrumb point.
+        // Never append points purely based on elapsed time if the device hasn't moved >= 15m.
         if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
             val dist = FloatArray(1)
             android.location.Location.distanceBetween(lastRecordedLat, lastRecordedLng, lat, lng, dist)
-            if (dist[0] < 15f && memoryPointsQueue.isNotEmpty() && (now - memoryPointsQueue.last().timestamp) < 15_000L) {
+            if (dist[0] < 15f && memoryPointsQueue.isNotEmpty()) {
+                if (shouldSync) {
+                    flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
+                }
                 return
             }
         }
@@ -637,10 +662,6 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
 
         _currentSession.value = session.copy(pendingPointsCount = memoryPointsQueue.size)
-
-        // Check if sync interval threshold is reached
-        val intervalMs = session.syncIntervalMinutes * 60_000L
-        val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
 
         if (shouldSync) {
             flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
@@ -820,9 +841,15 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("place", place ?: "")
                     put("trekking", trekking ?: "")
                     put("battery", battery)
+                    val activeProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
+                        ?: TripManager.getInstance(context).activityProfile.value
+                    put("activityProfile", activeProfile.name)
+                    put("activityProfileIcon", activeProfile.iconEmoji)
+                    put("activityProfileName", activeProfile.displayName)
                     put("t", System.currentTimeMillis())
                 })
             }
+
 
             OutputStreamWriter(conn.outputStream).use { it.write(root.toString()) }
             val code = conn.responseCode

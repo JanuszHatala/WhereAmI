@@ -90,9 +90,23 @@
     }
     
     .place-name { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .activity-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #38bdf8;
+      padding: 3px 9px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
     .trekking-badge { font-size: 13px; color: #38bdf8; font-weight: 600; margin-bottom: 8px; }
     
     .status-alert {
+
       display: none;
       padding: 8px 12px;
       border-radius: 10px;
@@ -167,9 +181,11 @@
     .top-card.collapsed .status-alert,
     .top-card.collapsed .stats-row,
     .top-card.collapsed .actions-row,
-    .top-card.collapsed #trekkingBadge {
+    .top-card.collapsed #trekkingBadge,
+    .top-card.collapsed #activityBadge {
       display: none !important;
     }
+
     .top-card.collapsed .place-name {
       font-size: 15px;
       margin-bottom: 0;
@@ -383,6 +399,7 @@
     </div>
     
     <div id="statusAlert" class="status-alert"></div>
+    <div id="activityBadge" class="activity-badge" style="display: none;"></div>
     <div id="placeName" class="place-name">Connecting...</div>
     <div id="trekkingBadge" class="trekking-badge" style="display: none;"></div>
     
@@ -401,10 +418,11 @@
         <span>Show Past Trips</span>
       </label>
       <button class="gmaps-btn" id="gmapsBtn" onclick="openGoogleMaps()" title="Open current location in Google Maps">
-        🗺️ Open in Google Maps
+        🗺️ Google Maps
       </button>
     </div>
   </div>
+
 
   <div id="map"></div>
   <div class="map-controls-group">
@@ -933,6 +951,22 @@
           } else {
             document.getElementById('trekkingBadge').style.display = 'none';
           }
+
+          const activityEl = document.getElementById('activityBadge');
+          if (activityEl) {
+            const profile = data.current.activityProfile;
+            const profileIcon = data.current.activityProfileIcon;
+            const profileName = data.current.activityProfileName;
+            if (profile && isSessionActive) {
+              const icon = profileIcon || (profile === 'CAR' ? '🚗' : profile === 'CYCLING' ? '🚴' : profile === 'MTB' ? '🚵' : profile === 'HIKING' ? '🥾' : profile === 'WALKING' ? '🚶' : profile === 'RUNNING' ? '🏃' : '📍');
+              const label = profileName || (profile.charAt(0) + profile.slice(1).toLowerCase());
+              activityEl.innerHTML = `${icon} <span>${label}</span>`;
+              activityEl.style.display = 'inline-flex';
+            } else {
+              activityEl.style.display = 'none';
+            }
+          }
+
 
           // MAP-R04: Compass Rose Heading Update
           const bearing = data.current.bearing;
