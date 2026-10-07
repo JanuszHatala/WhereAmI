@@ -7590,7 +7590,8 @@ private fun LocalityCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 2.dp),
+                        .padding(top = 2.dp)
+                        .height(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -7605,15 +7606,19 @@ private fun LocalityCard(
                     )
 
                     // Visited Places Badge (Compact Mode)
+                    // Note: Exact height 20dp and 0 vertical padding ensures zero height expansion when toggled
                     if (activeTrip != null) {
                         Surface(
                             onClick = onShowActiveTripRoute,
                             shape = RoundedCornerShape(6.dp),
                             color = Color(0x330284C7),
-                            border = BorderStroke(1.dp, Color(0x5538BDF8))
+                            border = BorderStroke(1.dp, Color(0x5538BDF8)),
+                            modifier = Modifier.height(20.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 EmojiText(emoji = "🚩", fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -7642,15 +7647,17 @@ private fun LocalityCard(
                     Box {
                         Row(
                             modifier = Modifier
+                                .height(22.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(Color(0xFF1E293B))
                                 .clickable { profileMenuExpanded = true }
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                                .padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             EmojiText(
                                 emoji = activityProfile.iconEmoji,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                yOffsetDp = 0.dp
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             val metricText = when (activityProfile) {
@@ -7662,6 +7669,7 @@ private fun LocalityCard(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8),
+                                softWrap = false,
                                 style = TextStyle(
                                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                                     lineHeightStyle = LineHeightStyle(
@@ -7851,15 +7859,21 @@ private fun LocalityCard(
                     ) {
                         if (nearbySavedPlace != null) {
                             // Responsive Saved Place badge in Row 1:
-                            // Try to fit the name by scaling font size, or fallback to icon-only if space is too constrained.
-                            // When Live Sharing is active, space is tighter so max width is smaller and font is more compact.
+                            // Dynamically scale font size to display the full name comfortably without premature truncation.
+                            // If the name is excessively long (> 18 chars), smoothly fall back to a clean icon-only pill.
                             val isLiveSharingActive = liveSession?.isActive == true
-                            val maxBadgeWidth = if (isLiveSharingActive) 95.dp else 140.dp
-                            val badgeFontSize = if (isLiveSharingActive) 10.sp else 11.sp
+                            val maxBadgeWidth = if (isLiveSharingActive) 155.dp else 185.dp
                             val placeName = nearbySavedPlace.name.trim()
 
-                            // If name is extremely long (> 16 chars) or live sharing active with > 10 chars, display icon-only (40dp circle/square)
-                            val showIconOnly = (isLiveSharingActive && placeName.length > 10) || placeName.length > 18
+                            // Dynamic font size: scale down font size as name length increases
+                            val badgeFontSize = when {
+                                placeName.length <= 8 -> 11.sp
+                                placeName.length <= 13 -> 10.sp
+                                else -> 9.sp
+                            }
+
+                            // Show icon-only only if name is excessively long
+                            val showIconOnly = placeName.length > 18
 
                             if (showIconOnly) {
                                 Surface(
@@ -7886,7 +7900,9 @@ private fun LocalityCard(
                                     shape = RoundedCornerShape(8.dp),
                                     color = Color(0x3310B981),
                                     border = BorderStroke(1.dp, Color(0x5510B981)),
-                                    modifier = Modifier.height(40.dp).widthIn(max = maxBadgeWidth)
+                                    modifier = Modifier
+                                        .height(40.dp)
+                                        .widthIn(min = 40.dp, max = maxBadgeWidth)
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -7896,7 +7912,7 @@ private fun LocalityCard(
                                     ) {
                                         EmojiText(
                                             emoji = nearbySavedPlace.category.iconEmoji,
-                                            fontSize = if (isLiveSharingActive) 13.sp else 15.sp,
+                                            fontSize = if (placeName.length > 12) 13.sp else 14.sp,
                                             yOffsetDp = 0.dp
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
