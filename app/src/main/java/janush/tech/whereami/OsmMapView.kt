@@ -187,42 +187,22 @@ fun calculateOpticalCenter(
         return GeoPoint(lat, lon)
     }
 
-    // Ground resolution in meters per pixel at latitude and current zoom level
     val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
-    val dxMeters = offsetPixelsX * metersPerPixel
-    val dyMeters = offsetPixelsY * metersPerPixel
-    val distMeters = kotlin.math.sqrt(dxMeters * dxMeters + dyMeters * dyMeters)
-    if (distMeters <= 0.1) {
-        return GeoPoint(lat, lon)
-    }
+    val uCam = -offsetPixelsX * metersPerPixel
+    val vCam = -offsetPixelsY * metersPerPixel
 
-    // In OSMDroid, mapOrientation rotates the canvas clockwise around the screen center.
-    // Screen UP corresponds to geographic bearing (360 - mapOrientation) % 360.
-    val rawOrientation = mapOrientation.toDouble()
-    val bearingScreenUp = ((360.0 - (rawOrientation % 360.0)) + 360.0) % 360.0
+    val alpha = Math.toRadians(mapOrientation.toDouble())
+    val cosA = kotlin.math.cos(alpha)
+    val sinA = kotlin.math.sin(alpha)
 
-    // Angle of camera displacement on screen relative to screen UP (clockwise):
-    // dx > 0 (target right on screen) requires camera center moving left (-dx)
-    // dy > 0 (target down on screen) requires camera center moving up (+dy)
-    val angleOnScreenRad = kotlin.math.atan2(-dxMeters, dyMeters)
-    val angleOnScreenDeg = Math.toDegrees(angleOnScreenRad)
-    val projectionBearing = ((bearingScreenUp + angleOnScreenDeg) % 360.0 + 360.0) % 360.0
+    val dEastCam = uCam * cosA + vCam * sinA
+    val dNorthCam = uCam * sinA - vCam * cosA
 
-    // Geodesic destination point projection along projectionBearing
-    val rEarth = 6378137.0 // WGS84 equatorial radius in meters
-    val delta = distMeters / rEarth
-    val phi1 = Math.toRadians(lat)
-    val lambda1 = Math.toRadians(lon)
-    val theta = Math.toRadians(projectionBearing)
+    val rEarth = 6378137.0
+    val camLat = lat + Math.toDegrees(dNorthCam / rEarth)
+    val camLon = lon + Math.toDegrees(dEastCam / (rEarth * kotlin.math.cos(Math.toRadians(lat))))
 
-    val sinPhi2 = kotlin.math.sin(phi1) * kotlin.math.cos(delta) +
-            kotlin.math.cos(phi1) * kotlin.math.sin(delta) * kotlin.math.cos(theta)
-    val phi2 = kotlin.math.asin(sinPhi2)
-    val y = kotlin.math.sin(theta) * kotlin.math.sin(delta) * kotlin.math.cos(phi1)
-    val x = kotlin.math.cos(delta) - kotlin.math.sin(phi1) * sinPhi2
-    val lambda2 = lambda1 + kotlin.math.atan2(y, x)
-
-    return GeoPoint(Math.toDegrees(phi2), Math.toDegrees(lambda2))
+    return GeoPoint(camLat, camLon)
 }
 
 /**
@@ -237,6 +217,7 @@ fun fitPointsToUnobstructedViewport(
     isCompact: Boolean,
     measuredTopInsetPx: Int? = null,
     measuredBottomInsetPx: Int? = null,
+    isRecording: Boolean = false,
     onZoomCalculated: ((Double) -> Unit)? = null
 ) {
     if (points.isEmpty()) return
@@ -244,7 +225,9 @@ fun fitPointsToUnobstructedViewport(
     val mapWidth = map.width.takeIf { it > 0 } ?: return
     val mapHeight = map.height.takeIf { it > 0 } ?: return
     val orientationDeg = map.mapOrientation
-    val thetaRad = Math.toRadians(orientationDeg.toDouble())
+    val alpha = Math.toRadians(orientationDeg.toDouble())
+    val cosA = kotlin.math.cos(alpha)
+    val sinA = kotlin.math.sin(alpha)
 
     // 1. Calculate unobstructed viewport insets (in pixels)
     // Map controls: 42dp width + 12dp end padding = 54dp minimum.
@@ -265,23 +248,25 @@ fun fitPointsToUnobstructedViewport(
     } else {
         val topCardDp = if (isCompact) 160f else 280f
         val statusBarDp = 36f
-        val bottomToolbarDp = 76f
-        val navBarDp = 24f
         val rightControlsDp = 72f
 
-        // Dynamic measured insets: if measuredTopInsetPx > 0, use it with margin; else fallback to density dp
+        // Minimum bottom clearance must guarantee clear space above bottom toolbar and floating Recenter pill
+        // Floating recenter button is at padding(bottom = if (isRecording) 136.dp else 78.dp) + height 40.dp
+        val minBottomInsetDp = if (isRecording) 186f else 130f
+        val minBottomInsetPx = (minBottomInsetDp * density).toInt()
+
         val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
             measuredTopInsetPx + marginPx
         } else {
             ((topCardDp + statusBarDp) * density).toInt() + marginPx
         }
 
-        // If bottomControlsTopPx is measured, bottomInset is mapHeight - bottomControlsTopPx
-        val resolvedBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
+        val measuredBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
             (mapHeight - measuredBottomInsetPx) + marginPx
         } else {
-            ((bottomToolbarDp + navBarDp) * density).toInt() + marginPx
+            minBottomInsetPx
         }
+        val resolvedBottomInset = maxOf(measuredBottomInset, minBottomInsetPx)
 
         listOf(
             marginPx,
@@ -314,76 +299,77 @@ fun fitPointsToUnobstructedViewport(
             offsetPixelsY = offsetPixelsY,
             offsetPixelsX = offsetPixelsX
         )
+        map.controller.stopAnimation(false)
         map.controller.setZoom(16.0)
-        map.controller.animateTo(cameraCenter)
+        map.controller.setCenter(cameraCenter)
         onZoomCalculated?.invoke(16.0)
+        map.invalidate()
         return
     }
 
-    // 2. Project points into local tangent plane coordinates (meters) rotated by orientationDeg
+    // 2. Project points into screen-aligned rotated coordinate frame (meters)
     val rEarth = 6378137.0
-    val meanLat = Math.toRadians(points.map { it.latitude }.average())
-    val meanLon = Math.toRadians(points.map { it.longitude }.average())
+    val meanLatDeg = points.map { it.latitude }.average()
+    val meanLonDeg = points.map { it.longitude }.average()
+    val meanLat = Math.toRadians(meanLatDeg)
+    val meanLon = Math.toRadians(meanLonDeg)
     val cosMeanLat = kotlin.math.cos(meanLat)
 
-    val cosTheta = kotlin.math.cos(thetaRad)
-    val sinTheta = kotlin.math.sin(thetaRad)
-
-    var minRotX = Double.MAX_VALUE
-    var maxRotX = -Double.MAX_VALUE
-    var minRotY = Double.MAX_VALUE
-    var maxRotY = -Double.MAX_VALUE
+    var minU = Double.MAX_VALUE
+    var maxU = -Double.MAX_VALUE
+    var minV = Double.MAX_VALUE
+    var maxV = -Double.MAX_VALUE
 
     for (p in points) {
         val latRad = Math.toRadians(p.latitude)
         val lonRad = Math.toRadians(p.longitude)
-        val x = (lonRad - meanLon) * rEarth * cosMeanLat
-        val y = (latRad - meanLat) * rEarth
-        // Rotate into screen-aligned coordinates
-        val rotX = x * cosTheta - y * sinTheta
-        val rotY = x * sinTheta + y * cosTheta
+        val dEast = (lonRad - meanLon) * rEarth * cosMeanLat
+        val dNorth = (latRad - meanLat) * rEarth
+        // Rotate into screen-aligned coordinates:
+        // u is aligned with screen X (right positive)
+        // v is aligned with screen Y (down positive)
+        val u = dEast * cosA + dNorth * sinA
+        val v = dEast * sinA - dNorth * cosA
 
-        if (rotX < minRotX) minRotX = rotX
-        if (rotX > maxRotX) maxRotX = rotX
-        if (rotY < minRotY) minRotY = rotY
-        if (rotY > maxRotY) maxRotY = rotY
+        if (u < minU) minU = u
+        if (u > maxU) maxU = u
+        if (v < minV) minV = v
+        if (v > maxV) maxV = v
     }
 
-    // Minimum span of 250m to avoid over-zooming on stationary points
-    val spanRotX = (maxRotX - minRotX).coerceAtLeast(250.0)
-    val spanRotY = (maxRotY - minRotY).coerceAtLeast(250.0)
+    // Minimum span of 200m to avoid over-zooming on stationary points
+    val spanU = (maxU - minU).coerceAtLeast(200.0)
+    val spanV = (maxV - minV).coerceAtLeast(200.0)
 
-    // 3. Compute exact zoom fitting both rotated width and height into unobstructed window
-    val metersPerPixelX = spanRotX / availWidth
-    val metersPerPixelY = spanRotY / availHeight
+    // 3. Compute zoom fitting both rotated width and height into unobstructed window with 12% safety padding
+    val safeWidth = availWidth * 0.88
+    val safeHeight = availHeight * 0.88
+    val metersPerPixelX = spanU / safeWidth
+    val metersPerPixelY = spanV / safeHeight
     val requiredMpp = kotlin.math.max(metersPerPixelX, metersPerPixelY)
 
     val calculatedZoom = (kotlin.math.log2((156543.03392 * cosMeanLat) / requiredMpp))
         .coerceIn(map.minZoomLevel, 18.0)
 
-    // 4. Center of the rotated bounding box converted back to lat/lon
-    val midRotX = (minRotX + maxRotX) / 2.0
-    val midRotY = (minRotY + maxRotY) / 2.0
+    // 4. Center of rotated bounding box in (u, v) coordinates
+    val midU = (minU + maxU) / 2.0
+    val midV = (minV + maxV) / 2.0
 
-    // Un-rotate back to East/North tangent coordinates
-    val midX = midRotX * cosTheta + midRotY * sinTheta
-    val midY = -midRotX * sinTheta + midRotY * cosTheta
+    // Shift camera in (u, v) coordinates so midU, midV lands at (screenCenterX, screenCenterY)
+    val uCam = midU - offsetPixelsX * requiredMpp
+    val vCam = midV - offsetPixelsY * requiredMpp
 
-    val centerLat = Math.toDegrees(meanLat + midY / rEarth)
-    val centerLon = Math.toDegrees(meanLon + midX / (rEarth * cosMeanLat))
+    // Un-rotate camera displacement back to East/North tangent coordinates
+    val dEastCam = uCam * cosA + vCam * sinA
+    val dNorthCam = uCam * sinA - vCam * cosA
 
-    // 5. Apply optical offset so centerLat/centerLon lands at the center of the unobstructed window
-    val cameraCenter = calculateOpticalCenter(
-        lat = centerLat,
-        lon = centerLon,
-        zoom = calculatedZoom,
-        mapOrientation = orientationDeg,
-        offsetPixelsY = offsetPixelsY,
-        offsetPixelsX = offsetPixelsX
-    )
+    val camLat = Math.toDegrees(meanLat + dNorthCam / rEarth)
+    val camLon = Math.toDegrees(meanLon + dEastCam / (rEarth * cosMeanLat))
+    val cameraCenter = GeoPoint(camLat, camLon)
 
+    map.controller.stopAnimation(false)
     map.controller.setZoom(calculatedZoom)
-    map.controller.animateTo(cameraCenter)
+    map.controller.setCenter(cameraCenter)
     onZoomCalculated?.invoke(calculatedZoom)
     map.invalidate()
 }
@@ -1060,6 +1046,7 @@ fun OsmMapView(
                 isCompact = isCompact,
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1079,6 +1066,7 @@ fun OsmMapView(
                 isCompact = isCompact,
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1349,6 +1337,7 @@ fun OsmMapView(
                                 isCompact = isCompact,
                                 measuredTopInsetPx = measuredTopInsetPx,
                                 measuredBottomInsetPx = measuredBottomInsetPx,
+                                isRecording = isRecording,
                                 onZoomCalculated = { currentZoom = it }
                             )
                         },
