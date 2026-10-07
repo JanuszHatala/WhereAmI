@@ -8078,7 +8078,8 @@ private fun LocalityCard(
                         .padding(top = 3.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                        .defaultMinSize(minHeight = 28.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Visited Places Badge (Left of Activity Profile)
@@ -8090,7 +8091,7 @@ private fun LocalityCard(
                             border = BorderStroke(1.dp, Color(0x5538BDF8))
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)
