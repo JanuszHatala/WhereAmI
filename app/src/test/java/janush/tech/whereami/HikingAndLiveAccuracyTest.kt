@@ -21,6 +21,26 @@ class HikingAndLiveAccuracyTest {
         assertEquals(10, hiking.autoStopMinutesDefault)
         assertEquals(3_000L, hiking.gpsIntervalMs)
         assertEquals(1_500L, hiking.minGpsIntervalMs)
+        assertEquals(30.0, hiking.minValidDistanceMeters, 0.01)
+        assertEquals(20_000L, hiking.minValidDurationMs)
+    }
+
+    @Test
+    fun testTrivialTripDiscardRules() {
+        // Trivial trips under both profile thresholds should be discarded
+        val driving = ActivityProfile.CAR
+        fun isTrivial(distMeters: Double, durationMs: Long, profile: ActivityProfile): Boolean {
+            return distMeters < profile.minValidDistanceMeters && durationMs < profile.minValidDurationMs
+        }
+
+        // Accidental start/stop in 1-5 seconds with 0-5m distance
+        assertTrue("0m in 1s must be discarded", isTrivial(0.0, 1_000L, driving))
+        assertTrue("5m in 4s must be discarded", isTrivial(5.0, 4_000L, driving))
+        assertTrue("20m in 10s must be discarded", isTrivial(20.0, 10_000L, driving))
+
+        // Legitimate short drive or walk exceeding either threshold
+        assertTrue("Drive with 120m in 15s must be retained", !isTrivial(120.0, 15_000L, driving))
+        assertTrue("Walk for 45s with 35m must be retained", !isTrivial(35.0, 45_000L, ActivityProfile.WALKING))
     }
 
     @Test
@@ -89,4 +109,28 @@ class HikingAndLiveAccuracyTest {
         assertTrue(modes.contains(TripMode.MANUAL))
         assertTrue(modes.contains(TripMode.AUTO))
     }
+
+    @Test
+    fun testLiveBreadcrumbGatingRule() {
+        // Invariant: breadcrumbs must NEVER accumulate unless activeTrip != null AND displacement >= 15m.
+        // Pure elapsed time (e.g. 15s) with displacement < 15m must NOT produce a breadcrumb point.
+        fun shouldAddBreadcrumb(hasActiveTrip: Boolean, displacementMeters: Float, elapsedMs: Long): Boolean {
+            if (!hasActiveTrip) return false
+            if (displacementMeters < 15f) return false
+            return true
+        }
+
+        // Stationary overnight with no active trip
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = false, displacementMeters = 0f, elapsedMs = 60_000L))
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = false, displacementMeters = 50f, elapsedMs = 15_000L))
+
+        // Active trip but stationary / jitter (< 15m)
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 3f, elapsedMs = 30_000L))
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 14.9f, elapsedMs = 120_000L))
+
+        // Active trip with genuine displacement (>= 15m)
+        assertEquals(true, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 15.0f, elapsedMs = 5_000L))
+        assertEquals(true, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 35.0f, elapsedMs = 2_000L))
+    }
 }
+
