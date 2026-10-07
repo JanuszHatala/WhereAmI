@@ -36,8 +36,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 23** | Field Testing (2026-10-05 Slovakia & Poland Trips) Stop/Continuation Separation, 150s Rest Pause Gating, Zero Past-Trip Visual Bleed, Viewport Optical Offset, International Road Canonicalization & Live Sharing Polish | 8 | 8 | 0 | 0 |
 | **Round 24** | UI Polish, Locality Card Layout, Independent Profile Settings & Language Audit (2026-10-06) | 6 | 6 | 0 | 0 |
 | **Round 25** | Visited Places Pill Integration, Toolbar Icon Hierarchy, Full-Aperture Viewport Insets & Instant-Expanded Settings Sheets (2026-10-06) | 5 | 5 | 0 | 0 |
+| **Round 26** | Field Testing (2026-10-07) Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **201** | **193** | **0** | **8** |
+| **Total** | | **205** | **197** | **0** | **8** |
 
 ---
 
@@ -459,6 +460,18 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **UX25-03** | **Unobstructed Map Viewport Insets Expansion**: Prevent polyline from rendering under right map controls, top locality card, or bottom toolbars after map rotation or resizing. Expanded right controls inset to 72dp + margin (86dp total), top card inset to 280dp (normal) / 160dp (compact), and bottom toolbar to 76dp + margin. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Insets expanded to ensure full clearance of 42dp buttons + padding and multi-line locality cards under any arbitrary orientation. Verified with updated `ViewportFitTest`. |
 | **UX25-04** | **Promote Activity Profiles & Instant Full-Expanded Sheets**: Moved Activity Profiles to the very top of App Settings with high-contrast card styling. Added `skipPartiallyExpanded = true` to both `showSettingsSheet` and `ProfileConfigSheet` so sheets open directly to full height without requiring drag-up gestures. | `MainActivity.kt` (`showSettingsSheet`, `ProfileConfigSheet`) | **Completed** | Activity Profiles section positioned at top of App Settings; bottom sheets expand immediately to full height on tap. |
 | **UX25-05** | **Build Gate & Version Increment**: Increment versionCode to 39 and versionName to "1.4.1". All tests pass with zero errors. | `app/build.gradle.kts`, `MainActivity.kt`, `OsmMapView.kt` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 52s, all 170 unit tests passed). |
+
+---
+
+## 29. Round 26: Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BAT-01** | **Live Sharing Overnight Zero-Drain & Breadcrumb Decoupling**: Decouple Live Sharing presence streaming from breadcrumb trail generation. When no trip is recording (`TripManager.activeTrip.value == null`), Live Sharing streams presence only (current location, locality, speed) with zero points appended to the trail polyline. Release WakeLock during `LIVE_ONLY` mode when stationary or without an active recording. | `LiveSharingManager.kt`, `LiveTrackingService.kt`, `HikingAndLiveAccuracyTest.kt` | **Completed** | Telemetry showed 1,627 jitter breadcrumbs accumulated overnight due to `(now - lastTime) >= 15s` bypass and 3-hour continuous WakeLock renewal. Now breadcrumbs are gated strictly to `activeTrip != null` and genuine displacement ($\ge 15\text{m}$), and WakeLock is only held during active trip recording. Unit test `testLiveBreadcrumbGatingRule` verified. |
+| **MAP-01** | **Map Viewport Fit Optical Center Sign Inversion**: Correct sign error in `OsmMapView.kt` unobstructed viewport centering (`offsetPixelsX = screenCenterX - mapWidth / 2.0`). Shifts camera east so track polyline renders centered within the visible aperture between left margin and right map controls. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Previous formula `mapWidth / 2.0 - screenCenterX` had positive sign, causing `calculateOpticalCenter` to shift camera west by 2,349m and pushing track east under buttons and offscreen. Inversion shifts camera east, centering polyline within `[leftInset, mapWidth - rightInset]`. Verified in `ViewportFitTest`. |
+| **UI-01** | **Visited Places Badge Icon Vertical Padding & Sizing**: Eliminate top clipping of the `🚩` flag icon in both Compact and Normal modes within `LocalityCard`. Set `yOffsetDp = 0.dp` on `EmojiText` inside the badge to override default upward baseline compensation. | `MainActivity.kt` (`LocalityCard`) | **Completed** | `EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)` renders cleanly centered without clipping against the top border of the 8dp pill surface. |
+| **VER-01** | **Build Gate & Version Increment**: Increment versionCode to 40 and versionName to "1.4.2". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 1m 5s, all 171 unit tests passed). |
+
 
 
 

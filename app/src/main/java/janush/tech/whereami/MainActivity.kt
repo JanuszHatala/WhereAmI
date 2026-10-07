@@ -7603,7 +7603,7 @@ private fun LocalityCard(
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                EmojiText(emoji = "🚩", fontSize = 11.sp)
+                                EmojiText(emoji = "🚩", fontSize = 11.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "${activeTrip.placesVisited.size}",
@@ -8091,7 +8091,7 @@ private fun LocalityCard(
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                EmojiText(emoji = "🚩", fontSize = 13.sp)
+                                EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "${activeTrip.placesVisited.size}",
