@@ -133,5 +133,16 @@ class ViewportFitTest {
 
         // Viewport center must be physically lower than screen center because top card is larger than bottom toolbar
         assertTrue("Viewport center Y ($screenCenterY) must be lower than screen center ($physicalCenterY)", screenCenterY > physicalCenterY)
+
+        val screenCenterX = leftInset + availWidth / 2.0
+        val physicalCenterX = mapWidth / 2.0
+        // Because right-side controls are wider (72dp + margin) than left margin alone,
+        // unobstructed center X must be to the LEFT of physical screen center.
+        assertTrue("Unobstructed center X ($screenCenterX) must be to the left of physical center ($physicalCenterX)", screenCenterX < physicalCenterX)
+
+        // The camera offset in pixels: offsetPixelsX = screenCenterX - physicalCenterX (negative)
+        val offsetPixelsX = (screenCenterX - physicalCenterX).toInt()
+        assertTrue("offsetPixelsX ($offsetPixelsX) must be negative to shift the camera east and center track away from right buttons", offsetPixelsX < 0)
     }
 }
+

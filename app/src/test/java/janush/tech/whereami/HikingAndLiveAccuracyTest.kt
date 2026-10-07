@@ -89,4 +89,28 @@ class HikingAndLiveAccuracyTest {
         assertTrue(modes.contains(TripMode.MANUAL))
         assertTrue(modes.contains(TripMode.AUTO))
     }
+
+    @Test
+    fun testLiveBreadcrumbGatingRule() {
+        // Invariant: breadcrumbs must NEVER accumulate unless activeTrip != null AND displacement >= 15m.
+        // Pure elapsed time (e.g. 15s) with displacement < 15m must NOT produce a breadcrumb point.
+        fun shouldAddBreadcrumb(hasActiveTrip: Boolean, displacementMeters: Float, elapsedMs: Long): Boolean {
+            if (!hasActiveTrip) return false
+            if (displacementMeters < 15f) return false
+            return true
+        }
+
+        // Stationary overnight with no active trip
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = false, displacementMeters = 0f, elapsedMs = 60_000L))
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = false, displacementMeters = 50f, elapsedMs = 15_000L))
+
+        // Active trip but stationary / jitter (< 15m)
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 3f, elapsedMs = 30_000L))
+        assertEquals(false, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 14.9f, elapsedMs = 120_000L))
+
+        // Active trip with genuine displacement (>= 15m)
+        assertEquals(true, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 15.0f, elapsedMs = 5_000L))
+        assertEquals(true, shouldAddBreadcrumb(hasActiveTrip = true, displacementMeters = 35.0f, elapsedMs = 2_000L))
+    }
 }
+

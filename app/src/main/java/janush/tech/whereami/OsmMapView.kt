@@ -281,7 +281,9 @@ fun fitPointsToUnobstructedViewport(
     val screenCenterY = topInset + availHeight / 2.0
 
     // Offset of the viewport center relative to physical screen center
-    val offsetPixelsX = (mapWidth / 2.0 - screenCenterX).toInt()
+    // Positive offsetPixelsX: screenCenterX is to the right of physical center.
+    // Negative offsetPixelsX: screenCenterX is to the left of physical center (due to right-side toolbar insets).
+    val offsetPixelsX = (screenCenterX - mapWidth / 2.0).toInt()
     val offsetPixelsY = (screenCenterY - mapHeight / 2.0).toInt()
 
     if (points.size == 1) {
