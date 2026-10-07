@@ -37,8 +37,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 24** | UI Polish, Locality Card Layout, Independent Profile Settings & Language Audit (2026-10-06) | 6 | 6 | 0 | 0 |
 | **Round 25** | Visited Places Pill Integration, Toolbar Icon Hierarchy, Full-Aperture Viewport Insets & Instant-Expanded Settings Sheets (2026-10-06) | 5 | 5 | 0 | 0 |
 | **Round 26** | Field Testing (2026-10-07) Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding | 4 | 4 | 0 | 0 |
+| **Round 27** | LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07) | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **205** | **197** | **0** | **8** |
+| **Total** | | **208** | **200** | **0** | **8** |
 
 ---
 
@@ -471,6 +472,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **MAP-01** | **Map Viewport Fit Optical Center Sign Inversion**: Correct sign error in `OsmMapView.kt` unobstructed viewport centering (`offsetPixelsX = screenCenterX - mapWidth / 2.0`). Shifts camera east so track polyline renders centered within the visible aperture between left margin and right map controls. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Previous formula `mapWidth / 2.0 - screenCenterX` had positive sign, causing `calculateOpticalCenter` to shift camera west by 2,349m and pushing track east under buttons and offscreen. Inversion shifts camera east, centering polyline within `[leftInset, mapWidth - rightInset]`. Verified in `ViewportFitTest`. |
 | **UI-01** | **Visited Places Badge Icon Vertical Padding & Sizing**: Eliminate top clipping of the `🚩` flag icon in both Compact and Normal modes within `LocalityCard`. Set `yOffsetDp = 0.dp` on `EmojiText` inside the badge to override default upward baseline compensation. | `MainActivity.kt` (`LocalityCard`) | **Completed** | `EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)` renders cleanly centered without clipping against the top border of the 8dp pill surface. |
 | **VER-01** | **Build Gate & Version Increment**: Increment versionCode to 40 and versionName to "1.4.2". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 1m 5s, all 171 unit tests passed). |
+
+---
+
+## 30. Round 27: LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI27-01** | **LocalityCard Zero-Jitter Height Stability**: Eliminate card height jumps and telemetry pill shifting when toggling trip recording. Enforced minimum container height (`defaultMinSize(minHeight = 28.dp)`) and symmetrical vertical padding (`3.dp` container, `2.dp` badge) so Row 2 maintains an identical optical baseline whether `🚩 N` is present or absent. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Row 2 now locks its baseline height across recording states, completely eliminating visual jumping of the activity profile, speed, and pace pill. |
+| **TRIP27-01** | **Empty / Trivial Trip Discard Engine**: Discard accidental trips (< few seconds, 0m distance or stationary jitter) upon stopping instead of polluting history. Configured per-profile minimum thresholds (`minValidDistanceMeters` 25m–80m, `minValidDurationMs` 20s–25s); if both criteria are unmet when stopped, automatically delete trip from SQLite database. | `TripModels.kt`, `TripManager.kt`, `HikingAndLiveAccuracyTest.kt` | **Completed** | Trivial trips (e.g. 0m in 1s) are deleted via `dbHelper.deleteTrip(current.id)` and logged as `DISCARDED_TRIVIAL`. Legitimate trips exceeding thresholds are preserved. Covered by `testTrivialTripDiscardRules`. |
+| **VER-02** | **Build Gate & Version Increment**: Increment versionCode to 41 and versionName to "1.4.3". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 19s, all 173 unit tests passed). |
+
 
 
 
