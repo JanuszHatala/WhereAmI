@@ -40,8 +40,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 27** | LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07) | 3 | 3 | 0 | 0 |
 | **Round 28** | High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07) | 4 | 4 | 0 | 0 |
 | **Round 29** | LocalityCard Zero-Growth Height Guarantee & Adaptive Single-Row Saved Place Fit (2026-10-07) | 2 | 2 | 0 | 0 |
+| **Round 30** | Compact Mode Zero-Height Jump & Saved Place Dynamic Width Expansion (2026-10-07) | 2 | 2 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **214** | **206** | **0** | **8** |
+| **Total** | | **216** | **208** | **0** | **8** |
 
 
 ---
@@ -506,7 +507,15 @@ It is updated after every phase to maintain full traceability across agent invoc
 | :--- | :--- | :--- | :---: | :--- |
 | **UI29-01** | **LocalityCard Zero-Growth Height Invariant**: Visited places badge (`🚩 N`) strictly adjusts its dimensions to the activity row without causing the LocalityCard to expand or shifting the activity profile/speed line down when recording starts. Enforced exact container `height(28.dp)` and badge `height(20.dp)` with 0 vertical padding overhead. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Container and badge dimensions locked. Baseline and card height remain 100% frozen between recording ON and OFF states. |
 | **UI29-02** | **Single-Line Saved Place Fit with Dynamic Font Scaling & Icon Fallback**: Completely removed duplicate dedicated saved place row (`shouldShowDedicatedSavedPlaceRow`). In Row 1, the saved place badge dynamically adapts: scales font down to `10.sp` / `widthIn(max = 95.dp)` when Live Sharing is active, or `11.sp` / `widthIn(max = 140.dp)` when inactive. If the name exceeds fit limits, cleanly falls back to a 40dp icon-only badge. Never renders a separate line. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Deleted dedicated row `shouldShowDedicatedSavedPlaceRow`. Row 1 badge scales font dynamically with graceful icon-only fallback. |
-| **VER-04** | **Build Gate & Version Increment**: Increment versionCode to 43 and versionName to "1.4.5". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 2m 13s, all 173 unit tests passed). |
+---
+
+## 33. Round 30: Compact Mode Zero-Height Jump & Saved Place Dynamic Width Expansion (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI30-01** | **Compact Mode Zero-Height Jump Guarantee**: Eliminate height jumping in compact mode when recording starts. Row 3 (`Hierarchy & Country / Visited Badge / Speed Pill`) now locks to fixed container `height(24.dp)` and the visited places badge (`🚩 N`) locks to `height(20.dp)` with 0 vertical padding. Telemetry pill locked to `height(22.dp)`. The compact card height and baseline remain 100% stable regardless of recording state. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Height jumping between recording ON and OFF states eliminated in compact mode (matching normal mode invariant). |
+| **UI30-02** | **Saved Place Badge Available Width Expansion & Dynamic Font Fit**: Remove artificial narrow `95.dp` cap on the saved place badge. Expanded maximum width to `155.dp` (when Live Sharing is active) and `185.dp` (when inactive), allowing names like "Timebook" to display in full without premature ellipsis. Dynamic font size scaling (`11.sp` for $\le 8$ chars, `10.sp` for $9-13$ chars, `9.sp` for $> 13$ chars), with clean icon-only fallback only when name is excessively long ($> 18$ chars). | `MainActivity.kt` (`LocalityCard`) | **Completed** | "Timebook" and similar names now render completely without truncation. Overflow ellipsis applies only when space is genuinely exhausted. |
+| **VER-05** | **Build Gate & Version Increment**: Increment versionCode to 44 and versionName to "1.4.6". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 24s, all 173 unit tests passed). |
 
 
 
