@@ -375,7 +375,11 @@ class LiveTrackingService : Service() {
 
         if (trip != null || hasLive) {
             startLocationTracking()
-            updateWakeLock(true)
+            // Strict WakeLock scoping: ONLY hold CPU wake lock during active trip recording.
+            // When only Live Sharing is active (without active trip recording), do NOT hold persistent
+            // WakeLock so the device can safely enter Doze/deep sleep when stationary.
+            val shouldHoldWakeLock = trip != null
+            updateWakeLock(shouldHoldWakeLock)
             updateNotification(force = true)
         } else if (isAuto) {
             stopLocationTracking()
