@@ -39,8 +39,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 26** | Field Testing (2026-10-07) Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding | 4 | 4 | 0 | 0 |
 | **Round 27** | LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07) | 3 | 3 | 0 | 0 |
 | **Round 28** | High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07) | 4 | 4 | 0 | 0 |
+| **Round 29** | LocalityCard Zero-Growth Height Guarantee & Adaptive Single-Row Saved Place Fit (2026-10-07) | 2 | 2 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **212** | **204** | **0** | **8** |
+| **Total** | | **214** | **206** | **0** | **8** |
 
 
 ---
@@ -496,6 +497,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **UI28-03** | **LocalityCard Row 1 Collision Responsive Adaptation**: When Live Sharing is active (showing satellite icon, countdown timer, and viewer count pill) AND a Saved Place matches the current location, the Saved Place badge in Row 1 adapts to an icon-only badge (`36dp–40dp` square container with `EmojiText(yOffsetDp = 0.dp)`). When Live Sharing is inactive, the short place name pill (`widthIn(max = 140.dp)`) is displayed. The dedicated full place name row displays whenever Live Sharing forces the icon-only badge or name > 12 chars. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Eliminates visual collision with the top-right collapse `^`/`X` button. Verified layout responsive logic. |
 | **WEB28-01** | **Companion Web Viewer Activity Profile Badge & "Google Maps" Label**: Display activity profile (e.g. `🚗 Driving`, `🥾 Hiking`, `🚴 Cycling`) in the web companion HUD. Transmitted `activityProfile`, `activityProfileIcon`, and `activityProfileName` in `LiveSharingManager` JSON payload. Shortened `"Open in Google Maps"` button label to `"Google Maps"`. | `LiveSharingManager.kt`, `server/public/index.html` | **Completed** | Web viewer HUD now renders the Activity Profile badge `#activityBadge` and shortened `"🗺️ Google Maps"` button, adapting cleanly across mobile and desktop viewports. |
 | **VER-03** | **Build Gate & Version Increment**: Increment versionCode to 42 and versionName to "1.4.4". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 23s, all 173 unit tests passed). |
+
+---
+
+## 32. Round 29: LocalityCard Zero-Growth Height Guarantee & Adaptive Single-Row Saved Place Fit (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI29-01** | **LocalityCard Zero-Growth Height Invariant**: Visited places badge (`🚩 N`) strictly adjusts its dimensions to the activity row without causing the LocalityCard to expand or shifting the activity profile/speed line down when recording starts. Enforced exact container `height(28.dp)` and badge `height(20.dp)` with 0 vertical padding overhead. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Container and badge dimensions locked. Baseline and card height remain 100% frozen between recording ON and OFF states. |
+| **UI29-02** | **Single-Line Saved Place Fit with Dynamic Font Scaling & Icon Fallback**: Completely removed duplicate dedicated saved place row (`shouldShowDedicatedSavedPlaceRow`). In Row 1, the saved place badge dynamically adapts: scales font down to `10.sp` / `widthIn(max = 95.dp)` when Live Sharing is active, or `11.sp` / `widthIn(max = 140.dp)` when inactive. If the name exceeds fit limits, cleanly falls back to a 40dp icon-only badge. Never renders a separate line. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Deleted dedicated row `shouldShowDedicatedSavedPlaceRow`. Row 1 badge scales font dynamically with graceful icon-only fallback. |
+| **VER-04** | **Build Gate & Version Increment**: Increment versionCode to 43 and versionName to "1.4.5". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 2m 13s, all 173 unit tests passed). |
+
 
 
 
