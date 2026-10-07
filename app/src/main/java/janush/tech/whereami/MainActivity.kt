@@ -595,6 +595,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
             opticalOffsetX = measuredOpticalOffsetX,
             opticalOffsetY = measuredOpticalOffsetY,
+            measuredTopInsetPx = topCardBottomPx,
+            measuredBottomInsetPx = bottomControlsTopPx,
             isRecording = activeTrip != null,
             pauses = allDisplayPauses,
             orientationMode = orientationMode,
