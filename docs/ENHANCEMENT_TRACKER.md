@@ -33,10 +33,15 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 19** | Field Testing (2026-10-03 Morning) Rotation-Aware & Viewport-Aware Track Fitting, Scoped Motion Burst WakeLock, Low-Power Standby FGS Preservation & Telemetry Audit | 3 | 3 | 0 | 0 |
 | **Round 20** | Field Testing (2026-10-03 Afternoon) Auto-Start FGS Bootstrap via BroadcastReceiver (PendingIntent path), eliminates Android 14+ startForegroundService DENIED for screen-off motion wake | 1 | 1 | 0 | 0 |
 | **Round 21** | Field Testing (2026-10-03 Late Afternoon) Restoring Persistent Standby Notification & Zero-CPU Foreground Service for TripMode.AUTO (Android 14+ Location FGS Protection) | 1 | 1 | 0 | 0 |
-| **Round 22** | Field Testing (2026-10-03 Evening) Activity Profile Configurable Auto-Start Speed Thresholds & Dynamic Settings | 1 | 1 | 0 | 0 |
 | **Round 23** | Field Testing (2026-10-05 Slovakia & Poland Trips) Stop/Continuation Separation, 150s Rest Pause Gating, Zero Past-Trip Visual Bleed, Viewport Optical Offset, International Road Canonicalization & Live Sharing Polish | 8 | 8 | 0 | 0 |
+| **Round 24** | UI Polish, Locality Card Layout, Independent Profile Settings & Language Audit (2026-10-06) | 6 | 6 | 0 | 0 |
+| **Round 25** | Visited Places Pill Integration, Toolbar Icon Hierarchy, Full-Aperture Viewport Insets & Instant-Expanded Settings Sheets (2026-10-06) | 5 | 5 | 0 | 0 |
+| **Round 26** | Field Testing (2026-10-07) Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding | 4 | 4 | 0 | 0 |
+| **Round 27** | LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07) | 3 | 3 | 0 | 0 |
+| **Round 28** | High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **190** | **182** | **0** | **8** |
+| **Total** | | **212** | **204** | **0** | **8** |
+
 
 ---
 
@@ -446,6 +451,55 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **UX24-04** | **Decoupled Activity Profile Management**: Decouple changing the active recording profile from modifying profile settings. Introduce "Activity Profiles & Settings" hub listing all 6 profiles, opening independent configuration sheet without switching active recording mode. | `MainActivity.kt` (`AppSettings`, `ProfileConfigSheet`) | **Completed** | Added list of all 6 profiles in Settings. Tapping opens `ProfileConfigSheet` to configure auto-start, auto-stop, and mode independently, with explicit "Set as Current Recording Profile" action. |
 | **UX24-05** | **Language & Map Readings Audit**: Deep diagnostic report detailing where and why languages are currently conflicting across UI, platform geocoding, OSM vectors, and raster map tiles. Registered as `BKL-10`. | `docs/ENHANCEMENT_TRACKER.md`, `LocationManager.kt` | **Completed** | Comprehensive architectural breakdown provided and registered as `BKL-10`. |
 | **UX24-06** | **Build & Test Quality Gate**: Verify clean build with zero unit test failures. | Entire project | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 18s, all unit tests passed). |
+
+---
+
+## 28. Round 25: Visited Places Pill Integration, Toolbar Icon Hierarchy, Full-Aperture Viewport Insets & Instant-Expanded Settings Sheets (2026-10-06)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UX25-01** | **Visited Places Badge Relocation to Activity Row**: Replaced isolated line with clean pill inside Row 2 (`🚩 N`), positioned to the left of the Activity Profile pill. Formatted with standard `EmojiText`, 8dp rounded surface, and zero text clipping. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Placed `🚩 N` pill to the left of Activity Profile pill with 8dp spacing; eliminated wasted vertical space and ensured clean multi-line wrapping for place names. |
+| **UX25-02** | **Toolbar Action Icons & Gear Badge Prominence**: Enlarged Map Layers button icon to 22dp, overlaid Gear badge to 21dp (icon 15dp) with offset (-3dp, -3dp), and Main Settings gear icon to 22dp for balanced visual hierarchy. | `MainActivity.kt` (`MainBottomControlsCard`) | **Completed** | Icons updated to 22dp with 21dp badge. Visually balanced with surrounding tools. |
+| **UX25-03** | **Unobstructed Map Viewport Insets Expansion**: Prevent polyline from rendering under right map controls, top locality card, or bottom toolbars after map rotation or resizing. Expanded right controls inset to 72dp + margin (86dp total), top card inset to 280dp (normal) / 160dp (compact), and bottom toolbar to 76dp + margin. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Insets expanded to ensure full clearance of 42dp buttons + padding and multi-line locality cards under any arbitrary orientation. Verified with updated `ViewportFitTest`. |
+| **UX25-04** | **Promote Activity Profiles & Instant Full-Expanded Sheets**: Moved Activity Profiles to the very top of App Settings with high-contrast card styling. Added `skipPartiallyExpanded = true` to both `showSettingsSheet` and `ProfileConfigSheet` so sheets open directly to full height without requiring drag-up gestures. | `MainActivity.kt` (`showSettingsSheet`, `ProfileConfigSheet`) | **Completed** | Activity Profiles section positioned at top of App Settings; bottom sheets expand immediately to full height on tap. |
+| **UX25-05** | **Build Gate & Version Increment**: Increment versionCode to 39 and versionName to "1.4.1". All tests pass with zero errors. | `app/build.gradle.kts`, `MainActivity.kt`, `OsmMapView.kt` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 52s, all 170 unit tests passed). |
+
+---
+
+## 29. Round 26: Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BAT-01** | **Live Sharing Overnight Zero-Drain & Breadcrumb Decoupling**: Decouple Live Sharing presence streaming from breadcrumb trail generation. When no trip is recording (`TripManager.activeTrip.value == null`), Live Sharing streams presence only (current location, locality, speed) with zero points appended to the trail polyline. Release WakeLock during `LIVE_ONLY` mode when stationary or without an active recording. | `LiveSharingManager.kt`, `LiveTrackingService.kt`, `HikingAndLiveAccuracyTest.kt` | **Completed** | Telemetry showed 1,627 jitter breadcrumbs accumulated overnight due to `(now - lastTime) >= 15s` bypass and 3-hour continuous WakeLock renewal. Now breadcrumbs are gated strictly to `activeTrip != null` and genuine displacement ($\ge 15\text{m}$), and WakeLock is only held during active trip recording. Unit test `testLiveBreadcrumbGatingRule` verified. |
+| **MAP-01** | **Map Viewport Fit Optical Center Sign Inversion**: Correct sign error in `OsmMapView.kt` unobstructed viewport centering (`offsetPixelsX = screenCenterX - mapWidth / 2.0`). Shifts camera east so track polyline renders centered within the visible aperture between left margin and right map controls. | `OsmMapView.kt`, `ViewportFitTest.kt` | **Completed** | Previous formula `mapWidth / 2.0 - screenCenterX` had positive sign, causing `calculateOpticalCenter` to shift camera west by 2,349m and pushing track east under buttons and offscreen. Inversion shifts camera east, centering polyline within `[leftInset, mapWidth - rightInset]`. Verified in `ViewportFitTest`. |
+| **UI-01** | **Visited Places Badge Icon Vertical Padding & Sizing**: Eliminate top clipping of the `🚩` flag icon in both Compact and Normal modes within `LocalityCard`. Set `yOffsetDp = 0.dp` on `EmojiText` inside the badge to override default upward baseline compensation. | `MainActivity.kt` (`LocalityCard`) | **Completed** | `EmojiText(emoji = "🚩", fontSize = 12.sp, yOffsetDp = 0.dp)` renders cleanly centered without clipping against the top border of the 8dp pill surface. |
+| **VER-01** | **Build Gate & Version Increment**: Increment versionCode to 40 and versionName to "1.4.2". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 1m 5s, all 171 unit tests passed). |
+
+---
+
+## 30. Round 27: LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI27-01** | **LocalityCard Zero-Jitter Height Stability**: Eliminate card height jumps and telemetry pill shifting when toggling trip recording. Enforced minimum container height (`defaultMinSize(minHeight = 28.dp)`) and symmetrical vertical padding (`3.dp` container, `2.dp` badge) so Row 2 maintains an identical optical baseline whether `🚩 N` is present or absent. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Row 2 now locks its baseline height across recording states, completely eliminating visual jumping of the activity profile, speed, and pace pill. |
+| **TRIP27-01** | **Empty / Trivial Trip Discard Engine**: Discard accidental trips (< few seconds, 0m distance or stationary jitter) upon stopping instead of polluting history. Configured per-profile minimum thresholds (`minValidDistanceMeters` 25m–80m, `minValidDurationMs` 20s–25s); if both criteria are unmet when stopped, automatically delete trip from SQLite database. | `TripModels.kt`, `TripManager.kt`, `HikingAndLiveAccuracyTest.kt` | **Completed** | Trivial trips (e.g. 0m in 1s) are deleted via `dbHelper.deleteTrip(current.id)` and logged as `DISCARDED_TRIVIAL`. Legitimate trips exceeding thresholds are preserved. Covered by `testTrivialTripDiscardRules`. |
+| **VER-02** | **Build Gate & Version Increment**: Increment versionCode to 41 and versionName to "1.4.3". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 19s, all 173 unit tests passed). |
+
+---
+
+## 31. Round 28: High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI28-01** | **High-Contrast Interactive Buttons Invariant**: Eliminate low-contrast gray/slate text on interactive buttons. Enforced strict rule in `DESIGN_SYSTEM.md`, `AGENTS.md`, and `GEMINI.md`: all interactive buttons must use `Color.White` / `#F8FAFC`. Updated `LiveQuickShareModal` (trail/position buttons, duration adjustment buttons, interval buttons, manage session button), `LiveShareDialog` (sync intervals, copy links), `DestinationPlaceCard` (navigation, map, share, save, delete, borders), and `LocationShareDialog`. | `MainActivity.kt`, `DESIGN_SYSTEM.md`, `AGENTS.md`, `GEMINI.md` | **Completed** | All interactive button labels and icons across modals/cards now strictly use high-contrast white text, preventing sunlight washout. Verified across all screens. |
+| **UI28-02** | **DestinationPlaceCard Pin Dismiss Streamlining**: Eliminate redundant "Clear Pin" button in the bottom action row. The top-right circular `X` (`IconButton(Icons.Default.Close)`) already dismisses the destination pin cleanly. Bottom action row now cleanly hosts `Save` and `Borders` (for unsaved pins) or `Edit`, `Delete`, and `Borders` (for saved places), with pure white button text. | `MainActivity.kt` (`DestinationPlaceCard`) | **Completed** | Redundant "Clear Pin" button removed, uncluttering Row 2 and allowing remaining buttons full width. |
+| **UI28-03** | **LocalityCard Row 1 Collision Responsive Adaptation**: When Live Sharing is active (showing satellite icon, countdown timer, and viewer count pill) AND a Saved Place matches the current location, the Saved Place badge in Row 1 adapts to an icon-only badge (`36dp–40dp` square container with `EmojiText(yOffsetDp = 0.dp)`). When Live Sharing is inactive, the short place name pill (`widthIn(max = 140.dp)`) is displayed. The dedicated full place name row displays whenever Live Sharing forces the icon-only badge or name > 12 chars. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Eliminates visual collision with the top-right collapse `^`/`X` button. Verified layout responsive logic. |
+| **WEB28-01** | **Companion Web Viewer Activity Profile Badge & "Google Maps" Label**: Display activity profile (e.g. `🚗 Driving`, `🥾 Hiking`, `🚴 Cycling`) in the web companion HUD. Transmitted `activityProfile`, `activityProfileIcon`, and `activityProfileName` in `LiveSharingManager` JSON payload. Shortened `"Open in Google Maps"` button label to `"Google Maps"`. | `LiveSharingManager.kt`, `server/public/index.html` | **Completed** | Web viewer HUD now renders the Activity Profile badge `#activityBadge` and shortened `"🗺️ Google Maps"` button, adapting cleanly across mobile and desktop viewports. |
+| **VER-03** | **Build Gate & Version Increment**: Increment versionCode to 42 and versionName to "1.4.4". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 23s, all 173 unit tests passed). |
+
+
+
+
 
 
 

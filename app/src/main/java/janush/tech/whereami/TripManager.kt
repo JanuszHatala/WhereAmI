@@ -377,9 +377,19 @@ class TripManager private constructor(private val context: Context) {
             sanitizeTrailingPauses(updatedPauses, current.points.size, now, current.points.lastOrNull())
         }
 
-        val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
-        dbHelper.updateTrip(finishedTrip)
-        TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
+        val durationMs = now - current.startTime
+        val profile = current.activityProfile
+        val isTrivialTrip = current.distanceMeters < profile.minValidDistanceMeters && durationMs < profile.minValidDurationMs
+
+        if (isTrivialTrip) {
+            // Discard "empty" accidental / instant start-stop trip (e.g. 0m in 1s or stationary jitter)
+            dbHelper.deleteTrip(current.id)
+            TelemetryLogger.logTrip("DISCARDED_TRIVIAL", current.id, "Trip discarded: dist=${current.distanceMeters.toInt()}m < ${profile.minValidDistanceMeters}m and duration=${durationMs / 1000}s < ${profile.minValidDurationMs / 1000}s")
+        } else {
+            val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
+            dbHelper.updateTrip(finishedTrip)
+            TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
+        }
         _activeTrip.value = null
         _isPaused.value = false
         lastLocation = null
