@@ -38,8 +38,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 25** | Visited Places Pill Integration, Toolbar Icon Hierarchy, Full-Aperture Viewport Insets & Instant-Expanded Settings Sheets (2026-10-06) | 5 | 5 | 0 | 0 |
 | **Round 26** | Field Testing (2026-10-07) Zero-Drain Live Sharing Decoupling, Viewport Optical Offset Inversion & Visited Badge Glyph Padding | 4 | 4 | 0 | 0 |
 | **Round 27** | LocalityCard Zero-Jitter Height Stability & Empty Trip Discard Engine (2026-10-07) | 3 | 3 | 0 | 0 |
+| **Round 28** | High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **208** | **200** | **0** | **8** |
+| **Total** | | **212** | **204** | **0** | **8** |
+
 
 ---
 
@@ -482,6 +484,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **UI27-01** | **LocalityCard Zero-Jitter Height Stability**: Eliminate card height jumps and telemetry pill shifting when toggling trip recording. Enforced minimum container height (`defaultMinSize(minHeight = 28.dp)`) and symmetrical vertical padding (`3.dp` container, `2.dp` badge) so Row 2 maintains an identical optical baseline whether `🚩 N` is present or absent. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Row 2 now locks its baseline height across recording states, completely eliminating visual jumping of the activity profile, speed, and pace pill. |
 | **TRIP27-01** | **Empty / Trivial Trip Discard Engine**: Discard accidental trips (< few seconds, 0m distance or stationary jitter) upon stopping instead of polluting history. Configured per-profile minimum thresholds (`minValidDistanceMeters` 25m–80m, `minValidDurationMs` 20s–25s); if both criteria are unmet when stopped, automatically delete trip from SQLite database. | `TripModels.kt`, `TripManager.kt`, `HikingAndLiveAccuracyTest.kt` | **Completed** | Trivial trips (e.g. 0m in 1s) are deleted via `dbHelper.deleteTrip(current.id)` and logged as `DISCARDED_TRIVIAL`. Legitimate trips exceeding thresholds are preserved. Covered by `testTrivialTripDiscardRules`. |
 | **VER-02** | **Build Gate & Version Increment**: Increment versionCode to 41 and versionName to "1.4.3". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 19s, all 173 unit tests passed). |
+
+---
+
+## 31. Round 28: High-Contrast Button Text Invariant, Destination Pin Streamlining, LocalityCard Collision Fix & Web Companion Activity Badge (2026-10-07)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI28-01** | **High-Contrast Interactive Buttons Invariant**: Eliminate low-contrast gray/slate text on interactive buttons. Enforced strict rule in `DESIGN_SYSTEM.md`, `AGENTS.md`, and `GEMINI.md`: all interactive buttons must use `Color.White` / `#F8FAFC`. Updated `LiveQuickShareModal` (trail/position buttons, duration adjustment buttons, interval buttons, manage session button), `LiveShareDialog` (sync intervals, copy links), `DestinationPlaceCard` (navigation, map, share, save, delete, borders), and `LocationShareDialog`. | `MainActivity.kt`, `DESIGN_SYSTEM.md`, `AGENTS.md`, `GEMINI.md` | **Completed** | All interactive button labels and icons across modals/cards now strictly use high-contrast white text, preventing sunlight washout. Verified across all screens. |
+| **UI28-02** | **DestinationPlaceCard Pin Dismiss Streamlining**: Eliminate redundant "Clear Pin" button in the bottom action row. The top-right circular `X` (`IconButton(Icons.Default.Close)`) already dismisses the destination pin cleanly. Bottom action row now cleanly hosts `Save` and `Borders` (for unsaved pins) or `Edit`, `Delete`, and `Borders` (for saved places), with pure white button text. | `MainActivity.kt` (`DestinationPlaceCard`) | **Completed** | Redundant "Clear Pin" button removed, uncluttering Row 2 and allowing remaining buttons full width. |
+| **UI28-03** | **LocalityCard Row 1 Collision Responsive Adaptation**: When Live Sharing is active (showing satellite icon, countdown timer, and viewer count pill) AND a Saved Place matches the current location, the Saved Place badge in Row 1 adapts to an icon-only badge (`36dp–40dp` square container with `EmojiText(yOffsetDp = 0.dp)`). When Live Sharing is inactive, the short place name pill (`widthIn(max = 140.dp)`) is displayed. The dedicated full place name row displays whenever Live Sharing forces the icon-only badge or name > 12 chars. | `MainActivity.kt` (`LocalityCard`) | **Completed** | Eliminates visual collision with the top-right collapse `^`/`X` button. Verified layout responsive logic. |
+| **WEB28-01** | **Companion Web Viewer Activity Profile Badge & "Google Maps" Label**: Display activity profile (e.g. `🚗 Driving`, `🥾 Hiking`, `🚴 Cycling`) in the web companion HUD. Transmitted `activityProfile`, `activityProfileIcon`, and `activityProfileName` in `LiveSharingManager` JSON payload. Shortened `"Open in Google Maps"` button label to `"Google Maps"`. | `LiveSharingManager.kt`, `server/public/index.html` | **Completed** | Web viewer HUD now renders the Activity Profile badge `#activityBadge` and shortened `"🗺️ Google Maps"` button, adapting cleanly across mobile and desktop viewports. |
+| **VER-03** | **Build Gate & Version Increment**: Increment versionCode to 42 and versionName to "1.4.4". Verify all unit tests pass. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` in 23s, all 173 unit tests passed). |
+
 
 
 

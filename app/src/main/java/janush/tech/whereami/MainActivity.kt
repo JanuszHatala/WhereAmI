@@ -4717,7 +4717,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A)
+                                        containerColor = if (session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A),
+                                        contentColor = Color.White
                                     ),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
@@ -4728,6 +4729,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Full Trail",
                                             fontSize = 11.sp,
+                                            color = Color.White,
                                             fontWeight = if (session.trailVisible) FontWeight.Bold else FontWeight.Normal,
                                             style = TextStyle(
                                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -4747,7 +4749,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (!session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A)
+                                        containerColor = if (!session.trailVisible) Color(0xFF0284C7) else Color(0xFF0F172A),
+                                        contentColor = Color.White
                                     ),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
@@ -4758,6 +4761,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Position Only",
                                             fontSize = 11.sp,
+                                            color = Color.White,
                                             fontWeight = if (!session.trailVisible) FontWeight.Bold else FontWeight.Normal,
                                             style = TextStyle(
                                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -4789,15 +4793,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF0F172A)
+                                            containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF0F172A),
+                                            contentColor = Color.White
                                         ),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("${mins}m", fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                        Text("${mins}m", fontSize = 12.sp, color = Color.White, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                                     }
                                 }
                             }
+
 
                             Spacer(modifier = Modifier.height(10.dp))
 
@@ -4809,10 +4815,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         android.widget.Toast.makeText(context, "Switched to 6h timed duration", android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("⏱ Switch to Timed Duration (+6h)", fontSize = 12.sp, color = Color(0xFFCBD5E1))
+                                    Text("⏱ Switch to Timed Duration (+6h)", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                                 }
                             } else {
                                 Text("Adjust Sharing Duration:", fontSize = 11.sp, color = Color(0xFF94A3B8))
@@ -4826,10 +4832,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             android.widget.Toast.makeText(context, "Reduced session by -1 hour", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
                                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
-                                    ) { Text("-1h", fontSize = 11.sp) }
+                                    ) { Text("-1h", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold) }
 
                                     Button(
                                         onClick = {
@@ -4837,10 +4843,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             android.widget.Toast.makeText(context, "Reduced session by -30 min", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
                                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
-                                    ) { Text("-30m", fontSize = 11.sp) }
+                                    ) { Text("-30m", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold) }
 
                                     Button(
                                         onClick = {
@@ -4848,10 +4854,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             android.widget.Toast.makeText(context, "Extended session by +1 hour", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
                                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
-                                    ) { Text("+1h", fontSize = 11.sp) }
+                                    ) { Text("+1h", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold) }
 
                                     Button(
                                         onClick = {
@@ -4859,10 +4865,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             android.widget.Toast.makeText(context, "Extended session by +6 hours", android.widget.Toast.LENGTH_SHORT).show()
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
                                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                         modifier = Modifier.weight(1f)
-                                    ) { Text("+6h", fontSize = 11.sp) }
+                                    ) { Text("+6h", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold) }
                                 }
                                 Button(
                                     onClick = {
@@ -4870,12 +4876,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         android.widget.Toast.makeText(context, "Switched to continuous (no expiry)", android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color(0xFF38BDF8)),
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                                 ) {
-                                    Text("∞ Switch to Continuous (No Expiry)", fontSize = 12.sp, color = Color(0xFF38BDF8))
+                                    Text("∞ Switch to Continuous (No Expiry)", fontSize = 12.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
                                 }
                             }
+
                         }
                     }
 
@@ -5249,8 +5256,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         android.widget.Toast.makeText(context, "Personal link copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Static Link", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Static Link", tint = Color.White, modifier = Modifier.size(20.dp))
                                 }
+
                             }
                         }
                     }
@@ -5337,14 +5345,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 onClick = { selectedInterval = mins },
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B)
+                                    containerColor = if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                    contentColor = Color.White
                                 ),
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text(label, fontSize = 12.sp)
+                                Text(label, fontSize = 12.sp, color = Color.White, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium)
                             }
                         }
+
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -5602,10 +5612,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                             showLiveShareDialog = true
                         }
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF94A3B8))
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Manage Session", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                        Text("Manage Session", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
+
 
                     TextButton(
                         onClick = {
@@ -7854,14 +7865,35 @@ private fun LocalityCard(
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
+                        } else if (liveSession?.isActive == true) {
+                            // When Live Sharing pill is active in Row 1, space is tight!
+                            // Render icon-only badge (40dp) to prevent any overflow with collapse toggle.
+                            Surface(
+                                onClick = onOpenSavedPlaces,
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0x3310B981),
+                                border = BorderStroke(1.dp, Color(0x5510B981)),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    EmojiText(
+                                        emoji = nearbySavedPlace.category.iconEmoji,
+                                        fontSize = 16.sp,
+                                        yOffsetDp = 0.dp
+                                    )
+                                }
+                            }
                         } else if (nearbySavedPlace.name.length <= 12) {
-                            // Short Place Name (<= 12 chars): Fits compactly in Row 1!
+                            // Short Place Name (<= 12 chars) with inactive live share: Fits compactly in Row 1!
                             Surface(
                                 onClick = onOpenSavedPlaces,
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0x3310B981),
                                 border = BorderStroke(1.dp, Color(0x5510B981)),
-                                modifier = Modifier.height(40.dp).widthIn(max = 150.dp)
+                                modifier = Modifier.height(40.dp).widthIn(max = 140.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -7871,15 +7903,17 @@ private fun LocalityCard(
                                 ) {
                                     EmojiText(
                                         emoji = nearbySavedPlace.category.iconEmoji,
-                                        fontSize = 15.sp
+                                        fontSize = 15.sp,
+                                        yOffsetDp = 0.dp
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = nearbySavedPlace.name,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF10B981),
                                         maxLines = 1,
+                                        softWrap = false,
                                         overflow = TextOverflow.Ellipsis,
                                         style = TextStyle(
                                             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -7887,7 +7921,7 @@ private fun LocalityCard(
                                                 alignment = LineHeightStyle.Alignment.Center,
                                                 trim = LineHeightStyle.Trim.Both
                                             ),
-                                            lineHeight = 12.sp
+                                            lineHeight = 11.sp
                                         )
                                     )
                                 }
@@ -7912,8 +7946,11 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Dedicated Bookmarked Place Line: Only if Long (> 12 chars) to avoid Row 1 overflow ──
-                if (nearbySavedPlace != null && nearbySavedPlace.name.length > 12) {
+                // ── Dedicated Bookmarked Place Line: Shown if Long (>12 chars) OR when Live Sharing forced Row 1 to icon-only ──
+                val shouldShowDedicatedSavedPlaceRow = nearbySavedPlace != null && (
+                    nearbySavedPlace.name.length > 12 || liveSession?.isActive == true
+                )
+                if (shouldShowDedicatedSavedPlaceRow && nearbySavedPlace != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
                         onClick = onOpenSavedPlaces,
@@ -7922,6 +7959,7 @@ private fun LocalityCard(
                         border = BorderStroke(1.dp, Color(0x5510B981)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -8705,7 +8743,7 @@ private fun DestinationPlaceCard(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Exit Destination",
-                        tint = Color(0xFF94A3B8),
+                        tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -8812,7 +8850,7 @@ private fun DestinationPlaceCard(
                         Text("Delete", color = Color(0xFFF87171), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 } else {
-                    // Unsaved Pin: Save, Clear Pin, Borders
+                    // Unsaved Pin: Save, Borders
                     Button(
                         onClick = {
                             onSavePlace?.invoke(destinationPoint.latitude, destinationPoint.longitude, destinationItem)
@@ -8822,21 +8860,9 @@ private fun DestinationPlaceCard(
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f).height(38.dp)
                     ) {
-                        Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
-                        Text("Save", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-                    }
-
-                    Button(
-                        onClick = onClearDestination,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("Clear Pin", color = Color(0xFFE2E8F0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        Text("Save", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 }
 

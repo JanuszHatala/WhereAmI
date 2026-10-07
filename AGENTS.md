@@ -102,6 +102,7 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **Emoji/Icon Glyph Padding in Badges**: When embedding emojis inside compact badges or pills (e.g. `🚩 N` in `LocalityCard`), explicitly pass `yOffsetDp = 0.dp` to `EmojiText` to prevent the default upward baseline compensation (`-maxOf(2.5f, fontSize * 0.28f).dp`) from clipping the top tip of glyphs against the pill container border.
 - **Compose ModalBottomSheet Expansion**: All secondary configuration or settings bottom sheets (`ModalBottomSheet`) must configure `rememberModalBottomSheetState(skipPartiallyExpanded = true)` to open immediately at full height, preventing half-screen partial drawer states that hide settings behind drag gestures.
 - **Landscape Screen Conservation**: In landscape mode, never stack toolbars vertically. Collapse secondary toolbars to icon-only representations or position them side-by-side with the main bottom toolbar.
+- **High-Contrast Interactive Buttons Invariant (`docs/DESIGN_SYSTEM.md` Section 6)**: All interactive button labels (`Button`, `OutlinedButton`, `TextButton`, `Surface(onClick = ...)`, `FilterChip`) MUST use crisp, high-contrast white text (`Color.White` / `#F8FAFC`). Never use gray (`#94A3B8`, `Color.LightGray`, `#CBD5E1`) for button labels. Differentiate secondary/tertiary buttons using container backgrounds (`#334155`, `#1E293B`) or border strokes, never dimmed text.
 
 ---
 

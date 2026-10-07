@@ -841,9 +841,15 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("place", place ?: "")
                     put("trekking", trekking ?: "")
                     put("battery", battery)
+                    val activeProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
+                        ?: TripManager.getInstance(context).activityProfile.value
+                    put("activityProfile", activeProfile.name)
+                    put("activityProfileIcon", activeProfile.iconEmoji)
+                    put("activityProfileName", activeProfile.displayName)
                     put("t", System.currentTimeMillis())
                 })
             }
+
 
             OutputStreamWriter(conn.outputStream).use { it.write(root.toString()) }
             val code = conn.responseCode
