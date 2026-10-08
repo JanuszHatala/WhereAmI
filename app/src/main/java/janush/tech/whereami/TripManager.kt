@@ -365,7 +365,7 @@ class TripManager private constructor(private val context: Context) {
                 endTime = now,
                 durationMs = now - activePause!!.startTime
             )
-            updatedPauses.add(finalized)
+            tryCoalescePause(updatedPauses, finalized, now, current.id)
             TelemetryLogger.logTrip("PAUSE_FINALIZED", current.id, "Finalized manual stop pause: ${finalized.durationMs / 1000}s")
         }
         activePause = null
@@ -440,6 +440,46 @@ class TripManager private constructor(private val context: Context) {
             result.removeAt(result.size - 1)
         }
         return result
+    }
+
+    private fun tryCoalescePause(
+        pauses: MutableList<TripPause>,
+        candidate: TripPause,
+        now: Long,
+        tripId: Long
+    ) {
+        val prevPause = pauses.lastOrNull()
+        val canCoalesce = if (prevPause != null) {
+            val prevEnd = prevPause.endTime ?: (prevPause.startTime + prevPause.durationMs)
+            val gapMs = candidate.startTime - prevEnd
+            val dPrev = FloatArray(1)
+            Location.distanceBetween(
+                prevPause.latitude,
+                prevPause.longitude,
+                candidate.latitude,
+                candidate.longitude,
+                dPrev
+            )
+            // Coalesce if overlapping (gapMs <= 0) or close proximity adjacent (gapMs in 0..60s) within 30m
+            gapMs <= 60_000L && dPrev[0] <= 30.0f
+        } else false
+
+        if (canCoalesce && prevPause != null) {
+            val prevEnd = prevPause.endTime ?: (prevPause.startTime + prevPause.durationMs)
+            val candEnd = candidate.endTime ?: (candidate.startTime + candidate.durationMs)
+            val combinedEnd = maxOf(prevEnd, candEnd)
+            val combinedStart = minOf(prevPause.startTime, candidate.startTime)
+            val merged = prevPause.copy(
+                startTime = combinedStart,
+                endTime = combinedEnd,
+                durationMs = (combinedEnd - combinedStart).coerceAtLeast(prevPause.durationMs + candidate.durationMs)
+            )
+            pauses[pauses.size - 1] = merged
+            TelemetryLogger.logTrip("PAUSE_COALESCED", tripId, "Merged pause: ${merged.durationMs / 1000}s")
+        } else {
+            pauses.add(candidate)
+            TelemetryLogger.logTrip("PAUSE_RECORDED", tripId, "Pause recorded: ${candidate.durationMs / 1000}s")
+        }
     }
 
     fun onLocationUpdate(
@@ -569,33 +609,7 @@ class TripManager private constructor(private val context: Context) {
                         durationMs = (pauseEndTime - activePause!!.startTime).coerceAtLeast(150_000L)
                     )
 
-                    // Coalesce with previous pause if within 30m and 60s
-                    val prevPause = updatedPauses.lastOrNull()
-                    val canCoalesce = if (prevPause != null) {
-                        val prevEnd = prevPause.endTime ?: (prevPause.startTime + prevPause.durationMs)
-                        val gapMs = finalized.startTime - prevEnd
-                        val dPrev = FloatArray(1)
-                        Location.distanceBetween(
-                            prevPause.latitude,
-                            prevPause.longitude,
-                            finalized.latitude,
-                            finalized.longitude,
-                            dPrev
-                        )
-                        gapMs in 0L..60_000L && dPrev[0] <= 30.0f
-                    } else false
-
-                    if (canCoalesce && prevPause != null) {
-                        val merged = prevPause.copy(
-                            endTime = finalized.endTime,
-                            durationMs = ((finalized.endTime ?: now) - prevPause.startTime).coerceAtLeast(prevPause.durationMs + finalized.durationMs)
-                        )
-                        updatedPauses[updatedPauses.size - 1] = merged
-                        TelemetryLogger.logTrip("PAUSE_COALESCED", current.id, "Merged pause: ${merged.durationMs / 1000}s")
-                    } else {
-                        updatedPauses.add(finalized)
-                        TelemetryLogger.logTrip("PAUSE_RECORDED", current.id, "Pause recorded: ${finalized.durationMs / 1000}s")
-                    }
+                    tryCoalescePause(updatedPauses, finalized, now, current.id)
 
                     activePause = null
                     pauseAnchorLocation = null

@@ -11,7 +11,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Shapes
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 val WhereAmIShapes = Shapes(
@@ -24,20 +27,72 @@ val WhereAmIShapes = Shapes(
 
 val AppButtonShape = RoundedCornerShape(10.dp)
 
-private val DarkColorScheme = darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
 
-private val LightColorScheme =
-  lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
-  )
+private val DarkColorScheme = darkColorScheme(
+    primary = TacticalSky,
+    onPrimary = Color.White,
+    secondary = TacticalEmerald,
+    onSecondary = Color.White,
+    tertiary = TacticalAmber,
+    onTertiary = Color.White,
+    background = TacticalNavy,
+    onBackground = Color.White,
+    surface = TacticalSlate,
+    onSurface = Color.White,
+    surfaceVariant = TacticalSlateLight,
+    onSurfaceVariant = Color.White,
+    error = TacticalRed,
+    onError = Color.White
+)
+
+private val LightColorScheme = DarkColorScheme // WhereAmI is an outdoor tactical dark UI
+
+/**
+ * Tactical button color presets enforcing crisp white contrast on interactive buttons
+ * (docs/DESIGN_SYSTEM.md Section 6).
+ */
+object AppButtonDefaults {
+    @Composable
+    fun primaryColors(containerColor: Color = TacticalSky): ButtonColors =
+        ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = Color.White
+        )
+
+    @Composable
+    fun successColors(containerColor: Color = TacticalEmerald): ButtonColors =
+        ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = Color.White
+        )
+
+    @Composable
+    fun warningColors(containerColor: Color = TacticalAmber): ButtonColors =
+        ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = Color.White
+        )
+
+    @Composable
+    fun dangerColors(containerColor: Color = TacticalRed): ButtonColors =
+        ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = Color.White
+        )
+
+    @Composable
+    fun secondaryColors(containerColor: Color = TacticalSlateLight): ButtonColors =
+        ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = Color.White
+        )
+}
 
 @Composable
 fun WhereAmITheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
-  dynamicColor: Boolean = true,
+  darkTheme: Boolean = true,
+  // Dynamic color is disabled by default to preserve tactical contrast
+  dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) {
   val colorScheme =
@@ -60,8 +115,9 @@ fun WhereAmITheme(
 
 @Composable
 fun WhereIAmTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  dynamicColor: Boolean = true,
+  darkTheme: Boolean = true,
+  dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) = WhereAmITheme(darkTheme, dynamicColor, content)
+
 

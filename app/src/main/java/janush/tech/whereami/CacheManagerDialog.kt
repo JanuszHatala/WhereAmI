@@ -475,16 +475,20 @@ fun CacheManagerDialog(
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF0284C7),
+                                            contentColor = Color.White
+                                        ),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Icon(
                                             if (totalMissing == 0) Icons.Default.Refresh else Icons.Default.CloudDownload,
                                             contentDescription = null,
+                                            tint = Color.White,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(buttonText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text(buttonText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
 
                                     val estimateStr = when (totalMissing) {
@@ -704,19 +708,25 @@ fun CacheManagerDialog(
                                         Button(
                                             onClick = { cacheManager.startPrefetch() },
                                             modifier = Modifier.fillMaxWidth(),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF0284C7),
+                                                contentColor = Color.White
+                                            ),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
-                                            Text("Fetch Remaining Missing Data ($totalMissing)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text("Fetch Remaining Missing Data ($totalMissing)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                         }
                                     } else {
                                         Button(
                                             onClick = { cacheManager.calculateCacheDeficit() },
                                             modifier = Modifier.fillMaxWidth(),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF0284C7),
+                                                contentColor = Color.White
+                                            ),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
-                                            Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                         }
                                     }
                                 }
@@ -732,10 +742,13 @@ fun CacheManagerDialog(
                                     Button(
                                         onClick = { cacheManager.startPrefetch() },
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF0284C7),
+                                            contentColor = Color.White
+                                        ),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
                                 }
                             }
@@ -750,10 +763,13 @@ fun CacheManagerDialog(
                                     Button(
                                         onClick = { cacheManager.startPrefetch() },
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF0284C7),
+                                            contentColor = Color.White
+                                        ),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
                                 }
                             }
