@@ -47,9 +47,9 @@ class LiveTrackingService : Service() {
         wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock")
 
         val hasTrip = TripManager.getInstance(this).activeTrip.value != null
-        val liveSession = LiveSharingManager.getInstance(this).currentSession.value
-        val hasLive = liveSession != null && liveSession.isActive
-        updateWakeLock(hasTrip || hasLive)
+        // Strict WakeLock scoping (AGENTS.md Rule 2.A):
+        // Only acquire wake lock during active trip recording, NEVER during Live Sharing alone.
+        updateWakeLock(hasTrip)
 
         try {
             startForegroundService()

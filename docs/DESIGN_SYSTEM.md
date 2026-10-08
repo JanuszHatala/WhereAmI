@@ -177,11 +177,10 @@ fun EmojiText(
 - **Mandatory White Text on Buttons**:
   - All interactive button labels (`Button`, `OutlinedButton`, `TextButton`, `Surface(onClick = ...)`, `FilterChip`) MUST use crisp, high-contrast white text (`Color.White` / `#F8FAFC`).
   - **NEVER use gray/slate text** (`#94A3B8`, `Color.LightGray`, `Color.Gray`, `#64748B`, `#CBD5E1`) for button labels or button icons inside clickable controls.
-- **Visual Hierarchy via Backgrounds & Borders, NOT Dimmed Text**:
-  - **Primary Action**: Saturated container (e.g. `#0284C7` Sky, `#059669` Emerald, `#10B981`) with `Color.White` text.
-  - **Secondary Action**: Dark slate container (e.g. `#334155` or `#1E293B`) with `Color.White` text and optional border (`BorderStroke(1.dp, #475569)`).
-  - **Tertiary / Outlined Action**: Transparent or slate container with border, and `Color.White` or saturated accent text.
-  - **Destructive Action**: Saturated red/amber container or border with `Color.White` or `#FCA5A5` text.
-  - Dimming button text to gray to denote a "secondary" action is strictly forbidden as it degrades contrast below WCAG AA (~2.2:1) under outdoor sunlight.
+- **Triple-Layer Contrast Defense**:
+  1. *Foundation Theme Enforcement*: `WhereAmITheme` sets `dynamicColor = false` by default, preventing Android 12+ wallpaper Monet palette from overriding dark/light container content tokens with dimmed or gray shades. All Material3 content tokens (`onPrimary`, `onSecondary`, `onTertiary`, `onSurface`, `onSurfaceVariant`) map strictly to `Color.White`.
+  2. *Call-Site Explicit Invariant*: All button invocations either use `AppButtonDefaults` presets (`primary()`, `secondary()`, `destructive()`, `text()`, `outlined()`) or explicitly pass `colors = ButtonDefaults.buttonColors(..., contentColor = Color.White)`. Nested `Text` composables inside button content lambdas explicitly specify `color = Color.White`.
+  3. *Automated Static Compliance Gate*: Every Gradle test run (`./gradlew testDebugUnitTest`) executes `ButtonContrastComplianceTest.kt`, scanning all UI composables to fail builds if any `Button`, `TextButton`, or `OutlinedButton` content block contains `Color.Gray`, `Color.LightGray`, `0xFF94A3B8`, or `0xFFCBD5E1`.
+
 
 
