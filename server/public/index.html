@@ -181,9 +181,40 @@
     .top-card.collapsed .status-alert,
     .top-card.collapsed .stats-row,
     .top-card.collapsed .actions-row,
+    .top-card.collapsed .guest-sharing-row,
     .top-card.collapsed #trekkingBadge,
     .top-card.collapsed #activityBadge {
       display: none !important;
+    }
+
+    .guest-sharing-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .guest-name-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      padding: 2px 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+      user-select: none;
+    }
+    .guest-name-pill:hover {
+      background: rgba(16, 185, 129, 0.28);
+      color: #fff;
     }
 
     .top-card.collapsed .place-name {
@@ -420,6 +451,13 @@
       <button class="gmaps-btn" id="gmapsBtn" onclick="openGoogleMaps()" title="Open current location in Google Maps">
         🗺️ Google Maps
       </button>
+    </div>
+
+    <div id="guestSharingRow" class="guest-sharing-row" style="display: none;">
+      <span class="guest-sharing-label">📍 Sharing your location with host as:</span>
+      <span class="guest-name-pill" id="guestNamePill" onclick="promptEditGuestName()" title="Click to edit nickname">
+        <span id="guestNameDisplay">Guest</span> ✏️
+      </span>
     </div>
   </div>
 
@@ -785,6 +823,83 @@
       }
 
       updateVisitorDistance();
+      streamGuestLocation(lat, lng, acc);
+    }
+
+    function getOrCreateGuestId() {
+      let id = localStorage.getItem('whereami_guest_device_id');
+      if (!id) {
+        id = 'g_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+        localStorage.setItem('whereami_guest_device_id', id);
+      }
+      return id;
+    }
+
+    function getGuestNickname() {
+      return localStorage.getItem('whereami_guest_nickname') || '';
+    }
+
+    function setGuestNickname(name) {
+      if (name && name.trim()) {
+        localStorage.setItem('whereami_guest_nickname', name.trim().slice(0, 30));
+      } else {
+        localStorage.removeItem('whereami_guest_nickname');
+      }
+    }
+
+    function promptEditGuestName() {
+      const current = getGuestNickname() || (document.getElementById('guestNameDisplay')?.textContent || '');
+      const newName = prompt('Enter your name to share with the host (leave blank to restore default):', current === 'Guest' ? '' : current);
+      if (newName !== null) {
+        setGuestNickname(newName);
+        const display = document.getElementById('guestNameDisplay');
+        if (display) display.textContent = newName.trim() || 'Guest';
+        if (visitorCoords) {
+          streamGuestLocation(visitorCoords[0], visitorCoords[1], null, true);
+        }
+      }
+    }
+
+    let lastGuestPushTime = 0;
+    let lastGuestPushCoords = null;
+    let lastGuestAssignedName = null;
+
+    function streamGuestLocation(lat, lng, acc, force = false) {
+      if (window.currentSessionFollowGuests === false) {
+        const row = document.getElementById('guestSharingRow');
+        if (row) row.style.display = 'none';
+        return;
+      }
+
+      const now = Date.now();
+      if (!force && lastGuestPushCoords) {
+        const d = map.distance(lastGuestPushCoords, [lat, lng]);
+        if (d < 10 && (now - lastGuestPushTime < 8000)) return;
+      }
+      lastGuestPushTime = now;
+      lastGuestPushCoords = [lat, lng];
+
+      const gId = getOrCreateGuestId();
+      const nick = getGuestNickname();
+
+      fetch('/api/sessions/' + sessionId + '/guests/' + gId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: lat,
+          lng: lng,
+          acc: acc || null,
+          name: nick || undefined
+        })
+      }).then(res => res.json()).then(data => {
+        if (data && data.success && data.guest) {
+          lastGuestAssignedName = data.guest.name;
+          const row = document.getElementById('guestSharingRow');
+          const display = document.getElementById('guestNameDisplay');
+          if (row) row.style.display = 'flex';
+          if (display) display.textContent = data.guest.name;
+        }
+      }).catch(err => console.debug('Guest stream err:', err));
     }
 
     if (navigator.geolocation) {
@@ -827,11 +942,26 @@
         }
       }
     }
-    setInterval(updateTimerTicker, 1000);
+    let isInitialPageView = false;
+    try {
+      const pvKey = 'whereami_pv_' + sessionId;
+      if (!sessionStorage.getItem(pvKey)) {
+        sessionStorage.setItem(pvKey, '1');
+        isInitialPageView = true;
+      }
+    } catch (_) {
+      isInitialPageView = true;
+    }
 
     async function fetchTrack() {
       try {
-        const res = await fetch('/api/sessions/' + sessionId, { cache: 'no-store' });
+        const guestIdParam = encodeURIComponent(getOrCreateGuestId());
+        let fetchUrl = '/api/sessions/' + sessionId + '?guestId=' + guestIdParam;
+        if (isInitialPageView) {
+          fetchUrl += '&pv=1';
+          isInitialPageView = false;
+        }
+        const res = await fetch(fetchUrl, { cache: 'no-store' });
         if (!res.ok) {
           if (res.status === 404) {
             document.getElementById('placeName').textContent = 'Session not found';
@@ -844,6 +974,15 @@
         }
         const data = await res.json();
         
+        window.currentSessionFollowGuests = data.followGuests !== false;
+        if (window.currentSessionFollowGuests === false) {
+          const row = document.getElementById('guestSharingRow');
+          if (row) row.style.display = 'none';
+        } else if (lastGuestAssignedName) {
+          const row = document.getElementById('guestSharingRow');
+          if (row) row.style.display = 'flex';
+        }
+
         currentSessionMeta = { expiresAt: data.expiresAt, createdAt: data.createdAt };
         document.getElementById('sessionTitle').textContent = data.title || 'Live Location';
         const countdownChip = document.getElementById('countdownChip');
