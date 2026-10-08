@@ -2019,7 +2019,10 @@ private fun MapSettingsDialog(
             ) {
                 Button(
                     onClick = onResetProfileDefaults,
-                    colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF334155)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ComposeColor(0xFF334155),
+                        contentColor = ComposeColor.White
+                    ),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
@@ -2027,7 +2030,7 @@ private fun MapSettingsDialog(
                     Text(
                         text = "Reset ${activityProfile.displayName}",
                         fontSize = 11.sp,
-                        color = ComposeColor(0xFFE2E8F0),
+                        color = ComposeColor.White,
                         maxLines = 1,
                         softWrap = false
                     )
@@ -2035,7 +2038,10 @@ private fun MapSettingsDialog(
 
                 Button(
                     onClick = onResetAllProfileDefaults,
-                    colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF1E293B)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ComposeColor(0xFF1E293B),
+                        contentColor = ComposeColor.White
+                    ),
                     border = BorderStroke(1.dp, ComposeColor(0xFF475569)),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1f),
@@ -2044,7 +2050,7 @@ private fun MapSettingsDialog(
                     Text(
                         text = "Reset All Profiles",
                         fontSize = 11.sp,
-                        color = ComposeColor(0xFFCBD5E1),
+                        color = ComposeColor.White,
                         maxLines = 1,
                         softWrap = false
                     )
