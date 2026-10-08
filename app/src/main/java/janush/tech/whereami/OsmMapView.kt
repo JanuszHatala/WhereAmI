@@ -171,7 +171,8 @@ fun getOpticalCenter(
         zoom = mapView.zoomLevelDouble,
         mapOrientation = mapView.mapOrientation,
         offsetPixelsY = offsetPixelsY,
-        offsetPixelsX = offsetPixelsX
+        offsetPixelsX = offsetPixelsX,
+        tilesScaleFactor = mapView.tilesScaleFactor
     )
 }
 
@@ -181,13 +182,15 @@ fun calculateOpticalCenter(
     zoom: Double,
     mapOrientation: Float,
     offsetPixelsY: Int,
-    offsetPixelsX: Int = 0
+    offsetPixelsX: Int = 0,
+    tilesScaleFactor: Float = 1.0f
 ): GeoPoint {
     if (offsetPixelsX == 0 && offsetPixelsY == 0) {
         return GeoPoint(lat, lon)
     }
 
-    val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
+    val scale = if (tilesScaleFactor > 0f) tilesScaleFactor else 1.0f
+    val metersPerPixel = ((156543.03392 / scale) * kotlin.math.cos(Math.toRadians(lat))) / Math.pow(2.0, zoom)
     val uCam = -offsetPixelsX * metersPerPixel
     val vCam = -offsetPixelsY * metersPerPixel
 
@@ -297,7 +300,8 @@ fun fitPointsToUnobstructedViewport(
             zoom = 16.0,
             mapOrientation = orientationDeg,
             offsetPixelsY = offsetPixelsY,
-            offsetPixelsX = offsetPixelsX
+            offsetPixelsX = offsetPixelsX,
+            tilesScaleFactor = map.tilesScaleFactor
         )
         map.controller.stopAnimation(false)
         map.controller.setZoom(16.0)
@@ -341,23 +345,27 @@ fun fitPointsToUnobstructedViewport(
     val spanU = (maxU - minU).coerceAtLeast(200.0)
     val spanV = (maxV - minV).coerceAtLeast(200.0)
 
-    // 3. Compute zoom fitting both rotated width and height into unobstructed window with 12% safety padding
-    val safeWidth = availWidth * 0.88
-    val safeHeight = availHeight * 0.88
+    // 3. Compute zoom fitting both rotated width and height into unobstructed window with 15% safety padding
+    val scaleFactor = map.tilesScaleFactor.takeIf { it > 0f } ?: 1.0f
+    val equatorRes = 156543.03392 / scaleFactor
+    val safeWidth = availWidth * 0.85
+    val safeHeight = availHeight * 0.85
     val metersPerPixelX = spanU / safeWidth
     val metersPerPixelY = spanV / safeHeight
     val requiredMpp = kotlin.math.max(metersPerPixelX, metersPerPixelY)
 
-    val calculatedZoom = (kotlin.math.log2((156543.03392 * cosMeanLat) / requiredMpp))
+    val calculatedZoom = (kotlin.math.log2((equatorRes * cosMeanLat) / requiredMpp))
         .coerceIn(map.minZoomLevel, 18.0)
+
+    val actualMpp = (equatorRes * cosMeanLat) / Math.pow(2.0, calculatedZoom)
 
     // 4. Center of rotated bounding box in (u, v) coordinates
     val midU = (minU + maxU) / 2.0
     val midV = (minV + maxV) / 2.0
 
     // Shift camera in (u, v) coordinates so midU, midV lands at (screenCenterX, screenCenterY)
-    val uCam = midU - offsetPixelsX * requiredMpp
-    val vCam = midV - offsetPixelsY * requiredMpp
+    val uCam = midU - offsetPixelsX * actualMpp
+    val vCam = midV - offsetPixelsY * actualMpp
 
     // Un-rotate camera displacement back to East/North tangent coordinates
     val dEastCam = uCam * cosA + vCam * sinA

@@ -661,9 +661,30 @@ class LocationManager private constructor(private val context: Context) {
                 !multiData.pl.city.equals("Unknown City", ignoreCase = true) &&
                 !multiData.pl.city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
+        val isRoundaboutExit = (committedStreetBase?.contains("Rondo", ignoreCase = true) == true ||
+                committedStreetBase?.contains("Roundabout", ignoreCase = true) == true) &&
+                !rawBase.contains("Rondo", ignoreCase = true) &&
+                !rawBase.contains("Roundabout", ignoreCase = true)
+
         // When crossing into a confirmed new locality, adopt the new locality's street immediately on the 1st fix
         if (isLocalityTransition && !rawStreetPl.isNullOrBlank()) {
             TelemetryLogger.log("STREET", "Locality transition to '${multiData.pl.city}': adopting candidate '$rawStreetPl' immediately on 1st fix")
+            committedStreetPl = rawStreetPl
+            committedStreetBase = rawBase
+            lastCommittedStreetLocality = multiData.pl.city
+            candidateStreetPl = null
+            candidateStreetBase = null
+            candidateStreetCount = 0
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        }
+
+        // When leaving a roundabout onto an exit street, adopt immediately on the 1st fix (zero delay)
+        if (isRoundaboutExit && !rawStreetPl.isNullOrBlank()) {
+            TelemetryLogger.log("STREET", "Roundabout exit from '$committedStreetPl' to '$rawStreetPl': adopting immediately on 1st fix")
             committedStreetPl = rawStreetPl
             committedStreetBase = rawBase
             lastCommittedStreetLocality = multiData.pl.city
@@ -1287,14 +1308,9 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
                 !osm?.street.isNullOrBlank() -> {
-                    if (trajectoryStreet != null && !osmMatchesTrajectory && !RoadNameNormalizer.isMajorRoad(osm.street)) {
-                        // Preserve trajectory street against momentary perpendicular cross-street hits
-                        RoadNameNormalizer.normalize(trajectoryStreet, osm.roadRef, null, includeHouseNumber = false, countryCode = countryCode)
-                    } else {
-                        val validHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: address.subThoroughfare) else null
-                        val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
-                        RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
-                    }
+                    val validHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: address.subThoroughfare) else null
+                    val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
+                    RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                 }
                 // 3. Road ref enrichment if thoroughfare provided
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
@@ -1486,16 +1502,17 @@ class LocationManager private constructor(private val context: Context) {
                 // In Poland: If municipality starts with "gmina ", check if village/town is present.
                 // If city is a neighbouring metropolis (e.g. city="Bielsko-Biała" for postal delivery, but municipality="gmina Kozy"),
                 // the true territorial place name is the village or gmina name ("Kozy").
+                // Hamlets/przysiółki (e.g. "Krzemionki", "Małe Kozy") must NOT override the genuine village or gmina name.
                 val isPolishGmina = rawMunicipality != null && rawMunicipality.startsWith("gmina ", ignoreCase = true)
                 val gminaName = if (isPolishGmina) rawMunicipality.removePrefix("gmina ").trim() else null
-                val villageOrTown = str("village") ?: str("town") ?: str("hamlet")
+                val villageOrTown = str("village") ?: str("town")
 
                 val resolvedCity = if (isPolishGmina && !villageOrTown.isNullOrBlank()) {
                     villageOrTown
-                } else if (isPolishGmina && gminaName != null && str("city") != null && !str("city").equals(gminaName, ignoreCase = true)) {
+                } else if (isPolishGmina && gminaName != null) {
                     gminaName
                 } else {
-                    str("city") ?: str("town") ?: str("village") ?: str("hamlet") ?: str("suburb")
+                    str("city") ?: str("town") ?: str("village") ?: str("suburb") ?: str("hamlet")
                 }
 
                 val osmResult = OsmPlaceResult(

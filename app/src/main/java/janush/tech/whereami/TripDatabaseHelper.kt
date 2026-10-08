@@ -115,17 +115,26 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     val obj = array.getJSONObject(i)
                     val kindStr = obj.optString("kind", PlaceKind.LOCALITY.name)
                     val kind = try { PlaceKind.valueOf(kindStr) } catch (_: Exception) { PlaceKind.LOCALITY }
-                    list.add(
-                        VisitedPlace(
-                            placeName = obj.getString("name"),
-                            hierarchySubtitle = obj.optString("sub", ""),
-                            timestamp = obj.getLong("time"),
-                            latitude = obj.getDouble("lat"),
-                            longitude = obj.getDouble("lng"),
-                            distanceAtEntryMeters = obj.getDouble("dist"),
-                            placeKind = kind
-                        )
+                    val rawName = obj.getString("name")
+                    val rawSub = obj.optString("sub", "")
+                    val resolvedName = if (rawName.equals("Krzemionki", ignoreCase = true) &&
+                        (rawSub.contains("gm. Kozy", ignoreCase = true) || rawSub.contains("gmina Kozy", ignoreCase = true))) {
+                        "Kozy"
+                    } else rawName
+
+                    val place = VisitedPlace(
+                        placeName = resolvedName,
+                        hierarchySubtitle = rawSub,
+                        timestamp = obj.getLong("time"),
+                        latitude = obj.getDouble("lat"),
+                        longitude = obj.getDouble("lng"),
+                        distanceAtEntryMeters = obj.getDouble("dist"),
+                        placeKind = kind
                     )
+                    if (list.isNotEmpty() && list.last().placeName == place.placeName && list.last().placeKind == place.placeKind) {
+                        continue
+                    }
+                    list.add(place)
                 }
             } catch (_: Exception) {}
             return list
@@ -199,6 +208,42 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         super.onOpen(db)
         cleanUpTrailingDestinationPauses(db)
         ensureSavedPlacesColumns(db)
+        sanitizeStoredPlaces(db)
+    }
+
+    private fun sanitizeStoredPlaces(db: SQLiteDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                "SELECT $COL_ID, $COL_PLACES_JSON FROM $TABLE_TRIPS WHERE $COL_PLACES_JSON LIKE '%Krzemionki%'",
+                null
+            )
+            val updates = mutableListOf<Pair<Long, String>>()
+            cursor.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(COL_ID)
+                val placesIdx = c.getColumnIndexOrThrow(COL_PLACES_JSON)
+                while (c.moveToNext()) {
+                    val id = c.getLong(idIdx)
+                    val rawPlacesJson = c.getString(placesIdx) ?: "[]"
+                    val parsed = jsonToPlaces(rawPlacesJson)
+                    val cleanedJson = placesToJson(parsed)
+                    if (cleanedJson != rawPlacesJson) {
+                        updates.add(Pair(id, cleanedJson))
+                    }
+                }
+            }
+            if (updates.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for ((tripId, newPlaces) in updates) {
+                        val cv = ContentValues().apply { put(COL_PLACES_JSON, newPlaces) }
+                        db.update(TABLE_TRIPS, cv, "$COL_ID = ?", arrayOf(tripId.toString()))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun ensureSavedPlacesColumns(db: SQLiteDatabase) {
