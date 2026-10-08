@@ -35,10 +35,29 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:AutoMediaWakeLock")?.apply {
-            acquire(6 * 60 * 60 * 1000L) // 6h safe timeout
+            acquire(2 * 60 * 60 * 1000L) // 2h safe timeout
         }
 
         mediaSession = MediaSessionCompat(this, "AutoMediaService").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() {
+                    setPlaybackState(
+                        PlaybackStateCompat.Builder()
+                            .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1.0f)
+                            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
+                            .build()
+                    )
+                }
+
+                override fun onPause() {
+                    setPlaybackState(
+                        PlaybackStateCompat.Builder()
+                            .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1.0f)
+                            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
+                            .build()
+                    )
+                }
+            })
             setPlaybackState(
                 PlaybackStateCompat.Builder()
                     .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1.0f)
@@ -242,6 +261,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
+        TelemetryLogger.log("AUTO", "onGetRoot called by $clientPackageName (uid=$clientUid)")
         return BrowserRoot("root", null)
     }
 
@@ -249,30 +269,43 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         parentId: String,
         result: Result<MutableList<MediaBrowserCompat.MediaItem>>
     ) {
-        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
-        val lat = prefs.getFloat("lat", 0f).toDouble()
-        val lng = prefs.getFloat("lng", 0f).toDouble()
-        val lastPlace = locationManager.resolveMultiLanguageData(lat, lng).pl
+        // Decouple Binder IPC from main thread immediately to prevent Android Auto IPC timeout/hang
+        result.detach()
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+                val lat = prefs.getFloat("lat", 0f).toDouble()
+                val lng = prefs.getFloat("lng", 0f).toDouble()
 
-        val items = mutableListOf<MediaBrowserCompat.MediaItem>()
-        fun addBrowserItem(id: String, title: String, subtitle: String) {
-            val desc = android.support.v4.media.MediaDescriptionCompat.Builder()
-                .setMediaId(id)
-                .setTitle(title)
-                .setSubtitle(subtitle)
-                .build()
-            items.add(MediaBrowserCompat.MediaItem(desc, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE))
-        }
+                // Fast in-memory / disk cache lookup: strictly allowNetwork = false so Android Auto browser
+                // never blocks on network Geocoder, Nominatim HTTP, OSRM HTTP, or Thread.sleep.
+                val lastPlace = locationManager.lastLocationSnapshot?.multiPlace?.pl
+                    ?: locationManager.resolveMultiLanguageData(lat, lng, allowNetwork = false).pl
 
-        if (lastPlace.city != "Unknown City") {
-            addBrowserItem("item_loc", "Locality: ${lastPlace.city}", LocationManager.formatHierarchy(lastPlace))
-            if (!lastPlace.street.isNullOrBlank() || !lastPlace.roadRef.isNullOrBlank()) {
-                addBrowserItem("item_road", "Road", listOfNotNull(lastPlace.street, lastPlace.roadRef).joinToString(" "))
+                val items = mutableListOf<MediaBrowserCompat.MediaItem>()
+                fun addBrowserItem(id: String, title: String, subtitle: String) {
+                    val desc = android.support.v4.media.MediaDescriptionCompat.Builder()
+                        .setMediaId(id)
+                        .setTitle(title)
+                        .setSubtitle(subtitle)
+                        .build()
+                    items.add(MediaBrowserCompat.MediaItem(desc, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE))
+                }
+
+                if (lastPlace.city != "Unknown City") {
+                    addBrowserItem("item_loc", "Locality: ${lastPlace.city}", LocationManager.formatHierarchy(lastPlace))
+                    if (!lastPlace.street.isNullOrBlank() || !lastPlace.roadRef.isNullOrBlank()) {
+                        addBrowserItem("item_road", "Road", listOfNotNull(lastPlace.street, lastPlace.roadRef).joinToString(" "))
+                    }
+                    addBrowserItem("item_country", "Country: ${lastPlace.country}", lastPlace.voivodeship)
+                }
+
+                result.sendResult(items)
+            } catch (e: Exception) {
+                TelemetryLogger.log("ERROR", "AutoMediaService onLoadChildren failed: ${e.message}")
+                result.sendResult(mutableListOf())
             }
-            addBrowserItem("item_country", "Country: ${lastPlace.country}", lastPlace.voivodeship)
         }
-
-        result.sendResult(items)
     }
 
     override fun onDestroy() {

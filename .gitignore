@@ -25,3 +25,4 @@ device_dump_*/
 device_data_*/
 .device_telemetry/
 analysis/
+diagnostic_pull_*/
