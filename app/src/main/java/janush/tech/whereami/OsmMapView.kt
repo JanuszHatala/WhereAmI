@@ -433,6 +433,9 @@ fun OsmMapView(
     onSavedPlaceClick: ((SavedPlace) -> Unit)? = null,
     onClearDestination: (() -> Unit)? = null,
     onMapClick: ((GeoPoint) -> Unit)? = null,
+    activeGuests: List<LiveGuest> = emptyList(),
+    showGuestDistanceBadge: Boolean = true,
+    onGuestClick: ((LiveGuest) -> Unit)? = null,
     activityProfile: ActivityProfile = ActivityProfile.CAR,
     isCompact: Boolean = true,
     opticalOffsetY: Int? = null,
@@ -453,6 +456,7 @@ fun OsmMapView(
     val context = LocalContext.current
     val currentOnMapClick by rememberUpdatedState(onMapClick)
     val currentOnOrientationChange by rememberUpdatedState(onOrientationModeChange)
+    val currentOnGuestClick by rememberUpdatedState(onGuestClick)
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -498,6 +502,7 @@ fun OsmMapView(
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var guestMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
     var isFollowing by remember { mutableStateOf(true) }
 
     val prefs = remember(context) {
@@ -875,6 +880,59 @@ fun OsmMapView(
         map.invalidate()
     }
 
+    // Render Guest Markers (Follow back guest positions)
+    LaunchedEffect(activeGuests, showGuestDistanceBadge, latLng) {
+        val map = mapView ?: return@LaunchedEffect
+        guestMarkers.forEach { map.overlays.remove(it) }
+
+        if (activeGuests.isEmpty()) {
+            guestMarkers = emptyList()
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
+        val newGuestMarkers = mutableListOf<Marker>()
+
+        activeGuests.forEach { guest ->
+            val distMeters = if (hostLoc != null) {
+                val results = FloatArray(1)
+                android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, guest.lat, guest.lng, results)
+                results[0]
+            } else null
+
+            val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+            val gm = Marker(map).apply {
+                position = guest.geoPoint
+                setAnchor(iconResult.anchorX, iconResult.anchorY)
+                icon = iconResult.drawable
+                title = guest.name
+                val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
+                val statusStr = if (guest.isInactive) " (inactive)" else ""
+                snippet = "Guest$statusStr$distStr"
+                infoWindow = null
+                setOnMarkerClickListener { _, _ ->
+                    if (currentOnGuestClick != null) {
+                        currentOnGuestClick?.invoke(guest)
+                    } else {
+                        val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
+                        val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
+                        android.widget.Toast.makeText(
+                            context,
+                            "👤 ${guest.name}$statusInfo$distInfo",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    true
+                }
+            }
+            map.overlays.add(gm)
+            newGuestMarkers.add(gm)
+        }
+        guestMarkers = newGuestMarkers
+        map.invalidate()
+    }
+
     // Render Boundary Polygon (Phase 2)
     LaunchedEffect(boundaryPoints) {
         val map = mapView ?: return@LaunchedEffect
@@ -1026,15 +1084,24 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Collect all visible points (active recording track OR selected past trips)
+    // Collect all visible points (active recording track OR selected past trips + guests)
     // Invariant: When recording, ONLY fit active track points. Do not include past trips.
-    val allShownPoints = remember(trackPoints, selectedTrips, isRecording) {
+    // Also include all visible guests (active and dimmed) and host position if no track points exist yet.
+    val allShownPoints = remember(trackPoints, selectedTrips, isRecording, activeGuests, latLng) {
         val pts = mutableListOf<GeoPoint>()
         if (isRecording || trackPoints.isNotEmpty()) {
             pts.addAll(trackPoints)
         } else {
             selectedTrips.forEach { trip ->
                 pts.addAll(trip.points)
+            }
+        }
+        if (activeGuests.isNotEmpty()) {
+            activeGuests.forEach { guest ->
+                pts.add(guest.geoPoint)
+            }
+            if (trackPoints.isEmpty() && latLng != null) {
+                pts.add(GeoPoint(latLng.first, latLng.second))
             }
         }
         pts
@@ -2428,6 +2495,136 @@ internal fun makeEndMarkerIcon(context: Context): android.graphics.drawable.Bitm
     canvas.drawRect(cx - sqHalf, cy - sqHalf, cx + sqHalf, cy + sqHalf, sqPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+}
+
+internal data class GuestMarkerIconResult(
+    val drawable: android.graphics.drawable.BitmapDrawable,
+    val anchorX: Float,
+    val anchorY: Float
+)
+
+internal fun makeGuestMarkerIcon(
+    context: Context,
+    guest: LiveGuest,
+    distanceMeters: Float?,
+    showDistance: Boolean
+): GuestMarkerIconResult {
+    val density = context.resources.displayMetrics.density
+    val avatarDiameter = (32f * density).toInt()
+    val badgeHeight = if (showDistance && distanceMeters != null) (18f * density).toInt() else 0
+    val badgeSpacing = (3f * density).toInt()
+
+    val distanceText = if (showDistance && distanceMeters != null) LiveGuest.formatDistance(distanceMeters) else ""
+
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 10f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
+    val textWidth = if (distanceText.isNotEmpty()) textPaint.measureText(distanceText) else 0f
+    val badgeWidth = if (distanceText.isNotEmpty()) (textWidth + 14f * density).toInt() else 0
+
+    val totalWidth = maxOf(avatarDiameter, badgeWidth) + (8f * density).toInt()
+    val totalHeight = avatarDiameter + (if (badgeHeight > 0) badgeHeight + badgeSpacing else 0) + (4f * density).toInt()
+
+    val bmp = Bitmap.createBitmap(totalWidth, totalHeight, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+
+    val cx = totalWidth / 2f
+    val cy = avatarDiameter / 2f + (2f * density)
+    val radius = avatarDiameter / 2f - (2f * density)
+
+    val baseColor = LiveGuest.getColor(guest.colorIndex)
+    val alpha = if (guest.isInactive) 130 else 255
+
+    // Outer shadow
+    val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb((alpha * 0.35f).toInt(), 0, 0, 0)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(cx, cy + 2f * density, radius + 1f * density, shadowPaint)
+
+    // Dark slate background (#0F172A)
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(alpha, 15, 23, 42)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(cx, cy, radius, bgPaint)
+
+    // Vibrant colored rim (or muted if inactive)
+    val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (guest.isInactive) {
+            val r = Color.red(baseColor)
+            val g = Color.green(baseColor)
+            val b = Color.blue(baseColor)
+            Color.argb(alpha, (r + 100) / 2, (g + 100) / 2, (b + 100) / 2)
+        } else {
+            baseColor
+        }
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * density
+    }
+    canvas.drawCircle(cx, cy, radius - 1.5f * density, rimPaint)
+
+    // Person Silhouette 👤
+    val personPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (guest.isInactive) Color.argb(alpha, 180, 190, 205) else Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val headRadius = radius * 0.30f
+    val headCenterY = cy - radius * 0.22f
+    canvas.drawCircle(cx, headCenterY, headRadius, personPaint)
+
+    val bodyRect = RectF(
+        cx - radius * 0.58f,
+        headCenterY + headRadius + 1.5f * density,
+        cx + radius * 0.58f,
+        cy + radius - 2f * density
+    )
+    canvas.save()
+    val clipPath = android.graphics.Path().apply {
+        addCircle(cx, cy, radius - 2f * density, android.graphics.Path.Direction.CW)
+    }
+    canvas.clipPath(clipPath)
+    canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, personPaint)
+    canvas.restore()
+
+    // Attached Distance Badge
+    if (badgeHeight > 0 && distanceText.isNotEmpty()) {
+        val badgeLeft = cx - badgeWidth / 2f
+        val badgeTop = cy + radius + badgeSpacing
+        val badgeRight = cx + badgeWidth / 2f
+        val badgeBottom = badgeTop + badgeHeight
+        val badgeRect = RectF(badgeLeft, badgeTop, badgeRight, badgeBottom)
+
+        val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((alpha * 0.92f).toInt(), 15, 23, 42)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBgPaint)
+
+        val badgeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (guest.isInactive) Color.argb(alpha, 100, 116, 139) else baseColor
+            style = Paint.Style.STROKE
+            strokeWidth = 1f * density
+        }
+        canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBorderPaint)
+
+        val textY = badgeTop + (badgeHeight / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
+        textPaint.alpha = alpha
+        canvas.drawText(distanceText, cx, textY, textPaint)
+    }
+
+    val anchorX = cx / totalWidth.toFloat()
+    val anchorY = cy / totalHeight.toFloat()
+
+    return GuestMarkerIconResult(
+        drawable = android.graphics.drawable.BitmapDrawable(context.resources, bmp),
+        anchorX = anchorX,
+        anchorY = anchorY
+    )
 }
 
 /**

@@ -43,6 +43,10 @@ function loadSessions() {
           sessions.set(k, v);
         }
       }
+      for (const [k, v] of sessions.entries()) {
+        if (!v.guests || typeof v.guests !== 'object') v.guests = {};
+        if (v.followGuests === undefined) v.followGuests = true;
+      }
       console.log(`Loaded ${sessions.size} sessions and ${staticAliases.size} static aliases from disk.`);
     }
   } catch (e) {
@@ -115,7 +119,7 @@ app.post('/api/sessions/:id/interval', (req, res) => {
 
 app.post('/api/sessions/:id', (req, res) => {
   const { id } = req.params;
-  const { title, createdAt, expiresAt, staticId, trailVisible, syncIntervalMinutes } = req.body;
+  const { title, createdAt, expiresAt, staticId, trailVisible, syncIntervalMinutes, followGuests } = req.body;
   let session = sessions.get(id);
   if (!session) {
     session = {
@@ -126,10 +130,13 @@ app.post('/api/sessions/:id', (req, res) => {
       expiresAt: expiresAt || 0,
       trailVisible: trailVisible !== undefined ? Boolean(trailVisible) : true,
       syncIntervalMinutes: parseInt(syncIntervalMinutes, 10) || 5,
+      followGuests: followGuests !== undefined ? Boolean(followGuests) : true,
       ended: false,
       paused: false,
       current: null,
-      points: []
+      points: [],
+      pauses: [],
+      guests: {}
     };
     sessions.set(id, session);
   } else {
@@ -138,6 +145,8 @@ app.post('/api/sessions/:id', (req, res) => {
     if (staticId) session.staticId = staticId;
     if (trailVisible !== undefined) session.trailVisible = Boolean(trailVisible);
     if (syncIntervalMinutes !== undefined) session.syncIntervalMinutes = parseInt(syncIntervalMinutes, 10) || session.syncIntervalMinutes || 5;
+    if (followGuests !== undefined) session.followGuests = Boolean(followGuests);
+    if (!session.guests || typeof session.guests !== 'object') session.guests = {};
     session.ended = false;
   }
 
@@ -211,6 +220,9 @@ app.post('/api/sessions/:id/points', (req, res) => {
     return res.status(410).json({ error: 'Session expired' });
   }
 
+  if (req.body.followGuests !== undefined) session.followGuests = Boolean(req.body.followGuests);
+  if (!session.guests || typeof session.guests !== 'object') session.guests = {};
+
   if (req.body.isPaused !== undefined) session.paused = Boolean(req.body.isPaused);
   if (current) session.current = current;
   if (Array.isArray(pauses)) {
@@ -228,7 +240,127 @@ app.post('/api/sessions/:id/points', (req, res) => {
     if (session.points.length > 4000) session.points = session.points.slice(-4000);
   }
   saveSessions();
-  res.json({ success: true, totalPoints: session.points.length, viewCount: session.viewCount || 0 });
+
+  const syncInterval = session.syncIntervalMinutes || 5;
+  const inactivityThresholdMs = Math.max(5 * 60_000, syncInterval * 2 * 60_000);
+  const guestsList = [];
+  if (session.followGuests !== false && session.guests) {
+    for (const [gId, g] of Object.entries(session.guests)) {
+      if (!g || typeof g.lat !== 'number' || typeof g.lng !== 'number') continue;
+      const isInactive = (Date.now() - g.t) > inactivityThresholdMs;
+      guestsList.push({
+        id: g.id || gId,
+        name: g.name || `Guest ${(g.colorIndex || 0) + 1}`,
+        lat: g.lat,
+        lng: g.lng,
+        acc: g.acc,
+        t: g.t,
+        colorIndex: typeof g.colorIndex === 'number' ? g.colorIndex : 0,
+        isInactive: isInactive,
+        firstSeen: g.firstSeen || g.createdAt || g.t,
+        viewCount: g.viewCount || 1
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    totalPoints: session.points.length,
+    viewCount: session.viewCount || 0,
+    guests: guestsList
+  });
+});
+
+app.post('/api/sessions/:id/guests/:guestId', (req, res) => {
+  const { id, guestId } = req.params;
+  let targetId = id;
+  if (staticAliases.has(id)) {
+    targetId = staticAliases.get(id);
+  } else {
+    for (const [sId, sess] of sessions.entries()) {
+      if (sess.staticId === id) {
+        targetId = sId;
+        break;
+      }
+    }
+  }
+
+  const session = sessions.get(targetId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.ended) return res.status(410).json({ error: 'Session ended' });
+  if (session.followGuests === false) return res.json({ success: false, disabled: true });
+
+  if (!session.guests || typeof session.guests !== 'object') {
+    session.guests = {};
+  }
+
+  const { lat, lng, acc, name } = req.body;
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+
+  let existing = session.guests[guestId];
+  if (!existing) {
+    const guestKeys = Object.keys(session.guests);
+    const colorIndex = guestKeys.length % 8;
+    existing = {
+      id: guestId,
+      name: (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 30) : `Guest ${guestKeys.length + 1}`,
+      colorIndex: colorIndex,
+      firstSeen: Date.now(),
+      viewCount: 1,
+      createdAt: Date.now()
+    };
+  } else {
+    if (typeof name === 'string' && name.trim()) {
+      existing.name = name.trim().slice(0, 30);
+    }
+    if (!existing.firstSeen) existing.firstSeen = existing.createdAt || Date.now();
+    if (!existing.viewCount) existing.viewCount = 1;
+  }
+
+  existing.lat = lat;
+  existing.lng = lng;
+  existing.acc = typeof acc === 'number' ? acc : null;
+  existing.t = Date.now();
+
+  session.guests[guestId] = existing;
+  saveSessions();
+  res.json({ success: true, guest: existing });
+});
+
+app.delete('/api/sessions/:id/guests/:guestId', (req, res) => {
+  const { id, guestId } = req.params;
+  let targetId = id;
+  if (staticAliases.has(id)) {
+    targetId = staticAliases.get(id);
+  } else {
+    for (const [sId, sess] of sessions.entries()) {
+      if (sess.staticId === id) {
+        targetId = sId;
+        break;
+      }
+    }
+  }
+
+  const session = sessions.get(targetId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.guests && session.guests[guestId]) {
+    delete session.guests[guestId];
+    saveSessions();
+    return res.json({ success: true, removed: guestId });
+  }
+  res.json({ success: true, removed: null });
+});
+
+app.post('/api/sessions/:id/guest-settings', (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (req.body.followGuests !== undefined) {
+    session.followGuests = Boolean(req.body.followGuests);
+    saveSessions();
+  }
+  res.json({ success: true, followGuests: session.followGuests !== false });
 });
 
 app.get('/api/sessions/:id', (req, res) => {
@@ -254,6 +386,32 @@ app.get('/api/sessions/:id', (req, res) => {
 
   const session = sessions.get(targetId);
 
+  const guestId = req.query.guestId;
+  const isPv = req.query.pv === '1';
+  if (session && guestId && typeof guestId === 'string') {
+    if (!session.guests || typeof session.guests !== 'object') {
+      session.guests = {};
+    }
+    const cleanGuestId = guestId.trim().slice(0, 64);
+    if (cleanGuestId) {
+      if (!session.guests[cleanGuestId]) {
+        const guestKeys = Object.keys(session.guests);
+        session.guests[cleanGuestId] = {
+          id: cleanGuestId,
+          name: `Guest ${guestKeys.length + 1}`,
+          colorIndex: guestKeys.length % 8,
+          firstSeen: Date.now(),
+          viewCount: 1,
+          createdAt: Date.now()
+        };
+        saveSessions();
+      } else if (isPv) {
+        session.guests[cleanGuestId].viewCount = (session.guests[cleanGuestId].viewCount || 0) + 1;
+        saveSessions();
+      }
+    }
+  }
+
   // If looking up via static ID (or starts with static format like 'jh-'):
   if (isStaticLookup || id.startsWith('jh-')) {
     if (!session || session.ended || (session.expiresAt > 0 && Date.now() > session.expiresAt)) {
@@ -269,8 +427,10 @@ app.get('/api/sessions/:id', (req, res) => {
       });
     }
     const isPersonalPaused = Boolean(session.personalPaused || session.paused);
+    const { guests: _omittedGuests, ...safeSession } = session;
     return res.json({
-      ...session,
+      ...safeSession,
+      followGuests: session.followGuests !== false,
       isStatic: true,
       staticId: id,
       active: !session.ended,
@@ -284,8 +444,10 @@ app.get('/api/sessions/:id', (req, res) => {
     session.ended = true;
   }
   const isRandomPaused = Boolean(session.randomPaused || session.paused);
+  const { guests: _omittedGuests, ...safeSession } = session;
   res.json({
-    ...session,
+    ...safeSession,
+    followGuests: session.followGuests !== false,
     paused: isRandomPaused,
     viewCount: session.viewCount || 0
   });
