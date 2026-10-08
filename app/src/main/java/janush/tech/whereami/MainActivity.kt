@@ -330,6 +330,9 @@ fun LocationScreen(viewModel: MainViewModel) {
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
+    val activeGuests by liveSharingManager.activeGuests.collectAsState()
+    val followGuests by liveSharingManager.followGuests.collectAsState()
+    val showGuestDistanceBadge by liveSharingManager.showGuestDistanceBadge.collectAsState()
     val usbConnectionManager = remember { UsbConnectionManager.getInstance(context) }
     val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
     val isTripPaused by viewModel.isTripPaused.collectAsState()
@@ -340,6 +343,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var qrCodeTargetUrl by remember { mutableStateOf("") }
     var qrCodeTargetTitle by remember { mutableStateOf("") }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
+    var selectedGuestDetails by remember { mutableStateOf<LiveGuest?>(null) }
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
 
@@ -365,6 +369,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         showHeatMapSettingsDialog = false
         showMapSettingsDialog = false
         activeLocationShareTarget = null
+        selectedGuestDetails = null
         viewModel.dismissCacheManager()
     }
 
@@ -562,6 +567,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             trackPoints = activeTrip?.points ?: emptyList(),
             selectedTrips = selectedTripsList,
             savedPlaces = savedPlaces,
+            activeGuests = activeGuests,
+            showGuestDistanceBadge = showGuestDistanceBadge,
+            onGuestClick = { guest -> selectedGuestDetails = guest },
             boundaryPoints = boundaryPoints,
             pinnedBoundaryPoints = pinnedBoundaryPoints,
             heatMapTracks = heatMapTracks,
@@ -4414,6 +4422,12 @@ fun LocationScreen(viewModel: MainViewModel) {
         var durationDropdownExpanded by remember { mutableStateOf(false) }
         var selectedInterval by remember { mutableStateOf(liveSession?.syncIntervalMinutes ?: prefs.getInt("active_session_interval", 5)) }
         var selectedDuration by remember { mutableStateOf(prefs.getInt(LiveSharingManager.KEY_PREF_DURATION, 6)) } // 0 = permanent
+        var inputFollowGuests by remember {
+            mutableStateOf(liveSession?.followGuests ?: prefs.getBoolean(LiveSharingManager.KEY_PREF_FOLLOW_GUESTS, true))
+        }
+        var inputShowGuestDistance by remember {
+            mutableStateOf(liveSession?.showGuestDistanceBadge ?: prefs.getBoolean(LiveSharingManager.KEY_PREF_SHOW_GUEST_DISTANCE, true))
+        }
         var upcomingSessionId by remember { mutableStateOf(LiveSharingManager.generate10CharSlug()) }
         var advancedControlsExpanded by remember { mutableStateOf(false) }
 
@@ -5165,6 +5179,86 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Card 3: 👥 Guest Tracking (Mid-session controls)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("👥", fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Guest Tracking", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                val connectedCount = activeGuests.count { !it.isInactive }
+                                val totalCount = activeGuests.size
+                                val badgeText = if (totalCount == 0) "No guests" else if (connectedCount == totalCount) "$totalCount active" else "$connectedCount active ($totalCount total)"
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (connectedCount > 0) Color(0x3310B981) else Color(0x3364748B))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(badgeText, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (connectedCount > 0) Color(0xFF34D399) else Color(0xFF94A3B8))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Follow back guest positions", fontSize = 12.sp, color = Color.White)
+                                    Text("Mark web guests on host map", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                }
+                                Switch(
+                                    checked = followGuests,
+                                    onCheckedChange = { liveSharingManager.setFollowGuests(it) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF0284C7)
+                                    )
+                                )
+                            }
+
+                            if (followGuests) {
+                                androidx.compose.material3.HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    color = Color(0xFF334155)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Show distance badges on map", fontSize = 12.sp, color = Color.White)
+                                        Text("Attach distance pill to guest pins", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                    }
+                                    Switch(
+                                        checked = showGuestDistanceBadge,
+                                        onCheckedChange = { liveSharingManager.setShowGuestDistanceBadge(it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = Color(0xFF0284C7)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } else {
                     // ── Create New Session View ──
                     Text("Session Title", fontSize = 13.sp, color = Color(0xFF94A3B8))
@@ -5204,6 +5298,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 .putString(LiveSharingManager.KEY_PREF_PROVIDER, selectedProvider.name)
                                 .putInt(LiveSharingManager.KEY_PREF_DURATION, selectedDuration)
                                 .putInt("active_session_interval", selectedInterval)
+                                .putBoolean(LiveSharingManager.KEY_PREF_FOLLOW_GUESTS, inputFollowGuests)
+                                .putBoolean(LiveSharingManager.KEY_PREF_SHOW_GUEST_DISTANCE, inputShowGuestDistance)
                                 .apply()
                             val s = liveSharingManager.startSession(
                                 title = inputTitle,
@@ -5211,7 +5307,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 serverUrl = serverUrl,
                                 provider = selectedProvider,
                                 syncIntervalMinutes = selectedInterval,
-                                customSlug = upcomingSessionId
+                                customSlug = upcomingSessionId,
+                                followGuests = inputFollowGuests,
+                                showGuestDistanceBadge = inputShowGuestDistance
                             )
                             upcomingSessionId = LiveSharingManager.generate10CharSlug()
                             showLiveShareDialog = false
@@ -5471,6 +5569,74 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         prefs.edit().putInt(LiveSharingManager.KEY_PREF_DURATION, hrs).apply()
                                     }
                                 )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text("Guest Tracking (Bidirectional)", fontSize = 13.sp, color = Color(0xFF94A3B8))
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("👥", fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text("Follow back guest position", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                                        Text("Mark web guests on host map", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    }
+                                }
+                                Switch(
+                                    checked = inputFollowGuests,
+                                    onCheckedChange = {
+                                        inputFollowGuests = it
+                                        prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_FOLLOW_GUESTS, it).apply()
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF0284C7)
+                                    )
+                                )
+                            }
+
+                            if (inputFollowGuests) {
+                                androidx.compose.material3.HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    color = Color(0xFF334155)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(start = 24.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Show distance badge on map", fontSize = 12.sp, color = Color.White)
+                                        Text("Attach distance pill to guest pins", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                    }
+                                    Switch(
+                                        checked = inputShowGuestDistance,
+                                        onCheckedChange = {
+                                            inputShowGuestDistance = it
+                                            prefs.edit().putBoolean(LiveSharingManager.KEY_PREF_SHOW_GUEST_DISTANCE, it).apply()
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = Color(0xFF0284C7)
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
@@ -5749,6 +5915,432 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             containerColor = Color(0xFF0F172A)
         )
+    }
+
+    // ── Guest Details Modal Bottom Sheet ─────────────────────────────────────
+    if (selectedGuestDetails != null) {
+        val currentGuest = activeGuests.find { it.id == selectedGuestDetails!!.id } ?: selectedGuestDetails!!
+        val guestSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+        val hostLoc = currentLatLng
+        val distMeters = if (hostLoc != null) {
+            val results = FloatArray(1)
+            android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, currentGuest.lat, currentGuest.lng, results)
+            results[0]
+        } else null
+
+        val (cardinal, arrow) = if (hostLoc != null) {
+            currentGuest.getDirectionCompass(hostLoc.first, hostLoc.second)
+        } else ("" to "")
+        val bearingDeg = if (hostLoc != null) Math.round(currentGuest.getBearingFrom(hostLoc.first, hostLoc.second)) else null
+
+        val guestColor = Color(LiveGuest.getColor(currentGuest.colorIndex))
+        val coordsStr = String.format(Locale.US, "%.5f, %.5f", currentGuest.lat, currentGuest.lng)
+
+        ModalBottomSheet(
+            onDismissRequest = { selectedGuestDetails = null },
+            sheetState = guestSheetState,
+            containerColor = Color(0xFF0F172A),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .navigationBarsPadding()
+            ) {
+                // Header: Guest Avatar, Name, Status Pill & Close Icon
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(guestColor),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = currentGuest.name.take(1).uppercase(),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = currentGuest.name,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (currentGuest.isInactive) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0x33F59E0B))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "⏸️ Inactive (> 5m)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFF59E0B)
+                                        )
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0x3310B981))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "● Active",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { selectedGuestDetails = null },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Distance to Host Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "DISTANCE TO YOU",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = distMeters?.let { LiveGuest.formatDistance(it) } ?: "Unavailable",
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                        if (bearingDeg != null && cardinal.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF334155))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = arrow,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "$cardinal ($bearingDeg°)",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Metrics Grid (2 columns x 2 rows)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Views Count
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "VIEWS",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "👁️ ${currentGuest.viewCount} ${if (currentGuest.viewCount == 1) "view" else "views"}",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Visits to live link",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+
+                    // First Seen
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "FIRST VIEWED",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = LiveGuest.formatTimeAgo(currentGuest.firstSeen),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Since first opened",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Last Update
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "LAST GPS FIX",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = LiveGuest.formatTimeAgo(currentGuest.lastUpdated),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Last position report",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+
+                    // Accuracy
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "GPS ACCURACY",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = currentGuest.accuracy?.let { "±${Math.round(it)} m" } ?: "Not reported",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Reported by browser",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Coordinates Row with Copy Action
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF1E293B),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "COORDINATES",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF94A3B8)
+                            )
+                            Text(
+                                text = coordsStr,
+                                fontSize = 13.sp,
+                                color = Color(0xFFE2E8F0),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Guest Coordinates", coordsStr))
+                                Toast.makeText(context, "Coordinates copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy Coordinates",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Actions: Open in Google Maps
+                Button(
+                    onClick = {
+                        try {
+                            val uri = android.net.Uri.parse("geo:${currentGuest.lat},${currentGuest.lng}?q=${currentGuest.lat},${currentGuest.lng}(${android.net.Uri.encode(currentGuest.name)})")
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Cannot open external maps app", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Map,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Open in Google Maps",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                // Inactive Guest Removal Button (User rule: for dimmed/inactive guest, allow removal)
+                if (currentGuest.isInactive) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            liveSharingManager.removeGuest(currentGuest.id)
+                            selectedGuestDetails = null
+                            Toast.makeText(context, "Removed ${currentGuest.name} from map", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDC2626),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Remove Inactive Guest from Map",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
     }
 }
 
