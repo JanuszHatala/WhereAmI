@@ -785,7 +785,7 @@ class LocationManager private constructor(private val context: Context) {
             } else null
 
             if (initialCoords != null) {
-                val cachedMulti = resolveMultiLanguageData(initialCoords.first, initialCoords.second)
+                val cachedMulti = resolveMultiLanguageData(initialCoords.first, initialCoords.second, allowNetwork = false)
                 committedPlace = cachedMulti
                 val initialSnap = MultiLocationSnapshot(
                     multiPlace = cachedMulti,
@@ -1163,7 +1163,8 @@ class LocationManager private constructor(private val context: Context) {
         bearing: Float? = null,
         speedKmh: Float? = null,
         accuracyMeters: Float? = null,
-        forceCache: Boolean = false
+        forceCache: Boolean = false,
+        allowNetwork: Boolean = true
     ): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
@@ -1184,6 +1185,20 @@ class LocationManager private constructor(private val context: Context) {
         } catch (_: Exception) {}
 
         val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+
+        // Strict Main Thread and allowNetwork Guard:
+        // NEVER perform blocking network Geocoder, Nominatim HTTP, OSRM HTTP, or Thread.sleep on the Android Main (UI) thread!
+        val isMainThread = try { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() } catch (_: Exception) { false }
+        if (!allowNetwork || isMainThread) {
+            val fallback = committedPlace ?: getLastGoodMultiPlace(prefs)
+            if (isMainThread && allowNetwork) {
+                // Trigger asynchronous background geocoding so cache gets populated without blocking main thread Looper
+                ioScope.launch {
+                    resolveMultiLanguageData(lat, lng, bearing, speedKmh, accuracyMeters, forceCache, allowNetwork = true)
+                }
+            }
+            return fallback
+        }
 
         val baseAddress = geocode(lat, lng, Locale.getDefault())
         val countryCode = baseAddress?.countryCode?.uppercase() ?: ""
@@ -1528,6 +1543,18 @@ class LocationManager private constructor(private val context: Context) {
         val cc = prefs.getString("last_good_cc_$key", "") ?: ""
         val canonicalCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
         return PlaceInfo(city, street, roadRef, gmina, powiat, state, canonicalCountry, cc)
+    }
+
+    private fun getLastGoodMultiPlace(prefs: SharedPreferences): MultiLanguagePlaceInfo {
+        val pl = loadLastGood(prefs, "pl")
+        val en = loadLastGood(prefs, "en")
+        val native = loadLastGood(prefs, "native")
+        val fallback = PlaceInfo("Unknown City", null, null, null, null, "Unknown Region", "Unknown Country", "")
+        return MultiLanguagePlaceInfo(
+            en = en ?: pl ?: native ?: fallback,
+            pl = pl ?: en ?: native ?: fallback,
+            native = native ?: pl ?: en ?: fallback
+        )
     }
 
     private fun distanceBetween(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Float {
