@@ -1213,7 +1213,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Trips (${savedTrips.size})",
                                             fontWeight = if (sheetTab == 0) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (sheetTab == 0) Color(0xFF38BDF8) else Color.LightGray,
+                                            color = if (sheetTab == 0) Color(0xFF38BDF8) else Color.White,
                                             fontSize = 12.sp,
                                             maxLines = 1
                                         )
@@ -1226,7 +1226,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Places (${savedPlaces.size})",
                                             fontWeight = if (sheetTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (sheetTab == 1) Color(0xFF10B981) else Color.LightGray,
+                                            color = if (sheetTab == 1) Color(0xFF10B981) else Color.White,
                                             fontSize = 12.sp,
                                             maxLines = 1
                                         )
@@ -1239,7 +1239,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Stats",
                                             fontWeight = if (sheetTab == 2) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (sheetTab == 2) Color(0xFFFBBF24) else Color.LightGray,
+                                            color = if (sheetTab == 2) Color(0xFFFBBF24) else Color.White,
                                             fontSize = 12.sp,
                                             maxLines = 1
                                         )
@@ -1310,7 +1310,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "Trips (${savedTrips.size})",
                                         fontWeight = if (sheetTab == 0) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (sheetTab == 0) Color(0xFF38BDF8) else Color.LightGray,
+                                        color = if (sheetTab == 0) Color(0xFF38BDF8) else Color.White,
                                         fontSize = 13.sp,
                                         maxLines = 1
                                     )
@@ -1323,7 +1323,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "Places (${savedPlaces.size})",
                                         fontWeight = if (sheetTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (sheetTab == 1) Color(0xFF10B981) else Color.LightGray,
+                                        color = if (sheetTab == 1) Color(0xFF10B981) else Color.White,
                                         fontSize = 13.sp,
                                         maxLines = 1
                                     )
@@ -1336,7 +1336,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "Stats",
                                         fontWeight = if (sheetTab == 2) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (sheetTab == 2) Color(0xFFFBBF24) else Color.LightGray,
+                                        color = if (sheetTab == 2) Color(0xFFFBBF24) else Color.White,
                                         fontSize = 13.sp,
                                         maxLines = 1
                                     )
@@ -1368,13 +1368,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             showTripsSheet = false
                                             viewModel.triggerFitPlaces()
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF0284C7),
+                                            contentColor = Color.White
+                                        ),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Icon(Icons.Default.CropFree, contentDescription = "Fit Map", modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Default.CropFree, contentDescription = "Fit Map", tint = Color.White, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Fit Map", fontSize = 12.sp)
+                                        Text("Fit Map", fontSize = 12.sp, color = Color.White)
                                     }
                                 }
 
@@ -1392,13 +1395,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             showSavePlaceDialog = true
                                         }
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF10B981),
+                                        contentColor = Color.White
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Add Here", fontSize = 12.sp)
+                                    Text("Add Here", fontSize = 12.sp, color = Color.White)
                                 }
                             }
                         }
@@ -1722,12 +1728,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                     showTripsSheet = false
                                                     viewModel.triggerFitTrack()
                                                 },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = Color(0xFF0284C7),
+                                                    contentColor = Color.White
+                                                ),
                                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                                 shape = RoundedCornerShape(8.dp),
                                                 modifier = Modifier.defaultMinSize(minWidth = 65.dp)
                                             ) {
-                                                Text("Fit Map", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                                                Text("Fit Map", fontSize = 11.sp, maxLines = 1, softWrap = false, color = Color.White)
                                             }
                                         }
                                     }
@@ -2682,10 +2691,13 @@ fun LocationScreen(viewModel: MainViewModel) {
             confirmButton = {
                 Button(
                     onClick = saveRenameAction,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Save")
+                    Text("Save", color = Color.White)
                 }
             },
             dismissButton = {
@@ -3634,10 +3646,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                         showSavePlaceDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Save")
+                    Text("Save", color = Color.White)
                 }
             },
             dismissButton = {
@@ -3668,10 +3683,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         selectedSavedPlace = null
                         viewModel.clearPinnedBorders()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFEF4444),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Delete")
+                    Text("Delete", color = Color.White)
                 }
             },
             dismissButton = {
@@ -3704,10 +3722,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         viewModel.deleteTrip(trip.id)
                         tripToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFEF4444),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Delete")
+                    Text("Delete", color = Color.White)
                 }
             },
             dismissButton = {
@@ -3896,10 +3917,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                         showMergeConfirmationDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF8B5CF6),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Merge Trips")
+                    Text("Merge Trips", color = Color.White)
                 }
             },
             dismissButton = {
@@ -3931,10 +3955,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         showResetDefaultsConfirm = false
                         android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFEF4444),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Restore Defaults")
+                    Text("Restore Defaults", color = Color.White)
                 }
             },
             dismissButton = {
@@ -4197,10 +4224,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                             selectedSavedPlace = updated
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Save Changes")
+                    Text("Save Changes", color = Color.White)
                 }
             },
             dismissButton = {
@@ -4356,10 +4386,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(
                         onClick = { showActiveTripRouteDialog = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF334155),
+                            contentColor = Color.White
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Close")
+                        Text("Close", color = Color.White)
                     }
                 }
             }
@@ -4652,11 +4685,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 android.widget.Toast.makeText(context, "Live sharing stopped", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFEF4444),
+                                contentColor = Color.White
+                            ),
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("⏹️ Stop", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("⏹️ Stop", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
 
                         Button(
@@ -4671,12 +4707,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (session.isPaused) Color(0xFF059669) else Color(0xFFD97706)
+                                containerColor = if (session.isPaused) Color(0xFF059669) else Color(0xFFD97706),
+                                contentColor = Color.White
                             ),
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1.1f)
                         ) {
-                            Text(if (session.isPaused) "▶️ Resume" else "⏸️ Pause", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (session.isPaused) "▶️ Resume" else "⏸️ Pause", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
 
                         Button(
@@ -4685,13 +4722,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 android.widget.Toast.makeText(context, "Syncing live telemetry...", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0284C7),
+                                contentColor = Color.White
+                            ),
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Sync, contentDescription = "Sync", modifier = Modifier.size(14.dp), tint = Color.White)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Sync", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Sync", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
 
@@ -4958,13 +4998,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         context.startActivity(Intent.createChooser(sendIntent, "Share Trip Link"))
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Share", fontSize = 11.sp)
+                                    Text("Share", fontSize = 11.sp, color = Color.White)
                                 }
                                 Button(
                                     onClick = {
@@ -4993,12 +5036,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (session.isRandomPaused) Color(0xFF059669) else Color(0xFF475569)
+                                        containerColor = if (session.isRandomPaused) Color(0xFF059669) else Color(0xFF475569),
+                                        contentColor = Color.White
                                     ),
                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1.1f)
                                 ) {
-                                    Text(if (session.isRandomPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp)
+                                    Text(if (session.isRandomPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp, color = Color.White)
                                 }
                             }
                         }
@@ -5072,13 +5116,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         context.startActivity(Intent.createChooser(sendIntent, "Share Personal Link"))
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF059669),
+                                        contentColor = Color.White
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Share", fontSize = 11.sp)
+                                    Text("Share", fontSize = 11.sp, color = Color.White)
                                 }
                                 Button(
                                     onClick = {
@@ -5107,12 +5154,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (session.isPersonalPaused) Color(0xFF059669) else Color(0xFF475569)
+                                        containerColor = if (session.isPersonalPaused) Color(0xFF059669) else Color(0xFF475569),
+                                        contentColor = Color.White
                                     ),
                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                                     modifier = Modifier.weight(1.1f)
                                 ) {
-                                    Text(if (session.isPersonalPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp)
+                                    Text(if (session.isPersonalPaused) "▶ Resume" else "⏸ Pause", fontSize = 11.sp, color = Color.White)
                                 }
                             }
                         }
@@ -5549,13 +5597,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
                         context.startActivity(Intent.createChooser(sendIntent, "Share Personal Link"))
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF059669),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().height(46.dp)
                 ) {
-                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Share Personal Link (Permanent)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Share Personal Link (Permanent)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -5688,9 +5739,12 @@ fun LocationScreen(viewModel: MainViewModel) {
             confirmButton = {
                 Button(
                     onClick = { showLiveQrCodeModal = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    )
                 ) {
-                    Text("Done")
+                    Text("Done", color = Color.White)
                 }
             },
             containerColor = Color(0xFF0F172A)
@@ -5820,12 +5874,15 @@ fun LocationShareDialog(
                         onDismiss()
                     },
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Share via App (WhatsApp, SMS, etc.)", fontWeight = FontWeight.Bold)
+                    Text("Share via App (WhatsApp, SMS, etc.)", fontWeight = FontWeight.Bold, color = Color.White)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -6001,13 +6058,16 @@ private fun ProfileConfigSheet(
                     onClick = {
                         onSetAsActive()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     EmojiText(emoji = profile.iconEmoji, fontSize = 16.sp)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Set as Current Recording Profile", fontWeight = FontWeight.Bold)
+                    Text("Set as Current Recording Profile", fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
 
@@ -6223,9 +6283,12 @@ private fun ProfileConfigSheet(
                                     viewModel.setAutoStartSpeedForProfile(profile, speedVal)
                                     showCustomSpeedDialog = false
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                )
                             ) {
-                                Text("Set")
+                                Text("Set", color = Color.White)
                             }
                         },
                         dismissButton = {
@@ -6361,9 +6424,12 @@ private fun ProfileConfigSheet(
                                     viewModel.setAutoStartSecondsForProfile(profile, secVal)
                                     showCustomAutoStartDialog = false
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                )
                             ) {
-                                Text("Set")
+                                Text("Set", color = Color.White)
                             }
                         },
                         dismissButton = {
@@ -6533,9 +6599,12 @@ private fun ProfileConfigSheet(
                                 viewModel.setAutoStopMinutesForProfile(profile, minVal)
                                 showCustomAutoStopDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0284C7),
+                                contentColor = Color.White
+                            )
                         ) {
-                            Text("Set")
+                            Text("Set", color = Color.White)
                         }
                     },
                     dismissButton = {
@@ -8762,14 +8831,17 @@ private fun DestinationPlaceCard(
                     onClick = {
                         onNavigate(destinationPoint.latitude, destinationPoint.longitude)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Navigation, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
-                    Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    Text("Navigate", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, color = Color.White)
                 }
 
                 val gmapsTitle = savedPlace?.name ?: destinationItem?.title ?: ""
@@ -9484,16 +9556,19 @@ fun TripDetailDialog(
                                 // Overlay "Show on Map" button
                                 Button(
                                     onClick = { onShowOnMap(trip) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    ),
                                     shape = RoundedCornerShape(10.dp),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                     modifier = Modifier
                                         .align(Alignment.BottomEnd)
                                         .padding(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Explore, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Show on Map", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Show on Map", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                             }
                         }
@@ -9957,7 +10032,10 @@ fun TripDetailDialog(
                                                 ) {
                                                     Button(
                                                         onClick = { onSplitPause(trip.id, item.pauseIndex) },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFF0284C7),
+                                                            contentColor = Color.White
+                                                        ),
                                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                                         shape = RoundedCornerShape(6.dp),
                                                         modifier = Modifier.height(26.dp)
@@ -9968,7 +10046,10 @@ fun TripDetailDialog(
                                                     if (item.pauseIndex < trip.pauses.size - 1) {
                                                         Button(
                                                             onClick = { pauseToMergeIndex = item.pauseIndex },
-                                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                                            colors = ButtonDefaults.buttonColors(
+                                                                containerColor = Color(0xFFD97706),
+                                                                contentColor = Color.White
+                                                            ),
                                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                                             shape = RoundedCornerShape(6.dp),
                                                             modifier = Modifier.height(28.dp)
@@ -9979,12 +10060,15 @@ fun TripDetailDialog(
 
                                                     Button(
                                                         onClick = { pauseToDeleteIndex = item.pauseIndex },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D)),
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFFDC2626),
+                                                            contentColor = Color.White
+                                                        ),
                                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                                         shape = RoundedCornerShape(6.dp),
                                                         modifier = Modifier.height(28.dp)
                                                     ) {
-                                                        Text("🗑️ Remove", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFCA5A5))
+                                                        Text("🗑️ Remove", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                                     }
                                                 }
                                             }
@@ -10002,13 +10086,16 @@ fun TripDetailDialog(
                     ) {
                         Button(
                             onClick = { onShowOnMap(trip) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0284C7),
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().height(44.dp)
                         ) {
-                            Icon(Icons.Default.Explore, contentDescription = null)
+                            Icon(Icons.Default.Explore, contentDescription = null, tint = Color.White)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Show Route on Map", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text("Show Route on Map", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
 
                         Row(
@@ -10017,24 +10104,30 @@ fun TripDetailDialog(
                         ) {
                             Button(
                                 onClick = { onShare(trip) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF10B981),
+                                    contentColor = Color.White
+                                ),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.weight(1f).height(40.dp)
                             ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Share GPX", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Share GPX", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
 
                             Button(
                                 onClick = { onDelete(trip) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFEF4444),
+                                    contentColor = Color.White
+                                ),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.weight(1f).height(40.dp)
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Delete", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Delete", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                     }
@@ -10066,7 +10159,7 @@ fun TripDetailDialog(
             },
             dismissButton = {
                 TextButton(onClick = { pauseToDeleteIndex = null }) {
-                    Text("Cancel", color = Color.Gray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -10096,7 +10189,7 @@ fun TripDetailDialog(
             },
             dismissButton = {
                 TextButton(onClick = { pauseToMergeIndex = null }) {
-                    Text("Cancel", color = Color.Gray)
+                    Text("Cancel", color = Color.White)
                 }
             },
             containerColor = Color(0xFF1E293B)

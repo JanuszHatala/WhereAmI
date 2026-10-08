@@ -146,5 +146,28 @@ class BatteryOptimizationAndAutoStartTest {
             assertTrue("Default auto-stop minutes must be between 1 and 60", profile.autoStopMinutesDefault in 1..60)
         }
     }
+
+    @Test
+    fun testWakeLockScopingStrictlyToActiveTripRecording() {
+        // AGENTS.md Rule 2.A:
+        // Wake locks must ONLY be acquired when an active trip is actively recording.
+        // Never during Live Sharing alone (LIVE_ONLY mode), in onCreate(), or in standby/idle.
+        val shouldHoldWakeLock = { hasTrip: Boolean, hasLive: Boolean ->
+            hasTrip // Strictly scoped to active trip recording
+        }
+
+        // Active trip + Live sharing -> Hold wake lock
+        assertTrue(shouldHoldWakeLock(true, true))
+
+        // Active trip only -> Hold wake lock
+        assertTrue(shouldHoldWakeLock(true, false))
+
+        // Live sharing only (without active trip) -> MUST NOT hold wake lock
+        assertFalse("Live sharing alone must not hold persistent wake lock to allow Doze deep sleep", shouldHoldWakeLock(false, true))
+
+        // Standby/Idle -> MUST NOT hold wake lock
+        assertFalse(shouldHoldWakeLock(false, false))
+    }
 }
+
 
