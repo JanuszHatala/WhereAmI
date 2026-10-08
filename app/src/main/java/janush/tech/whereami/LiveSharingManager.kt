@@ -45,6 +45,8 @@ data class LiveSession(
     val provider: LiveShareProvider,
     val syncIntervalMinutes: Int,     // 1, 2, 5, 10
     val trailVisible: Boolean = true, // Whether visitors see the full trail or current position only
+    val followGuests: Boolean = true, // Whether to track web guests back to host map
+    val showGuestDistanceBadge: Boolean = true, // Whether to show distance badge on guest markers
     val lastSyncTime: Long = 0L,
     val pendingPointsCount: Int = 0,
     val viewCount: Int = 0
@@ -119,12 +121,16 @@ class LiveSharingManager private constructor(private val context: Context) {
         private const val KEY_SESSION_INTERVAL = "active_session_interval"
         private const val KEY_SESSION_LAST_SYNC = "active_session_last_sync"
         private const val KEY_SESSION_TRAIL_VISIBLE = "active_session_trail_visible"
+        private const val KEY_SESSION_FOLLOW_GUESTS = "active_session_follow_guests"
+        private const val KEY_SESSION_SHOW_GUEST_DISTANCE = "active_session_show_guest_distance"
         private const val KEY_STATIC_LIVE_ID = "personal_static_live_id"
         // Dialog UI preference persistence
         const val KEY_PREF_LINK_MODE_STATIC = "pref_link_mode_static"   // Boolean
         const val KEY_PREF_PROVIDER = "pref_default_provider"           // String (enum name)
         const val KEY_PREF_DURATION = "pref_default_duration_hours"     // Int (0 = permanent)
         const val KEY_PREF_TITLE = "pref_default_title"                 // String
+        const val KEY_PREF_FOLLOW_GUESTS = "pref_default_follow_guests" // Boolean
+        const val KEY_PREF_SHOW_GUEST_DISTANCE = "pref_default_show_guest_distance" // Boolean
 
         private val SLUG_CHARS = "23456789abcdefghjkmnpqrstuvwxyz".toCharArray()
         private val random = SecureRandom()
@@ -153,8 +159,19 @@ class LiveSharingManager private constructor(private val context: Context) {
     private val _currentSession = MutableStateFlow<LiveSession?>(null)
     val currentSession: StateFlow<LiveSession?> = _currentSession.asStateFlow()
 
+    private val _activeGuests = MutableStateFlow<List<LiveGuest>>(emptyList())
+    val activeGuests: StateFlow<List<LiveGuest>> = _activeGuests.asStateFlow()
+
+    private val _followGuests = MutableStateFlow<Boolean>(true)
+    val followGuests: StateFlow<Boolean> = _followGuests.asStateFlow()
+
+    private val _showGuestDistanceBadge = MutableStateFlow<Boolean>(true)
+    val showGuestDistanceBadge: StateFlow<Boolean> = _showGuestDistanceBadge.asStateFlow()
+
     private val _staticLiveId = MutableStateFlow<String>("")
     val staticLiveId: StateFlow<String> = _staticLiveId.asStateFlow()
+
+    private val dismissedGuestIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private val memoryPointsQueue = mutableListOf<LivePoint>()
     private var lastRecordedLat: Double = 0.0
@@ -218,6 +235,10 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         val isPersonalPaused = prefs.getBoolean(KEY_SESSION_PERSONAL_PAUSED, false)
         val isRandomPaused = prefs.getBoolean(KEY_SESSION_RANDOM_PAUSED, false)
+        val followGuests = prefs.getBoolean(KEY_SESSION_FOLLOW_GUESTS, prefs.getBoolean(KEY_PREF_FOLLOW_GUESTS, true))
+        val showGuestDistance = prefs.getBoolean(KEY_SESSION_SHOW_GUEST_DISTANCE, prefs.getBoolean(KEY_PREF_SHOW_GUEST_DISTANCE, true))
+        _followGuests.value = followGuests
+        _showGuestDistanceBadge.value = showGuestDistance
 
         val session = LiveSession(
             id = id,
@@ -232,6 +253,8 @@ class LiveSharingManager private constructor(private val context: Context) {
             provider = provider,
             syncIntervalMinutes = prefs.getInt(KEY_SESSION_INTERVAL, 5),
             trailVisible = prefs.getBoolean(KEY_SESSION_TRAIL_VISIBLE, true),
+            followGuests = followGuests,
+            showGuestDistanceBadge = showGuestDistance,
             lastSyncTime = prefs.getLong(KEY_SESSION_LAST_SYNC, 0L),
             pendingPointsCount = memoryPointsQueue.size
         )
@@ -244,7 +267,9 @@ class LiveSharingManager private constructor(private val context: Context) {
         serverUrl: String,
         provider: LiveShareProvider = LiveShareProvider.LOCAL,
         syncIntervalMinutes: Int = 5,
-        customSlug: String? = null
+        customSlug: String? = null,
+        followGuests: Boolean = prefs.getBoolean(KEY_PREF_FOLLOW_GUESTS, true),
+        showGuestDistanceBadge: Boolean = prefs.getBoolean(KEY_PREF_SHOW_GUEST_DISTANCE, true)
     ): LiveSession {
         val slug = if (!customSlug.isNullOrBlank()) customSlug else generate10CharSlug()
         val now = System.currentTimeMillis()
@@ -265,6 +290,8 @@ class LiveSharingManager private constructor(private val context: Context) {
             provider = provider,
             syncIntervalMinutes = syncIntervalMinutes,
             trailVisible = true,
+            followGuests = followGuests,
+            showGuestDistanceBadge = showGuestDistanceBadge,
             lastSyncTime = 0L,
             pendingPointsCount = 0
         )
@@ -282,8 +309,15 @@ class LiveSharingManager private constructor(private val context: Context) {
             .putString(KEY_SESSION_PROVIDER, session.provider.name)
             .putInt(KEY_SESSION_INTERVAL, session.syncIntervalMinutes)
             .putBoolean(KEY_SESSION_TRAIL_VISIBLE, true)
+            .putBoolean(KEY_SESSION_FOLLOW_GUESTS, followGuests)
+            .putBoolean(KEY_SESSION_SHOW_GUEST_DISTANCE, showGuestDistanceBadge)
             .putLong(KEY_SESSION_LAST_SYNC, 0L)
             .apply()
+
+        _followGuests.value = followGuests
+        _showGuestDistanceBadge.value = showGuestDistanceBadge
+        dismissedGuestIds.clear()
+        _activeGuests.value = emptyList()
 
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
@@ -539,8 +573,65 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
     }
 
+    fun setFollowGuests(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_SESSION_FOLLOW_GUESTS, enabled)
+            .putBoolean(KEY_PREF_FOLLOW_GUESTS, enabled)
+            .apply()
+        _followGuests.value = enabled
+        if (!enabled) {
+            _activeGuests.value = emptyList()
+        }
+        val s = _currentSession.value ?: return
+        val updated = s.copy(followGuests = enabled)
+        _currentSession.value = updated
+
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/guest-settings"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.doOutput = true
+                val body = JSONObject().apply { put("followGuests", enabled) }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setShowGuestDistanceBadge(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_SESSION_SHOW_GUEST_DISTANCE, enabled)
+            .putBoolean(KEY_PREF_SHOW_GUEST_DISTANCE, enabled)
+            .apply()
+        _showGuestDistanceBadge.value = enabled
+        val s = _currentSession.value ?: return
+        _currentSession.value = s.copy(showGuestDistanceBadge = enabled)
+    }
+
+    fun removeGuest(guestId: String) {
+        dismissedGuestIds.add(guestId)
+        _activeGuests.value = _activeGuests.value.filter { it.id != guestId }
+        val s = _currentSession.value ?: return
+        scope.launch {
+            try {
+                val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/guests/$guestId"
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.requestMethod = "DELETE"
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.responseCode
+            } catch (_: Exception) {}
+        }
+    }
+
     fun stopSession() {
         stopPausedHeartbeat()
+        dismissedGuestIds.clear()
+        _activeGuests.value = emptyList()
         val s = _currentSession.value ?: return
         val stopped = s.copy(isActive = false, isPaused = false)
         prefs.edit().putBoolean(KEY_SESSION_ACTIVE, false).putBoolean(KEY_SESSION_PAUSED, false).apply()
@@ -583,6 +674,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
     fun deleteSession() {
         stopSession()
+        _activeGuests.value = emptyList()
         prefs.edit().clear().apply()
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
@@ -737,6 +829,7 @@ class LiveSharingManager private constructor(private val context: Context) {
                 put("createdAt", session.createdAt)
                 put("expiresAt", session.expiresAt)
                 put("trailVisible", session.trailVisible)
+                put("followGuests", session.followGuests)
                 put("syncIntervalMinutes", session.syncIntervalMinutes)
                 if (targetStaticId.isNotBlank()) {
                     put("staticId", targetStaticId)
@@ -828,6 +921,7 @@ class LiveSharingManager private constructor(private val context: Context) {
                 put("pauses", pausesArr)
                 put("isPaused", session.isPaused)
                 put("title", session.title)
+                put("followGuests", session.followGuests)
                 if (targetStaticId.isNotBlank()) {
                     put("staticId", targetStaticId)
                 }
@@ -859,6 +953,22 @@ class LiveSharingManager private constructor(private val context: Context) {
                     val json = JSONObject(resp)
                     val views = json.optInt("viewCount", session.viewCount)
                     _currentSession.value = _currentSession.value?.copy(viewCount = views)
+
+                    val guestsArr = json.optJSONArray("guests")
+                    if (guestsArr != null && session.followGuests) {
+                        val parsed = mutableListOf<LiveGuest>()
+                        for (i in 0 until guestsArr.length()) {
+                            val gObj = guestsArr.optJSONObject(i) ?: continue
+                            LiveGuest.fromJson(gObj)?.let { g ->
+                                if (!dismissedGuestIds.contains(g.id)) {
+                                    parsed.add(g)
+                                }
+                            }
+                        }
+                        _activeGuests.value = parsed
+                    } else if (!session.followGuests) {
+                        _activeGuests.value = emptyList()
+                    }
                 } catch (_: Exception) {}
             } else {
                 TelemetryLogger.log("LIVE_SHARE", "postSyncPayload failed with code $code: $urlStr")
