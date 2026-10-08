@@ -60,11 +60,11 @@ class StreetResolutionTest {
     ): String? {
         val isPolishGmina = rawMunicipality != null && rawMunicipality.startsWith("gmina ", ignoreCase = true)
         val gminaName = if (isPolishGmina) rawMunicipality.removePrefix("gmina ").trim() else null
-        val villageOrTown = rawVillage ?: rawTown ?: rawHamlet
+        val villageOrTown = rawVillage ?: rawTown
 
         return if (isPolishGmina && !villageOrTown.isNullOrBlank()) {
             villageOrTown
-        } else if (isPolishGmina && gminaName != null && rawCity != null && !rawCity.equals(gminaName, ignoreCase = true)) {
+        } else if (isPolishGmina && gminaName != null) {
             gminaName
         } else {
             rawCity ?: rawTown ?: rawVillage ?: rawHamlet
@@ -343,8 +343,24 @@ class StreetResolutionTest {
                     !city.equals("Unknown City", ignoreCase = true) &&
                     !city.equals(lastCommittedStreetLocality, ignoreCase = true)
 
+            val isRoundaboutExit = (committedStreetBase?.contains("Rondo", ignoreCase = true) == true ||
+                    committedStreetBase?.contains("Roundabout", ignoreCase = true) == true) &&
+                    !rawBase.contains("Rondo", ignoreCase = true) &&
+                    !rawBase.contains("Roundabout", ignoreCase = true)
+
             // When crossing into a confirmed new locality, adopt new locality's street immediately on 1st fix
             if (isLocalityTransition && !rawStreetPl.isNullOrBlank()) {
+                committedStreetPl = rawStreetPl
+                committedStreetBase = rawBase
+                lastCommittedStreetLocality = city
+                candidateStreetPl = null
+                candidateStreetBase = null
+                candidateStreetCount = 0
+                return committedStreetPl
+            }
+
+            // When exiting a roundabout, adopt exit street immediately on 1st fix (zero delay)
+            if (isRoundaboutExit && !rawStreetPl.isNullOrBlank()) {
                 committedStreetPl = rawStreetPl
                 committedStreetBase = rawBase
                 lastCommittedStreetLocality = city
@@ -483,6 +499,67 @@ class StreetResolutionTest {
             now = 4100L
         )
         assertEquals("Switch to ul. Krakowska must commit on 2nd confirmation", "ul. Krakowska", fix2)
+    }
+
+    @Test
+    fun `Exiting roundabout commits exit street immediately on first fix without lag`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // 1. Driving on roundabout Rondo NSZZ Solidarność in Kęty
+        val rondoStreet = model.processFix(
+            rawStreetPl = "Rondo NSZZ Solidarność",
+            city = "Kęty",
+            roadRef = null,
+            speedKmh = 25f,
+            now = 1000L
+        )
+        assertEquals("Rondo NSZZ Solidarność", rondoStreet)
+
+        // 2. Exiting roundabout onto Fabryczna at 34 km/h (Fix 1)
+        val exitStreet = model.processFix(
+            rawStreetPl = "Fabryczna",
+            city = "Kęty",
+            roadRef = null,
+            speedKmh = 34f,
+            now = 2000L
+        )
+        // Must switch immediately on 1st fix without hanging or lagging halfway down Fabryczna!
+        assertEquals("Exiting roundabout must commit exit street 'Fabryczna' immediately on 1st fix", "Fabryczna", exitStreet)
+    }
+
+    @Test
+    fun `OSM Nominatim hamlet in gmina Kozy does not usurp genuine town or gmina Kozy`() {
+        // Real-world scenario from Trip 161 (Krzemionki in gmina Kozy):
+        // Nominatim returns hamlet = "Krzemionki", city = "Bielsko-Biała", municipality = "gmina Kozy"
+        val resolved = resolvePolishLocality(
+            rawCity = "Bielsko-Biała",
+            rawTown = null,
+            rawVillage = null,
+            rawHamlet = "Krzemionki",
+            rawMunicipality = "gmina Kozy"
+        )
+        assertEquals(
+            "Hamlet 'Krzemionki' must not usurp territorial authority 'Kozy'",
+            "Kozy",
+            resolved
+        )
+    }
+
+    @Test
+    fun `OSM Nominatim real village in Polish gmina takes precedence over gmina name`() {
+        // Real-world scenario: Kobiernice in gmina Porąbka
+        val resolved = resolvePolishLocality(
+            rawCity = null,
+            rawTown = null,
+            rawVillage = "Kobiernice",
+            rawHamlet = null,
+            rawMunicipality = "gmina Porąbka"
+        )
+        assertEquals(
+            "Genuine village 'Kobiernice' must take precedence over gmina name 'Porąbka'",
+            "Kobiernice",
+            resolved
+        )
     }
 }
 

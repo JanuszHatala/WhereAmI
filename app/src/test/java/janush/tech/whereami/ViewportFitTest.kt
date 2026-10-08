@@ -21,7 +21,8 @@ class ViewportFitTest {
         availWidth: Double,
         availHeight: Double,
         offsetPixelsX: Double = 0.0,
-        offsetPixelsY: Double = 0.0
+        offsetPixelsY: Double = 0.0,
+        tilesScaleFactor: Float = 1.0f
     ): Pair<Double, Pair<Double, Double>> {
         val alpha = Math.toRadians(orientationDeg.toDouble())
         val cosA = cos(alpha)
@@ -53,18 +54,22 @@ class ViewportFitTest {
         val spanU = (maxU - minU).coerceAtLeast(200.0)
         val spanV = (maxV - minV).coerceAtLeast(200.0)
 
-        val safeWidth = availWidth * 0.88
-        val safeHeight = availHeight * 0.88
+        val safeWidth = availWidth * 0.85
+        val safeHeight = availHeight * 0.85
         val mppX = spanU / safeWidth
         val mppY = spanV / safeHeight
         val requiredMpp = max(mppX, mppY)
-        val zoom = log2((156543.03392 * cosMeanLat) / requiredMpp)
+        val scale = if (tilesScaleFactor > 0f) tilesScaleFactor else 1.0f
+        val equatorRes = 156543.03392 / scale
+        val zoom = log2((equatorRes * cosMeanLat) / requiredMpp)
+
+        val actualMpp = (equatorRes * cosMeanLat) / Math.pow(2.0, zoom)
 
         val midU = (minU + maxU) / 2.0
         val midV = (minV + maxV) / 2.0
 
-        val uCam = midU - offsetPixelsX * requiredMpp
-        val vCam = midV - offsetPixelsY * requiredMpp
+        val uCam = midU - offsetPixelsX * actualMpp
+        val vCam = midV - offsetPixelsY * actualMpp
 
         val dEastCam = uCam * cosA + vCam * sinA
         val dNorthCam = uCam * sinA - vCam * cosA
@@ -87,12 +92,14 @@ class ViewportFitTest {
         zoom: Double,
         orientationDeg: Float,
         screenWidth: Double,
-        screenHeight: Double
+        screenHeight: Double,
+        tilesScaleFactor: Float = 1.0f
     ): Pair<Double, Double> {
         val alpha = Math.toRadians(orientationDeg.toDouble())
         val cosA = cos(alpha)
         val sinA = sin(alpha)
-        val mpp = (156543.03392 * cos(Math.toRadians(camLat))) / Math.pow(2.0, zoom)
+        val scale = if (tilesScaleFactor > 0f) tilesScaleFactor else 1.0f
+        val mpp = ((156543.03392 / scale) * cos(Math.toRadians(camLat))) / Math.pow(2.0, zoom)
 
         val dEast = Math.toRadians(lon - camLon) * rEarth * cos(Math.toRadians(camLat))
         val dNorth = Math.toRadians(lat - camLat) * rEarth
@@ -281,5 +288,77 @@ class ViewportFitTest {
         val phoneAvailHeight = phoneHeight - phoneTopInset - phoneBottomInset
 
         assertTrue("Small phone available height ($phoneAvailHeight) provides adequate viewport", phoneAvailHeight > 500)
+    }
+
+    @Test
+    fun testMaximumFontScaleTilesScaleFactorFitsWithoutClipping() {
+        // Real-world scenario from Trip 162 (19.22 km driving trip with profile CAR fontScale = MAXIMUM -> scaleFactor = 1.75f)
+        // 1080x2400 phone screen, density = 2.625
+        val screenWidth = 1080.0
+        val screenHeight = 2400.0
+        val scaleFactor = 1.75f // MAXIMUM font scale
+
+        val leftInset = 40.0
+        val rightInset = 210.0 // 72dp right controls + margin
+        val topInset = 550.0   // Locality card in compact mode + status bar + margin
+        val bottomInset = 500.0 // Bottom toolbar + recenter button + margin
+
+        val availWidth = screenWidth - leftInset - rightInset
+        val availHeight = screenHeight - topInset - bottomInset
+
+        val screenCenterX = leftInset + availWidth / 2.0
+        val screenCenterY = topInset + availHeight / 2.0
+        val offsetPixelsX = screenCenterX - screenWidth / 2.0
+        val offsetPixelsY = screenCenterY - screenHeight / 2.0
+
+        // Real points from Trip 162 spanning Kęty to Czaniec
+        val tripPoints = listOf(
+            Pair(49.8558598, 19.2615655), // Start Czaniec
+            Pair(49.8906000, 19.2301000), // Rondo Solidarność
+            Pair(49.8850000, 19.2299000), // Fabryczna
+            Pair(49.8283491, 19.1204180)  // Kozy
+        )
+
+        val (zoom, camCenter) = computeRotatedFit(
+            points = tripPoints,
+            orientationDeg = 0f,
+            availWidth = availWidth,
+            availHeight = availHeight,
+            offsetPixelsX = offsetPixelsX,
+            offsetPixelsY = offsetPixelsY,
+            tilesScaleFactor = scaleFactor
+        )
+
+        // Verify each point projects strictly within unobstructed viewport
+        for (pt in tripPoints) {
+            val (sx, sy) = projectToScreen(
+                lat = pt.first,
+                lon = pt.second,
+                camLat = camCenter.first,
+                camLon = camCenter.second,
+                zoom = zoom,
+                orientationDeg = 0f,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                tilesScaleFactor = scaleFactor
+            )
+
+            assertTrue(
+                "Screen X ($sx) must be >= leftInset ($leftInset) under 1.75x tile scaling to prevent left track clipping",
+                sx >= leftInset
+            )
+            assertTrue(
+                "Screen X ($sx) must be <= screenWidth - rightInset (${screenWidth - rightInset})",
+                sx <= (screenWidth - rightInset)
+            )
+            assertTrue(
+                "Screen Y ($sy) must be >= topInset ($topInset)",
+                sy >= topInset
+            )
+            assertTrue(
+                "Screen Y ($sy) must be <= screenHeight - bottomInset (${screenHeight - bottomInset})",
+                sy <= (screenHeight - bottomInset)
+            )
+        }
     }
 }

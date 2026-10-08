@@ -73,11 +73,18 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val resolvedVoivodeship = if (resolvedCountry == "Polska" || cc.uppercase() == "PL") {
                     LocationManager.canonicalizePolishVoivodeship(rawVoivodeship)
                 } else rawVoivodeship
+                val rawCity = obj.optString("city", "Unknown City")
+                val rawGmina = obj.optString("gmina").takeIf { it.isNotBlank() }
+                val resolvedCity = if (rawGmina?.contains("gm. Kozy", ignoreCase = true) == true || rawGmina?.contains("gmina Kozy", ignoreCase = true) == true) {
+                    if (rawCity.equals("Krzemionki", ignoreCase = true) || rawCity.equals("Małe Kozy", ignoreCase = true)) {
+                        "Kozy"
+                    } else rawCity
+                } else rawCity
                 PlaceInfo(
-                    city = obj.optString("city", "Unknown City"),
+                    city = resolvedCity,
                     street = obj.optString("street").takeIf { it.isNotBlank() },
                     roadRef = obj.optString("roadRef").takeIf { it.isNotBlank() },
-                    gmina = obj.optString("gmina").takeIf { it.isNotBlank() },
+                    gmina = rawGmina,
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
                     voivodeship = resolvedVoivodeship,
                     country = resolvedCountry,
@@ -198,6 +205,22 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     "WHERE $COL_EN_JSON LIKE '%\"country\":\"Poland\"%' " +
                     "OR $COL_PL_JSON LIKE '%\"country\":\"Poland\"%' " +
                     "OR $COL_NATIVE_JSON LIKE '%\"country\":\"Poland\"%'"
+                )
+                db.execSQL(
+                    "UPDATE $TABLE_CACHE SET $COL_CITY = 'Kozy', " +
+                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"'), " +
+                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"'), " +
+                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"') " +
+                    "WHERE ($COL_CITY = 'Krzemionki' OR $COL_PL_JSON LIKE '%\"city\":\"Krzemionki\"%') " +
+                    "AND ($COL_PL_JSON LIKE '%gmina Kozy%' OR $COL_PL_JSON LIKE '%gm. Kozy%')"
+                )
+                db.execSQL(
+                    "UPDATE $TABLE_CACHE SET $COL_CITY = 'Kozy', " +
+                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"'), " +
+                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"'), " +
+                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"') " +
+                    "WHERE ($COL_CITY = 'Małe Kozy' OR $COL_PL_JSON LIKE '%\"city\":\"Małe Kozy\"%') " +
+                    "AND ($COL_PL_JSON LIKE '%gmina Kozy%' OR $COL_PL_JSON LIKE '%gm. Kozy%')"
                 )
             } catch (_: Exception) {}
         } catch (_: Exception) {}
