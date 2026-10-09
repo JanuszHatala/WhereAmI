@@ -6,10 +6,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -172,6 +174,17 @@ class AppStateManager private constructor(private val context: Context) {
 
     fun handleMotionWake() {
         val tripManager = TripManager.getInstance(context)
+        val currentMode = _currentMode.value
+
+        if (currentMode == AppLifecycleMode.LIVE_ONLY) {
+            TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
+            LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+            startLiveOnlyWatcher()
+            if (tripManager.tripMode.value != TripMode.AUTO || tripManager.activeTrip.value != null) {
+                return
+            }
+        }
+
         if (tripManager.tripMode.value != TripMode.AUTO) return
         if (tripManager.activeTrip.value != null) return
 
@@ -227,6 +240,52 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
+    private var liveOnlyWatcherJob: Job? = null
+
+    private fun startLiveOnlyWatcher() {
+        liveOnlyWatcherJob?.cancel()
+        val locManager = LocationManager.getInstance(context)
+        val motionManager = MotionWakeManager.getInstance(context)
+        val charging = _isCharging.value
+
+        // When moving, sample at conservative interval
+        val interval = if (charging) 6_000L else 15_000L
+        val minInterval = if (charging) 3_000L else 8_000L
+        locManager.updateSamplingInterval(interval, minInterval)
+
+        liveOnlyWatcherJob = scope.launch {
+            var stationarySinceMs = 0L
+            while (isActive) {
+                delay(5_000L)
+                if (_currentMode.value != AppLifecycleMode.LIVE_ONLY) break
+                val tripActive = TripManager.getInstance(context).activeTrip.value != null
+                if (tripActive) break
+
+                val isPhysicalStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                val currentSpeed = LocationManager.getInstance(context).getLastValidSpeedMs()
+                val isSpeedStationary = currentSpeed < 0.35f // < ~1.2 km/h
+
+                val now = SystemClock.elapsedRealtime()
+                if (isPhysicalStationary || isSpeedStationary) {
+                    if (stationarySinceMs == 0L) {
+                        stationarySinceMs = now
+                    }
+                    val stationaryDuration = now - stationarySinceMs
+                    // After 30 seconds of verified stationary dwell, power down GPS completely!
+                    if (stationaryDuration >= 30_000L) {
+                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Powering down GPS hardware and arming MotionWakeManager.")
+                        locManager.stopLocationUpdates()
+                        motionManager.arm()
+                        LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+                        break // Standby active, wait for motion trigger
+                    }
+                } else {
+                    stationarySinceMs = 0L
+                }
+            }
+        }
+    }
+
     fun recalculateState() {
         val tripActive = TripManager.getInstance(context).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
@@ -234,9 +293,9 @@ class AppStateManager private constructor(private val context: Context) {
 
         val newMode = when {
             tripActive -> AppLifecycleMode.TRIP_RECORDING
-            liveActive -> AppLifecycleMode.LIVE_ONLY
             isAutoMediaActive -> AppLifecycleMode.ANDROID_AUTO
             isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
+            liveActive -> AppLifecycleMode.LIVE_ONLY
             else -> AppLifecycleMode.IDLE
         }
 
@@ -249,6 +308,11 @@ class AppStateManager private constructor(private val context: Context) {
         val motionManager = MotionWakeManager.getInstance(context)
         val policy = _powerPolicy.value
         val charging = _isCharging.value
+
+        if (mode != AppLifecycleMode.LIVE_ONLY) {
+            liveOnlyWatcherJob?.cancel()
+            LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+        }
 
         when (mode) {
             AppLifecycleMode.IDLE -> {
@@ -320,11 +384,7 @@ class AppStateManager private constructor(private val context: Context) {
             }
             AppLifecycleMode.LIVE_ONLY -> {
                 motionBurstJob?.cancel()
-                motionManager.disarm()
-                // Collect breadcrumbs at steady 10s (charging: 6s) so batch upload has complete trail
-                val interval = if (charging) 6_000L else 12_000L
-                val minInterval = if (charging) 3_000L else 6_000L
-                locManager.updateSamplingInterval(interval, minInterval)
+                startLiveOnlyWatcher()
             }
             AppLifecycleMode.ANDROID_AUTO -> {
                 motionBurstJob?.cancel()

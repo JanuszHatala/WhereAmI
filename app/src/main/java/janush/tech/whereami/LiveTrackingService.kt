@@ -317,7 +317,8 @@ class LiveTrackingService : Service() {
             }
             isLiveActive -> {
                 val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
-                "Live Sharing Active$pauseTag • $lastPlaceName • ${liveSession.getFormattedRemaining()}"
+                val place = getEffectivePlaceName()
+                "Live Sharing Active$pauseTag • $place"
             }
             isAuto -> {
                 val startSpeed = TripManager.getInstance(this).getAutoStartSpeedForProfile(profile)
@@ -339,6 +340,26 @@ class LiveTrackingService : Service() {
             lastNotificationTitle = title
             lastNotificationText = text
         }
+    }
+
+    private fun getEffectivePlaceName(): String {
+        if (lastPlaceName.isNotBlank() && lastPlaceName != "In Transit") {
+            return lastPlaceName
+        }
+        val currentCity = LocationManager.getInstance(this).lastLocationSnapshot?.multiPlace?.let {
+            it.pl.takeIf { p -> p.isValid() }?.city ?: it.en.city
+        }
+        if (!currentCity.isNullOrBlank()) {
+            lastPlaceName = currentCity
+            return currentCity
+        }
+        val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+        val saved = prefs.getString("last_city", null)
+        if (!saved.isNullOrBlank()) {
+            lastPlaceName = saved
+            return saved
+        }
+        return "Broadcasting live location"
     }
 
     private var locationUpdatesJob: Job? = null
@@ -373,13 +394,16 @@ class LiveTrackingService : Service() {
         val hasLive = liveSession != null && liveSession.isActive
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
-        if (trip != null || hasLive) {
+        if (trip != null) {
             startLocationTracking()
             // Strict WakeLock scoping: ONLY hold CPU wake lock during active trip recording.
-            // When only Live Sharing is active (without active trip recording), do NOT hold persistent
-            // WakeLock so the device can safely enter Doze/deep sleep when stationary.
-            val shouldHoldWakeLock = trip != null
-            updateWakeLock(shouldHoldWakeLock)
+            updateWakeLock(true)
+            updateNotification(force = true)
+        } else if (hasLive) {
+            // Live sharing active without active trip recording:
+            // Standby live mode: release CPU wake lock, stop continuous location flow subscription
+            stopLocationTracking()
+            updateWakeLock(false)
             updateNotification(force = true)
         } else if (isAuto) {
             stopLocationTracking()
