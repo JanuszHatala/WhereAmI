@@ -221,3 +221,13 @@ Whenever the user reports field testing feedback, mentions test results, or uplo
    - Explain the root cause identified, technical action taken, and link to modified files/symbols.
    - List all additional telemetry findings or unprompted bugs caught and resolved.
    - Update `docs/ENHANCEMENT_TRACKER.md`.
+
+---
+
+## 7. RTK Token Optimization & Command Output Discipline
+
+To conserve LLM context tokens and prevent context bloat:
+- **RTK Shell Proxy**: All verbose terminal operations (`git status`, `git diff`, `git log`, `./gradlew`, `adb logcat`, test runners) are routed through `rtk` (Rust Token Killer).
+- **Transparent Hooking**: The global `PreToolUse` hook in Antigravity and Cursor automatically rewrites shell commands to pass through `rtk hook`.
+- **Compact Output Awareness**: Treat compact output returned by `rtk` as complete and definitive. Re-run with `rtk proxy <cmd>` only if output was unexpectedly empty or garbled.
+- **Output-Gated Inspection**: When inspecting Android logcat or SQLite databases, always use targeted filtering (`rtk logcat | grep ...`, `tail -n 100`, SQL `LIMIT`) rather than dumping full multi-megabyte streams.
