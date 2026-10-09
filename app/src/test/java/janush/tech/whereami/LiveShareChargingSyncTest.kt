@@ -11,12 +11,12 @@ class LiveShareChargingSyncTest {
     @Test
     fun testActivityProfileChargingProperties() {
         // Verify profile-adapted real-time sync intervals when plugged into a charger
-        assertEquals(2_000L, ActivityProfile.CAR.chargingLiveSyncIntervalMs)
-        assertEquals(3_000L, ActivityProfile.CYCLING.chargingLiveSyncIntervalMs)
-        assertEquals(3_000L, ActivityProfile.MTB.chargingLiveSyncIntervalMs)
-        assertEquals(4_000L, ActivityProfile.RUNNING.chargingLiveSyncIntervalMs)
-        assertEquals(5_000L, ActivityProfile.HIKING.chargingLiveSyncIntervalMs)
-        assertEquals(5_000L, ActivityProfile.WALKING.chargingLiveSyncIntervalMs)
+        assertEquals(5_000L, ActivityProfile.CAR.chargingLiveSyncIntervalMs)
+        assertEquals(6_000L, ActivityProfile.CYCLING.chargingLiveSyncIntervalMs)
+        assertEquals(6_000L, ActivityProfile.MTB.chargingLiveSyncIntervalMs)
+        assertEquals(8_000L, ActivityProfile.RUNNING.chargingLiveSyncIntervalMs)
+        assertEquals(10_000L, ActivityProfile.HIKING.chargingLiveSyncIntervalMs)
+        assertEquals(10_000L, ActivityProfile.WALKING.chargingLiveSyncIntervalMs)
 
         // Verify profile-adapted breadcrumb displacement thresholds
         assertEquals(15.0f, ActivityProfile.CAR.chargingBreadcrumbDisplacementMeters, 0.01f)
@@ -58,7 +58,7 @@ class LiveShareChargingSyncTest {
 
     @Test
     fun testChargingSyncCadenceWhenMoving() {
-        // Driving at 60 km/h: 2s update interval and 15m breadcrumb gate
+        // Driving at 60 km/h: 5s update interval and 15m breadcrumb gate
         val (carInterval, carGate) = resolveSyncParams(
             isCharging = true,
             profile = ActivityProfile.CAR,
@@ -66,10 +66,10 @@ class LiveShareChargingSyncTest {
             distanceMeters = 33f,
             batteryIntervalMinutes = 5
         )
-        assertEquals(2_000L, carInterval)
+        assertEquals(5_000L, carInterval)
         assertEquals(15.0f, carGate, 0.01f)
 
-        // Cycling at 20 km/h: 3s update interval and 12m breadcrumb gate
+        // Cycling at 20 km/h: 6s update interval and 12m breadcrumb gate
         val (bikeInterval, bikeGate) = resolveSyncParams(
             isCharging = true,
             profile = ActivityProfile.CYCLING,
@@ -77,10 +77,10 @@ class LiveShareChargingSyncTest {
             distanceMeters = 16f,
             batteryIntervalMinutes = 5
         )
-        assertEquals(3_000L, bikeInterval)
+        assertEquals(6_000L, bikeInterval)
         assertEquals(12.0f, bikeGate, 0.01f)
 
-        // Hiking at 4 km/h: 5s update interval and 8m breadcrumb gate
+        // Hiking at 4 km/h: 10s update interval and 8m breadcrumb gate
         val (hikeInterval, hikeGate) = resolveSyncParams(
             isCharging = true,
             profile = ActivityProfile.HIKING,
@@ -88,10 +88,10 @@ class LiveShareChargingSyncTest {
             distanceMeters = 6f,
             batteryIntervalMinutes = 5
         )
-        assertEquals(5_000L, hikeInterval)
+        assertEquals(10_000L, hikeInterval)
         assertEquals(8.0f, hikeGate, 0.01f)
 
-        // Running at 10 km/h: 4s update interval and 12m breadcrumb gate
+        // Running at 10 km/h: 8s update interval and 12m breadcrumb gate
         val (runInterval, runGate) = resolveSyncParams(
             isCharging = true,
             profile = ActivityProfile.RUNNING,
@@ -99,7 +99,7 @@ class LiveShareChargingSyncTest {
             distanceMeters = 11f,
             batteryIntervalMinutes = 2
         )
-        assertEquals(4_000L, runInterval)
+        assertEquals(8_000L, runInterval)
         assertEquals(12.0f, runGate, 0.01f)
     }
 
@@ -134,7 +134,7 @@ class LiveShareChargingSyncTest {
             distanceMeters = 18f,
             batteryIntervalMinutes = 5
         )
-        assertEquals(2_000L, resumedInterval)
+        assertEquals(5_000L, resumedInterval)
     }
 
     @Test

@@ -54,22 +54,56 @@ function loadSessions() {
   }
 }
 
-function saveSessions() {
-  try {
-    const obj = {
-      sessions: Object.fromEntries(sessions),
-      staticAliases: Object.fromEntries(staticAliases)
-    };
-    fs.writeFileSync(DATA_FILE, JSON.stringify(obj, null, 2), 'utf8');
-  } catch (e) {
-    console.error('Error saving sessions:', e.message);
+let saveTimeout = null;
+
+function saveSessions(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
+    try {
+      const obj = {
+        sessions: Object.fromEntries(sessions),
+        staticAliases: Object.fromEntries(staticAliases)
+      };
+      fs.writeFileSync(DATA_FILE, JSON.stringify(obj), 'utf8');
+    } catch (e) {
+      console.error('Error saving sessions synchronously:', e.message);
+    }
+    return;
   }
+
+  if (saveTimeout) return;
+  saveTimeout = setTimeout(() => {
+    saveTimeout = null;
+    try {
+      const obj = {
+        sessions: Object.fromEntries(sessions),
+        staticAliases: Object.fromEntries(staticAliases)
+      };
+      fs.writeFile(DATA_FILE, JSON.stringify(obj), 'utf8', (err) => {
+        if (err) console.error('Error saving sessions asynchronously:', err.message);
+      });
+    } catch (e) {
+      console.error('Error serializing sessions:', e.message);
+    }
+  }, 2000);
 }
+
+process.on('SIGTERM', () => {
+  saveSessions(true);
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  saveSessions(true);
+  process.exit(0);
+});
 
 loadSessions();
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'WhereAmI Live Server', version: '1.3.3', activeSessions: sessions.size, staticAliases: staticAliases.size });
+  res.json({ status: 'ok', service: 'WhereAmI Live Server', version: '1.3.4', activeSessions: sessions.size, staticAliases: staticAliases.size });
 });
 
 app.get('/live/:id', (req, res) => {

@@ -124,6 +124,11 @@ class CacheManager private constructor(private val context: Context) {
     // ── Battery & Connectivity Safety Checks ──────────────────────────────────
 
     fun isDeviceCharging(): Boolean {
+        try {
+            if (AppStateManager.getInstance(context).isCharging.value) return true
+        } catch (_: Exception) {}
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        if (bm?.isCharging == true) return true
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         val batteryStatus = context.registerReceiver(null, filter)
         val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
@@ -180,6 +185,7 @@ class CacheManager private constructor(private val context: Context) {
 
     private val NOTIF_CHANNEL_PREFETCH = "prefetch_channel"
     private val NOTIF_PREFETCH_ID = 3001
+    @Volatile private var lastNotifPostTimeMs = 0L
 
     private fun ensurePrefetchChannel() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -197,7 +203,13 @@ class CacheManager private constructor(private val context: Context) {
         return androidx.core.text.HtmlCompat.fromHtml("<font color='$colorHex'>$text</font>", androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY)
     }
 
-    private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean) {
+    private fun updateNotification(passName: String, current: Int, total: Int, isPaused: Boolean, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && !isPaused && current < total && (now - lastNotifPostTimeMs < 2500L)) {
+            return
+        }
+        lastNotifPostTimeMs = now
+
         ensurePrefetchChannel()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
 
@@ -269,12 +281,22 @@ class CacheManager private constructor(private val context: Context) {
     }
 
     private fun dismissNotification() {
+        lastNotifPostTimeMs = 0L
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
         manager?.cancel(NOTIF_PREFETCH_ID)
     }
 
-    fun startPrefetch() {
+    fun startPrefetch(isUserInitiated: Boolean = true) {
         if (_prefetchState.value is PrefetchState.Running) return
+
+        if (!isUserInitiated) {
+            val isRecording = TripManager.getInstance(context).activeTrip.value != null
+            val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+            if (isRecording || isLiveSharing) {
+                TelemetryLogger.log("CACHE", "Auto-prefetch suppressed during active trip recording or live sharing.")
+                return
+            }
+        }
 
         val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
         notifManager?.cancel(NOTIF_AVAILABLE_ID)
@@ -479,9 +501,18 @@ class CacheManager private constructor(private val context: Context) {
         dismissNotification()
     }
 
-    fun fetchMissingBoundaries() {
+    fun fetchMissingBoundaries(isUserInitiated: Boolean = true) {
         if (_prefetchState.value is PrefetchState.Running) return
         
+        if (!isUserInitiated) {
+            val isRecording = TripManager.getInstance(context).activeTrip.value != null
+            val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+            if (isRecording || isLiveSharing) {
+                TelemetryLogger.log("CACHE", "Auto boundary prefetch suppressed during active trip recording or live sharing.")
+                return
+            }
+        }
+
         if (!allowOnBattery && !isDeviceCharging()) {
             _prefetchState.value = PrefetchState.Blocked("Device is not charging.")
             return
@@ -607,10 +638,15 @@ class CacheManager private constructor(private val context: Context) {
 
                 val totalMissing = missingRoutes + missingBoundaries
                 if (totalMissing > 0 && _prefetchState.value is PrefetchState.Idle) {
+                    val isRecording = TripManager.getInstance(context).activeTrip.value != null
+                    val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+                    if (isRecording || isLiveSharing) {
+                        return@launch
+                    }
                     val canAutoWifi = autoStartOnWifi && isUnmeteredWifi()
                     val canAutoCharger = autoStartOnCharger && isDeviceCharging()
                     if (canAutoWifi || canAutoCharger) {
-                        startPrefetch()
+                        startPrefetch(isUserInitiated = false)
                     } else if (notifyWhenAvailable) {
                         postUpdatesAvailableNotification(deficit)
                     }
