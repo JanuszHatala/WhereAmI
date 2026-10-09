@@ -1,0 +1,3 @@
+# RTK Token Optimization
+Shell command outputs are automatically compacted by RTK (Rust Token Killer) to minimize context token usage.
+Treat compact command outputs as complete. Do not re-run commands with verbose flags unless explicitly instructed.
