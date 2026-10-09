@@ -323,6 +323,8 @@ class LocationManager private constructor(private val context: Context) {
     @Volatile
     private var lastValidSpeedMs: Float = 0f
 
+    fun getLastValidSpeedMs(): Float = lastValidSpeedMs
+
     // Displacement tracking for zero-motion confirmation
     private var lastFixLat: Double = 0.0
     private var lastFixLng: Double = 0.0

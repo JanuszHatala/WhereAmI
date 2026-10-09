@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.os.BatteryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -318,6 +320,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         _showGuestDistanceBadge.value = showGuestDistanceBadge
         dismissedGuestIds.clear()
         _activeGuests.value = emptyList()
+        stopStationaryHeartbeat()
 
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
@@ -346,6 +349,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     private var pausedHeartbeatJob: kotlinx.coroutines.Job? = null
 
     fun pauseSession() {
+        stopStationaryHeartbeat()
         val s = _currentSession.value ?: return
         val paused = s.copy(isPaused = true)
         prefs.edit().putBoolean(KEY_SESSION_PAUSED, true).apply()
@@ -370,6 +374,54 @@ class LiveSharingManager private constructor(private val context: Context) {
     private fun stopPausedHeartbeat() {
         pausedHeartbeatJob?.cancel()
         pausedHeartbeatJob = null
+    }
+
+    private var stationaryHeartbeatJob: kotlinx.coroutines.Job? = null
+
+    fun startStationaryHeartbeat() {
+        if (stationaryHeartbeatJob?.isActive == true) return
+        stationaryHeartbeatJob = scope.launch {
+            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat started (GPS off, periodic network ping)")
+            while (isActive) {
+                val session = _currentSession.value
+                if (session == null || !session.isActive || session.isExpired || session.isPaused) break
+                val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
+                if (isTripRecording) break
+
+                val intervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
+                delay(intervalMs)
+
+                val current = _currentSession.value
+                if (current == null || !current.isActive || current.isExpired || current.isPaused) break
+                if (TripManager.getInstance(context).activeTrip.value != null) break
+
+                if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
+                    val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+                    val city = LocationManager.getInstance(context).lastLocationSnapshot?.multiPlace?.let {
+                        it.pl.takeIf { p -> p.isValid() }?.city ?: it.en.city
+                    } ?: prefs.getString("last_city", null)
+
+                    flushPointsToServer(
+                        lat = lastRecordedLat,
+                        lng = lastRecordedLng,
+                        speedKmh = 0f,
+                        altitude = null,
+                        bearing = lastRecordedBearing,
+                        placeName = city,
+                        trekkingBadge = null,
+                        accuracy = lastRecordedAccuracy
+                    )
+                }
+            }
+        }
+    }
+
+    fun stopStationaryHeartbeat() {
+        if (stationaryHeartbeatJob != null) {
+            stationaryHeartbeatJob?.cancel()
+            stationaryHeartbeatJob = null
+            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat stopped")
+        }
     }
 
     fun resumeSession() {
@@ -630,6 +682,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
     fun stopSession() {
         stopPausedHeartbeat()
+        stopStationaryHeartbeat()
         dismissedGuestIds.clear()
         _activeGuests.value = emptyList()
         val s = _currentSession.value ?: return
