@@ -1124,8 +1124,8 @@
           statusClass = 'online';
           const isChargingBoost = Boolean(data.current?.isCharging);
           badge.innerHTML = isChargingBoost 
-            ? '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div> ⚡ LIVE' 
-            : '<div class="pulse-dot"></div> ONLINE';
+            ? '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div> ⚡ LIVE (boost)' 
+            : `<div class="pulse-dot"></div> ONLINE (${data.syncIntervalMinutes || 1}m)`;
           badge.style.background = isChargingBoost 
             ? 'rgba(59, 130, 246, 0.22)' 
             : 'rgba(34, 197, 94, 0.18)';
@@ -1161,7 +1161,8 @@
           }
 
           const agoSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-          document.getElementById('updatedVal').textContent = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago');
+          const cadenceText = isChargingBoost ? '⚡ ~5s' : `${data.syncIntervalMinutes || 1}m`;
+          document.getElementById('updatedVal').textContent = (agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago')) + ` (${cadenceText})`;
 
           if (trekking) {
             document.getElementById('trekkingBadge').style.display = 'block';
@@ -1258,10 +1259,10 @@
         const isChargingBoost = Boolean(data.current?.isCharging);
         const syncIntervalMs = data.current?.syncIntervalMs || 0;
 
-        if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 6000))) {
-          nextPollIntervalMs = 1800; // Fast 1.8s polling during real-time charging boost
+        if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 10000))) {
+          nextPollIntervalMs = 2500; // Snappy 2.5s polling during charging boost
         } else if (isHostActive) {
-          nextPollIntervalMs = 3500;
+          nextPollIntervalMs = 4000;
         } else {
           nextPollIntervalMs = 5000;
         }
