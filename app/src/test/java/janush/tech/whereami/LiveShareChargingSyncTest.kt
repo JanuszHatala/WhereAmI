@@ -204,4 +204,48 @@ class LiveShareChargingSyncTest {
         assertFalse(batteryJson.getBoolean("isCharging"))
         assertEquals(60000L, batteryJson.getLong("syncIntervalMs"))
     }
+
+    @Test
+    fun testActiveTripBackfillDownsampling() {
+        val now = 1791547791375L
+        val startTime = now - 3600_000L // 1h ago
+        val tripPoints = (0 until 2500).map { i ->
+            org.osmdroid.util.GeoPoint(49.8 + i * 0.0001, 19.0 + i * 0.0001)
+        }
+        val memoryQueue = mutableListOf<LivePoint>()
+        val step = maxOf(1, kotlin.math.ceil(tripPoints.size.toDouble() / 1500.0).toInt())
+        val timeStep = (now - startTime) / tripPoints.size
+        for (i in tripPoints.indices step step) {
+            val gp = tripPoints[i]
+            val t = startTime + i * timeStep
+            memoryQueue.add(
+                LivePoint(
+                    lat = gp.latitude,
+                    lng = gp.longitude,
+                    speedKmh = 45f,
+                    altitude = null,
+                    timestamp = t,
+                    accuracy = null
+                )
+            )
+        }
+        if ((tripPoints.size - 1) % step != 0) {
+            val lastGp = tripPoints.last()
+            memoryQueue.add(
+                LivePoint(
+                    lat = lastGp.latitude,
+                    lng = lastGp.longitude,
+                    speedKmh = 45f,
+                    altitude = null,
+                    timestamp = now,
+                    accuracy = null
+                )
+            )
+        }
+
+        assertTrue("Queue must contain backfilled points", memoryQueue.size > 1000)
+        assertTrue("Queue must not exceed 2000 points", memoryQueue.size <= 2000)
+        assertEquals(tripPoints.first().latitude, memoryQueue.first().lat, 0.00001)
+        assertEquals(tripPoints.last().latitude, memoryQueue.last().lat, 0.00001)
+    }
 }

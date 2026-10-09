@@ -325,6 +325,41 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
+            val activeTrip = TripManager.getInstance(context).activeTrip.value
+            if (activeTrip != null && activeTrip.points.isNotEmpty()) {
+                val tripPoints = activeTrip.points
+                val step = maxOf(1, kotlin.math.ceil(tripPoints.size.toDouble() / 1500.0).toInt())
+                val timeStep = if (tripPoints.size > 1) (now - activeTrip.startTime) / tripPoints.size else 1000L
+                for (i in tripPoints.indices step step) {
+                    val gp = tripPoints[i]
+                    val t = activeTrip.startTime + i * timeStep
+                    memoryPointsQueue.add(
+                        LivePoint(
+                            lat = gp.latitude,
+                            lng = gp.longitude,
+                            speedKmh = activeTrip.avgSpeedKmh,
+                            altitude = null,
+                            timestamp = t,
+                            accuracy = null
+                        )
+                    )
+                }
+                if ((tripPoints.size - 1) % step != 0) {
+                    val lastGp = tripPoints.last()
+                    memoryPointsQueue.add(
+                        LivePoint(
+                            lat = lastGp.latitude,
+                            lng = lastGp.longitude,
+                            speedKmh = activeTrip.avgSpeedKmh,
+                            altitude = null,
+                            timestamp = now,
+                            accuracy = null
+                        )
+                    )
+                }
+                lastRecordedLat = tripPoints.last().latitude
+                lastRecordedLng = tripPoints.last().longitude
+            }
         }
         _currentSession.value = session
 
@@ -341,7 +376,19 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
 
         scope.launch {
-            postSessionMeta(session)
+            val metaOk = postSessionMeta(session)
+            if (metaOk) {
+                val hasPending = synchronized(memoryPointsQueue) { memoryPointsQueue.isNotEmpty() }
+                if (hasPending) {
+                    val trip = TripManager.getInstance(context).activeTrip.value
+                    val lastGp = trip?.points?.lastOrNull()
+                    if (lastGp != null) {
+                        syncNow(currentLat = lastGp.latitude, currentLng = lastGp.longitude, currentSpeed = trip.avgSpeedKmh)
+                    } else {
+                        syncNow()
+                    }
+                }
+            }
         }
 
         return session
