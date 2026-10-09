@@ -153,7 +153,11 @@ class GpsFilterEngine private constructor() {
 
         // ── Stage 4: Stationary Jitter Dampener ───────────────────────────────────
         // Dampen position micro-oscillations when stopped without destroying GNSS Doppler hardware speed.
-        if (deltaDistMeters < 3.5 && candidate.hasSpeed() && candidate.speed < 0.4f) {
+        if (deltaDistMeters < 4.0 && candidate.hasSpeed() && candidate.speed < 0.45f) {
+            candidate.latitude = prev.latitude
+            candidate.longitude = prev.longitude
+        } else if (deltaDistMeters < 12.0 && candidate.hasAccuracy() && candidate.accuracy > 20.0f && (!candidate.hasSpeed() || candidate.speed < 0.8f)) {
+            // Indoor multipath drift: wide accuracy bubble with negligible velocity
             candidate.latitude = prev.latitude
             candidate.longitude = prev.longitude
         }

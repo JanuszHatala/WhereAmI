@@ -389,6 +389,9 @@ class TripManager private constructor(private val context: Context) {
             val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
             dbHelper.updateTrip(finishedTrip)
             TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
+            try {
+                CacheManager.getInstance(context).onTripFinished()
+            } catch (_: Exception) {}
         }
         _activeTrip.value = null
         _isPaused.value = false

@@ -25,12 +25,42 @@ object RoadNameNormalizer {
     /**
      * Determines whether a given road name represents a high-speed / national / provincial corridor.
      */
-    fun isMajorRoad(name: String?): Boolean {
+    fun isMajorRoad(name: String?, roadRef: String? = null): Boolean {
+        if (!roadRef.isNullOrBlank()) {
+            val refTrimmed = roadRef.trim().uppercase(Locale.ROOT)
+            if (refTrimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) || refTrimmed.matches(Regex("""^\d{1,3}$"""))) {
+                return true
+            }
+        }
         if (name.isNullOrBlank()) return false
         val trimmed = name.trim().uppercase(Locale.ROOT)
         return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
                 trimmed.matches(Regex("""^\d{1,3}$""")) ||
                 trimmed.contains(Regex("""\((DK|DW|A|S|E)\s*\d+.*\)""")) ||
+                trimmed.startsWith("DROGA KRAJOWA") ||
+                trimmed.startsWith("KRAJOWA") ||
+                trimmed.startsWith("DROGA WOJEWÓDZKA") ||
+                trimmed.startsWith("WOJEWÓDZKA") ||
+                trimmed.startsWith("AUTOSTRADA") ||
+                trimmed.startsWith("DROGA EKSPRESOWA") ||
+                trimmed.startsWith("EKSPRESOWA") ||
+                trimmed.contains("NIEPODLEGŁOŚCI") ||
+                trimmed.startsWith("ALEJA") ||
+                trimmed.startsWith("ALEJE") ||
+                trimmed.startsWith("AL.") ||
+                trimmed.startsWith("TRASA") ||
+                trimmed.contains("OBWODNICA")
+    }
+
+    /**
+     * Determines whether a given string is strictly a highway code (e.g. DK52, S1, DW946)
+     * rather than a named local street running along the corridor (e.g. Aleje świętego Jana Pawła II).
+     */
+    fun isHighwayCodeOnly(name: String?): Boolean {
+        if (name.isNullOrBlank()) return false
+        val trimmed = name.trim().uppercase(Locale.ROOT)
+        return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
+                trimmed.matches(Regex("""^\d{1,3}$""")) ||
                 trimmed.startsWith("DROGA KRAJOWA") ||
                 trimmed.startsWith("KRAJOWA") ||
                 trimmed.startsWith("DROGA WOJEWÓDZKA") ||
@@ -240,7 +270,7 @@ object RoadNameNormalizer {
         // If it's a major highway:
         if (normalizedHighway != null) {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
-            return if (!isRoadSelfHighway && road.isNotEmpty() && !isMajorRoad(road)) {
+            return if (!isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
                 "$cleanLocal ($normalizedHighway)"
             } else {

@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -42,6 +43,7 @@ fun CacheManagerDialog(
     var autoStartOnWifi by remember { mutableStateOf(cacheManager.autoStartOnWifi) }
     var autoStartOnCharger by remember { mutableStateOf(cacheManager.autoStartOnCharger) }
     var notifyWhenAvailable by remember { mutableStateOf(cacheManager.notifyWhenAvailable) }
+    var maxCacheSizeMb by remember { mutableStateOf(cacheManager.maxCacheSizeMb) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL"
@@ -422,6 +424,45 @@ fun CacheManagerDialog(
                                     cacheManager.notifyWhenAvailable = it
                                 }
                             )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // Max Cache Storage Budget
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("Max Storage Limit", color = Color.White, fontSize = 14.sp)
+                            Text(
+                                "Entries older than 1 year are evicted via LRU only when cache exceeds this limit",
+                                color = Color(0xFFE2E8F0),
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(500 to "500 MB", 1024 to "1 GB", 2048 to "2 GB", 5120 to "5 GB").forEach { (sizeMb, label) ->
+                                    val isSelected = maxCacheSizeMb == sizeMb
+                                    Surface(
+                                        onClick = {
+                                            maxCacheSizeMb = sizeMb
+                                            cacheManager.maxCacheSizeMb = sizeMb
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

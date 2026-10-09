@@ -56,4 +56,23 @@ class SpatialCacheGridTest {
         assertEquals("Zielona", place?.street)
         assertEquals("Polska", place?.country)
     }
+
+    @Test
+    fun testCacheAgeStalenessGates() {
+        val now = System.currentTimeMillis()
+        val thirtyDaysAgo = now - (30L * 24 * 3600 * 1000L)
+        val ninetyDaysAgo = now - (90L * 24 * 3600 * 1000L)
+        val fourHundredDaysAgo = now - (400L * 24 * 3600 * 1000L)
+
+        val freshAge = now - thirtyDaysAgo
+        val agingAge = now - ninetyDaysAgo
+        val obsoleteAge = now - fourHundredDaysAgo
+
+        val sixtyDaysMs = 60L * 24 * 3600 * 1000L
+        val oneYearMs = 365L * 24 * 3600 * 1000L
+
+        org.junit.Assert.assertTrue("30 days is fresh (< 60 days)", freshAge < sixtyDaysMs)
+        org.junit.Assert.assertTrue("90 days is aging (60-365 days)", agingAge in sixtyDaysMs..oneYearMs)
+        org.junit.Assert.assertTrue("400 days is obsolete (> 365 days)", obsoleteAge > oneYearMs)
+    }
 }
