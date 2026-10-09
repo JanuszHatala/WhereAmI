@@ -180,6 +180,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     private var lastRecordedLng: Double = 0.0
     private var lastRecordedBearing: Float? = null
     private var lastRecordedAccuracy: Float? = null
+    @Volatile private var isSyncInFlight = false
 
     init {
         loadSavedSession()
@@ -681,6 +682,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     }
 
     fun stopSession() {
+        isSyncInFlight = false
         stopPausedHeartbeat()
         stopStationaryHeartbeat()
         dismissedGuestIds.clear()
@@ -703,6 +705,7 @@ class LiveSharingManager private constructor(private val context: Context) {
     }
 
     fun resetSessionTrail() {
+        isSyncInFlight = false
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
         }
@@ -736,12 +739,14 @@ class LiveSharingManager private constructor(private val context: Context) {
     }
 
     fun isDeviceCharging(): Boolean {
-        return try {
+        val stateCharging = try {
             AppStateManager.getInstance(context).isCharging.value
         } catch (_: Exception) {
-            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
-            bm?.isCharging == true
+            false
         }
+        if (stateCharging) return true
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        return bm?.isCharging == true
     }
 
     fun resolveSyncParameters(
@@ -896,6 +901,11 @@ class LiveSharingManager private constructor(private val context: Context) {
         val session = _currentSession.value ?: return
         if (!session.isActive) return
 
+        if (isSyncInFlight) {
+            // Drop overlapping dispatch to prevent concurrent HTTPS requests over cellular and NAS thread pool exhaustion
+            return
+        }
+
         val pointsToPost: List<LivePoint>
         synchronized(memoryPointsQueue) {
             pointsToPost = memoryPointsQueue.toList()
@@ -906,20 +916,25 @@ class LiveSharingManager private constructor(private val context: Context) {
         val activeProfile = tripManager.activeTrip.value?.activityProfile ?: tripManager.activityProfile.value
         val syncIntervalMs = syncIntervalMsOverride ?: if (charging) activeProfile.chargingLiveSyncIntervalMs else (session.syncIntervalMinutes * 60_000L)
 
+        isSyncInFlight = true
         scope.launch {
-            val battery = getBatteryPercentage()
-            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy, charging, syncIntervalMs)
-            if (ok) {
-                val now = System.currentTimeMillis()
-                val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
-                synchronized(memoryPointsQueue) {
-                    memoryPointsQueue.removeAll { it.timestamp in postedTimestamps }
+            try {
+                val battery = getBatteryPercentage()
+                val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy, charging, syncIntervalMs)
+                if (ok) {
+                    val now = System.currentTimeMillis()
+                    val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
+                    synchronized(memoryPointsQueue) {
+                        memoryPointsQueue.removeAll { it.timestamp in postedTimestamps }
+                    }
+                    prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
+                    _currentSession.value = _currentSession.value?.copy(
+                        lastSyncTime = now, 
+                        pendingPointsCount = memoryPointsQueue.size
+                    )
                 }
-                prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
-                _currentSession.value = _currentSession.value?.copy(
-                    lastSyncTime = now, 
-                    pendingPointsCount = memoryPointsQueue.size
-                )
+            } finally {
+                isSyncInFlight = false
             }
         }
     }
