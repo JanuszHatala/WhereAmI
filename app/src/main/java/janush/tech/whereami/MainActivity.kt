@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppStateManager.getInstance(this).setAppForegroundState(true)
+        CacheManager.getInstance(this).calculateCacheDeficit()
     }
 
     override fun onStop() {
