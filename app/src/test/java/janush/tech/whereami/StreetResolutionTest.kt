@@ -370,16 +370,29 @@ class StreetResolutionTest {
                 return committedStreetPl
             }
 
-            val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase)
+            val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, roadRef)
             val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
 
+            val isRecentTurn = false // simulation default
+
+            // High-Speed Corridor Shield:
+            // While driving at high speed (> 40 km/h) along a confirmed corridor without having made a physical turn:
+            // Strictly reject parallel residential streets and building parcel addresses (e.g. "Braterska 144").
+            val hasCandidateHouseNumber = rawStreetPl.any { it.isDigit() }
+            if (speedKmh > 40f && isCommittedMajor && !isCandidateMajor && !isRecentTurn) {
+                return committedStreetPl
+            }
+            if (speedKmh > 35f && isCommittedMajor && hasCandidateHouseNumber && !isRecentTurn) {
+                return committedStreetPl
+            }
+
             val rawRequiredCount = when {
-                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 7 else 2
+                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 8 else 2
                 speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 5 else 2
                 else -> if (isCommittedMajor && !isCandidateMajor) 5 else 3
             }
             val rawRequiredDuration = when {
-                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 10_000L else 2_000L
+                speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 12_000L else 2_000L
                 speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_000L
                 else -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
             }
@@ -560,6 +573,77 @@ class StreetResolutionTest {
             "Kobiernice",
             resolved
         )
+    }
+
+    @Test
+    fun `Cruising on Niepodległości expressway at 79 km-h rejects parallel side-street Braterska`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // 1. Driving on Niepodległości (S52) at 79.3 km/h
+        val s52Street = model.processFix(
+            rawStreetPl = "Niepodległości",
+            city = "Bielsko-Biała",
+            roadRef = "S52",
+            speedKmh = 79.3f,
+            now = 1000L
+        )
+        assertEquals("Niepodległości", s52Street)
+
+        // 2. Google Geocoder / cached side-street Braterska returned at 79.3 km/h without a turn
+        for (i in 1..5) {
+            val candidateFix = model.processFix(
+                rawStreetPl = "Braterska",
+                city = "Bielsko-Biała",
+                roadRef = null,
+                speedKmh = 79.3f,
+                now = 1000L + (i * 1000L)
+            )
+            assertEquals("Cruising on expressway must reject parallel side-street 'Braterska'", "Niepodległości", candidateFix)
+        }
+    }
+
+    @Test
+    fun `Cruising on Niepodległości expressway at 60 km-h rejects parallel side-street Generała Józefa Chłopickiego`() {
+        val model = LocalityStreetHysteresisModel()
+
+        model.processFix(
+            rawStreetPl = "Niepodległości",
+            city = "Bielsko-Biała",
+            roadRef = "S52",
+            speedKmh = 60.1f,
+            now = 1000L
+        )
+
+        val candidateFix = model.processFix(
+            rawStreetPl = "Generała Józefa Chłopickiego",
+            city = "Bielsko-Biała",
+            roadRef = null,
+            speedKmh = 60.1f,
+            now = 2000L
+        )
+        assertEquals("Expressway cruising must reject side-street 'Generała Józefa Chłopickiego'", "Niepodległości", candidateFix)
+    }
+
+    @Test
+    fun `Cruising on Niepodległości expressway rejects side-street with house numbers like Czerwona 129`() {
+        val model = LocalityStreetHysteresisModel()
+
+        model.processFix(
+            rawStreetPl = "Niepodległości",
+            city = "Bielsko-Biała",
+            roadRef = "S52",
+            speedKmh = 46.6f,
+            now = 1000L
+        )
+
+        val candidateFix = model.processFix(
+            rawStreetPl = "Czerwona 129",
+            city = "Bielsko-Biała",
+            roadRef = null,
+            speedKmh = 46.6f,
+            now = 2000L
+        )
+        assertEquals("Must reject house-numbered side-street 'Czerwona 129' while driving on corridor", "Niepodległości", candidateFix)
     }
 }
 

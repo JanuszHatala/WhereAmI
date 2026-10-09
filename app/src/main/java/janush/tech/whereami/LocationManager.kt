@@ -421,16 +421,21 @@ class LocationManager private constructor(private val context: Context) {
 
         // Accelerometer-based physical motion check:
         // Strictly for indoor desk / resting clamp.
-        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s), single fix moved > 3.0m,
-        // or cumulative displacement > 8.0m (unblocks slow driving from stop).
-        // Newton's 1st Law: uniform highway cruising has zero acceleration variance by physical definition.
-        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 8.0f
-        if (!isMoving) {
-            val isPhysicallyStationary = try {
-                StationaryDetector.getInstance(context).isPhysicallyStationary.value
-            } catch (_: Exception) { false }
+        // Distinguishes true physical locomotion from stationary GPS multipath noise
+        // (e.g. resting on a desk or during sleep where Doppler GPS creates 5-14 km/h phantom spikes).
+        val isPhysicallyStationary = try {
+            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+        } catch (_: Exception) { false }
 
-            if (isPhysicallyStationary) {
+        if (isPhysicallyStationary) {
+            // High-speed cruising safeguard:
+            // A vehicle cruising smoothly on an expressway at > 35 km/h has rawSpeed > 9.7 m/s.
+            // When resting indoors/on a desk, multipath causes phantom GPS speeds of 1-6 m/s (3-20 km/h)
+            // with GPS accuracy > 12m or erratic Doppler.
+            val isCruisingHighSpeed = rawSpeed != null && rawSpeed > 9.7f // > 35 km/h
+            val isAccurateOutdoorLocomotion = (gpsAccuracyMps != null && gpsAccuracyMps < 0.4f) && (rawSpeed != null && rawSpeed > 3.0f)
+
+            if (!isCruisingHighSpeed && !isAccurateOutdoorLocomotion) {
                 kalmanSpeed = 0f
                 lastValidSpeedMs = 0f
                 return 0f
@@ -645,8 +650,8 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         // Different road detected!
-        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase)
-        val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
+        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, committedPlace?.pl?.roadRef)
+        val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase, multiData.pl.roadRef)
 
         // Track candidate observations
         if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
@@ -702,6 +707,27 @@ class LocationManager private constructor(private val context: Context) {
 
         val isRecentTurn = (now - lastTurnTimestamp) < 14_000L
 
+        // High-Speed Corridor Shield:
+        // While driving at high speed (> 40 km/h) along a confirmed corridor without having made a physical turn:
+        // Strictly reject parallel residential streets and building parcel addresses (e.g. "Braterska 144").
+        val hasCandidateHouseNumber = rawStreetPl.any { it.isDigit() }
+        if (speedKmh > 40f && isCommittedMajor && !isCandidateMajor && !isRecentTurn) {
+            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from non-major candidate '$rawStreetPl' at ${speedKmh.toInt()} km/h")
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        }
+        if (speedKmh > 35f && isCommittedMajor && hasCandidateHouseNumber && !isRecentTurn) {
+            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from house-numbered side street '$rawStreetPl' at ${speedKmh.toInt()} km/h")
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        }
+
         // Compute required confirmations based on speed and road hierarchy
         val rawRequiredCount: Int
         val rawRequiredDuration: Long
@@ -715,14 +741,14 @@ class LocationManager private constructor(private val context: Context) {
             }
             speedKmh > 35f -> {
                 // High speed driving (viaduct / bridge / corridor inertia):
-                // Never abandon DK/DW/A/S for a parallel or side street unless sustained for 10s and 7 fixes
+                // Never abandon DK/DW/A/S or major thoroughfares for a parallel or side street unless sustained
                 rawRequiredCount = when {
-                    isCommittedMajor && !isCandidateMajor -> 7
+                    isCommittedMajor && !isCandidateMajor -> 8
                     !isCommittedMajor && isCandidateMajor -> 2 // Snap onto highway corridor quickly
                     else -> 2 // Fast switch between regular streets when driving
                 }
                 rawRequiredDuration = when {
-                    isCommittedMajor && !isCandidateMajor -> 10_000L
+                    isCommittedMajor && !isCandidateMajor -> 12_000L
                     !isCommittedMajor && isCandidateMajor -> 2_000L
                     else -> 2_000L
                 }
@@ -895,6 +921,16 @@ class LocationManager private constructor(private val context: Context) {
                         }
 
                         val prevLoc = lastProcessedLocation
+                        val isPhysicallyStationary = try {
+                            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                        } catch (_: Exception) { false }
+
+                        // Stationary coordinate anchor: freeze coordinates to anchor when device is resting indoors/on a desk
+                        if (isPhysicallyStationary && speed == 0f && prevLoc != null) {
+                            location.latitude = prevLoc.latitude
+                            location.longitude = prevLoc.longitude
+                        }
+
                         val displacement = if (prevLoc != null) prevLoc.distanceTo(location) else 0f
                         val candidateBearing: Float? = when {
                             location.hasBearing() && speed >= minSpeedForBearing -> location.bearing
@@ -1202,8 +1238,17 @@ class LocationManager private constructor(private val context: Context) {
         try {
             val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
             if (diskCached != null) {
-                spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
-                return sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
+                val committed = committedPlace?.pl
+                val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committed?.street, committed?.roadRef)
+                val isCachedMajor = RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef)
+                val isCachedSideStreet = !isCachedMajor && (diskCached.pl.street?.any { it.isDigit() } == true || isCommittedMajor)
+
+                if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
+                    TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
+                } else {
+                    spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
+                    return sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
+                }
             }
         } catch (_: Exception) {}
 
