@@ -119,8 +119,10 @@ class AppStateManager private constructor(private val context: Context) {
         val hasLive = liveSession != null && liveSession.isActive
         val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
+        val shouldServiceRun = (isAuto || hasLive || hasTrip)
+
         // Only start FGS while in foreground (PROC_STATE_TOP), where Android 14+ guarantees success
-        if (isAuto && !hasTrip && !hasLive && isAppInForeground) {
+        if (shouldServiceRun && isAppInForeground) {
             try {
                 val intent = Intent(context, LiveTrackingService::class.java).apply {
                     action = LiveTrackingService.ACTION_ENTER_STANDBY
@@ -130,9 +132,9 @@ class AppStateManager private constructor(private val context: Context) {
                 } else {
                     context.startService(intent)
                 }
-                TelemetryLogger.log("POWER", "Started LiveTrackingService in foreground standby for AUTO mode")
+                TelemetryLogger.log("POWER", "Started LiveTrackingService in foreground (isAuto=$isAuto, hasLive=$hasLive, hasTrip=$hasTrip)")
             } catch (e: Exception) {
-                TelemetryLogger.log("ERROR", "Failed to start LiveTrackingService standby: ${e.message}")
+                TelemetryLogger.log("ERROR", "Failed to start LiveTrackingService: ${e.message}")
             }
         }
     }
@@ -145,17 +147,23 @@ class AppStateManager private constructor(private val context: Context) {
     private fun monitorSubsystems() {
         scope.launch {
             TripManager.getInstance(context).activeTrip.collect {
+                if (isAppInForeground) {
+                    ensureAutoStandbyServiceRunning()
+                }
                 recalculateState()
             }
         }
         scope.launch {
             LiveSharingManager.getInstance(context).currentSession.collect {
+                if (isAppInForeground) {
+                    ensureAutoStandbyServiceRunning()
+                }
                 recalculateState()
             }
         }
         scope.launch {
             TripManager.getInstance(context).tripMode.collect { mode ->
-                if (mode == TripMode.AUTO && isAppInForeground) {
+                if (isAppInForeground) {
                     ensureAutoStandbyServiceRunning()
                 }
                 recalculateState()
@@ -255,6 +263,7 @@ class AppStateManager private constructor(private val context: Context) {
 
         liveOnlyWatcherJob = scope.launch {
             var stationarySinceMs = 0L
+            var isStationaryCadenceApplied = false
             while (isActive) {
                 delay(5_000L)
                 if (_currentMode.value != AppLifecycleMode.LIVE_ONLY) break
@@ -271,16 +280,27 @@ class AppStateManager private constructor(private val context: Context) {
                         stationarySinceMs = now
                     }
                     val stationaryDuration = now - stationarySinceMs
-                    // After 30 seconds of verified stationary dwell, power down GPS completely!
-                    if (stationaryDuration >= 30_000L) {
-                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Powering down GPS hardware and arming MotionWakeManager.")
-                        locManager.stopLocationUpdates()
+                    // After 30 seconds of verified stationary dwell, relax GPS sampling to stationary cadence
+                    if (stationaryDuration >= 30_000L && !isStationaryCadenceApplied) {
+                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Relaxing GPS cadence and arming MotionWakeManager.")
+                        val stationaryInterval = if (_isCharging.value) 30_000L else 60_000L
+                        val stationaryMinInterval = if (_isCharging.value) 15_000L else 30_000L
+                        locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
                         motionManager.arm()
                         LiveSharingManager.getInstance(context).startStationaryHeartbeat()
-                        break // Standby active, wait for motion trigger
+                        isStationaryCadenceApplied = true
                     }
                 } else {
                     stationarySinceMs = 0L
+                    if (isStationaryCadenceApplied) {
+                        // Locomotion resumed! Restore conservative moving interval
+                        TelemetryLogger.log("POWER", "LIVE_ONLY: Locomotion resumed. Restoring moving GPS cadence (${interval / 1000}s).")
+                        val movingInterval = if (_isCharging.value) 6_000L else 15_000L
+                        val movingMinInterval = if (_isCharging.value) 3_000L else 8_000L
+                        locManager.updateSamplingInterval(movingInterval, movingMinInterval)
+                        LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+                        isStationaryCadenceApplied = false
+                    }
                 }
             }
         }

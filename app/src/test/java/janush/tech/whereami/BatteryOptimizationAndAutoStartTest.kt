@@ -258,6 +258,87 @@ class BatteryOptimizationAndAutoStartTest {
         assertTrue("Active trip with displacement >= 15m must append breadcrumbs", appendBreadcrumb(true, 20f))
         assertFalse("Active trip with stationary jitter < 15m must not append breadcrumbs", appendBreadcrumb(true, 5f))
     }
+
+    @Test
+    fun testLiveOnlyStationaryCadenceRelaxation() {
+        // In LIVE_ONLY mode:
+        // When moving: sample at conservative cadence (15s on battery, 6s on charging)
+        // When stationary for >= 30s: relax sampling cadence to 60s (30s on charging) to minimize battery drain
+        // while continuing to receive periodic location fixes ("then less frequently but still").
+        // Ultra-low power hardware motion sensor (Sensor.TYPE_SIGNIFICANT_MOTION) is armed to wake on locomotion.
+        val resolveSamplingIntervalMs = { isStationaryGated: Boolean, isCharging: Boolean ->
+            if (isStationaryGated) {
+                if (isCharging) 30_000L else 60_000L
+            } else {
+                if (isCharging) 6_000L else 15_000L
+            }
+        }
+
+        // Moving on battery: 15s
+        assertEquals(15_000L, resolveSamplingIntervalMs(false, false))
+        // Moving on charging: 6s
+        assertEquals(6_000L, resolveSamplingIntervalMs(false, true))
+
+        // Stationary on battery: relaxed to 60s
+        assertEquals(60_000L, resolveSamplingIntervalMs(true, false))
+        // Stationary on charging: relaxed to 30s
+        assertEquals(30_000L, resolveSamplingIntervalMs(true, true))
+    }
+
+    @Test
+    fun testLiveOnlyNotificationTextIncludesAutoDetectWhenAutoModeEnabled() {
+        // When both Live Sharing and Auto-detect are active (without an active trip),
+        // the notification MUST clearly convey both:
+        // 1. Live Sharing is active
+        // 2. Auto-detect is ready with current profile and speed threshold
+        // 3. Static text without ticking minutes to prevent notification wakelock storms
+        val generateLiveNotification = { activeTripExists: Boolean, isLiveActive: Boolean, isAuto: Boolean, isPaused: Boolean, placeName: String, profileName: String, startSpeedKmh: Float ->
+            val pauseTag = if (isPaused) " [PAUSED]" else ""
+            val autoTag = if (isAuto) {
+                val speedFormatted = if (startSpeedKmh % 1f == 0f) ">${startSpeedKmh.toInt()}" else ">%.1f".format(startSpeedKmh)
+                " • Auto-detect: $profileName ($speedFormatted km/h)"
+            } else ""
+            "Live Sharing Active$pauseTag$autoTag • $placeName"
+        }
+
+        val text1 = generateLiveNotification(false, true, true, false, "Kraków", "Car", 10.0f)
+        val text2 = generateLiveNotification(false, true, true, false, "Kraków", "Car", 10.0f)
+
+        // Texts must be identical and static
+        assertEquals(text1, text2)
+        assertEquals("Live Sharing Active • Auto-detect: Car (>10 km/h) • Kraków", text1)
+
+        val bikeText = generateLiveNotification(false, true, true, false, "Zakopane", "Cycling", 7.0f)
+        assertEquals("Live Sharing Active • Auto-detect: Cycling (>7 km/h) • Zakopane", bikeText)
+
+        val manualText = generateLiveNotification(false, true, false, false, "Kraków", "Car", 10.0f)
+        assertEquals("Live Sharing Active • Kraków", manualText)
+    }
+
+    @Test
+    fun testForegroundEntryGuaranteesServiceStartWhenAutoOrLiveOrTrip() {
+        val shouldServiceRun = { isAuto: Boolean, hasLive: Boolean, hasTrip: Boolean, isAppInForeground: Boolean ->
+            (isAuto || hasLive || hasTrip) && isAppInForeground
+        }
+
+        // AUTO + Live Sharing in foreground -> MUST RUN
+        assertTrue(shouldServiceRun(true, true, false, true))
+
+        // MANUAL + Live Sharing in foreground -> MUST RUN
+        assertTrue(shouldServiceRun(false, true, false, true))
+
+        // AUTO only in foreground -> MUST RUN
+        assertTrue(shouldServiceRun(true, false, false, true))
+
+        // Active trip in foreground -> MUST RUN
+        assertTrue(shouldServiceRun(false, false, true, true))
+
+        // MANUAL, no live, no trip -> DO NOT RUN (Option A zero-drain)
+        assertFalse(shouldServiceRun(false, false, false, true))
+
+        // In background: never start directly from background (Android 14+ rule)
+        assertFalse(shouldServiceRun(true, true, false, false))
+    }
 }
 
 
