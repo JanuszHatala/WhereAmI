@@ -504,6 +504,9 @@ fun OsmMapView(
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var guestMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
     var isFollowing by remember { mutableStateOf(true) }
+    val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
+    val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
+    var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     val prefs = remember(context) {
         context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
@@ -682,8 +685,13 @@ fun OsmMapView(
         }
     }
 
-    // Continuous 60fps Choreographer Frame Loop: smooth dead-reckoning marker & optical camera tracking
+    // Continuous Frame Loop: smooth dead-reckoning marker & optical camera tracking throttled to ~35fps
     LaunchedEffect(isFollowing, destinationPoint, selectedSavedPlace, orientationMode, isRecording) {
+        var lastRenderedLat = 0.0
+        var lastRenderedLng = 0.0
+        var lastRenderedAngle = -999f
+        var lastFrameRenderMs = 0L
+
         while (isActive) {
             val map = mapView
             if (map != null && currentFix != null) {
@@ -707,40 +715,56 @@ fun OsmMapView(
                     m.infoWindow = null
                     m.setOnMarkerClickListener { _, _ -> true }
 
-                    m.position = gp
-                    m.isFlat = false
+                    if (lastAppliedHeadingState != hasHeading) {
+                        m.icon = if (hasHeading) headingMarkerIcon else dotMarkerIcon
+                        lastAppliedHeadingState = hasHeading
+                    }
 
                     // In OSMDroid, Marker rotation on canvas is (-map.mapOrientation - m.rotation) when isFlat is false.
                     // Since the canvas itself is pre-rotated by +map.mapOrientation, the net marker angle on SCREEN is -m.rotation.
                     // The vehicle's heading vector on screen (relative to top of screen) is:
                     //   roadScreenAngle = (effectiveBearing + map.mapOrientation + 360f) % 360f.
-                    // To align the arrow strictly with the road on screen across all modes (COURSE_UP during turns, NORTH, EAST, manual gesture):
-                    //   -m.rotation = roadScreenAngle  ==>  m.rotation = -roadScreenAngle.
                     val roadScreenAngle = if (hasHeading && effectiveBearing != null) {
                         (effectiveBearing + map.mapOrientation + 360f) % 360f
                     } else {
                         0f
                     }
-                    m.rotation = -roadScreenAngle
-                    m.icon = makeMarkerIcon(context, hasHeading)
-                    m.title = null
 
-                    if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
-                        val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                        // Immediate center tracking on frame clock: completely eliminates animation fighting and snap-back jerks!
-                        map.controller.setCenter(centerGp)
+                    val dLat = kotlin.math.abs(gp.latitude - lastRenderedLat)
+                    val dLng = kotlin.math.abs(gp.longitude - lastRenderedLng)
+                    val dAngle = kotlin.math.abs(roadScreenAngle - lastRenderedAngle)
+
+                    // Only update marker position and invalidate if visually meaningful displacement occurred
+                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f) {
+                        m.position = gp
+                        m.rotation = -roadScreenAngle
+                        m.title = null
+                        lastRenderedLat = gp.latitude
+                        lastRenderedLng = gp.longitude
+                        lastRenderedAngle = roadScreenAngle
+
+                        if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
+                            val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                            map.controller.setCenter(centerGp)
+                        }
+                        map.invalidate()
                     }
-                    map.invalidate()
                 }
             }
 
-            // Power / Battery optimization:
-            // When stationary, throttle the loop to save CPU & battery.
-            // When moving, synchronize with display VSYNC via withFrameNanos.
+            // Thermal / Battery optimization:
+            // When stationary, throttle the loop to 350ms.
+            // When moving, synchronize with display VSYNC and cap maximum frame rate to ~35 FPS (~28ms).
             if (posInterpolator.isStationary()) {
                 kotlinx.coroutines.delay(350L)
             } else {
                 withFrameNanos { /* next frame */ }
+                val now = android.os.SystemClock.uptimeMillis()
+                val delta = now - lastFrameRenderMs
+                if (delta < 28L) {
+                    kotlinx.coroutines.delay(28L - delta)
+                }
+                lastFrameRenderMs = android.os.SystemClock.uptimeMillis()
             }
         }
     }

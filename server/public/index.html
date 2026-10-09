@@ -1062,6 +1062,9 @@
         const alertBox = document.getElementById('statusAlert');
         const badge = document.getElementById('liveBadge');
 
+        const isChargingBoost = Boolean(data.current?.isCharging);
+        const syncIntervalMs = data.current?.syncIntervalMs || 0;
+
         const agoSec = data.current?.t ? Math.max(0, Math.round((Date.now() - data.current.t) / 1000)) : 0;
         const lastSeenStr = agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec / 60) + 'm ago');
         const lastTimeStr = data.current?.t ? new Date(data.current.t).toLocaleTimeString() : '';
@@ -1122,7 +1125,6 @@
         } else {
           isOnline = true;
           statusClass = 'online';
-          const isChargingBoost = Boolean(data.current?.isCharging);
           badge.innerHTML = isChargingBoost 
             ? '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div> ⚡ LIVE (boost)' 
             : `<div class="pulse-dot"></div> ONLINE (${data.syncIntervalMinutes || 1}m)`;
@@ -1161,7 +1163,7 @@
           }
 
           const agoSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-          const cadenceText = isChargingBoost ? '⚡ ~5s' : `${data.syncIntervalMinutes || 1}m`;
+          const cadenceText = isChargingBoost ? (spd && spd > 1.0 ? '⚡ ~5s' : '⚡ ~15s') : `${data.syncIntervalMinutes || 1}m`;
           document.getElementById('updatedVal').textContent = (agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago')) + ` (${cadenceText})`;
 
           if (trekking) {
@@ -1256,9 +1258,6 @@
 
         // Adaptive polling schedule
         const isHostActive = isSessionActive && !isSessionPaused && !isDisconnected;
-        const isChargingBoost = Boolean(data.current?.isCharging);
-        const syncIntervalMs = data.current?.syncIntervalMs || 0;
-
         if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 10000))) {
           nextPollIntervalMs = 2500; // Snappy 2.5s polling during charging boost
         } else if (isHostActive) {
