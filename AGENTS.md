@@ -28,20 +28,20 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
 - **Complete Idle GPS Shutdown**:
   - In `AppLifecycleMode.IDLE` (screen off, no active trip, no live sharing), **GPS hardware MUST be completely powered down** via `LocationManager.stopLocationUpdates()`.
   - **Never poll GPS continuously in background idle**.
-- **Live Sharing Stationary GNSS Power-Down & Motion Wake Arming (`LIVE_ONLY`)**:
-  - When Live Sharing is active in the background without an active trip recording (`LIVE_ONLY` mode), continuous GNSS polling while stationary is strictly forbidden.
+- **Live Sharing Stationary Low-Frequency Cadence & Motion Wake Arming (`LIVE_ONLY`)**:
+  - When Live Sharing is active in the background without an active trip recording (`LIVE_ONLY` mode), frequent GNSS polling while stationary is strictly forbidden.
   - When stationary for $\ge 30\text{s}$ (accelerometer variance $< 0.045$ via `StationaryDetector` or speed $< 0.35\text{ m/s}$):
-    - **GPS hardware MUST be completely powered down** via `LocationManager.stopLocationUpdates()`.
+    - **GPS sampling interval MUST be relaxed to 60s (30s when charging)** via `LocationManager.updateSamplingInterval(60_000L, 30_000L)`.
     - Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW) MUST be armed via `MotionWakeManager.arm()`.
-    - A lightweight periodic presence heartbeat (every `syncIntervalMinutes`) transmits cached coordinates (`lat, lng, spd = 0`) over HTTP (~50ms) without running GNSS hardware, keeping the companion web viewer "ONLINE".
-  - Significant physical locomotion triggers `MotionWakeManager.handleMotionWake()`, immediately re-engaging GPS sampling.
+    - A lightweight periodic presence heartbeat (every `syncIntervalMinutes`) transmits presence over HTTP (~50ms), keeping the companion web viewer "ONLINE".
+  - Significant physical locomotion triggers `MotionWakeManager.handleMotionWake()`, immediately restoring moving GPS cadence (15s / 6s) and evaluating trip auto-start.
 - **Notification Content Stability Invariant (Zero-Wakelock-Storm)**:
   - When a trip is NOT actively recording (e.g. `LIVE_ONLY` mode, `TripMode.AUTO` standby), the persistent notification text MUST NOT include dynamic ticking time strings (e.g. `⏱️ 7h 12m elapsed` or minutes/seconds counters).
   - Changing notification strings causes `contentChanged = true` on every minute tick, triggering `NotificationManager.notify()`, acquiring system wake locks (`NotificationManagerService:post`), firing wakeup alarms, and pulling the CPU out of Android Doze.
-  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • $place"` or `"WhereAmI • Auto-detect Standby"`).
+  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-detect: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-detect Standby"`).
 - **Standby Location Stream Decoupling**:
-  - In `LiveTrackingService`, continuous location collectors (`locationUpdatesJob`) MUST ONLY be active when an active trip is recording (`TripManager.activeTrip.value != null`).
-  - When Live Sharing is active without a trip recording (`LIVE_ONLY`), `LiveTrackingService` MUST call `stopLocationTracking()`, releasing `masterLocationFlow` subscribers so GNSS hardware can enter deep sleep.
+  - In `LiveTrackingService`, when in pure standby without an active trip and without live sharing (`TripMode.AUTO` standby), `stopLocationTracking()` MUST be called to release `masterLocationFlow` subscribers.
+  - When Live Sharing is active (`LIVE_ONLY`), `startLocationTracking()` remains active to stream live fixes, while CPU wake locks remain released (`updateWakeLock(false)`).
 - **Hardware Motion Wake (`MotionWakeManager`)**:
   - In `TripMode.AUTO`, idle locomotion detection relies strictly on Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW draw in sensor hub).
   - Physical motion triggers a temporary, profile-adapted confirmation GPS burst (`(profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)`). If locomotion criteria are met, the trip auto-starts; otherwise GPS powers down and the hardware sensor re-arms.
