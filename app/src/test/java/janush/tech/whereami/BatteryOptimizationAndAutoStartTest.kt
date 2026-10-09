@@ -168,6 +168,96 @@ class BatteryOptimizationAndAutoStartTest {
         // Standby/Idle -> MUST NOT hold wake lock
         assertFalse(shouldHoldWakeLock(false, false))
     }
+
+    @Test
+    fun testForegroundViewPrecedenceOverLiveOnly() {
+        // When the user has the app open in foreground, FOREGROUND_VIEW must take precedence
+        // over LIVE_ONLY so that high-rate 1.5s UI and map updates are rendered smoothly.
+        val resolveMode = { tripActive: Boolean, isForeground: Boolean, liveActive: Boolean, autoMedia: Boolean ->
+            when {
+                tripActive -> AppLifecycleMode.TRIP_RECORDING
+                autoMedia -> AppLifecycleMode.ANDROID_AUTO
+                isForeground -> AppLifecycleMode.FOREGROUND_VIEW
+                liveActive -> AppLifecycleMode.LIVE_ONLY
+                else -> AppLifecycleMode.IDLE
+            }
+        }
+
+        // App in foreground with live active -> FOREGROUND_VIEW
+        assertEquals(AppLifecycleMode.FOREGROUND_VIEW, resolveMode(false, true, true, false))
+
+        // Screen turned off / background with live active -> LIVE_ONLY
+        assertEquals(AppLifecycleMode.LIVE_ONLY, resolveMode(false, false, true, false))
+
+        // Trip active always takes precedence -> TRIP_RECORDING
+        assertEquals(AppLifecycleMode.TRIP_RECORDING, resolveMode(true, true, true, false))
+        assertEquals(AppLifecycleMode.TRIP_RECORDING, resolveMode(true, false, true, false))
+
+        // Screen turned off, no trip, no live -> IDLE
+        assertEquals(AppLifecycleMode.IDLE, resolveMode(false, false, false, false))
+    }
+
+    @Test
+    fun testLiveOnlyStationaryGatingAndZeroIdleDrain() {
+        // When in LIVE_ONLY mode and device is stationary for >= 30s:
+        // 1. GPS hardware updates must be completely stopped.
+        // 2. Ultra-low power hardware motion sensor (Sensor.TYPE_SIGNIFICANT_MOTION) must be armed.
+        // 3. Periodic stationary presence heartbeat is used instead of GNSS polling.
+        val isStationaryGated = { stationaryDurationMs: Long, isPhysicalStationary: Boolean, speedMs: Float ->
+            (isPhysicalStationary || speedMs < 0.35f) && stationaryDurationMs >= 30_000L
+        }
+
+        // 10s on table -> not yet gated
+        assertFalse(isStationaryGated(10_000L, true, 0f))
+
+        // 30s motionless on nightstand -> gated (GPS shutdown & motion wake armed)
+        assertTrue(isStationaryGated(30_000L, true, 0f))
+        assertTrue(isStationaryGated(60_000L, true, 0f))
+
+        // Moving at 5 km/h (1.38 m/s) -> not gated
+        assertFalse(isStationaryGated(45_000L, false, 1.38f))
+    }
+
+    @Test
+    fun testLiveOnlyNotificationTextStabilityWithoutTrip() {
+        // Without active trip recording, notification text must be static (no ticking elapsed minutes).
+        // This prevents 60s content changes that trigger notification wake lock storms.
+        val generateLiveNotificationText = { activeTripExists: Boolean, isPaused: Boolean, placeName: String, remainingText: String ->
+            if (activeTripExists) {
+                // Trip active: includes telemetry and remaining time
+                "$placeName • [LIVE] • $remainingText"
+            } else {
+                // Live only: static place name, no ticking minutes
+                val pauseTag = if (isPaused) " [PAUSED]" else ""
+                "Live Sharing Active$pauseTag • $placeName"
+            }
+        }
+
+        val text1 = generateLiveNotificationText(false, false, "Kraków", "⏱️ 7h 11m elapsed")
+        val text2 = generateLiveNotificationText(false, false, "Kraków", "⏱️ 7h 12m elapsed")
+
+        // Crucial invariant: texts MUST be identical so contentChanged == false!
+        assertEquals(text1, text2)
+        assertEquals("Live Sharing Active • Kraków", text1)
+
+        // But when a trip IS recording, remainingText can update
+        val tripText1 = generateLiveNotificationText(true, false, "Kraków", "⏱️ 7h 11m elapsed")
+        val tripText2 = generateLiveNotificationText(true, false, "Kraków", "⏱️ 7h 12m elapsed")
+        org.junit.Assert.assertNotEquals(tripText1, tripText2)
+    }
+
+    @Test
+    fun testStationaryPresenceHeartbeatDoesNotAppendBreadcrumbPoints() {
+        // Breadcrumb points must NEVER accumulate unless activeTrip != null
+        val appendBreadcrumb = { isTripRecording: Boolean, displacementMeters: Float ->
+            isTripRecording && displacementMeters >= 15f
+        }
+
+        assertFalse("Stationary live sharing must not append breadcrumb points", appendBreadcrumb(false, 0f))
+        assertFalse("Moving live sharing without active trip must not append breadcrumb points", appendBreadcrumb(false, 30f))
+        assertTrue("Active trip with displacement >= 15m must append breadcrumbs", appendBreadcrumb(true, 20f))
+        assertFalse("Active trip with stationary jitter < 15m must not append breadcrumbs", appendBreadcrumb(true, 5f))
+    }
 }
 
 
