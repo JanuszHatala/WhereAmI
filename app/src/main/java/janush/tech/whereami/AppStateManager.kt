@@ -75,6 +75,11 @@ class AppStateManager private constructor(private val context: Context) {
     }
 
     private fun registerBatteryReceiver() {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        if (bm != null) {
+            _isCharging.value = bm.isCharging
+        }
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_POWER_CONNECTED)
             addAction(Intent.ACTION_POWER_DISCONNECTED)
@@ -94,7 +99,15 @@ class AppStateManager private constructor(private val context: Context) {
                 recalculateState()
             }
         }
-        context.registerReceiver(receiver, filter)
+        val stickyIntent = context.registerReceiver(receiver, filter)
+        if (stickyIntent != null) {
+            val status = stickyIntent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            if (status != -1) {
+                _isCharging.value = (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                        status == BatteryManager.BATTERY_STATUS_FULL)
+            }
+        }
+        recalculateState()
     }
 
     fun setPowerPolicy(policy: BatteryPowerPolicy) {
