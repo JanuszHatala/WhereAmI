@@ -328,7 +328,14 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Architecture & Implementation**:
   - `LiveTrackingService.kt`: Notification actions for `⏸ Pause` / `▶ Resume`, `🔄 Sync Now`, and `⏹ Stop`. Runtime `POST_NOTIFICATIONS` permission flow for Android 13+.
 
+### LIV-09: Real-Time Live Share Charging Boost & Fluid Web Animation
+- **Core Value**: When the host device is charging (e.g. car mount, motorcycle cradle, bike or hiking power bank), automatically boosts Live Share position sync frequency up to 10x+ (Driving: 2s, Cycling/MTB: 3s, Running: 4s, Hiking/Walking: 5s) with profile-adapted breadcrumb displacement gating (8m-15m) and stationary keep-alive throttling (15s). The companion web viewer adapts to 1.8s polling and animates host marker movements smoothly via `requestAnimationFrame` cubic ease-out coordinate interpolation, giving visitors the impression of watching live continuous movement.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `TripModels.kt`, `LiveSharingManager.kt`, `server/public/index.html`. Covered by `LiveShareChargingSyncTest.kt`.
+
 ---
+
 
 ## 6. Category 5: Saved Places ("My Places") & Search
 
