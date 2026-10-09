@@ -1216,6 +1216,31 @@ class LocationManager private constructor(private val context: Context) {
 
     // ── Place resolution ───────────────────────────────────────────────────────
 
+    private val pendingRevalidations = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun isNetworkConnected(): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val network = cm?.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun scheduleBackgroundRevalidation(lat: Double, lng: Double, bearing: Float?, speedKmh: Float?, accuracyMeters: Float?) {
+        val key = SpatialCacheHelper.toGridKey(lat, lng)
+        if (!pendingRevalidations.add(key)) return
+        ioScope.launch {
+            try {
+                resolveMultiLanguageData(lat, lng, bearing, speedKmh, accuracyMeters, forceCache = true, allowNetwork = true, forceRefresh = true)
+            } finally {
+                pendingRevalidations.remove(key)
+            }
+        }
+    }
+
     fun resolveMultiLanguageData(
         lat: Double,
         lng: Double,
@@ -1223,34 +1248,56 @@ class LocationManager private constructor(private val context: Context) {
         speedKmh: Float? = null,
         accuracyMeters: Float? = null,
         forceCache: Boolean = false,
-        allowNetwork: Boolean = true
+        allowNetwork: Boolean = true,
+        forceRefresh: Boolean = false
     ): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
-        val cached = spatialPlaceCache[gridKey]
         val isDrivingFast = speedKmh != null && speedKmh > 15f && bearing != null
 
-        if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
-            return sanitizeMultiDataHouseNumbers(cached.data, speedKmh, accuracyMeters)
-        }
-
-        // Check persistent SQLite spatial cache (indefinite retention for offline-first resilience & zero network overhead on daily commutes)
-        try {
-            val diskCached = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
-            if (diskCached != null) {
-                val committed = committedPlace?.pl
-                val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committed?.street, committed?.roadRef)
-                val isCachedMajor = RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef)
-                val isCachedSideStreet = !isCachedMajor && (diskCached.pl.street?.any { it.isDigit() } == true || isCommittedMajor)
-
-                if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
-                    TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
-                } else {
-                    spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
-                    return sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
-                }
+        if (!forceRefresh) {
+            val cached = spatialPlaceCache[gridKey]
+            if (cached != null && (now - cached.timestamp) < 30 * 60 * 1000L) {
+                return sanitizeMultiDataHouseNumbers(cached.data, speedKmh, accuracyMeters)
             }
-        } catch (_: Exception) {}
+
+            // Check persistent SQLite spatial cache with 3-tier staleness evaluation
+            try {
+                val timedCached = SpatialCacheHelper.getInstance(context).getWithTimestamp(lat, lng)
+                if (timedCached != null) {
+                    val diskCached = timedCached.info
+                    val cacheAgeMs = now - timedCached.timestamp
+                    val committed = committedPlace?.pl
+                    val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committed?.street, committed?.roadRef)
+                    val isCachedMajor = RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef)
+                    val isCachedSideStreet = !isCachedMajor && (diskCached.pl.street?.any { it.isDigit() } == true || isCommittedMajor)
+
+                    if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
+                        TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
+                    } else {
+                        spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
+                        val result = sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
+
+                        // 3-Tier Staleness Gates
+                        val isOnline = isNetworkConnected()
+                        if (cacheAgeMs > 365L * 24 * 3600 * 1000L) { // > 1 Year (Obsolete)
+                            if (isOnline && allowNetwork) {
+                                // SWR: Serve immediately (0ms UI latency), revalidate in background
+                                scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
+                            } else {
+                                // Offline fallback: keep cache, mark for post-trip routine update
+                                CacheManager.getInstance(context).enqueuePendingRefresh(lat, lng)
+                            }
+                        } else if (cacheAgeMs > 60L * 24 * 3600 * 1000L) { // 60 - 365 Days (Aging)
+                            // Enqueue for post-trip routine on Wi-Fi + Charger
+                            CacheManager.getInstance(context).enqueuePendingRefresh(lat, lng)
+                        }
+
+                        return result
+                    }
+                }
+            } catch (_: Exception) {}
+        }
 
         val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
 
