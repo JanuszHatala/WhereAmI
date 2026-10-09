@@ -142,6 +142,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                          OR street LIKE '%Kryształowa%' 
                          OR street LIKE '%Czerwona%' 
                          OR street LIKE '%Bukietowa%'))
+                   OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło')
             """.trimIndent())
         } catch (_: Exception) {}
     }
