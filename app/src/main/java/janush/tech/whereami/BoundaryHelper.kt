@@ -75,28 +75,37 @@ object BoundaryHelper {
         // Tier 3: Network fetch from OSM Nominatim with rate limiting & 429 resilience
         val now = System.currentTimeMillis()
         if (now < coolDownUntil) {
-            TelemetryLogger.log("BOUNDARY", "Skipping network fetch for $cleanCity: in 429 cooldown for ${(coolDownUntil - now) / 1000}s")
-            return@withContext null
+            val waitTime = coolDownUntil - now
+            TelemetryLogger.log("BOUNDARY", "Waiting ${waitTime / 1000}s for 429 cooldown before fetching $cleanCity...")
+            kotlinx.coroutines.delay(waitTime)
         }
 
         requestMutex.withLock {
             // Re-check cache after acquiring lock
             memoryCache[cleanKey]?.let { return@withContext it }
 
-            val elapsed = System.currentTimeMillis() - lastRequestTime
-            if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-                kotlinx.coroutines.delay(MIN_REQUEST_INTERVAL_MS - elapsed)
+            // Helper to throttle every individual network query
+            suspend fun throttle() {
+                val elapsed = System.currentTimeMillis() - lastRequestTime
+                if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+                    kotlinx.coroutines.delay(MIN_REQUEST_INTERVAL_MS - elapsed)
+                }
+                lastRequestTime = System.currentTimeMillis()
             }
-            lastRequestTime = System.currentTimeMillis()
 
             var fetched: List<GeoPoint>? = null
 
             // 1. When pin has resolved address, take the place from the address (village/town/city)
             // and find the boundary for that exact place first:
             if (cleanCity != null) {
+                throttle()
                 fetched = fetchFromNetwork(cleanCity, countryCode)
                 if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+                    throttle()
                     fetched = fetchFromNetwork(cleanCity, "Polska")
+                } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
+                    throttle()
+                    fetched = fetchFromNetwork(cleanCity, "Slovensko")
                 }
             }
 
@@ -107,17 +116,24 @@ object BoundaryHelper {
                     .replace("gm. ", "", ignoreCase = true).trim()
                 if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                     val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
+                    throttle()
                     fetched = fetchFromNetwork(munQuery, countryCode)
                     if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+                        throttle()
                         fetched = fetchFromNetwork(cleanMun, "Polska")
+                    } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
+                        throttle()
+                        fetched = fetchFromNetwork(cleanMun, "Slovensko")
                     }
                 }
             }
 
             // 3. Coordinate-based enclosing boundary fallback (when pin is not resolved to specify village/town/city or place node has no polygon):
             if (fetched == null && geoPoint != null) {
+                throttle()
                 fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 12)
                 if (fetched == null) {
+                    throttle()
                     fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 10)
                 }
             }

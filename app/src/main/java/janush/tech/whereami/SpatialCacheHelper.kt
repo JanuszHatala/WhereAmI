@@ -135,6 +135,14 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 DELETE FROM $TABLE_CACHE 
                 WHERE (street LIKE '%Krzemionki%' AND latitude BETWEEN 49.8415 AND 49.8445)
                    OR (street LIKE '%Klonowa%' AND latitude BETWEEN 49.8510 AND 49.8525 AND longitude BETWEEN 19.1420 AND 19.1435)
+                   OR ((latitude BETWEEN 49.8350 AND 49.8550 AND longitude BETWEEN 19.0450 AND 19.0750)
+                       AND (street LIKE '%Braterska%' 
+                         OR street LIKE '%Chłopickiego%' 
+                         OR street LIKE '%Baczyńskiego%' 
+                         OR street LIKE '%Kryształowa%' 
+                         OR street LIKE '%Czerwona%' 
+                         OR street LIKE '%Bukietowa%'))
+                   OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło')
             """.trimIndent())
         } catch (_: Exception) {}
     }
@@ -226,7 +234,12 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         } catch (_: Exception) {}
     }
 
-    fun get(lat: Double, lng: Double, maxAgeMs: Long? = null): MultiLanguagePlaceInfo? {
+    data class TimedPlaceInfo(
+        val info: MultiLanguagePlaceInfo,
+        val timestamp: Long
+    )
+
+    fun getWithTimestamp(lat: Double, lng: Double): TimedPlaceInfo? {
         val key = toGridKey(lat, lng)
         val db = readableDatabase
         val cursor = db.query(
@@ -240,12 +253,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         )
         cursor.use {
             if (it.moveToFirst()) {
-                if (maxAgeMs != null) {
-                    val timestamp = it.getLong(3)
-                    if (System.currentTimeMillis() - timestamp > maxAgeMs) {
-                        return null
-                    }
-                }
+                val timestamp = it.getLong(3)
                 val enJson = it.getString(0)
                 val plJson = it.getString(1)
                 val nativeJson = it.getString(2)
@@ -253,7 +261,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val pl = deserializePlaceInfo(plJson)
                 val native = deserializePlaceInfo(nativeJson)
                 if (en != null && pl != null && native != null) {
-                    return MultiLanguagePlaceInfo(en = en, pl = pl, native = native)
+                    return TimedPlaceInfo(MultiLanguagePlaceInfo(en = en, pl = pl, native = native), timestamp)
                 }
             }
         }
@@ -271,12 +279,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         )
         cursorLegacy.use {
             if (it.moveToFirst()) {
-                if (maxAgeMs != null) {
-                    val timestamp = it.getLong(3)
-                    if (System.currentTimeMillis() - timestamp > maxAgeMs) {
-                        return null
-                    }
-                }
+                val timestamp = it.getLong(3)
                 val enJson = it.getString(0)
                 val plJson = it.getString(1)
                 val nativeJson = it.getString(2)
@@ -284,11 +287,41 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val pl = deserializePlaceInfo(plJson)
                 val native = deserializePlaceInfo(nativeJson)
                 if (en != null && pl != null && native != null) {
-                    return MultiLanguagePlaceInfo(en = en, pl = pl, native = native)
+                    return TimedPlaceInfo(MultiLanguagePlaceInfo(en = en, pl = pl, native = native), timestamp)
                 }
             }
         }
         return null
+    }
+
+    fun get(lat: Double, lng: Double, maxAgeMs: Long? = null): MultiLanguagePlaceInfo? {
+        val timed = getWithTimestamp(lat, lng) ?: return null
+        if (maxAgeMs != null) {
+            if (System.currentTimeMillis() - timed.timestamp > maxAgeMs) {
+                return null
+            }
+        }
+        return timed.info
+    }
+
+    fun enforceStorageLimit(maxSizeMb: Int) {
+        val maxBytes = maxSizeMb.toLong() * 1024L * 1024L
+        val currentBytes = getStorageBytes()
+        if (currentBytes <= maxBytes) return
+        val db = writableDatabase
+        db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_CITY IS NULL OR $COL_CITY IN ('Unknown City', '--', 'Likwidacja', 'Serwis', 'Powiat', 'koło')")
+        val oneYearAgo = System.currentTimeMillis() - (365L * 24 * 3600 * 1000L)
+        db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_TIMESTAMP < $oneYearAgo")
+        if (getStorageBytes() > maxBytes) {
+            db.execSQL("""
+                DELETE FROM $TABLE_CACHE 
+                WHERE $COL_GRID_KEY IN (
+                    SELECT $COL_GRID_KEY FROM $TABLE_CACHE 
+                    ORDER BY $COL_TIMESTAMP ASC 
+                    LIMIT 10000
+                )
+            """.trimIndent())
+        }
     }
 
     fun isCached(lat: Double, lng: Double): Boolean {

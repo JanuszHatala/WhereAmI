@@ -103,4 +103,28 @@ class BoundaryRankingTest {
         assertEquals(4, selectedPoly!!.size)
         assertEquals(49.700, selectedPoly[0].latitude, 0.0001)
     }
+
+    @Test
+    fun testParseMultiPolygonGeoJson() {
+        val geoJsonString = """
+        {
+          "type": "MultiPolygon",
+          "coordinates": [
+            [
+              [
+                [19.10, 49.70],
+                [19.15, 49.70],
+                [19.15, 49.75],
+                [19.10, 49.70]
+              ]
+            ]
+          ]
+        }
+        """.trimIndent()
+        val poly = BoundaryHelper.parseGeoJsonPolygon(org.json.JSONObject(geoJsonString))
+        assertNotNull(poly)
+        assertEquals(4, poly!!.size)
+        assertEquals(49.70, poly[0].latitude, 0.001)
+        assertEquals(19.10, poly[0].longitude, 0.001)
+    }
 }
