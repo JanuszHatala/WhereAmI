@@ -290,6 +290,8 @@ class LiveTrackingService : Service() {
 
         val title = when {
             isLiveActive && !liveSession.title.isNullOrBlank() -> "🔴 ${liveSession.title}"
+            isLiveActive && isAuto -> "🔴 WhereAmI • Live & Auto-detect"
+            isLiveActive -> "🔴 WhereAmI Live Sharing"
             activeTrip != null -> "WhereAmI Active Tracking"
             isAuto -> "WhereAmI • Auto-detect Standby"
             else -> "WhereAmI Tracking"
@@ -318,7 +320,12 @@ class LiveTrackingService : Service() {
             isLiveActive -> {
                 val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
                 val place = getEffectivePlaceName()
-                "Live Sharing Active$pauseTag • $place"
+                val autoTag = if (isAuto) {
+                    val startSpeed = TripManager.getInstance(this).getAutoStartSpeedForProfile(profile)
+                    val speedFormatted = if (startSpeed % 1f == 0f) ">${startSpeed.toInt()}" else ">%.1f".format(startSpeed)
+                    " • Auto-detect: ${profile.displayName} ($speedFormatted km/h)"
+                } else ""
+                "Live Sharing Active$pauseTag$autoTag • $place"
             }
             isAuto -> {
                 val startSpeed = TripManager.getInstance(this).getAutoStartSpeedForProfile(profile)
@@ -401,8 +408,9 @@ class LiveTrackingService : Service() {
             updateNotification(force = true)
         } else if (hasLive) {
             // Live sharing active without active trip recording:
-            // Standby live mode: release CPU wake lock, stop continuous location flow subscription
-            stopLocationTracking()
+            // Keep location stream active so fixes are delivered at adaptive cadence (15s moving / 60s stationary)
+            startLocationTracking()
+            // Release CPU wake lock (no partial wake lock held during LIVE_ONLY)
             updateWakeLock(false)
             updateNotification(force = true)
         } else if (isAuto) {

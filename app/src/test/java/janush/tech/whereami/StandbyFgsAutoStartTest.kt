@@ -100,8 +100,19 @@ class StandbyFgsAutoStartTest {
         val hasTrip = false
         val hasLive = false
 
-        val shouldStartStandby = isAuto && !hasTrip && !hasLive && isAppInForeground
+        val shouldStartStandby = (isAuto || hasLive || hasTrip) && isAppInForeground
         assertTrue("Foreground view must ensure Standby FGS is running for AUTO mode", shouldStartStandby)
+    }
+
+    @Test
+    fun `foreground entry ensures FGS is started when live sharing is active even without trip`() {
+        val isAppInForeground = true
+        val isAuto = true
+        val hasTrip = false
+        val hasLive = true
+
+        val shouldStartService = (isAuto || hasLive || hasTrip) && isAppInForeground
+        assertTrue("Foreground view must ensure FGS is running when live sharing is active with auto-detect", shouldStartService)
     }
 
     @Test
@@ -111,7 +122,7 @@ class StandbyFgsAutoStartTest {
         val hasTrip = false
         val hasLive = false
 
-        val shouldStartStandby = isAuto && !hasTrip && !hasLive && isAppInForeground
+        val shouldStartStandby = (isAuto || hasLive || hasTrip) && isAppInForeground
         assertFalse("Must never attempt to start location FGS from background (Android 14+ DENIED)", shouldStartStandby)
     }
 
