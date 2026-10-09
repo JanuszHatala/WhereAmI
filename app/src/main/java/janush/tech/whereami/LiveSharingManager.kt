@@ -735,6 +735,44 @@ class LiveSharingManager private constructor(private val context: Context) {
         _currentSession.value = null
     }
 
+    fun isDeviceCharging(): Boolean {
+        return try {
+            AppStateManager.getInstance(context).isCharging.value
+        } catch (_: Exception) {
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            bm?.isCharging == true
+        }
+    }
+
+    fun resolveSyncParameters(
+        isCharging: Boolean,
+        profile: ActivityProfile,
+        speedKmh: Float,
+        distanceMeters: Float,
+        batteryIntervalMinutes: Int
+    ): Pair<Long, Float> {
+        val speedMs = speedKmh / 3.6f
+        val isStationary = speedMs < 0.35f || (distanceMeters >= 0f && distanceMeters < 4.0f)
+
+        val intervalMs = if (isCharging) {
+            if (isStationary) {
+                15_000L
+            } else {
+                profile.chargingLiveSyncIntervalMs
+            }
+        } else {
+            (batteryIntervalMinutes * 60_000L).coerceAtLeast(10_000L)
+        }
+
+        val breadcrumbGate = if (isCharging) {
+            profile.chargingBreadcrumbDisplacementMeters
+        } else {
+            15.0f
+        }
+
+        return Pair(intervalMs, breadcrumbGate)
+    }
+
     fun onLocationUpdate(
         lat: Double,
         lng: Double,
@@ -754,14 +792,32 @@ class LiveSharingManager private constructor(private val context: Context) {
         }
 
         val now = System.currentTimeMillis()
-        val intervalMs = session.syncIntervalMinutes * 60_000L
+        val isCharging = isDeviceCharging()
+        val tripManager = TripManager.getInstance(context)
+        val activeTrip = tripManager.activeTrip.value
+        val isTripRecording = activeTrip != null
+        val activeProfile = activeTrip?.activityProfile ?: tripManager.activityProfile.value
+
+        var distFromLast = -1f
+        if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
+            val dist = FloatArray(1)
+            android.location.Location.distanceBetween(lastRecordedLat, lastRecordedLng, lat, lng, dist)
+            distFromLast = dist[0]
+        }
+
+        val (intervalMs, breadcrumbGate) = resolveSyncParameters(
+            isCharging = isCharging,
+            profile = activeProfile,
+            speedKmh = speedKmh,
+            distanceMeters = distFromLast,
+            batteryIntervalMinutes = session.syncIntervalMinutes
+        )
+
         val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
 
         // Architectural Invariant: Breadcrumbs are ONLY recorded when an active trip is recording!
         // When Live Sharing is active without a trip (e.g. overnight presence or desk standby),
         // we stream current presence (marker, speed, battery, place) WITHOUT leaving a breadcrumb trail.
-        val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
-
         if (!isTripRecording) {
             lastRecordedLat = lat
             lastRecordedLng = lng
@@ -769,23 +825,19 @@ class LiveSharingManager private constructor(private val context: Context) {
             if (accuracy != null) lastRecordedAccuracy = accuracy
 
             if (shouldSync) {
-                flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
+                flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy, isCharging, intervalMs)
             }
             return
         }
 
         // Active Trip Breadcrumb Filtering:
-        // Require at least 15 meters physical displacement from last recorded breadcrumb point.
-        // Never append points purely based on elapsed time if the device hasn't moved >= 15m.
-        if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
-            val dist = FloatArray(1)
-            android.location.Location.distanceBetween(lastRecordedLat, lastRecordedLng, lat, lng, dist)
-            if (dist[0] < 15f && memoryPointsQueue.isNotEmpty()) {
-                if (shouldSync) {
-                    flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
-                }
-                return
+        // Adapt displacement gate per profile when charging (8m-15m) or enforce 15m on battery.
+        // Never append points purely based on elapsed time if displacement < breadcrumbGate.
+        if (distFromLast >= 0f && distFromLast < breadcrumbGate && memoryPointsQueue.isNotEmpty()) {
+            if (shouldSync) {
+                flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy, isCharging, intervalMs)
             }
+            return
         }
 
         lastRecordedLat = lat
@@ -809,7 +861,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         _currentSession.value = session.copy(pendingPointsCount = memoryPointsQueue.size)
 
         if (shouldSync) {
-            flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy)
+            flushPointsToServer(lat, lng, speedKmh, altitude, bearing ?: lastRecordedBearing, placeName, trekkingBadge, accuracy ?: lastRecordedAccuracy, isCharging, intervalMs)
         }
     }
 
@@ -837,7 +889,9 @@ class LiveSharingManager private constructor(private val context: Context) {
         bearing: Float?,
         placeName: String?,
         trekkingBadge: String?,
-        accuracy: Float? = null
+        accuracy: Float? = null,
+        isChargingOverride: Boolean? = null,
+        syncIntervalMsOverride: Long? = null
     ) {
         val session = _currentSession.value ?: return
         if (!session.isActive) return
@@ -847,9 +901,14 @@ class LiveSharingManager private constructor(private val context: Context) {
             pointsToPost = memoryPointsQueue.toList()
         }
 
+        val charging = isChargingOverride ?: isDeviceCharging()
+        val tripManager = TripManager.getInstance(context)
+        val activeProfile = tripManager.activeTrip.value?.activityProfile ?: tripManager.activityProfile.value
+        val syncIntervalMs = syncIntervalMsOverride ?: if (charging) activeProfile.chargingLiveSyncIntervalMs else (session.syncIntervalMinutes * 60_000L)
+
         scope.launch {
             val battery = getBatteryPercentage()
-            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy)
+            val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy, charging, syncIntervalMs)
             if (ok) {
                 val now = System.currentTimeMillis()
                 val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
@@ -933,7 +992,9 @@ class LiveSharingManager private constructor(private val context: Context) {
         place: String?,
         trekking: String?,
         battery: Int,
-        accuracy: Float? = null
+        accuracy: Float? = null,
+        isCharging: Boolean = false,
+        syncIntervalMs: Long = 0L
     ): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
             val urlStr = "${session.getApiBaseUrl()}/api/sessions/${session.id}/points"
@@ -993,6 +1054,10 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("activityProfile", activeProfile.name)
                     put("activityProfileIcon", activeProfile.iconEmoji)
                     put("activityProfileName", activeProfile.displayName)
+                    put("isCharging", isCharging)
+                    if (syncIntervalMs > 0L) {
+                        put("syncIntervalMs", syncIntervalMs)
+                    }
                     put("t", System.currentTimeMillis())
                 })
             }
