@@ -31,6 +31,8 @@ class CacheManager private constructor(private val context: Context) {
         const val KEY_AUTO_START_ON_WIFI = "auto_start_on_wifi"
         const val KEY_AUTO_START_ON_CHARGER = "auto_start_on_charger"
         const val KEY_NOTIFY_WHEN_AVAILABLE = "notify_when_available"
+        const val KEY_MAX_CACHE_SIZE_MB = "max_cache_size_mb"
+        const val DEFAULT_MAX_CACHE_SIZE_MB = 1024 // 1 GB default
         const val NOTIF_AVAILABLE_ID = 3002
         const val NOTIF_CHANNEL_AVAILABLE = "cache_updates_available"
         const val ACTION_OPEN_CACHE_MANAGER = "janush.tech.whereami.ACTION_OPEN_CACHE_MANAGER"
@@ -67,6 +69,10 @@ class CacheManager private constructor(private val context: Context) {
     var notifyWhenAvailable: Boolean
         get() = prefs.getBoolean(KEY_NOTIFY_WHEN_AVAILABLE, true)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_WHEN_AVAILABLE, value).apply()
+
+    var maxCacheSizeMb: Int
+        get() = prefs.getInt(KEY_MAX_CACHE_SIZE_MB, DEFAULT_MAX_CACHE_SIZE_MB)
+        set(value) = prefs.edit().putInt(KEY_MAX_CACHE_SIZE_MB, value).apply()
 
     // ── Metric Computations ───────────────────────────────────────────────────
 
@@ -664,10 +670,43 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 
+    // Queue of points that were encountered during driving and determined to be stale (> 60 days) or obsolete (> 1 year without internet)
+    private val pendingRefreshPoints = java.util.concurrent.ConcurrentHashMap<String, org.osmdroid.util.GeoPoint>()
+
+    fun enqueuePendingRefresh(lat: Double, lng: Double) {
+        val key = SpatialCacheHelper.toGridKey(lat, lng)
+        if (!pendingRefreshPoints.containsKey(key)) {
+            pendingRefreshPoints[key] = org.osmdroid.util.GeoPoint(lat, lng)
+        }
+    }
+
+    fun getPendingRefreshCount(): Int = pendingRefreshPoints.size
+
     fun onTripFinished() {
         managerScope.launch {
             try {
                 kotlinx.coroutines.delay(2500L)
+                val canAutoWifi = autoStartOnWifi && isUnmeteredWifi()
+                val canAutoCharger = autoStartOnCharger && isDeviceCharging()
+
+                // 1. Process pending stale/obsolete refreshes if power/wifi allows
+                if ((canAutoWifi || canAutoCharger) && pendingRefreshPoints.isNotEmpty()) {
+                    val pointsToRefresh = pendingRefreshPoints.values.toList()
+                    pendingRefreshPoints.clear()
+                    TelemetryLogger.log("CACHE", "Processing ${pointsToRefresh.size} pending stale corridor refreshes post-trip")
+                    for (pt in pointsToRefresh) {
+                        if (!allowOnBattery && !isDeviceCharging()) break
+                        LocationManager.getInstance(context).resolveMultiLanguageData(
+                            pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true
+                        )
+                        kotlinx.coroutines.delay(1000L)
+                    }
+                }
+
+                // 2. Enforce storage limit
+                SpatialCacheHelper.getInstance(context).enforceStorageLimit(maxCacheSizeMb)
+
+                // 3. Evaluate deficit and start prefetch or notify
                 calculateCacheDeficit()
             } catch (_: Exception) {}
         }
