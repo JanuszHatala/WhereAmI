@@ -121,12 +121,14 @@ enum class ActivityProfile(
     val gpsIntervalMs: Long,
     val minGpsIntervalMs: Long,
     val minValidDistanceMeters: Double = 50.0,
-    val minValidDurationMs: Long = 20_000L
+    val minValidDurationMs: Long = 20_000L,
+    val chargingLiveSyncIntervalMs: Long = 3_000L,
+    val chargingBreadcrumbDisplacementMeters: Float = 12.0f
 ) {
-    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 5, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L),
-    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 5, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L),
-    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L),
-    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 10, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L),
-    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L)
+    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 5, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L, chargingLiveSyncIntervalMs = 2_000L, chargingBreadcrumbDisplacementMeters = 15.0f),
+    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 5, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 3_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
+    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 3_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
+    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 10, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 8.0f),
+    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 4_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 8.0f)
 }

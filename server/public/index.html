@@ -588,16 +588,84 @@
       });
     }
 
-    function updateHostMarker(coords, isOnline, isPaused, statusClass, bearing, accuracy) {
+    let markerAnimFrame = null;
+    let currentMarkerCoords = null;
+
+    function animateMarkerTo(targetCoords, targetAccuracy, durationMs = 1500) {
+      if (!userMarker) return;
+      if (!currentMarkerCoords) {
+        currentMarkerCoords = [targetCoords[0], targetCoords[1]];
+        userMarker.setLatLng(targetCoords);
+        if (hostAccuracyCircle) hostAccuracyCircle.setLatLng(targetCoords);
+        return;
+      }
+
+      const startLat = currentMarkerCoords[0];
+      const startLng = currentMarkerCoords[1];
+      const endLat = targetCoords[0];
+      const endLng = targetCoords[1];
+
+      const dLat = endLat - startLat;
+      const dLng = endLng - startLng;
+
+      // If micro-jitter (< 1e-6) or massive jump (> 0.2 degrees ~ 20km), snap directly
+      if (Math.abs(dLat) < 0.000001 && Math.abs(dLng) < 0.000001) {
+        return;
+      }
+      if (Math.abs(dLat) > 0.2 || Math.abs(dLng) > 0.2) {
+        currentMarkerCoords = [endLat, endLng];
+        userMarker.setLatLng(targetCoords);
+        if (hostAccuracyCircle) hostAccuracyCircle.setLatLng(targetCoords);
+        return;
+      }
+
+      if (markerAnimFrame) {
+        cancelAnimationFrame(markerAnimFrame);
+        markerAnimFrame = null;
+      }
+
+      const startTime = performance.now();
+      function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(1.0, elapsed / durationMs);
+        // Cubic ease-out
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const curLat = startLat + dLat * ease;
+        const curLng = startLng + dLng * ease;
+        currentMarkerCoords = [curLat, curLng];
+        if (userMarker) userMarker.setLatLng([curLat, curLng]);
+        if (hostAccuracyCircle) hostAccuracyCircle.setLatLng([curLat, curLng]);
+
+        if (progress < 1.0) {
+          markerAnimFrame = requestAnimationFrame(step);
+        } else {
+          markerAnimFrame = null;
+          currentMarkerCoords = [endLat, endLng];
+        }
+      }
+      markerAnimFrame = requestAnimationFrame(step);
+    }
+
+    function updateHostMarker(coords, isOnline, isPaused, statusClass, bearing, accuracy, animate = false, animDurationMs = 1500) {
       if (!coords) return;
       lastHostState = { isOnline, isPaused, statusClass, bearing, accuracy };
       const icon = createHostIcon(isOnline, isPaused, statusClass, bearing);
       if (!userMarker) {
+        currentMarkerCoords = [coords[0], coords[1]];
         userMarker = L.marker(coords, { icon, zIndexOffset: 1000 }).addTo(map);
         recenterMap(15);
       } else {
-        userMarker.setLatLng(coords);
         userMarker.setIcon(icon);
+        if (animate) {
+          animateMarkerTo(coords, accuracy, animDurationMs);
+        } else {
+          if (markerAnimFrame) {
+            cancelAnimationFrame(markerAnimFrame);
+            markerAnimFrame = null;
+          }
+          currentMarkerCoords = [coords[0], coords[1]];
+          userMarker.setLatLng(coords);
+        }
       }
 
       if (accuracy !== null && accuracy !== undefined && accuracy > 0) {
@@ -611,7 +679,9 @@
             interactive: false
           }).addTo(map);
         } else {
-          hostAccuracyCircle.setLatLng(coords);
+          if (!animate) {
+            hostAccuracyCircle.setLatLng(coords);
+          }
           hostAccuracyCircle.setRadius(accuracy);
         }
       } else if (hostAccuracyCircle) {
@@ -1052,23 +1122,32 @@
         } else {
           isOnline = true;
           statusClass = 'online';
-          badge.innerHTML = '<div class="pulse-dot"></div> ONLINE';
-          badge.style.background = 'rgba(34, 197, 94, 0.18)';
-          badge.style.borderColor = 'rgba(74, 222, 128, 0.45)';
-          badge.style.color = '#4ade80';
+          const isChargingBoost = Boolean(data.current?.isCharging);
+          badge.innerHTML = isChargingBoost 
+            ? '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div> ⚡ LIVE' 
+            : '<div class="pulse-dot"></div> ONLINE';
+          badge.style.background = isChargingBoost 
+            ? 'rgba(59, 130, 246, 0.22)' 
+            : 'rgba(34, 197, 94, 0.18)';
+          badge.style.borderColor = isChargingBoost 
+            ? 'rgba(96, 165, 250, 0.55)' 
+            : 'rgba(74, 222, 128, 0.45)';
+          badge.style.color = isChargingBoost 
+            ? '#60a5fa' 
+            : '#4ade80';
           alertBox.className = 'status-alert';
           alertBox.style.display = 'none';
         }
 
         if (data.current) {
-          const { lat, lng, spd, alt, place, trekking, battery, t, acc } = data.current;
+          const { lat, lng, spd, alt, place, trekking, battery, t, acc, isCharging, syncIntervalMs } = data.current;
           lastCoords = [lat, lng];
           updateVisitorDistance();
 
           document.getElementById('placeName').textContent = place || (isSessionActive ? 'Active Track' : 'Stopped');
           document.getElementById('speedVal').textContent = isSessionActive ? (spd ? (spd.toFixed(1) + ' km/h') : '0.0 km/h') : '--';
           document.getElementById('altVal').textContent = isSessionActive ? (alt ? (Math.round(alt) + ' m ASL') : '--') : '--';
-          document.getElementById('batteryVal').textContent = isSessionActive ? (battery >= 0 ? ('🔋' + battery + '%') : '--') : '--';
+          document.getElementById('batteryVal').textContent = isSessionActive ? (battery >= 0 ? ((isCharging ? '⚡ ' : '🔋') + battery + '%') : '--') : '--';
           
           const accEl = document.getElementById('accuracyStat');
           const accVal = document.getElementById('accuracyVal');
@@ -1124,7 +1203,9 @@
             }
           }
 
-          updateHostMarker([lat, lng], isOnline, isSessionPaused, statusClass, bearing, acc);
+          const isHighFrequency = Boolean(isCharging || (syncIntervalMs && syncIntervalMs <= 10000));
+          const animDuration = isHighFrequency ? Math.min(2500, Math.max(1000, (syncIntervalMs || 2000) * 0.9)) : 1500;
+          updateHostMarker([lat, lng], isOnline, isSessionPaused, statusClass, bearing, acc, true, animDuration);
           if (autoFollow) {
             const currentZoom = map.getZoom() || 15;
             const offsetCenter = getOffsetCenter([lat, lng], currentZoom);
@@ -1171,13 +1252,35 @@
         }
 
         renderPauses(data.pauses);
+
+        // Adaptive polling schedule
+        const isHostActive = isSessionActive && !isSessionPaused && !isDisconnected;
+        const isChargingBoost = Boolean(data.current?.isCharging);
+        const syncIntervalMs = data.current?.syncIntervalMs || 0;
+
+        if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 6000))) {
+          nextPollIntervalMs = 1800; // Fast 1.8s polling during real-time charging boost
+        } else if (isHostActive) {
+          nextPollIntervalMs = 3500;
+        } else {
+          nextPollIntervalMs = 5000;
+        }
       } catch (err) {
         console.error('Fetch error:', err);
+        nextPollIntervalMs = 5000;
       }
     }
 
-    fetchTrack();
-    setInterval(fetchTrack, 4000);
+    let pollTimeoutId = null;
+    let nextPollIntervalMs = 4000;
+
+    async function pollLoop() {
+      await fetchTrack();
+      if (pollTimeoutId) clearTimeout(pollTimeoutId);
+      pollTimeoutId = setTimeout(pollLoop, nextPollIntervalMs);
+    }
+
+    pollLoop();
   </script>
 </body>
 </html>
