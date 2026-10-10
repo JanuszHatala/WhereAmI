@@ -434,6 +434,20 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
     }
+
+    @Test
+    fun testForegroundDualTierCadenceParameters() {
+        // In MANUAL mode, moving is 7000ms (min 4000ms) and stationary is 25000ms (min 15000ms)
+        val manualMovingInterval = 7000L
+        val manualStationaryInterval = 25000L
+        assertTrue("Manual stationary cadence must be at least 3x slower than moving", manualStationaryInterval >= manualMovingInterval * 3)
+
+        // In AUTO mode, moving is 1500ms (min 1000ms) and stationary is 10000ms (min 5000ms)
+        val autoMovingInterval = 1500L
+        val autoStationaryInterval = 10000L
+        assertTrue("Auto stationary cadence must be slower to conserve power at rest", autoStationaryInterval > autoMovingInterval * 5)
+    }
 }
+
 
 

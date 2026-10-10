@@ -506,6 +506,7 @@ fun OsmMapView(
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
+    val accuracyOverlay = remember(context) { AccuracyCircleOverlay(context) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     val prefs = remember(context) {
@@ -545,7 +546,15 @@ fun OsmMapView(
         PositionInterpolator().apply {
             val initFix = currentFix
             if (initFix != null && initFix.lat != 0.0 && initFix.lng != 0.0) {
-                onNewFix(initFix.lat, initFix.lng, initFix.bearing, initFix.speedMs, initFix.timestamp)
+                onNewFix(
+                    initFix.lat,
+                    initFix.lng,
+                    initFix.bearing,
+                    initFix.speedMs,
+                    initFix.timestamp,
+                    initFix.accuracy,
+                    initFix.isAnchored
+                )
             }
         }
     }
@@ -631,7 +640,15 @@ fun OsmMapView(
     // Feed new GPS fixes into the interpolator
     LaunchedEffect(currentFix) {
         val fix = currentFix ?: return@LaunchedEffect
-        posInterpolator.onNewFix(fix.lat, fix.lng, fix.bearing, fix.speedMs, fix.timestamp)
+        posInterpolator.onNewFix(
+            fix.lat,
+            fix.lng,
+            fix.bearing,
+            fix.speedMs,
+            fix.timestamp,
+            fix.accuracy,
+            fix.isAnchored
+        )
         if (fix.bearing != null) {
             lastFrozenBearing = fix.bearing
         }
@@ -703,6 +720,17 @@ fun OsmMapView(
                     val effectiveBearing = pt.bearing ?: lastFrozenBearing
                     val isMoving = !posInterpolator.isStationary()
                     val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
+
+                    if (!map.overlays.contains(accuracyOverlay)) {
+                        val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
+                        if (mIdx >= 0) {
+                            map.overlays.add(mIdx, accuracyOverlay)
+                        } else {
+                            map.overlays.add(accuracyOverlay)
+                        }
+                    }
+                    val effectiveAccuracy = pt.accuracy ?: currentFix?.accuracy
+                    accuracyOverlay.updatePosition(pt.lat, pt.lng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
                         it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)

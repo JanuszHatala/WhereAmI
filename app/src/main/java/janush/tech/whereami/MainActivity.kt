@@ -21,6 +21,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -96,6 +101,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         AppStateManager.getInstance(this).setAppForegroundState(true)
         CacheManager.getInstance(this).calculateCacheDeficit()
+        viewModel.requestOneShotLocation()
     }
 
     override fun onStop() {
@@ -985,6 +991,119 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
 
+        // ── Floating Compact Standby HUD Bar (Auto-Start Enabled, Waiting for Motion in Portrait) ────
+        if (!showTripsSheet && !isLandscape && activeTrip == null && tripMode == TripMode.AUTO) {
+            val autoSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
+            val infiniteTransition = rememberInfiniteTransition(label = "autoStandbyPulse")
+            val pulseAlpha by infiniteTransition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "standbyAlpha"
+            )
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = 82.dp
+                    )
+                    .widthIn(max = 380.dp)
+                    .fillMaxWidth()
+                    .clickable {
+                        dismissAllDialogs()
+                        showSettingsSheet = true
+                    },
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xF20F172A),
+                border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Pulsing indicator dot + AUTO-DETECT + Profile and Threshold
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8).copy(alpha = pulseAlpha))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "AUTO-DETECT",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 12.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = String.format(Locale.getDefault(), "• %s >%.0f km/h", activityProfile.displayName, autoSpeed),
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 12.sp
+                            )
+                        )
+                    }
+
+                    // Direct "START NOW" Button (triggers immediate manual recording)
+                    Button(
+                        onClick = { viewModel.startManualTrip() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Start Now",
+                            modifier = Modifier.size(13.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "START NOW",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
         // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
         if (!showTripsSheet) {
             val recTrip = activeTrip
@@ -1078,6 +1197,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onLandscapePauseResume = {
                     if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
                 },
+                isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
+                landscapeAutoSpeed = if (isLandscape && tripMode == TripMode.AUTO && activeTrip == null) viewModel.getAutoStartSpeedForProfile(activityProfile) else null,
+                onLandscapeStartAutoNow = if (isLandscape && tripMode == TripMode.AUTO && activeTrip == null) { { viewModel.startManualTrip() } } else null,
                 landscapeShowHeatMap = isLandscape && showHeatMap,
                 heatMapFilterActive = heatMapFilterState.hasActiveFilter,
                 onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -1095,6 +1217,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             showHeatMap && activeTrip != null -> 700.dp
                             showHeatMap -> 520.dp
                             activeTrip != null -> 580.dp
+                            tripMode == TripMode.AUTO -> 580.dp
                             else -> 420.dp
                         }
                     } else 440.dp)
@@ -8987,6 +9110,9 @@ private fun MainBottomControlsCard(
     landscapeHudDistKm: Double? = null,
     landscapeIsPaused: Boolean = false,
     onLandscapePauseResume: (() -> Unit)? = null,
+    isAutoStandby: Boolean = false,
+    landscapeAutoSpeed: Float? = null,
+    onLandscapeStartAutoNow: (() -> Unit)? = null,
     landscapeShowHeatMap: Boolean = false,
     heatMapFilterActive: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
@@ -9024,12 +9150,24 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 2. Trip Recording Pill (Start / Stop / REC status)
+            // 2. Trip Recording Pill (Start / Stop / REC / AUTO status)
+            val pillBorder = when {
+                isRecording -> null
+                isAutoStandby -> BorderStroke(1.2.dp, Color(0xFF38BDF8))
+                else -> null
+            }
             Row(
                 modifier = Modifier
                     .height(40.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(if (isRecording) Color(0x33EF4444) else Color(0xFF1E293B))
+                    .then(if (pillBorder != null) Modifier.border(pillBorder, RoundedCornerShape(20.dp)) else Modifier)
+                    .background(
+                        when {
+                            isRecording -> Color(0x33EF4444)
+                            isAutoStandby -> Color(0x2238BDF8)
+                            else -> Color(0xFF1E293B)
+                        }
+                    )
                     .clickable { onToggleTripRecording() }
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -9038,12 +9176,26 @@ private fun MainBottomControlsCard(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(if (isRecording) Color(0xFFEF4444) else Color(0xFF10B981))
+                        .background(
+                            when {
+                                isRecording -> Color(0xFFEF4444)
+                                isAutoStandby -> Color(0xFF38BDF8)
+                                else -> Color(0xFF10B981)
+                            }
+                        )
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (isRecording) "STOP" else "REC",
-                    color = if (isRecording) Color(0xFFEF4444) else Color.White,
+                    text = when {
+                        isRecording -> "STOP"
+                        isAutoStandby -> "AUTO"
+                        else -> "REC"
+                    },
+                    color = when {
+                        isRecording -> Color(0xFFEF4444)
+                        isAutoStandby -> Color(0xFF38BDF8)
+                        else -> Color.White
+                    },
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
@@ -9310,6 +9462,56 @@ private fun MainBottomControlsCard(
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = if (landscapeIsPaused) "RESUME" else "PAUSE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 10. Landscape Inline Auto-Start Standby HUD (shown when AUTO is enabled and not recording)
+            if (landscapeAutoSpeed != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xF20F172A),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8))
+                        )
+                        Text(
+                            text = String.format(Locale.getDefault(), "AUTO • >%.0f km/h", landscapeAutoSpeed),
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        if (onLandscapeStartAutoNow != null) {
+                            Button(
+                                onClick = onLandscapeStartAutoNow,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text(
+                                    text = "START",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
