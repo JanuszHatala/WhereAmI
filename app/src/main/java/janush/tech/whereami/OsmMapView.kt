@@ -221,6 +221,7 @@ fun fitPointsToUnobstructedViewport(
     measuredTopInsetPx: Int? = null,
     measuredBottomInsetPx: Int? = null,
     isRecording: Boolean = false,
+    isAutoStandby: Boolean = false,
     onZoomCalculated: ((Double) -> Unit)? = null
 ) {
     if (points.isEmpty()) return
@@ -254,8 +255,8 @@ fun fitPointsToUnobstructedViewport(
         val rightControlsDp = 72f
 
         // Minimum bottom clearance must guarantee clear space above bottom toolbar and floating Recenter pill
-        // Floating recenter button is at padding(bottom = if (isRecording) 136.dp else 78.dp) + height 40.dp
-        val minBottomInsetDp = if (isRecording) 186f else 130f
+        // Floating recenter button is at padding(bottom = if (isRecording || isAutoStandby) 136.dp else 78.dp) + height 40.dp
+        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 130f
         val minBottomInsetPx = (minBottomInsetDp * density).toInt()
 
         val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
@@ -443,6 +444,9 @@ fun OsmMapView(
     measuredTopInsetPx: Int? = null,
     measuredBottomInsetPx: Int? = null,
     isRecording: Boolean = false,
+    isAutoStandby: Boolean = false,
+    recenterTrigger: Long = 0L,
+    onFollowingChanged: ((Boolean) -> Unit)? = null,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
@@ -1174,6 +1178,7 @@ fun OsmMapView(
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
                 isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1194,6 +1199,7 @@ fun OsmMapView(
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
                 isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1223,6 +1229,22 @@ fun OsmMapView(
                     map.zoomToBoundingBox(paddedBox, true, 120)
                 } catch (e: Exception) {}
             }
+        }
+    }
+
+    LaunchedEffect(isFollowing) {
+        onFollowingChanged?.invoke(isFollowing)
+    }
+
+    LaunchedEffect(recenterTrigger) {
+        if (recenterTrigger > 0L) {
+            isFollowing = true
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
+                mapView?.controller?.setCenter(centerGp)
+            }
+            mapView?.invalidate()
         }
     }
 
@@ -1465,6 +1487,7 @@ fun OsmMapView(
                                 measuredTopInsetPx = measuredTopInsetPx,
                                 measuredBottomInsetPx = measuredBottomInsetPx,
                                 isRecording = isRecording,
+                                isAutoStandby = isAutoStandby,
                                 onZoomCalculated = { currentZoom = it }
                             )
                         },
@@ -1530,10 +1553,10 @@ fun OsmMapView(
                 68.dp
             } else {
                 when {
-                    showHeatMap && isRecording -> 180.dp
-                    showHeatMap               -> 136.dp
-                    isRecording               -> 136.dp
-                    else                      -> 78.dp
+                    showHeatMap && (isRecording || isAutoStandby) -> 180.dp
+                    showHeatMap                                   -> 136.dp
+                    isRecording || isAutoStandby                  -> 136.dp
+                    else                                          -> 78.dp
                 }
             }
             Surface(

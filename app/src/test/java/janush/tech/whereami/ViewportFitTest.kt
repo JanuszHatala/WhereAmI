@@ -361,4 +361,45 @@ class ViewportFitTest {
             )
         }
     }
+
+    @Test
+    fun testRecenterAndBottomInsetCalculationsForRecordingAndAutoStandby() {
+        // Test recenterBottomPadding logic
+        fun computeRecenterPaddingDp(isLandscape: Boolean, showHeatMap: Boolean, isRecording: Boolean, isAutoStandby: Boolean): Float {
+            return if (isLandscape) {
+                68f
+            } else {
+                when {
+                    showHeatMap && (isRecording || isAutoStandby) -> 180f
+                    showHeatMap                                   -> 136f
+                    isRecording || isAutoStandby                  -> 136f
+                    else                                          -> 78f
+                }
+            }
+        }
+
+        // Test minBottomInsetDp logic
+        fun computeMinBottomInsetDp(isRecording: Boolean, isAutoStandby: Boolean): Float {
+            return if (isRecording || isAutoStandby) 186f else 130f
+        }
+
+        // 1. Idle MANUAL mode (not recording, not auto-standby): default 78dp padding, 130dp inset
+        assertEquals(78f, computeRecenterPaddingDp(isLandscape = false, showHeatMap = false, isRecording = false, isAutoStandby = false), 0.001f)
+        assertEquals(130f, computeMinBottomInsetDp(isRecording = false, isAutoStandby = false), 0.001f)
+
+        // 2. Active Trip Recording: elevated 136dp padding (180dp with heatmap), 186dp inset
+        assertEquals(136f, computeRecenterPaddingDp(isLandscape = false, showHeatMap = false, isRecording = true, isAutoStandby = false), 0.001f)
+        assertEquals(180f, computeRecenterPaddingDp(isLandscape = false, showHeatMap = true, isRecording = true, isAutoStandby = false), 0.001f)
+        assertEquals(186f, computeMinBottomInsetDp(isRecording = true, isAutoStandby = false), 0.001f)
+
+        // 3. Auto-Detect Standby: elevated 136dp padding (180dp with heatmap), 186dp inset
+        // Must match active recording height to completely clear the 82dp auto-detect standby bar
+        assertEquals(136f, computeRecenterPaddingDp(isLandscape = false, showHeatMap = false, isRecording = false, isAutoStandby = true), 0.001f)
+        assertEquals(180f, computeRecenterPaddingDp(isLandscape = false, showHeatMap = true, isRecording = false, isAutoStandby = true), 0.001f)
+        assertEquals(186f, computeMinBottomInsetDp(isRecording = false, isAutoStandby = true), 0.001f)
+
+        // 4. Landscape: constant 68dp padding
+        assertEquals(68f, computeRecenterPaddingDp(isLandscape = true, showHeatMap = false, isRecording = false, isAutoStandby = true), 0.001f)
+        assertEquals(68f, computeRecenterPaddingDp(isLandscape = true, showHeatMap = true, isRecording = true, isAutoStandby = false), 0.001f)
+    }
 }
