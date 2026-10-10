@@ -339,6 +339,101 @@ class BatteryOptimizationAndAutoStartTest {
         // In background: never start directly from background (Android 14+ rule)
         assertFalse(shouldServiceRun(true, true, false, false))
     }
+
+    @Test
+    fun testMotionBurstProgressiveCooldown() {
+        assertEquals(0L, AppStateManager.computeBurstCooldownMs(0))
+        assertEquals(60_000L, AppStateManager.computeBurstCooldownMs(1))
+        assertEquals(120_000L, AppStateManager.computeBurstCooldownMs(2))
+        assertEquals(180_000L, AppStateManager.computeBurstCooldownMs(3))
+        assertEquals(180_000L, AppStateManager.computeBurstCooldownMs(10))
+    }
+
+    @Test
+    fun testMotionBurstEarlyAbortConditions() {
+        val minDuration = AppStateManager.MOTION_BURST_MIN_DURATION_MS
+        assertEquals(15_000L, minDuration)
+
+        val targetCandidateSpeedMs = (15.0f * 0.7f) / 3.6f // ~2.91 m/s (10.5 km/h for CAR profile)
+
+        // 1. Before 15s: never abort prematurely
+        assertFalse(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 10_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 0.0,
+                isPhysicallyStationary = true,
+                isCarProfile = true
+            )
+        )
+
+        // 2. At 15s with physical stationary surface detected: abort immediately
+        assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 0.0,
+                isPhysicallyStationary = true,
+                isCarProfile = true
+            )
+        )
+
+        // 3. At 15s with slow walking / drift (0.4 m/s, displacement 4m) without accelerometer stationary: abort
+        assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.4f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 4.0,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+
+        // 4. At 15s with true vehicle movement (speed 8 m/s = 28.8 km/h): DO NOT ABORT
+        assertFalse(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 8.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 80.0,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+
+        // 5. At 25s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 20m): abort
+        assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 25_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 1.4f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 20.0,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+
+        // 6. At 25s for CAR profile with fast driving (12 m/s = 43 km/h): DO NOT ABORT
+        assertFalse(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 25_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 12.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 200.0,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+    }
 }
 
 
