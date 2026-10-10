@@ -334,6 +334,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     var placeToDelete by remember { mutableStateOf<SavedPlace?>(null) }
     var editingSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
+    var isMapFollowing by remember { mutableStateOf(true) }
+    var recenterTrigger by remember { mutableStateOf(0L) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
@@ -559,6 +561,29 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
+    // ── Hierarchical System Back Gesture / Key Handler ───────────────────────
+    // Intercepts back swipes to dismiss active overlays, clear destinations,
+    // or recenter the map before allowing the system to minimize the app.
+    val hasOverlaySelection = selectedSavedPlace != null ||
+            destinationPoint != null ||
+            selectedGuestDetails != null ||
+            selectedTripsList.isNotEmpty()
+    BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
+        when {
+            selectedGuestDetails != null -> selectedGuestDetails = null
+            selectedSavedPlace != null -> selectedSavedPlace = null
+            destinationPoint != null -> {
+                viewModel.setDestination(null)
+                viewModel.clearPinnedBorders()
+            }
+            selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
+            !isMapFollowing -> {
+                recenterTrigger = System.currentTimeMillis()
+                isMapFollowing = true
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -613,6 +638,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             measuredTopInsetPx = topCardBottomPx,
             measuredBottomInsetPx = bottomControlsTopPx,
             isRecording = activeTrip != null,
+            isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
+            recenterTrigger = recenterTrigger,
+            onFollowingChanged = { isMapFollowing = it },
             pauses = allDisplayPauses,
             orientationMode = orientationMode,
             onOrientationModeChange = { viewModel.setOrientationMode(it) },
@@ -1013,8 +1041,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                         end = 16.dp,
                         bottom = 82.dp
                     )
-                    .widthIn(max = 380.dp)
-                    .fillMaxWidth()
                     .clickable {
                         dismissAllDialogs()
                         showSettingsSheet = true
@@ -1025,81 +1051,50 @@ fun LocationScreen(viewModel: MainViewModel) {
                 shadowElevation = 8.dp
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    // Pulsing indicator dot + AUTO-DETECT + Profile and Threshold
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF38BDF8).copy(alpha = pulseAlpha))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF38BDF8).copy(alpha = pulseAlpha))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Auto-detect standby:",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 12.sp
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "AUTO-DETECT",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.Both
-                                ),
-                                lineHeight = 12.sp
-                            )
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 12.sp
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = String.format(Locale.getDefault(), "• %s >%.0f km/h", activityProfile.displayName, autoSpeed),
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.Both
-                                ),
-                                lineHeight = 12.sp
-                            )
-                        )
-                    }
-
-                    // Direct "START NOW" Button (triggers immediate manual recording)
-                    Button(
-                        onClick = { viewModel.startManualTrip() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF0284C7),
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Start Now",
-                            modifier = Modifier.size(13.dp),
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "START NOW",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -1199,7 +1194,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                 },
                 isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
                 landscapeAutoSpeed = if (isLandscape && tripMode == TripMode.AUTO && activeTrip == null) viewModel.getAutoStartSpeedForProfile(activityProfile) else null,
-                onLandscapeStartAutoNow = if (isLandscape && tripMode == TripMode.AUTO && activeTrip == null) { { viewModel.startManualTrip() } } else null,
                 landscapeShowHeatMap = isLandscape && showHeatMap,
                 heatMapFilterActive = heatMapFilterState.hasActiveFilter,
                 onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -9112,7 +9106,6 @@ private fun MainBottomControlsCard(
     onLandscapePauseResume: (() -> Unit)? = null,
     isAutoStandby: Boolean = false,
     landscapeAutoSpeed: Float? = null,
-    onLandscapeStartAutoNow: (() -> Unit)? = null,
     landscapeShowHeatMap: Boolean = false,
     heatMapFilterActive: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
@@ -9150,24 +9143,12 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 2. Trip Recording Pill (Start / Stop / REC / AUTO status)
-            val pillBorder = when {
-                isRecording -> null
-                isAutoStandby -> BorderStroke(1.2.dp, Color(0xFF38BDF8))
-                else -> null
-            }
+            // 2. Trip Recording Pill (Start / Stop / REC)
             Row(
                 modifier = Modifier
                     .height(40.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .then(if (pillBorder != null) Modifier.border(pillBorder, RoundedCornerShape(20.dp)) else Modifier)
-                    .background(
-                        when {
-                            isRecording -> Color(0x33EF4444)
-                            isAutoStandby -> Color(0x2238BDF8)
-                            else -> Color(0xFF1E293B)
-                        }
-                    )
+                    .background(if (isRecording) Color(0x33EF4444) else Color(0xFF1E293B))
                     .clickable { onToggleTripRecording() }
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -9176,26 +9157,12 @@ private fun MainBottomControlsCard(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(
-                            when {
-                                isRecording -> Color(0xFFEF4444)
-                                isAutoStandby -> Color(0xFF38BDF8)
-                                else -> Color(0xFF10B981)
-                            }
-                        )
+                        .background(Color(0xFFEF4444))
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = when {
-                        isRecording -> "STOP"
-                        isAutoStandby -> "AUTO"
-                        else -> "REC"
-                    },
-                    color = when {
-                        isRecording -> Color(0xFFEF4444)
-                        isAutoStandby -> Color(0xFF38BDF8)
-                        else -> Color.White
-                    },
+                    text = if (isRecording) "STOP" else "REC",
+                    color = if (isRecording) Color(0xFFEF4444) else Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
@@ -9478,7 +9445,8 @@ private fun MainBottomControlsCard(
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = Color(0xF20F172A),
-                    border = BorderStroke(1.dp, Color(0xFF38BDF8))
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                    modifier = Modifier.clickable { onShowSettings() }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -9499,25 +9467,6 @@ private fun MainBottomControlsCard(
                             maxLines = 1,
                             softWrap = false
                         )
-                        if (onLandscapeStartAutoNow != null) {
-                            Button(
-                                onClick = onLandscapeStartAutoNow,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0284C7),
-                                    contentColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(26.dp)
-                            ) {
-                                Text(
-                                    text = "START",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
                     }
                 }
             }
