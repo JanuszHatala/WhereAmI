@@ -382,6 +382,65 @@ class AppStateManager private constructor(private val context: Context) {
     }
 
     private var liveOnlyWatcherJob: Job? = null
+    private var foregroundWatcherJob: Job? = null
+
+    private fun startForegroundCadenceWatcher() {
+        foregroundWatcherJob?.cancel()
+        val locManager = LocationManager.getInstance(context)
+        val tripManager = TripManager.getInstance(context)
+        val isAuto = tripManager.tripMode.value == TripMode.AUTO
+        val policy = _powerPolicy.value
+        val charging = _isCharging.value
+
+        // Configure moving and stationary intervals
+        val (movingInterval, movingMinInterval) = when {
+            isAuto -> 1500L to 1000L
+            policy == BatteryPowerPolicy.BATTERY_SAVER && !charging -> 10000L to 5000L
+            else -> 7000L to 4000L
+        }
+        val (stationaryInterval, stationaryMinInterval) = when {
+            isAuto -> 10000L to 5000L
+            else -> 25000L to 15000L
+        }
+
+        locManager.updateSamplingInterval(movingInterval, movingMinInterval)
+
+        foregroundWatcherJob = scope.launch {
+            var stationarySinceMs = 0L
+            var isStationaryCadenceApplied = false
+            while (isActive) {
+                delay(3000L)
+                if (_currentMode.value != AppLifecycleMode.FOREGROUND_VIEW) break
+                val tripActive = TripManager.getInstance(context).activeTrip.value != null
+                if (tripActive) break
+
+                val isPhysicalStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                val currentSpeed = LocationManager.getInstance(context).getLastValidSpeedMs()
+                val isSpeedStationary = currentSpeed < 0.35f
+
+                val now = SystemClock.elapsedRealtime()
+                if (isPhysicalStationary || isSpeedStationary) {
+                    if (stationarySinceMs == 0L) {
+                        stationarySinceMs = now
+                    }
+                    val stationaryDuration = now - stationarySinceMs
+                    // After 10 seconds of verified stationary dwell, relax GPS sampling
+                    if (stationaryDuration >= 10_000L && !isStationaryCadenceApplied) {
+                        TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Stationary for ${stationaryDuration / 1000}s. Relaxing cadence (isAuto=$isAuto, interval=${stationaryInterval}ms).")
+                        locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
+                        isStationaryCadenceApplied = true
+                    }
+                } else {
+                    stationarySinceMs = 0L
+                    if (isStationaryCadenceApplied) {
+                        TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Motion detected. Restoring moving cadence (isAuto=$isAuto, interval=${movingInterval}ms).")
+                        locManager.updateSamplingInterval(movingInterval, movingMinInterval)
+                        isStationaryCadenceApplied = false
+                    }
+                }
+            }
+        }
+    }
 
     private fun startLiveOnlyWatcher() {
         liveOnlyWatcherJob?.cancel()
@@ -467,6 +526,9 @@ class AppStateManager private constructor(private val context: Context) {
             liveOnlyWatcherJob?.cancel()
             LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
         }
+        if (mode != AppLifecycleMode.FOREGROUND_VIEW) {
+            foregroundWatcherJob?.cancel()
+        }
 
         when (mode) {
             AppLifecycleMode.IDLE -> {
@@ -521,11 +583,7 @@ class AppStateManager private constructor(private val context: Context) {
                 motionRearmJob?.cancel()
                 motionManager.disarm()
                 ensureAutoStandbyServiceRunning()
-                if (policy == BatteryPowerPolicy.BATTERY_SAVER && !charging) {
-                    locManager.updateSamplingInterval(3000L, 1500L)
-                } else {
-                    locManager.updateSamplingInterval(1500L, 1000L)
-                }
+                startForegroundCadenceWatcher()
             }
             AppLifecycleMode.TRIP_RECORDING -> {
                 motionBurstJob?.cancel()

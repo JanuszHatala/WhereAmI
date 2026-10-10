@@ -104,7 +104,9 @@ data class LocationFix(
     val lng: Double,
     val bearing: Float?,
     val speedMs: Float,
-    val timestamp: Long
+    val timestamp: Long,
+    val accuracy: Float? = null,
+    val isAnchored: Boolean = false
 )
 
 /** Small data class for OSM Nominatim reverse-geocode results. */
@@ -276,6 +278,11 @@ class LocationManager private constructor(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
     private val ioScope = CoroutineScope(Dispatchers.IO)
+    private val positionStabilizer = PositionStabilizer()
+
+    fun resetPositionStabilizer() {
+        positionStabilizer.reset()
+    }
 
     @SuppressLint("MissingPermission")
     fun updateSamplingInterval(intervalMs: Long, minIntervalMs: Long) {
@@ -1093,12 +1100,23 @@ class LocationManager private constructor(private val context: Context) {
             }
             .map {
                 val movingBearing = if (it.speedMs >= 0.8f) it.bearing else null
-                LocationFix(
+                val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                val stabilized = positionStabilizer.update(
                     lat = it.lat,
                     lng = it.lng,
+                    accuracy = it.accuracy ?: 10f,
+                    speedMs = it.speedMs,
+                    timestamp = it.timestamp,
+                    isPhysicalStationary = isStationary
+                )
+                LocationFix(
+                    lat = stabilized.lat,
+                    lng = stabilized.lng,
                     bearing = movingBearing,
                     speedMs = it.speedMs,
-                    timestamp = it.timestamp
+                    timestamp = it.timestamp,
+                    accuracy = stabilized.accuracy,
+                    isAnchored = stabilized.isAnchored
                 )
             }
     }
