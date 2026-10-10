@@ -719,7 +719,7 @@ fun OsmMapView(
                     val gp = GeoPoint(pt.lat, pt.lng)
                     val effectiveBearing = pt.bearing ?: lastFrozenBearing
                     val isMoving = !posInterpolator.isStationary()
-                    val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
+                    val hasHeading = isMoving && (effectiveBearing != null)
 
                     if (!map.overlays.contains(accuracyOverlay)) {
                         val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
@@ -2346,42 +2346,62 @@ private fun makeDestIcon(context: Context): android.graphics.drawable.BitmapDraw
 }
 
 private fun makeMarkerIcon(context: Context, hasBearing: Boolean): android.graphics.drawable.BitmapDrawable {
-    val size = (context.resources.displayMetrics.density * 32).toInt()
-    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bmp)
-    val cx = size / 2f
-    val cy = size / 2f
-    val radius = size / 2f - 4
-
-    val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-    canvas.drawCircle(cx, cy, radius + 3, ringPaint)
-
+    val density = context.resources.displayMetrics.density
     if (!hasBearing) {
+        // Small, crisp Google Maps-style stationary position dot (16dp diameter, 2dp white border)
+        val size = (18f * density).toInt().coerceAtLeast(18)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val cy = size / 2f
+        val dotRadius = 6.0f * density
+        val whiteBorderWidth = 2.0f * density
+
+        val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            setShadowLayer(2f * density, 0f, 1f * density, 0x40000000)
+        }
+        canvas.drawCircle(cx, cy, dotRadius + whiteBorderWidth, ringPaint)
+
         val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0EA5E9")
+            color = Color.parseColor("#1A73E8") // Google Maps signature blue
             style = Paint.Style.FILL
         }
-        canvas.drawCircle(cx, cy, radius, dotPaint)
+        canvas.drawCircle(cx, cy, dotRadius, dotPaint)
+
+        return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
     } else {
-        // Draw arrow pointing North (0° up) - Marker rotation & flat orientation handle map alignment
+        // Directional navigation arrow (28dp)
+        val size = (28f * density).toInt().coerceAtLeast(28)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val cy = size / 2f
+        val radius = size / 2f - (3f * density)
+
+        val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            setShadowLayer(2f * density, 0f, 1f * density, 0x40000000)
+        }
+        canvas.drawCircle(cx, cy, radius + (2f * density), ringPaint)
+
         val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0EA5E9")
+            color = Color.parseColor("#1A73E8") // Google Maps signature blue
             style = Paint.Style.FILL
         }
         val path = Path().apply {
             moveTo(cx, cy - radius)
-            lineTo(cx - radius * 0.55f, cy + radius * 0.7f)
+            lineTo(cx - radius * 0.55f, cy + radius * 0.65f)
             lineTo(cx, cy + radius * 0.25f)
-            lineTo(cx + radius * 0.55f, cy + radius * 0.7f)
+            lineTo(cx + radius * 0.55f, cy + radius * 0.65f)
             close()
         }
         canvas.drawPath(path, arrowPaint)
-    }
 
-    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+        return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+    }
 }
 
 private fun makeSavedPlaceIcon(context: Context, place: SavedPlace): android.graphics.drawable.BitmapDrawable {
