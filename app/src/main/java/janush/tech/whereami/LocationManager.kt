@@ -428,21 +428,16 @@ class LocationManager private constructor(private val context: Context) {
 
         // Accelerometer-based physical motion check:
         // Strictly for indoor desk / resting clamp.
-        // Distinguishes true physical locomotion from stationary GPS multipath noise
-        // (e.g. resting on a desk or during sleep where Doppler GPS creates 5-14 km/h phantom spikes).
-        val isPhysicallyStationary = try {
-            StationaryDetector.getInstance(context).isPhysicallyStationary.value
-        } catch (_: Exception) { false }
+        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s), single fix moved > 3.0m,
+        // or cumulative displacement > 6.0m (unblocks slow driving and starting from stop).
+        // Newton's 1st Law: uniform highway cruising has zero acceleration variance by physical definition.
+        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 6.0f
+        if (!isMoving) {
+            val isPhysicallyStationary = try {
+                StationaryDetector.getInstance(context).isPhysicallyStationary.value
+            } catch (_: Exception) { false }
 
-        if (isPhysicallyStationary) {
-            // High-speed cruising safeguard:
-            // A vehicle cruising smoothly on an expressway at > 35 km/h has rawSpeed > 9.7 m/s.
-            // When resting indoors/on a desk, multipath causes phantom GPS speeds of 1-6 m/s (3-20 km/h)
-            // with GPS accuracy > 12m or erratic Doppler.
-            val isCruisingHighSpeed = rawSpeed != null && rawSpeed > 9.7f // > 35 km/h
-            val isAccurateOutdoorLocomotion = (gpsAccuracyMps != null && gpsAccuracyMps < 0.4f) && (rawSpeed != null && rawSpeed > 3.0f)
-
-            if (!isCruisingHighSpeed && !isAccurateOutdoorLocomotion) {
+            if (isPhysicallyStationary) {
                 kalmanSpeed = 0f
                 lastValidSpeedMs = 0f
                 return 0f
@@ -604,9 +599,9 @@ class LocationManager private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         val speedKmh = speedMs * 3.6f
 
-        // Kinematic turn tracking: if vehicle turns (heading change >= 30 deg at speed >= 5 km/h),
+        // Kinematic turn tracking: if vehicle turns (heading change >= 30 deg at speed >= 3 km/h),
         // record turn timestamp so we promptly switch to the new street.
-        if (bearing != null && speedKmh >= 5f) {
+        if (bearing != null && speedKmh >= 3f) {
             val prev = lastSustainedBearing
             if (prev != null) {
                 val delta = kotlin.math.abs(((bearing - prev + 540) % 360) - 180)
@@ -762,14 +757,14 @@ class LocationManager private constructor(private val context: Context) {
             }
             speedKmh > 15f -> {
                 // Moderate city driving / cycling:
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 2
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_000L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 3 else 2
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 3_500L else 2_000L
             }
             else -> {
                 // Slow driving / cycling / walking (1.2 - 15 km/h):
                 // Protect major roads (DK*, DW*, etc.) and main thoroughfares against side-street hopping
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 4 else 3
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 4_500L else 2_500L
             }
         }
 
@@ -921,9 +916,9 @@ class LocationManager private constructor(private val context: Context) {
                             }
                         } else {
                             when {
-                                rawAcc > 20f -> 8.0f    // CAR poor accuracy
-                                rawAcc > 15f -> 5.0f    // CAR medium accuracy
-                                else         -> 2.5f    // CAR good accuracy
+                                rawAcc > 20f -> 6.0f    // CAR poor accuracy
+                                rawAcc > 15f -> 3.5f    // CAR medium accuracy
+                                else         -> 1.2f    // CAR good accuracy (~4.3 km/h) allows turning / roundabout heading
                             }
                         }
 

@@ -20,18 +20,18 @@ import kotlin.math.cos
 class AccuracyCircleOverlay(context: Context) : Overlay() {
 
     private val density = context.resources.displayMetrics.density
-    private val minRadiusPx = 10f * density
+    private val minRadiusPx = 14f * density
     private val maxRadiusPx = 120f * density
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x1A38BDF8.toInt() // ~10% opacity Sky Blue (#38BDF8)
+        color = 0x1A1A73E8 // ~10% opacity Google Blue (#1A73E8)
         style = Paint.Style.FILL
     }
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x4D38BDF8.toInt() // ~30% opacity Sky Blue (#38BDF8)
+        color = 0x4D1A73E8 // ~30% opacity Google Blue (#1A73E8)
         style = Paint.Style.STROKE
-        strokeWidth = 1.5f * density
+        strokeWidth = 1.0f * density
     }
 
     @Volatile

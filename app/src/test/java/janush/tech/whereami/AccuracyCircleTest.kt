@@ -7,9 +7,9 @@ import kotlin.math.cos
 class AccuracyCircleTest {
 
     @Test
-    fun `visual clamping enforces min 10dp and max 120dp bounds`() {
+    fun `visual clamping enforces min 14dp and max 120dp bounds`() {
         val density = 2.5f
-        val minRadiusPx = 10f * density // 25px
+        val minRadiusPx = 14f * density // 35px
         val maxRadiusPx = 120f * density // 300px
 
         // Extremely tight RTK accuracy: 1.5m -> e.g. 10px target

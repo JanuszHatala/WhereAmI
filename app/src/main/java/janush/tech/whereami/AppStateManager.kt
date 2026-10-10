@@ -399,7 +399,7 @@ class AppStateManager private constructor(private val context: Context) {
             else -> 7000L to 4000L
         }
         val (stationaryInterval, stationaryMinInterval) = when {
-            isAuto -> 10000L to 5000L
+            isAuto -> 3000L to 1500L
             else -> 25000L to 15000L
         }
 
@@ -424,8 +424,8 @@ class AppStateManager private constructor(private val context: Context) {
                         stationarySinceMs = now
                     }
                     val stationaryDuration = now - stationarySinceMs
-                    // After 10 seconds of verified stationary dwell, relax GPS sampling
-                    if (stationaryDuration >= 10_000L && !isStationaryCadenceApplied) {
+                    // After 20 seconds of verified stationary dwell, relax GPS sampling
+                    if (stationaryDuration >= 20_000L && !isStationaryCadenceApplied) {
                         TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Stationary for ${stationaryDuration / 1000}s. Relaxing cadence (isAuto=$isAuto, interval=${stationaryInterval}ms).")
                         locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
                         isStationaryCadenceApplied = true
