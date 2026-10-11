@@ -18,7 +18,9 @@ class PositionInterpolator {
         val lng: Double,
         val bearing: Float?,
         val speedMs: Float,
-        val isExtrapolated: Boolean
+        val isExtrapolated: Boolean,
+        val accuracy: Float? = null,
+        val isAnchored: Boolean = false
     )
 
     private var lastFixLat: Double = 0.0
@@ -26,6 +28,8 @@ class PositionInterpolator {
     private var lastFixBearing: Float? = null
     private var lastFixSpeedMs: Float = 0f
     private var lastFixTimestamp: Long = 0L
+    private var lastFixAccuracy: Float? = null
+    private var lastFixIsAnchored: Boolean = false
 
     // Smooth transition from previous extrapolated position to new GPS fix
     private var blendStartLat: Double = 0.0
@@ -36,7 +40,17 @@ class PositionInterpolator {
     private val blendDurationMs: Long = 250L
 
     @Synchronized
-    fun onNewFix(lat: Double, lng: Double, bearing: Float?, speedMs: Float, timestamp: Long) {
+    fun onNewFix(
+        lat: Double,
+        lng: Double,
+        bearing: Float?,
+        speedMs: Float,
+        timestamp: Long,
+        accuracy: Float? = null,
+        isAnchored: Boolean = false
+    ) {
+        lastFixAccuracy = accuracy
+        lastFixIsAnchored = isAnchored
         if (lastFixTimestamp == 0L) {
             // First fix anchor
             lastFixLat = lat
@@ -100,9 +114,17 @@ class PositionInterpolator {
             return InterpolatedPoint(0.0, 0.0, null, 0f, false)
         }
 
-        // If stationary (< 0.35 m/s or ~1.2 km/h), lock strictly to fix coordinates without drifting
-        if (lastFixSpeedMs < 0.35f) {
-            return InterpolatedPoint(lastFixLat, lastFixLng, lastFixBearing, 0f, false)
+        // If stationary (< 0.35 m/s or ~1.2 km/h) or anchored, lock strictly to fix coordinates without drifting
+        if (lastFixIsAnchored || lastFixSpeedMs < 0.35f) {
+            return InterpolatedPoint(
+                lat = lastFixLat,
+                lng = lastFixLng,
+                bearing = lastFixBearing,
+                speedMs = 0f,
+                isExtrapolated = false,
+                accuracy = lastFixAccuracy,
+                isAnchored = lastFixIsAnchored
+            )
         }
 
         // Blending phase after new fix (first 250ms)
@@ -125,13 +147,15 @@ class PositionInterpolator {
             lng = lng,
             bearing = lastFixBearing,
             speedMs = lastFixSpeedMs,
-            isExtrapolated = isExtrapolated
+            isExtrapolated = isExtrapolated,
+            accuracy = lastFixAccuracy,
+            isAnchored = lastFixIsAnchored
         )
     }
 
     @Synchronized
     fun isStationary(): Boolean {
-        return lastFixSpeedMs < 0.35f
+        return lastFixIsAnchored || lastFixSpeedMs < 0.35f
     }
 
     @Synchronized
@@ -141,6 +165,8 @@ class PositionInterpolator {
         lastFixBearing = null
         lastFixSpeedMs = 0f
         lastFixTimestamp = 0L
+        lastFixAccuracy = null
+        lastFixIsAnchored = false
         blendStartTime = 0L
     }
 }

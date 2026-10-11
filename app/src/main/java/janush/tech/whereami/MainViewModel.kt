@@ -638,6 +638,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun requestOneShotLocation() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                locationManager.getCurrentLocationSingle(_displayLanguage.value)
+            } catch (_: Exception) {}
+        }
+    }
+
     fun resetAllSettingsToDefaults() {
         appPrefs.edit().clear().apply()
         locPrefs.edit().remove("display_language").apply()

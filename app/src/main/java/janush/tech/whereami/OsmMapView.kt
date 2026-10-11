@@ -221,6 +221,7 @@ fun fitPointsToUnobstructedViewport(
     measuredTopInsetPx: Int? = null,
     measuredBottomInsetPx: Int? = null,
     isRecording: Boolean = false,
+    isAutoStandby: Boolean = false,
     onZoomCalculated: ((Double) -> Unit)? = null
 ) {
     if (points.isEmpty()) return
@@ -254,8 +255,8 @@ fun fitPointsToUnobstructedViewport(
         val rightControlsDp = 72f
 
         // Minimum bottom clearance must guarantee clear space above bottom toolbar and floating Recenter pill
-        // Floating recenter button is at padding(bottom = if (isRecording) 136.dp else 78.dp) + height 40.dp
-        val minBottomInsetDp = if (isRecording) 186f else 130f
+        // Floating recenter button is at padding(bottom = if (isRecording || isAutoStandby) 136.dp else 78.dp) + height 40.dp
+        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 130f
         val minBottomInsetPx = (minBottomInsetDp * density).toInt()
 
         val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
@@ -443,6 +444,9 @@ fun OsmMapView(
     measuredTopInsetPx: Int? = null,
     measuredBottomInsetPx: Int? = null,
     isRecording: Boolean = false,
+    isAutoStandby: Boolean = false,
+    recenterTrigger: Long = 0L,
+    onFollowingChanged: ((Boolean) -> Unit)? = null,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
@@ -506,6 +510,7 @@ fun OsmMapView(
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
+    val accuracyOverlay = remember(context) { AccuracyCircleOverlay(context) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     val prefs = remember(context) {
@@ -545,7 +550,15 @@ fun OsmMapView(
         PositionInterpolator().apply {
             val initFix = currentFix
             if (initFix != null && initFix.lat != 0.0 && initFix.lng != 0.0) {
-                onNewFix(initFix.lat, initFix.lng, initFix.bearing, initFix.speedMs, initFix.timestamp)
+                onNewFix(
+                    initFix.lat,
+                    initFix.lng,
+                    initFix.bearing,
+                    initFix.speedMs,
+                    initFix.timestamp,
+                    initFix.accuracy,
+                    initFix.isAnchored
+                )
             }
         }
     }
@@ -631,7 +644,15 @@ fun OsmMapView(
     // Feed new GPS fixes into the interpolator
     LaunchedEffect(currentFix) {
         val fix = currentFix ?: return@LaunchedEffect
-        posInterpolator.onNewFix(fix.lat, fix.lng, fix.bearing, fix.speedMs, fix.timestamp)
+        posInterpolator.onNewFix(
+            fix.lat,
+            fix.lng,
+            fix.bearing,
+            fix.speedMs,
+            fix.timestamp,
+            fix.accuracy,
+            fix.isAnchored
+        )
         if (fix.bearing != null) {
             lastFrozenBearing = fix.bearing
         }
@@ -702,7 +723,18 @@ fun OsmMapView(
                     val gp = GeoPoint(pt.lat, pt.lng)
                     val effectiveBearing = pt.bearing ?: lastFrozenBearing
                     val isMoving = !posInterpolator.isStationary()
-                    val hasHeading = if (!isRecording && !isMoving) false else (effectiveBearing != null)
+                    val hasHeading = isMoving && (effectiveBearing != null)
+
+                    if (!map.overlays.contains(accuracyOverlay)) {
+                        val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
+                        if (mIdx >= 0) {
+                            map.overlays.add(mIdx, accuracyOverlay)
+                        } else {
+                            map.overlays.add(accuracyOverlay)
+                        }
+                    }
+                    val effectiveAccuracy = pt.accuracy ?: currentFix?.accuracy
+                    accuracyOverlay.updatePosition(pt.lat, pt.lng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
                         it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -1146,6 +1178,7 @@ fun OsmMapView(
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
                 isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1166,6 +1199,7 @@ fun OsmMapView(
                 measuredTopInsetPx = measuredTopInsetPx,
                 measuredBottomInsetPx = measuredBottomInsetPx,
                 isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
                 onZoomCalculated = { currentZoom = it }
             )
         }
@@ -1195,6 +1229,22 @@ fun OsmMapView(
                     map.zoomToBoundingBox(paddedBox, true, 120)
                 } catch (e: Exception) {}
             }
+        }
+    }
+
+    LaunchedEffect(isFollowing) {
+        onFollowingChanged?.invoke(isFollowing)
+    }
+
+    LaunchedEffect(recenterTrigger) {
+        if (recenterTrigger > 0L) {
+            isFollowing = true
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
+                mapView?.controller?.setCenter(centerGp)
+            }
+            mapView?.invalidate()
         }
     }
 
@@ -1437,6 +1487,7 @@ fun OsmMapView(
                                 measuredTopInsetPx = measuredTopInsetPx,
                                 measuredBottomInsetPx = measuredBottomInsetPx,
                                 isRecording = isRecording,
+                                isAutoStandby = isAutoStandby,
                                 onZoomCalculated = { currentZoom = it }
                             )
                         },
@@ -1502,10 +1553,10 @@ fun OsmMapView(
                 68.dp
             } else {
                 when {
-                    showHeatMap && isRecording -> 180.dp
-                    showHeatMap               -> 136.dp
-                    isRecording               -> 136.dp
-                    else                      -> 78.dp
+                    showHeatMap && (isRecording || isAutoStandby) -> 180.dp
+                    showHeatMap                                   -> 136.dp
+                    isRecording || isAutoStandby                  -> 136.dp
+                    else                                          -> 78.dp
                 }
             }
             Surface(
@@ -2318,42 +2369,62 @@ private fun makeDestIcon(context: Context): android.graphics.drawable.BitmapDraw
 }
 
 private fun makeMarkerIcon(context: Context, hasBearing: Boolean): android.graphics.drawable.BitmapDrawable {
-    val size = (context.resources.displayMetrics.density * 32).toInt()
-    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bmp)
-    val cx = size / 2f
-    val cy = size / 2f
-    val radius = size / 2f - 4
-
-    val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-    canvas.drawCircle(cx, cy, radius + 3, ringPaint)
-
+    val density = context.resources.displayMetrics.density
     if (!hasBearing) {
+        // Small, crisp Google Maps-style stationary position dot (16dp diameter, 2dp white border)
+        val size = (18f * density).toInt().coerceAtLeast(18)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val cy = size / 2f
+        val dotRadius = 6.0f * density
+        val whiteBorderWidth = 2.0f * density
+
+        val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            setShadowLayer(2f * density, 0f, 1f * density, 0x40000000)
+        }
+        canvas.drawCircle(cx, cy, dotRadius + whiteBorderWidth, ringPaint)
+
         val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0EA5E9")
+            color = Color.parseColor("#1A73E8") // Google Maps signature blue
             style = Paint.Style.FILL
         }
-        canvas.drawCircle(cx, cy, radius, dotPaint)
+        canvas.drawCircle(cx, cy, dotRadius, dotPaint)
+
+        return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
     } else {
-        // Draw arrow pointing North (0° up) - Marker rotation & flat orientation handle map alignment
+        // Directional navigation arrow (28dp)
+        val size = (28f * density).toInt().coerceAtLeast(28)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val cy = size / 2f
+        val radius = size / 2f - (3f * density)
+
+        val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            setShadowLayer(2f * density, 0f, 1f * density, 0x40000000)
+        }
+        canvas.drawCircle(cx, cy, radius + (2f * density), ringPaint)
+
         val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0EA5E9")
+            color = Color.parseColor("#1A73E8") // Google Maps signature blue
             style = Paint.Style.FILL
         }
         val path = Path().apply {
             moveTo(cx, cy - radius)
-            lineTo(cx - radius * 0.55f, cy + radius * 0.7f)
+            lineTo(cx - radius * 0.55f, cy + radius * 0.65f)
             lineTo(cx, cy + radius * 0.25f)
-            lineTo(cx + radius * 0.55f, cy + radius * 0.7f)
+            lineTo(cx + radius * 0.55f, cy + radius * 0.65f)
             close()
         }
         canvas.drawPath(path, arrowPaint)
-    }
 
-    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+        return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+    }
 }
 
 private fun makeSavedPlaceIcon(context: Context, place: SavedPlace): android.graphics.drawable.BitmapDrawable {

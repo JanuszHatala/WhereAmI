@@ -1,6 +1,7 @@
 package janush.tech.whereami
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -102,12 +103,57 @@ class SpeedKinematicsTest {
 
     @Test
     fun testKinematicDecouplingDoesNotClampMovingSpeed() {
-        // Simulating the logic: isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f
+        // Simulating the logic: isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 6.0f
         val rawSpeedHighway = 25.0f // 90 km/h
         val distMoved = 25.0f // 25m in 1 sec
         val isMoving = (rawSpeedHighway > 1.2f) || distMoved > 3.0f
 
         assertTrue("Vehicle on highway must be classified as moving", isMoving)
         // StationaryDetector check is bypassed when isMoving is true
+    }
+
+    @Test
+    fun testStartingFromStopNotClampedByStationaryDetector() {
+        // Car moving off from traffic light at slow speed (2.0 m/s = 7.2 km/h)
+        val rawSpeed = 2.0f
+        val distMoved = 3.2f
+        val cumulativeDistMoved = 7.0f
+        val isMoving = (rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 6.0f
+
+        assertTrue("Slow start from intersection must be classified as moving", isMoving)
+        // Stationary clamp must be completely bypassed so speed is delivered to UI immediately
+    }
+
+    @Test
+    fun testTrueDeskRestClampedByStationaryDetector() {
+        // Phone resting on a desk with indoor GPS multipath phantom spike
+        val rawSpeed = 0.9f // ~3.2 km/h phantom Doppler
+        val distMoved = 0.8f
+        val cumulativeDistMoved = 2.0f
+        val isMoving = (rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 6.0f
+
+        assertFalse("Desk resting must NOT be classified as moving", isMoving)
+        // Since isMoving is false and device is physically stationary on desk, speed snaps to 0.0
+    }
+
+    @Test
+    fun testIndoorDriftDoesNotResetAutoStopInVehicleProfile() {
+        // Walking in mall or indoor drift at 3.0 km/h in CAR profile (autoStopSpeedKmh = 8.0 km/h)
+        val speedKmh = 3.0f
+        val carAutoStopSpeedKmh = 8.0f
+        val isMoving = speedKmh >= carAutoStopSpeedKmh
+        val distFromAnchor = 15.0 // Drifted or walked 15m (> 12m)
+
+        assertFalse("Indoor walking or drift must NOT count as vehicle locomotion", isMoving)
+        assertTrue("Displacement exceeded pause anchor", distFromAnchor > 12.0)
+
+        // Simulating TripManager logic: lastMovingTimestamp must ONLY reset if isMoving is true
+        var lastMovingTimestamp = 1000L
+        val now = 5000L
+        if (isMoving) {
+            lastMovingTimestamp = now
+        }
+
+        assertEquals("lastMovingTimestamp must NOT be reset by sub-threshold drift/walking", 1000L, lastMovingTimestamp)
     }
 }

@@ -388,13 +388,13 @@ class StreetResolutionTest {
 
             val rawRequiredCount = when {
                 speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 8 else 2
-                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 5 else 2
-                else -> if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 3 else 2
+                else -> if (isCommittedMajor && !isCandidateMajor) 4 else 3
             }
             val rawRequiredDuration = when {
                 speedKmh > 35f -> if (isCommittedMajor && !isCandidateMajor) 12_000L else 2_000L
-                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_000L
-                else -> if (isCommittedMajor && !isCandidateMajor) 6_000L else 2_500L
+                speedKmh > 15f -> if (isCommittedMajor && !isCandidateMajor) 3_500L else 2_000L
+                else -> if (isCommittedMajor && !isCandidateMajor) 4_500L else 2_500L
             }
 
             val requiredCount = rawRequiredCount
@@ -644,6 +644,52 @@ class StreetResolutionTest {
             now = 2000L
         )
         assertEquals("Must reject house-numbered side-street 'Czerwona 129' while driving on corridor", "Niepodległości", candidateFix)
+    }
+
+    @Test
+    fun `Turning from major Krakowska to side street Skotnica commits promptly after 3 confirmations and 3500ms`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // 1. Driving along major corridor ul. Krakowska (DK52) in Kozy
+        val initialFix = model.processFix(
+            rawStreetPl = "ul. Krakowska (DK52)",
+            city = "Kozy",
+            roadRef = "DK52",
+            speedKmh = 50f,
+            now = 1000L
+        )
+        assertEquals("ul. Krakowska (DK52)", initialFix)
+
+        // 2. Slow down and turn into residential side street ul. Skotnica at 25 km/h
+        // Fix 1 (1.0s after turn): Candidate seen, but shields major corridor against momentary jitter
+        val fix1 = model.processFix(
+            rawStreetPl = "ul. Skotnica",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 25f,
+            now = 2000L
+        )
+        assertEquals("ul. Krakowska (DK52)", fix1)
+
+        // Fix 2 (2.5s after turn): Still pending duration threshold (need >= 3500ms)
+        val fix2 = model.processFix(
+            rawStreetPl = "ul. Skotnica",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 25f,
+            now = 3500L
+        )
+        assertEquals("ul. Krakowska (DK52)", fix2)
+
+        // Fix 3 (4.0s after turn): 3rd consecutive confirmation and 3600ms >= 3500ms duration -> COMMITTED!
+        val fix3 = model.processFix(
+            rawStreetPl = "ul. Skotnica",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 25f,
+            now = 5600L
+        )
+        assertEquals("Must promptly switch to ul. Skotnica without excessive delay", "ul. Skotnica", fix3)
     }
 }
 
