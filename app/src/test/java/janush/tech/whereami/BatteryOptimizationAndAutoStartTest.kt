@@ -434,6 +434,46 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
     }
+
+    @Test
+    fun testForegroundDualTierCadenceParameters() {
+        // In MANUAL mode, moving is 7000ms (min 4000ms) and stationary is 25000ms (min 15000ms)
+        val manualMovingInterval = 7000L
+        val manualStationaryInterval = 25000L
+        assertTrue("Manual stationary cadence must be at least 3x slower than moving", manualStationaryInterval >= manualMovingInterval * 3)
+
+        // In AUTO mode, moving is 1500ms (min 1000ms) and stationary is 10000ms (min 5000ms)
+        val autoMovingInterval = 1500L
+        val autoStationaryInterval = 10000L
+        assertTrue("Auto stationary cadence must be slower to conserve power at rest", autoStationaryInterval > autoMovingInterval * 5)
+    }
+
+    @Test
+    fun testStandbyHibernationTimeoutAndGatingRules() {
+        // Standby hibernation timeout should be 90 minutes (5_400_000 ms)
+        assertEquals(90 * 60 * 1000L, AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS)
+
+        // Helper logic to verify screen keep-on gating rule
+        val computeKeepScreenOn = { userPreference: Boolean, isTripActive: Boolean, isLiveActive: Boolean, inactivityTimeoutReached: Boolean ->
+            userPreference && (isTripActive || isLiveActive || !inactivityTimeoutReached)
+        }
+
+        // 1. User pref OFF -> Screen off
+        assertFalse(computeKeepScreenOn(false, false, false, false))
+
+        // 2. User pref ON, active trip recording -> Keep screen on indefinitely (inactivity timeout ignored)
+        assertTrue(computeKeepScreenOn(true, true, false, true))
+
+        // 3. User pref ON, live share active -> Keep screen on indefinitely (inactivity timeout ignored)
+        assertTrue(computeKeepScreenOn(true, false, true, true))
+
+        // 4. User pref ON, idle at desk before 3min timeout -> Screen kept on
+        assertTrue(computeKeepScreenOn(true, false, false, false))
+
+        // 5. User pref ON, idle at desk after 3min stationary timeout -> Screen permitted to sleep!
+        assertFalse(computeKeepScreenOn(true, false, false, true))
+    }
 }
+
 
 

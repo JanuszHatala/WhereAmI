@@ -618,7 +618,9 @@ class TripManager private constructor(private val context: Context) {
                     pauseAnchorLocation = null
                     pauseAnchorFirstStationaryTime = null
                     movingSinceInPauseTimestamp = null
-                    lastMovingTimestamp = now
+                    if (isMoving) {
+                        lastMovingTimestamp = now
+                    }
                 }
             } else {
                 // Not in active pause: reset anchor if moved outside 12m
@@ -627,7 +629,9 @@ class TripManager private constructor(private val context: Context) {
                     pauseAnchorFirstStationaryTime = now
                 }
                 movingSinceInPauseTimestamp = null
-                lastMovingTimestamp = now
+                if (isMoving) {
+                    lastMovingTimestamp = now
+                }
             }
         } else {
             // Stationary: inside <= 12m cluster and speed < autoStopSpeedKmh

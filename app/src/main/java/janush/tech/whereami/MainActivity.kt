@@ -21,6 +21,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -96,6 +101,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         AppStateManager.getInstance(this).setAppForegroundState(true)
         CacheManager.getInstance(this).calculateCacheDeficit()
+        viewModel.requestOneShotLocation()
     }
 
     override fun onStop() {
@@ -328,6 +334,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     var placeToDelete by remember { mutableStateOf<SavedPlace?>(null) }
     var editingSavedPlace by remember { mutableStateOf<SavedPlace?>(null) }
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
+    var isMapFollowing by remember { mutableStateOf(true) }
+    var recenterTrigger by remember { mutableStateOf(0L) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val liveSession by liveSharingManager.currentSession.collectAsState()
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
@@ -394,9 +402,43 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    // Keep Screen On handler
-    DisposableEffect(keepScreenOn) {
-        if (keepScreenOn) {
+    // Smart Keep Screen On handler:
+    // When keepScreenOn is toggled ON, keep the screen awake during active trip recording, live sharing,
+    // or while actively moving/interacting. If stationary for >= 3 minutes with no active trip and no live share,
+    // gracefully clear FLAG_KEEP_SCREEN_ON so the display can sleep normally (preventing overnight battery drain).
+    val isPhysicallyStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
+    val isLiveSharingActive = liveSession?.isActive == true
+    var screenStationarySinceMs by remember { mutableStateOf(0L) }
+    var screenInactivityTimeoutReached by remember { mutableStateOf(false) }
+
+    LaunchedEffect(keepScreenOn, activeTrip, isLiveSharingActive, isPhysicallyStationary, currentLocationFix?.speedMs) {
+        if (!keepScreenOn || activeTrip != null || isLiveSharingActive) {
+            screenStationarySinceMs = 0L
+            screenInactivityTimeoutReached = false
+            return@LaunchedEffect
+        }
+        val speed = currentLocationFix?.speedMs ?: 0f
+        val isStopped = isPhysicallyStationary || speed < 0.35f
+        if (isStopped) {
+            if (screenStationarySinceMs == 0L) {
+                screenStationarySinceMs = android.os.SystemClock.elapsedRealtime()
+            }
+            while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == true && !screenInactivityTimeoutReached) {
+                kotlinx.coroutines.delay(10_000L)
+                val elapsed = android.os.SystemClock.elapsedRealtime() - screenStationarySinceMs
+                if (elapsed >= 3 * 60 * 1000L) { // 3 minutes stationary dwell
+                    screenInactivityTimeoutReached = true
+                }
+            }
+        } else {
+            screenStationarySinceMs = 0L
+            screenInactivityTimeoutReached = false
+        }
+    }
+
+    DisposableEffect(keepScreenOn, activeTrip, isLiveSharingActive, screenInactivityTimeoutReached) {
+        val shouldKeepScreenOn = keepScreenOn && (activeTrip != null || isLiveSharingActive || !screenInactivityTimeoutReached)
+        if (shouldKeepScreenOn) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -553,6 +595,29 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
+    // ── Hierarchical System Back Gesture / Key Handler ───────────────────────
+    // Intercepts back swipes to dismiss active overlays, clear destinations,
+    // or recenter the map before allowing the system to minimize the app.
+    val hasOverlaySelection = selectedSavedPlace != null ||
+            destinationPoint != null ||
+            selectedGuestDetails != null ||
+            selectedTripsList.isNotEmpty()
+    BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
+        when {
+            selectedGuestDetails != null -> selectedGuestDetails = null
+            selectedSavedPlace != null -> selectedSavedPlace = null
+            destinationPoint != null -> {
+                viewModel.setDestination(null)
+                viewModel.clearPinnedBorders()
+            }
+            selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
+            !isMapFollowing -> {
+                recenterTrigger = System.currentTimeMillis()
+                isMapFollowing = true
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -607,6 +672,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             measuredTopInsetPx = topCardBottomPx,
             measuredBottomInsetPx = bottomControlsTopPx,
             isRecording = activeTrip != null,
+            isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
+            recenterTrigger = recenterTrigger,
+            onFollowingChanged = { isMapFollowing = it },
             pauses = allDisplayPauses,
             orientationMode = orientationMode,
             onOrientationModeChange = { viewModel.setOrientationMode(it) },
@@ -985,6 +1053,86 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
 
+        // ── Floating Compact Standby HUD Bar (Auto-Start Enabled, Waiting for Motion in Portrait) ────
+        if (!showTripsSheet && !isLandscape && activeTrip == null && tripMode == TripMode.AUTO) {
+            val autoSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
+            val infiniteTransition = rememberInfiniteTransition(label = "autoStandbyPulse")
+            val pulseAlpha by infiniteTransition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "standbyAlpha"
+            )
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = 82.dp
+                    )
+                    .clickable {
+                        dismissAllDialogs()
+                        showSettingsSheet = true
+                    },
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xF20F172A),
+                border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF38BDF8).copy(alpha = pulseAlpha))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Auto-detect standby:",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 12.sp
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 12.sp
+                        )
+                    )
+                }
+            }
+        }
+
         // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
         if (!showTripsSheet) {
             val recTrip = activeTrip
@@ -1078,6 +1226,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onLandscapePauseResume = {
                     if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
                 },
+                isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
+                landscapeAutoSpeed = if (isLandscape && tripMode == TripMode.AUTO && activeTrip == null) viewModel.getAutoStartSpeedForProfile(activityProfile) else null,
                 landscapeShowHeatMap = isLandscape && showHeatMap,
                 heatMapFilterActive = heatMapFilterState.hasActiveFilter,
                 onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -1095,6 +1245,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             showHeatMap && activeTrip != null -> 700.dp
                             showHeatMap -> 520.dp
                             activeTrip != null -> 580.dp
+                            tripMode == TripMode.AUTO -> 580.dp
                             else -> 420.dp
                         }
                     } else 440.dp)
@@ -8987,6 +9138,8 @@ private fun MainBottomControlsCard(
     landscapeHudDistKm: Double? = null,
     landscapeIsPaused: Boolean = false,
     onLandscapePauseResume: (() -> Unit)? = null,
+    isAutoStandby: Boolean = false,
+    landscapeAutoSpeed: Float? = null,
     landscapeShowHeatMap: Boolean = false,
     heatMapFilterActive: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
@@ -9024,7 +9177,7 @@ private fun MainBottomControlsCard(
                 )
             }
 
-            // 2. Trip Recording Pill (Start / Stop / REC status)
+            // 2. Trip Recording Pill (Start / Stop / REC)
             Row(
                 modifier = Modifier
                     .height(40.dp)
@@ -9038,7 +9191,7 @@ private fun MainBottomControlsCard(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(if (isRecording) Color(0xFFEF4444) else Color(0xFF10B981))
+                        .background(Color(0xFFEF4444))
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
@@ -9316,6 +9469,38 @@ private fun MainBottomControlsCard(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // 10. Landscape Inline Auto-Start Standby HUD (shown when AUTO is enabled and not recording)
+            if (landscapeAutoSpeed != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xF20F172A),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                    modifier = Modifier.clickable { onShowSettings() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8))
+                        )
+                        Text(
+                            text = String.format(Locale.getDefault(), "AUTO • >%.0f km/h", landscapeAutoSpeed),
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }
