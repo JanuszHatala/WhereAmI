@@ -63,6 +63,12 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
     - Wake locks MUST be released (`updateWakeLock(false)`).
     - Hardware `Sensor.TYPE_SIGNIFICANT_MOTION` is armed to trigger confirmation bursts directly within the existing FGS process.
   - Never attempt to stop the FGS in `IDLE` expecting to restart it later from background sensors or receivers.
+- **Smart `FLAG_KEEP_SCREEN_ON` Inactivity Gating**:
+  - When `pref_keep_screen_on` is enabled, the screen remains awake continuously during active trip recording, live sharing, or active movement.
+  - When verified physically stationary for $\ge 3$ minutes without an active trip and without live sharing, `FLAG_KEEP_SCREEN_ON` MUST be cleared to allow Android display sleep and prevent overnight battery drain at home or on desks.
+- **Standby Hibernation & One-Tap Controls**:
+  - In `TripMode.AUTO` standby with screen off, after 90 minutes of verified stationary rest (`STANDBY_HIBERNATION_TIMEOUT_MS`), `AppStateManager` transitions the standby foreground service into hibernation, completely disarming `Sensor.TYPE_SIGNIFICANT_MOTION`.
+  - Standby notification MUST include `[🌙 Sleep Now]` (immediate hibernation) and sleep notification MUST provide `[▶ Activate]` (user-interaction wakeup complying with Android 14+ FGS restrictions). Standby sleep also automatically wakes on app resume (`MainActivity.onStart()`).
   - In `TripMode.MANUAL`, when screen turns off without an active trip or live sharing, the service and notification MUST stop completely (Option A).
 - **Adaptive GPS Sampling**:
   - Recording/Charging: High frequency (~5s–6s sampling).
@@ -180,6 +186,11 @@ To maintain production stability on `master`, the following Git workflow is **st
    git merge --no-ff <branch-name>
    git push origin master
    ```
+6. **Post-Merge Branch Pruning & Remote Cleanup**: Immediately after merging to `master` and pushing:
+   - Delete the merged local branch: `git branch -d <branch-name>`
+   - Delete the merged remote branch pointer on GitHub: `git push origin --delete <branch-name>`
+   - Prune stale remote tracking refs: `git remote prune origin`
+   - Never leave dead merged branches dangling; the full history and commit tree are permanently retained in `master`'s non-fast-forward merge commit.
 
 ### 3. Persistent Tracking Registers
 - Update `docs/ENHANCEMENT_TRACKER.md` after completing each sprint item or milestone.
@@ -221,6 +232,10 @@ Whenever the user reports field testing feedback, mentions test results, or uplo
    - Explain the root cause identified, technical action taken, and link to modified files/symbols.
    - List all additional telemetry findings or unprompted bugs caught and resolved.
    - Update `docs/ENHANCEMENT_TRACKER.md`.
+5. **Telemetry Lifecycle, Data Backup & Workspace Cleanup**:
+   - Diagnostic text logs (`logcat_*.txt`, `dumpsys_*.txt`), process traces, and temporary round extraction folders (`device_data_round_*`, `phone_diagnostics*`, `device_dump_*`, `diagnostic_pull_*`, `.device_telemetry`) are strictly ephemeral.
+   - Authoritative database snapshots or reference traces to preserve must be copied to the dedicated `device_backup/` directory (`device_backup/databases/`, `device_backup/shared_prefs/`).
+   - Once fixes are implemented, verified by unit tests, merged, or verified on-device, delete the temporary extraction folders (`rm -rf device_data_round_* phone_diagnostics* device_dump_* diagnostic_pull_* .device_telemetry`) to prevent multi-gigabyte workspace bloat. Never commit raw temporary test dumps into git.
 
 ---
 
