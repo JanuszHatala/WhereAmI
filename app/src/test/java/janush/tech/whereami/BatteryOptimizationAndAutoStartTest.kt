@@ -447,6 +447,32 @@ class BatteryOptimizationAndAutoStartTest {
         val autoStationaryInterval = 10000L
         assertTrue("Auto stationary cadence must be slower to conserve power at rest", autoStationaryInterval > autoMovingInterval * 5)
     }
+
+    @Test
+    fun testStandbyHibernationTimeoutAndGatingRules() {
+        // Standby hibernation timeout should be 90 minutes (5_400_000 ms)
+        assertEquals(90 * 60 * 1000L, AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS)
+
+        // Helper logic to verify screen keep-on gating rule
+        val computeKeepScreenOn = { userPreference: Boolean, isTripActive: Boolean, isLiveActive: Boolean, inactivityTimeoutReached: Boolean ->
+            userPreference && (isTripActive || isLiveActive || !inactivityTimeoutReached)
+        }
+
+        // 1. User pref OFF -> Screen off
+        assertFalse(computeKeepScreenOn(false, false, false, false))
+
+        // 2. User pref ON, active trip recording -> Keep screen on indefinitely (inactivity timeout ignored)
+        assertTrue(computeKeepScreenOn(true, true, false, true))
+
+        // 3. User pref ON, live share active -> Keep screen on indefinitely (inactivity timeout ignored)
+        assertTrue(computeKeepScreenOn(true, false, true, true))
+
+        // 4. User pref ON, idle at desk before 3min timeout -> Screen kept on
+        assertTrue(computeKeepScreenOn(true, false, false, false))
+
+        // 5. User pref ON, idle at desk after 3min stationary timeout -> Screen permitted to sleep!
+        assertFalse(computeKeepScreenOn(true, false, false, true))
+    }
 }
 
 

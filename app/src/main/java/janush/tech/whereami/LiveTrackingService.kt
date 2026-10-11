@@ -27,11 +27,14 @@ class LiveTrackingService : Service() {
     private val CHANNEL_ID = "live_tracking_channel"
 
     companion object {
+        const val NOTIF_SLEEP_ID = 3
         const val ACTION_PAUSE_RESUME = "janush.tech.whereami.ACTION_PAUSE_RESUME"
         const val ACTION_SYNC_NOW = "janush.tech.whereami.ACTION_SYNC_NOW"
         const val ACTION_STOP = "janush.tech.whereami.ACTION_STOP"
         const val ACTION_DISABLE_AUTO_START = "janush.tech.whereami.ACTION_DISABLE_AUTO_START"
         const val ACTION_ENTER_STANDBY = "janush.tech.whereami.ACTION_ENTER_STANDBY"
+        const val ACTION_STANDBY_SLEEP = "janush.tech.whereami.ACTION_STANDBY_SLEEP"
+        const val ACTION_STANDBY_ACTIVATE = "janush.tech.whereami.ACTION_STANDBY_ACTIVATE"
         const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
         const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
     }
@@ -131,6 +134,31 @@ class LiveTrackingService : Service() {
                 evaluateServiceState()
                 return START_STICKY
             }
+            ACTION_STANDBY_SLEEP -> {
+                val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+                val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+                val hasLive = liveSession != null && liveSession.isActive
+                if (!hasTrip && !hasLive) {
+                    stopLocationTracking()
+                    updateWakeLock(false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
+                    postSleepNotification()
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                return START_STICKY
+            }
+            ACTION_STANDBY_ACTIVATE -> {
+                val appStateMgr = AppStateManager.getInstance(this)
+                appStateMgr.wakeStandbySleep()
+                evaluateServiceState()
+                return START_STICKY
+            }
             ACTION_PAUSE_RESUME -> {
                 val sharingMgr = LiveSharingManager.getInstance(this)
                 val sess = sharingMgr.currentSession.value
@@ -159,6 +187,51 @@ class LiveTrackingService : Service() {
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
 
         return if (hasTrip || hasLive || isAuto) START_STICKY else START_NOT_STICKY
+    }
+
+    private fun postSleepNotification() {
+        try {
+            val contentIntent = android.app.PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java).apply {
+                    this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val activateIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.app.PendingIntent.getForegroundService(
+                    this,
+                    5,
+                    Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_ACTIVATE },
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+            } else {
+                android.app.PendingIntent.getService(
+                    this,
+                    5,
+                    Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_ACTIVATE },
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+
+            val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("🌙 WhereAmI Standby Sleeping")
+                .setContentText("Auto-detect paused for battery savings • Tap to activate")
+                .setSmallIcon(R.drawable.ic_stat_location)
+                .setContentIntent(contentIntent)
+                .setOngoing(false)
+                .setAutoCancel(false)
+                .setOnlyAlertOnce(true)
+                .addAction(0, formatActionTitle("▶ Activate", "#10B981"), activateIntent)
+
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIF_SLEEP_ID, builder.build())
+            TelemetryLogger.log("POWER", "Posted Standby Sleep notification (NOTIF_SLEEP_ID)")
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to post sleep notification: ${e.message}")
+        }
     }
 
     private fun startForegroundService() {
@@ -261,7 +334,16 @@ class LiveTrackingService : Service() {
             )
             builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
         } else if (activeTrip == null && isAuto) {
-            // Standby mode action: allow user to stop standby auto-recording directly from notification
+            // 1. Sleep Now Action (enter standby hibernation immediately)
+            val sleepIntent = android.app.PendingIntent.getService(
+                this,
+                6,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, formatActionTitle("🌙 Sleep Now", "#94A3B8"), sleepIntent)
+
+            // 2. Disable Auto-start Action
             val stopIntent = android.app.PendingIntent.getService(
                 this,
                 3,

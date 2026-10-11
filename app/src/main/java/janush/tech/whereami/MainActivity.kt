@@ -402,9 +402,43 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    // Keep Screen On handler
-    DisposableEffect(keepScreenOn) {
-        if (keepScreenOn) {
+    // Smart Keep Screen On handler:
+    // When keepScreenOn is toggled ON, keep the screen awake during active trip recording, live sharing,
+    // or while actively moving/interacting. If stationary for >= 3 minutes with no active trip and no live share,
+    // gracefully clear FLAG_KEEP_SCREEN_ON so the display can sleep normally (preventing overnight battery drain).
+    val isPhysicallyStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
+    val isLiveSharingActive = liveSession?.isActive == true
+    var screenStationarySinceMs by remember { mutableStateOf(0L) }
+    var screenInactivityTimeoutReached by remember { mutableStateOf(false) }
+
+    LaunchedEffect(keepScreenOn, activeTrip, isLiveSharingActive, isPhysicallyStationary, currentLocationFix?.speedMs) {
+        if (!keepScreenOn || activeTrip != null || isLiveSharingActive) {
+            screenStationarySinceMs = 0L
+            screenInactivityTimeoutReached = false
+            return@LaunchedEffect
+        }
+        val speed = currentLocationFix?.speedMs ?: 0f
+        val isStopped = isPhysicallyStationary || speed < 0.35f
+        if (isStopped) {
+            if (screenStationarySinceMs == 0L) {
+                screenStationarySinceMs = android.os.SystemClock.elapsedRealtime()
+            }
+            while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == true && !screenInactivityTimeoutReached) {
+                kotlinx.coroutines.delay(10_000L)
+                val elapsed = android.os.SystemClock.elapsedRealtime() - screenStationarySinceMs
+                if (elapsed >= 3 * 60 * 1000L) { // 3 minutes stationary dwell
+                    screenInactivityTimeoutReached = true
+                }
+            }
+        } else {
+            screenStationarySinceMs = 0L
+            screenInactivityTimeoutReached = false
+        }
+    }
+
+    DisposableEffect(keepScreenOn, activeTrip, isLiveSharingActive, screenInactivityTimeoutReached) {
+        val shouldKeepScreenOn = keepScreenOn && (activeTrip != null || isLiveSharingActive || !screenInactivityTimeoutReached)
+        if (shouldKeepScreenOn) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
