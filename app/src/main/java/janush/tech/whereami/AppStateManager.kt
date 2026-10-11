@@ -163,20 +163,18 @@ class AppStateManager private constructor(private val context: Context) {
     fun enterStandbySleep() {
         if (_isStandbySleeping.value) return
         val tripManager = TripManager.getInstance(context)
-        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
-        val hasLive = liveSession != null && liveSession.isActive
         val hasTrip = tripManager.activeTrip.value != null
 
-        // Inactive sleep only allowed when NOT recording and NOT live sharing
-        if (hasTrip || hasLive) {
-            TelemetryLogger.log("POWER", "Cannot enter standby sleep: active trip or live sharing in progress")
+        // Inactive sleep only forbidden during active trip recording
+        if (hasTrip) {
+            TelemetryLogger.log("POWER", "Cannot enter standby sleep: active trip recording in progress")
             return
         }
 
         _isStandbySleeping.value = true
         motionRearmJob?.cancel()
         MotionWakeManager.getInstance(context).disarm()
-        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping standby FGS).")
+        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS).")
 
         try {
             val intent = Intent(context, LiveTrackingService::class.java).apply {

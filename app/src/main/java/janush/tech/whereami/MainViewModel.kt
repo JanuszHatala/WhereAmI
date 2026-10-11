@@ -43,6 +43,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val powerPolicy: StateFlow<BatteryPowerPolicy> = appStateManager.powerPolicy
     val isCharging: StateFlow<Boolean> = appStateManager.isCharging
     val lifecycleMode: StateFlow<AppLifecycleMode> = appStateManager.currentMode
+    val isStandbySleeping: StateFlow<Boolean> = appStateManager.isStandbySleeping
+
+    fun enterStandbySleep() {
+        appStateManager.enterStandbySleep()
+    }
+
+    fun wakeStandbySleep() {
+        appStateManager.wakeStandbySleep()
+    }
+
+    fun toggleStandbySleep() {
+        if (appStateManager.isStandbySleeping.value) {
+            appStateManager.wakeStandbySleep()
+        } else {
+            appStateManager.enterStandbySleep()
+        }
+    }
 
     private val initialCoords: Triple<Double, Double, Float?>? = run {
         if (locPrefs.contains("lat") && locPrefs.contains("lng")) {
