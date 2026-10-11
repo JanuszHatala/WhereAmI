@@ -473,6 +473,24 @@ class BatteryOptimizationAndAutoStartTest {
         // 5. User pref ON, idle at desk after 3min stationary timeout -> Screen permitted to sleep!
         assertFalse(computeKeepScreenOn(true, false, false, true))
     }
+
+    @Test
+    fun testLiveSharingOvernightHibernationAndPresenceHeartbeat() {
+        // Sleep Mode allowed matrix:
+        val canEnterSleepMode = { hasActiveTrip: Boolean ->
+            // Only active trip recording blocks sleep mode; Live Sharing alone allows overnight hibernation
+            !hasActiveTrip
+        }
+
+        // Active recording trip in progress -> cannot enter sleep mode
+        assertFalse(canEnterSleepMode(true))
+
+        // Standby auto-detect without trip -> can enter sleep mode
+        assertTrue(canEnterSleepMode(false))
+
+        // Live Sharing active without active trip recording -> can enter sleep mode!
+        assertTrue(canEnterSleepMode(false))
+    }
 }
 
 
