@@ -283,6 +283,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
     val lifecycleMode by viewModel.lifecycleMode.collectAsState()
+    val isStandbySleeping by viewModel.isStandbySleeping.collectAsState()
 
     val selectedTripsList = remember(savedTrips, selectedTripIds) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
@@ -1074,14 +1075,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         start = 16.dp,
                         end = 16.dp,
                         bottom = 82.dp
-                    )
-                    .clickable {
-                        dismissAllDialogs()
-                        showSettingsSheet = true
-                    },
+                    ),
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xF20F172A),
-                border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                border = BorderStroke(1.dp, if (isStandbySleeping) Color(0xFF64748B) else Color(0xFF38BDF8)),
                 shadowElevation = 8.dp
             ) {
                 Row(
@@ -1089,46 +1086,100 @@ fun LocationScreen(viewModel: MainViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
+                    // Clickable left side opens Settings
+                    Row(
+                        modifier = Modifier.clickable {
+                            dismissAllDialogs()
+                            showSettingsSheet = true
+                        },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isStandbySleeping) Color(0xFF94A3B8)
+                                    else Color(0xFF38BDF8).copy(alpha = pulseAlpha)
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isStandbySleeping) "Auto-detect:" else "Auto-detect standby:",
+                            color = if (isStandbySleeping) Color(0xFF94A3B8) else Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 12.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = if (isStandbySleeping) {
+                                "Sleeping"
+                            } else {
+                                String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed)
+                            },
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 12.sp
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF38BDF8).copy(alpha = pulseAlpha))
+                            .height(14.dp)
+                            .width(1.dp)
+                            .background(Color(0xFF334155))
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Auto-detect standby:",
-                        color = Color(0xFF38BDF8),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 12.sp
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    // One-tap Sleep / Wake interactive chip
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isStandbySleeping) Color(0xFF047857) else Color(0xFF1E293B))
+                            .clickable {
+                                viewModel.toggleStandbySleep()
+                            }
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isStandbySleeping) "▶ Wake" else "🌙 Sleep",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 11.sp
+                            )
                         )
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed),
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 12.sp
-                        )
-                    )
+                    }
                 }
             }
         }

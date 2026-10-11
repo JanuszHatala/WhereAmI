@@ -48,10 +48,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 35** | Bidirectional Live Sharing Guest Position Follow Back, Colored Avatar Pins, Distance Badges & Persistent Identity (2026-10-08) | 4 | 4 | 0 | 0 |
 | **Round 36** | Guest Details Info Panel, Inactive Guest Removal & Visit Statistics (2026-10-08) | 4 | 4 | 0 | 0 |
 | **Round 37** | Zero-Idle-Drain Overhaul & Live Sharing Stationary GNSS Shutdown (2026-10-09) | 4 | 4 | 0 | 0 |
-| **Round 38** | Live Share Real-Time Charging Boost (2026-10-09) | 4 | 4 | 0 | 0 |
-| **Round 39** | Permanent Notification Restoration for Live Sharing + Auto-Record & Relaxed Stationary Cadence (2026-10-09) | 4 | 4 | 0 | 0 |
+| **Round 48** | Overnight Battery Standby Hibernation, Smart Screen-On Inactivity Gating & One-Tap Sleep/Wake Control (2026-10-11) | 4 | 4 | 0 | 0 |
+| **Round 49** | Live Sharing Overnight Hibernation, Zero-GNSS Presence Heartbeat & Standby HUD 1-Tap Sleep/Wake Button (2026-10-11) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **248** | **240** | **0** | **8** |
+| **Total** | | **252** | **244** | **0** | **8** |
 
 
 ---
@@ -703,4 +703,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **SLEEP48-01** | **Extended Stationary Hibernation Mode (90-Minute Inactivity Sleep)**: After 90 minutes of verified stationary rest with the screen off and no active recording/live sharing (`STANDBY_HIBERNATION_TIMEOUT_MS`), `AppStateManager` transitions the standby foreground service into hibernation, completely disarming `Sensor.TYPE_SIGNIFICANT_MOTION` to prevent Android from attributing sensor hub polling time to WhereAmI. | `AppStateManager.kt`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | Verified in `BatteryOptimizationAndAutoStartTest.kt`. |
 | **SLEEP48-02** | **One-Tap Sleep & One-Tap Wake Controls**: (1) Standby notification adds a `[🌙 Sleep Now]` action button allowing the user to immediately hibernate the standby service before sleep without waiting 90 minutes. (2) When sleeping, a low-priority notification (`🌙 WhereAmI Standby Sleeping • Auto-detect paused`) is posted with a prominent `[▶ Activate]` button (allowed user interaction under Android 14+ FGS restrictions) to wake up standby auto-detection instantly. Standby sleep is also woken up automatically whenever opening the app (`MainActivity.onStart()`). | `LiveTrackingService.kt`, `AppStateManager.kt` | **Completed** | Verified compilation and notification actions. |
 | **VER-22** | **Build Gate, Version Increment & Local Build**: Monotonically increment `versionCode` to 63 and `versionName` to "1.6.3". Pre-completion build gates passed (`./gradlew testDebugUnitTest assembleDebug` finished with 0 failures across all unit tests). | `app/build.gradle.kts` | **Completed** | All unit tests passed in 31s; `assembleDebug` passed in 17s. |
+| **RULES-01** | **Learned Rules Integration & Master Publication**: Integrated learned rules on post-merge branch pruning, telemetry cleanup, and standby sleep invariants into `AGENTS.md` and `GEMINI.md`. Committed and pushed directly to `origin/master` (commit `b59f1fb`). | `AGENTS.md`, `GEMINI.md` | **Completed** | Published and verified on `master`. |
+
+---
+
+## 52. Round 49: Live Sharing Overnight Hibernation, Zero-GNSS Presence Heartbeat & Standby HUD 1-Tap Sleep/Wake Button (2026-10-11)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **HUD49-01** | **In-App Standby HUD 1-Tap Sleep/Wake Control**: User asked where the newly implemented One-Tap Sleep/Wake actions are, expecting them on the main screen. Integrated a dedicated 1-tap chip into the bottom Auto-Detect Standby HUD pill. When ready/standby, pill displays `[ (•) Auto-detect standby: Car (>10 km/h) | 🌙 Sleep ]` (slate chip). When sleeping, pill displays `[ (•) Auto-detect: Sleeping | ▶ Wake ]` (emerald chip). Tapping the left area opens settings; tapping the right chip toggles hibernation immediately with zero menus. | `MainActivity.kt`, `MainViewModel.kt` | **Completed** | Interactive chip styled per Design System high-contrast rules (`Color.White` text). |
+| **SLEEP49-01** | **Live Sharing Overnight Hibernation Support**: Extended sleep mode so that Live Sharing alone does not block hibernation. When user sleeps while Live Sharing is active (and no trip is recording), GPS tracking and the Foreground Service are stopped, and periodic presence heartbeats (`startStationaryHeartbeat`) maintain the companion web viewer "ONLINE" without GPS hardware draw. | `AppStateManager.kt`, `LiveTrackingService.kt`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | Covered by `testLiveSharingOvernightHibernationAndPresenceHeartbeat` in `BatteryOptimizationAndAutoStartTest.kt`. |
+| **NOTIF49-01** | **Live Sharing Persistent Notification `[🌙 Sleep Now]` Action**: Added `[🌙 Sleep Now]` action button to the Live Sharing persistent notification when stationary and not actively recording, allowing the user to put Live Sharing into low-power presence sleep straight from the Android notification shade. Sleeping notification provides `[▶ Activate]` to resume full live tracking. | `LiveTrackingService.kt` | **Completed** | Verified notification actions and pending intents. |
+| **VER-23** | **Build Gate, Version Increment & On-Device Install**: Monotonically increment `versionCode` to 64 and `versionName` to "1.6.4". Full test suite passed (223/223 tests, 0 failures), APK assembled and installed on connected phone `63160DLCH000RZ`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` and `adb install -r app/build/outputs/apk/debug/app-debug.apk` succeeded. |
+
 
