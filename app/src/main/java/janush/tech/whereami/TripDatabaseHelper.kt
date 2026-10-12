@@ -912,5 +912,13 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         updateTrip(updatedTrip)
         return true
     }
+
+    fun cleanTripPlaces(tripId: Long, cleanedPlaces: List<VisitedPlace>): Boolean {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_PLACES_JSON, placesToJson(cleanedPlaces))
+        }
+        return db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(tripId.toString())) > 0
+    }
 }
 
