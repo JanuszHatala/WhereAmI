@@ -491,6 +491,59 @@ class BatteryOptimizationAndAutoStartTest {
         // Live Sharing active without active trip recording -> can enter sleep mode!
         assertTrue(canEnterSleepMode(false))
     }
+
+    @Test
+    fun testAppLifecycleModeResolutionWhenStandbySleeping() {
+        val resolveMode = { tripActive: Boolean, isAutoMedia: Boolean, inForeground: Boolean, isSleeping: Boolean, liveActive: Boolean ->
+            when {
+                tripActive -> AppLifecycleMode.TRIP_RECORDING
+                isAutoMedia -> AppLifecycleMode.ANDROID_AUTO
+                inForeground -> AppLifecycleMode.FOREGROUND_VIEW
+                isSleeping -> AppLifecycleMode.IDLE
+                liveActive -> AppLifecycleMode.LIVE_ONLY
+                else -> AppLifecycleMode.IDLE
+            }
+        }
+
+        // When sleeping in background with live sharing active, mode must resolve to IDLE (GPS completely off)
+        assertEquals(
+            AppLifecycleMode.IDLE,
+            resolveMode(false, false, false, true, true)
+        )
+
+        // When not sleeping, live sharing resolves to LIVE_ONLY
+        assertEquals(
+            AppLifecycleMode.LIVE_ONLY,
+            resolveMode(false, false, false, false, true)
+        )
+
+        // Active trip recording always supersedes sleep mode
+        assertEquals(
+            AppLifecycleMode.TRIP_RECORDING,
+            resolveMode(true, false, false, true, true)
+        )
+    }
+
+    @Test
+    fun testOvernightSleepPresenceCadenceRelaxation() {
+        val computeHeartbeatCadence = { baseMinutes: Int, isSleeping: Boolean ->
+            val baseIntervalMs = (baseMinutes * 60_000L).coerceAtLeast(60_000L)
+            if (isSleeping) {
+                baseIntervalMs.coerceAtLeast(15 * 60_000L)
+            } else {
+                baseIntervalMs
+            }
+        }
+
+        // Active daytime live sharing with 1m interval
+        assertEquals(60_000L, computeHeartbeatCadence(1, false))
+
+        // Overnight sleep mode with 1m interval -> relaxed to 15m (900,000 ms)
+        assertEquals(15 * 60_000L, computeHeartbeatCadence(1, true))
+
+        // Overnight sleep mode with 30m interval -> preserves 30m (1,800,000 ms)
+        assertEquals(30 * 60_000L, computeHeartbeatCadence(30, true))
+    }
 }
 
 

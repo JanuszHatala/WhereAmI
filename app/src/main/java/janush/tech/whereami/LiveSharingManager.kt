@@ -429,14 +429,22 @@ class LiveSharingManager private constructor(private val context: Context) {
     fun startStationaryHeartbeat() {
         if (stationaryHeartbeatJob?.isActive == true) return
         stationaryHeartbeatJob = scope.launch {
-            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat started (GPS off, periodic network ping)")
+            val isSleeping = AppStateManager.getInstance(context).isStandbySleeping.value
+            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat started (GPS off, periodic network ping, isSleeping=$isSleeping)")
             while (isActive) {
                 val session = _currentSession.value
                 if (session == null || !session.isActive || session.isExpired || session.isPaused) break
                 val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
                 if (isTripRecording) break
 
-                val intervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
+                val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
+                val baseIntervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
+                // When in sleep mode (overnight hibernation), relax heartbeat to 15-30 minutes so cellular radio sleeps
+                val intervalMs = if (isCurrentlySleeping) {
+                    baseIntervalMs.coerceAtLeast(15 * 60_000L)
+                } else {
+                    baseIntervalMs
+                }
                 delay(intervalMs)
 
                 val current = _currentSession.value
@@ -457,7 +465,9 @@ class LiveSharingManager private constructor(private val context: Context) {
                         bearing = lastRecordedBearing,
                         placeName = city,
                         trekkingBadge = null,
-                        accuracy = lastRecordedAccuracy
+                        accuracy = lastRecordedAccuracy,
+                        isChargingOverride = null,
+                        syncIntervalMsOverride = intervalMs
                     )
                 }
             }
@@ -1117,6 +1127,8 @@ class LiveSharingManager private constructor(private val context: Context) {
                     put("activityProfileIcon", activeProfile.iconEmoji)
                     put("activityProfileName", activeProfile.displayName)
                     put("isCharging", isCharging)
+                    val isAppSleeping = AppStateManager.getInstance(context).isStandbySleeping.value
+                    put("isSleeping", isAppSleeping)
                     if (syncIntervalMs > 0L) {
                         put("syncIntervalMs", syncIntervalMs)
                     }
