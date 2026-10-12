@@ -31,6 +31,38 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
         private const val KEY_AUTO_RESUME_ON_MOTION = "pref_auto_resume_on_motion"
+        private const val KEY_IS_PAUSED = "pref_trip_is_paused"
+        private const val KEY_PAUSE_START_TIME = "pref_trip_pause_start_time"
+        private const val KEY_PAUSE_LAT = "pref_trip_pause_lat"
+        private const val KEY_PAUSE_LNG = "pref_trip_pause_lng"
+        private const val KEY_PAUSE_POINT_INDEX = "pref_trip_pause_point_index"
+        private const val KEY_PAUSE_DIST = "pref_trip_pause_dist"
+        private const val PAUSE_WARNING_TIMEOUT_MS = 60 * 60 * 1000L // 1 hour
+
+        val POLISH_CITY_CENTROIDS = mapOf(
+            "kraków" to Pair(50.064, 19.945),
+            "warszawa" to Pair(52.229, 21.012),
+            "katowice" to Pair(50.264, 19.023),
+            "wrocław" to Pair(51.107, 17.038),
+            "bielsko-biała" to Pair(49.822, 19.044),
+            "gdańsk" to Pair(54.352, 18.646),
+            "poznań" to Pair(52.406, 16.925),
+            "łódź" to Pair(51.759, 19.456),
+            "szczecin" to Pair(53.428, 14.553),
+            "lublin" to Pair(51.246, 22.568),
+            "bydgoszcz" to Pair(53.123, 18.008),
+            "białystok" to Pair(53.132, 23.168),
+            "częstochowa" to Pair(50.811, 19.120),
+            "radom" to Pair(51.402, 21.147),
+            "sosnowiec" to Pair(50.286, 19.104),
+            "toruń" to Pair(53.013, 18.598),
+            "kielce" to Pair(50.866, 20.628),
+            "gliwice" to Pair(50.294, 18.671),
+            "zabrze" to Pair(50.324, 18.785),
+            "olsztyn" to Pair(53.778, 20.480),
+            "rzeszów" to Pair(50.041, 21.999),
+            "opole" to Pair(50.675, 17.921)
+        )
     }
 
     private val dbHelper = TripDatabaseHelper(context)
@@ -129,6 +161,8 @@ class TripManager private constructor(private val context: Context) {
     private val _activeTrip = MutableStateFlow<TripRecord?>(null)
     val activeTrip: StateFlow<TripRecord?> = _activeTrip.asStateFlow()
 
+    private var pauseWarningNotified = false
+
     fun pauseTrip() {
         val current = _activeTrip.value ?: return
         if (_isPaused.value) return
@@ -144,6 +178,15 @@ class TripManager private constructor(private val context: Context) {
             pointIndex = current.points.size,
             distanceMeters = current.distanceMeters
         )
+        pauseWarningNotified = false
+        prefs.edit()
+            .putBoolean(KEY_IS_PAUSED, true)
+            .putLong(KEY_PAUSE_START_TIME, now)
+            .putFloat(KEY_PAUSE_LAT, lat.toFloat())
+            .putFloat(KEY_PAUSE_LNG, lng.toFloat())
+            .putInt(KEY_PAUSE_POINT_INDEX, current.points.size)
+            .putFloat(KEY_PAUSE_DIST, current.distanceMeters.toFloat())
+            .apply()
         TelemetryLogger.logTrip("PAUSE_MANUAL", current.id, "Trip paused manually at point ${current.points.size}")
     }
 
@@ -163,6 +206,15 @@ class TripManager private constructor(private val context: Context) {
             TelemetryLogger.logTrip("RESUME_MANUAL", current.id, "Trip resumed manually after ${finalized.durationMs / 1000}s")
             activePause = null
         }
+        pauseWarningNotified = false
+        prefs.edit()
+            .remove(KEY_IS_PAUSED)
+            .remove(KEY_PAUSE_START_TIME)
+            .remove(KEY_PAUSE_LAT)
+            .remove(KEY_PAUSE_LNG)
+            .remove(KEY_PAUSE_POINT_INDEX)
+            .remove(KEY_PAUSE_DIST)
+            .apply()
         lastMovingTimestamp = now
     }
 
@@ -209,11 +261,20 @@ class TripManager private constructor(private val context: Context) {
                 val lastPointTime = unclosed.placesVisited.lastOrNull()?.timestamp ?: unclosed.startTime
                 val now = System.currentTimeMillis()
                 val timeoutMs = _autoStopMinutes.value * 60 * 1000L
+                val wasPaused = prefs.getBoolean(KEY_IS_PAUSED, false)
                 
-                // MAP-R05: If trip was abandoned during process death and exceeded timeout, close it instead of resuming
-                if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs)) {
+                // MAP-R05: If trip was abandoned during process death and exceeded timeout, close it instead of resuming (unless paused!)
+                if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs) && !wasPaused) {
                     val closed = unclosed.copy(endTime = lastPointTime)
                     dbHelper.updateTrip(closed)
+                    prefs.edit()
+                        .remove(KEY_IS_PAUSED)
+                        .remove(KEY_PAUSE_START_TIME)
+                        .remove(KEY_PAUSE_LAT)
+                        .remove(KEY_PAUSE_LNG)
+                        .remove(KEY_PAUSE_POINT_INDEX)
+                        .remove(KEY_PAUSE_DIST)
+                        .apply()
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
                 } else {
                     _activeTrip.value = unclosed
@@ -224,7 +285,22 @@ class TripManager private constructor(private val context: Context) {
                             longitude = it.longitude
                         }
                     }
-                    TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points")
+                    if (wasPaused) {
+                        val pauseStartTime = prefs.getLong(KEY_PAUSE_START_TIME, 0L)
+                        if (pauseStartTime > 0L) {
+                            activePause = TripPause(
+                                startTime = pauseStartTime,
+                                latitude = prefs.getFloat(KEY_PAUSE_LAT, 0f).toDouble(),
+                                longitude = prefs.getFloat(KEY_PAUSE_LNG, 0f).toDouble(),
+                                durationMs = System.currentTimeMillis() - pauseStartTime,
+                                pointIndex = prefs.getInt(KEY_PAUSE_POINT_INDEX, unclosed.points.size),
+                                distanceMeters = prefs.getFloat(KEY_PAUSE_DIST, unclosed.distanceMeters.toFloat()).toDouble()
+                            )
+                            _isPaused.value = true
+                            TelemetryLogger.logTrip("PAUSE_RESTORED", unclosed.id, "Restored paused state after process death: pause started ${(System.currentTimeMillis() - pauseStartTime) / 60000}m ago")
+                        }
+                    }
+                    TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points (isPaused=${_isPaused.value})")
                 }
             }
         }
@@ -235,9 +311,18 @@ class TripManager private constructor(private val context: Context) {
         watchdogJob = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(15_000L) // check every 15s
-                // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout (unless paused)
                 val active = _activeTrip.value
                 val mode = _tripMode.value
+                // Fix 2: Check if paused trip has exceeded 1-hour warning threshold
+                if (active != null && _isPaused.value && activePause != null) {
+                    val pauseDurationMs = System.currentTimeMillis() - activePause!!.startTime
+                    if (pauseDurationMs >= PAUSE_WARNING_TIMEOUT_MS && !pauseWarningNotified) {
+                        pauseWarningNotified = true
+                        TelemetryLogger.logTrip("PAUSE_WARNING_1H", active.id, "Trip paused for ${pauseDurationMs / 60000}m - warning user via notification")
+                        notifyPauseWarning(active, pauseDurationMs)
+                    }
+                }
+                // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout (unless paused)
                 if (active != null && mode == TripMode.AUTO && !_isPaused.value && lastMovingTimestamp != null) {
                     val now = System.currentTimeMillis()
                     val stationaryDurationMs = now - lastMovingTimestamp!!
@@ -249,6 +334,21 @@ class TripManager private constructor(private val context: Context) {
                 }
             }
         }
+    }
+
+    private fun notifyPauseWarning(trip: TripRecord, pauseDurationMs: Long) {
+        try {
+            val intent = android.content.Intent(context, LiveTrackingService::class.java).apply {
+                action = LiveTrackingService.ACTION_PAUSE_WARNING
+                putExtra("trip_id", trip.id)
+                putExtra("pause_duration_ms", pauseDurationMs)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (_: Exception) {}
     }
 
     fun setTripMode(mode: TripMode) {
@@ -332,6 +432,15 @@ class TripManager private constructor(private val context: Context) {
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
+        pauseWarningNotified = false
+        prefs.edit()
+            .remove(KEY_IS_PAUSED)
+            .remove(KEY_PAUSE_START_TIME)
+            .remove(KEY_PAUSE_LAT)
+            .remove(KEY_PAUSE_LNG)
+            .remove(KEY_PAUSE_POINT_INDEX)
+            .remove(KEY_PAUSE_DIST)
+            .apply()
         TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
 
         // Clear live sharing trail buffer so new trip starts with a clean live path
@@ -395,6 +504,15 @@ class TripManager private constructor(private val context: Context) {
         }
         _activeTrip.value = null
         _isPaused.value = false
+        pauseWarningNotified = false
+        prefs.edit()
+            .remove(KEY_IS_PAUSED)
+            .remove(KEY_PAUSE_START_TIME)
+            .remove(KEY_PAUSE_LAT)
+            .remove(KEY_PAUSE_LNG)
+            .remove(KEY_PAUSE_POINT_INDEX)
+            .remove(KEY_PAUSE_DIST)
+            .apply()
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
@@ -850,8 +968,35 @@ class TripManager private constructor(private val context: Context) {
             val displacementMeters = distResults[0]
             val durationMs = now - candidate.firstSeenTimestamp
 
-            val isPenetrated = displacementMeters >= 150f
-            val isSustainedStay = durationMs >= 45_000L
+            // Rule 1: Centroid distance check for known Polish county cities
+            val centroid = POLISH_CITY_CENTROIDS[candidateName.lowercase(java.util.Locale.ROOT)]
+            if (centroid != null) {
+                val distKm = distanceBetweenKm(lat, lng, centroid.first, centroid.second)
+                if (distKm > 25.0) {
+                    TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected candidate $candidateName: $distKm km from city centroid")
+                    pendingCandidate = null
+                    return false
+                }
+            }
+
+            // Rule 2: County city contradiction check (e.g. city is Kraków, but powiat is Powiat Bielsko-Biała)
+            val candidatePowiat = currentPlace.powiat ?: candidate.place.powiat
+            if (candidateName.equals("kraków", ignoreCase = true) && candidatePowiat?.contains("bielsko", ignoreCase = true) == true) {
+                TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected Kraków due to contradictory powiat: $candidatePowiat")
+                pendingCandidate = null
+                return false
+            }
+
+            // Rule 3: Speed-dependent intentional visit threshold
+            // When moving at speed (CAR, CYCLING, MTB), 150m is traversed in ~7s.
+            // Require sustained dwell (>= 30s) OR (displacement >= 300m AND duration >= 15s)
+            val isFastMode = _activityProfile.value in setOf(ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB)
+            val isPenetrated = if (isFastMode) {
+                displacementMeters >= 300f && durationMs >= 15_000L
+            } else {
+                displacementMeters >= 150f
+            }
+            val isSustainedStay = durationMs >= (if (isFastMode) 30_000L else 45_000L)
 
             val recentMatch = placesList.takeLast(4).find { it.placeName.equals(candidateName, ignoreCase = true) }
             val isRecentPingPong = recentMatch != null && (
@@ -894,6 +1039,75 @@ class TripManager private constructor(private val context: Context) {
             )
         }
         return false
+    }
+
+    private fun distanceBetweenKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val res = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, res)
+        return res[0] / 1000.0
+    }
+
+    data class MaintenanceResult(val totalCleanedPlaces: Int, val affectedTripsCount: Int)
+
+    fun reanalyzeAllTripPlaces(): MaintenanceResult {
+        val allTrips = dbHelper.getAllTrips()
+        var totalCleaned = 0
+        var tripsAffected = 0
+
+        for (trip in allTrips) {
+            val places = trip.placesVisited
+            if (places.isEmpty()) continue
+
+            val cleaned = mutableListOf<VisitedPlace>()
+            var removedInTrip = 0
+
+            for (i in places.indices) {
+                val p = places[i]
+                val nameLower = p.placeName.lowercase(java.util.Locale.ROOT)
+
+                // 1. Centroid distance check for known Polish county cities
+                val centroid = POLISH_CITY_CENTROIDS[nameLower]
+                if (centroid != null) {
+                    val distKm = distanceBetweenKm(p.latitude, p.longitude, centroid.first, centroid.second)
+                    if (distKm > 25.0) {
+                        TelemetryLogger.logTrip("MAINTENANCE_REMOVED", trip.id, "Removed false place ${p.placeName}: $distKm km from city centroid")
+                        removedInTrip++
+                        continue
+                    }
+                }
+
+                // 2. Sandwiched ping-pong blip check (< 30s stay between same locality)
+                if (i < places.size - 1 && cleaned.isNotEmpty()) {
+                    val nextP = places[i + 1]
+                    val prevP = cleaned.last()
+                    val durationSec = (nextP.timestamp - p.timestamp) / 1000.0
+                    if (durationSec < 30.0 && prevP.placeName.equals(nextP.placeName, ignoreCase = true)) {
+                        TelemetryLogger.logTrip("MAINTENANCE_REMOVED", trip.id, "Removed sandwiched ping-pong blip ${p.placeName} (${durationSec.toInt()}s)")
+                        removedInTrip++
+                        continue
+                    }
+                }
+
+                // 3. Coalesce consecutive identical places
+                if (cleaned.isNotEmpty() && cleaned.last().placeName.equals(p.placeName, ignoreCase = true)) {
+                    continue
+                }
+
+                cleaned.add(p)
+            }
+
+            if (removedInTrip > 0) {
+                dbHelper.cleanTripPlaces(trip.id, cleaned)
+                totalCleaned += removedInTrip
+                tripsAffected++
+                if (_activeTrip.value?.id == trip.id) {
+                    _activeTrip.value = _activeTrip.value?.copy(placesVisited = cleaned)
+                }
+            }
+        }
+
+        TelemetryLogger.log("MAINTENANCE", "Reanalyzed trips: cleaned $totalCleaned false places across $tripsAffected trips")
+        return MaintenanceResult(totalCleaned, tripsAffected)
     }
 
     fun renameTrip(id: Long, newTitle: String) {

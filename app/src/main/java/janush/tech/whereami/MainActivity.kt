@@ -3457,6 +3457,47 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                var maintenanceResultMsg by remember { mutableStateOf<String?>(null) }
+                var isCleaningPlaces by remember { mutableStateOf(false) }
+
+                OutlinedButton(
+                    onClick = {
+                        isCleaningPlaces = true
+                        viewModel.reanalyzeTripPlaces { res ->
+                            isCleaningPlaces = false
+                            maintenanceResultMsg = "Cleaned ${res.totalCleanedPlaces} false places across ${res.affectedTripsCount} trips"
+                            android.widget.Toast.makeText(context, maintenanceResultMsg, android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFF1E293B)),
+                    border = BorderStroke(1.dp, Color(0xFF3B82F6).copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    enabled = !isCleaningPlaces
+                ) {
+                    Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF60A5FA))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        if (isCleaningPlaces) "Cleaning False Places..." else "Clean False Places Across Trips",
+                        fontSize = 13.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (maintenanceResultMsg != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = maintenanceResultMsg!!,
+                        color = Color(0xFF10B981),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 OutlinedButton(
                     onClick = { showResetDefaultsConfirm = true },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),

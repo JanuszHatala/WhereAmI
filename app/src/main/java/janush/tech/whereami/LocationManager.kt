@@ -710,10 +710,10 @@ class LocationManager private constructor(private val context: Context) {
         val isRecentTurn = (now - lastTurnTimestamp) < 14_000L
 
         // High-Speed Corridor Shield:
-        // While driving at high speed (> 40 km/h) along a confirmed corridor without having made a physical turn:
-        // Strictly reject parallel residential streets and building parcel addresses (e.g. "Braterska 144").
+        // While driving at high speed (> 35 km/h) along a confirmed corridor without having made a physical turn:
+        // Strictly reject parallel residential streets and building parcel addresses (e.g. "Sabały", "Piechurów", "Braterska 144").
         val hasCandidateHouseNumber = rawStreetPl.any { it.isDigit() }
-        if (speedKmh > 40f && isCommittedMajor && !isCandidateMajor && !isRecentTurn) {
+        if (speedKmh > 35f && isCommittedMajor && !isCandidateMajor && !isRecentTurn) {
             TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from non-major candidate '$rawStreetPl' at ${speedKmh.toInt()} km/h")
             return multiData.copy(
                 en = multiData.en.copy(street = committedStreetPl),
@@ -721,7 +721,7 @@ class LocationManager private constructor(private val context: Context) {
                 native = multiData.native.copy(street = committedStreetPl)
             )
         }
-        if (speedKmh > 35f && isCommittedMajor && hasCandidateHouseNumber && !isRecentTurn) {
+        if (speedKmh > 30f && isCommittedMajor && hasCandidateHouseNumber && !isRecentTurn) {
             TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from house-numbered side street '$rawStreetPl' at ${speedKmh.toInt()} km/h")
             return multiData.copy(
                 en = multiData.en.copy(street = committedStreetPl),
@@ -1287,6 +1287,14 @@ class LocationManager private constructor(private val context: Context) {
 
                     if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
                         TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
+                        if (committedPlace != null) {
+                            val preserved = diskCached.copy(
+                                en = diskCached.en.copy(street = committedPlace!!.en.street, roadRef = committedPlace!!.en.roadRef),
+                                pl = diskCached.pl.copy(street = committedPlace!!.pl.street, roadRef = committedPlace!!.pl.roadRef),
+                                native = diskCached.native.copy(street = committedPlace!!.native.street, roadRef = committedPlace!!.native.roadRef)
+                            )
+                            return sanitizeMultiDataHouseNumbers(preserved, speedKmh, accuracyMeters)
+                        }
                     } else {
                         spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                         val result = sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
@@ -1342,7 +1350,15 @@ class LocationManager private constructor(private val context: Context) {
         // Kinematic Engine: Query OSRM using compass heading (or last valid heading when stopped)
         // to snap to the true driven corridor centerline.
         val effectiveBearing = bearing ?: lastValidBearing
-        val osrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
+        val rawOsrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
+        val committedStreet = committedPlace?.pl?.street
+        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreet, committedPlace?.pl?.roadRef)
+        val osrmStreet = if (speedKmh != null && speedKmh > 35f && isCommittedMajor && rawOsrmStreet != null && !RoadNameNormalizer.isMajorRoad(rawOsrmStreet)) {
+            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreet' from non-major OSRM snap '$rawOsrmStreet' at ${speedKmh.toInt()} km/h")
+            null
+        } else {
+            rawOsrmStreet
+        }
 
         val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
         val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)

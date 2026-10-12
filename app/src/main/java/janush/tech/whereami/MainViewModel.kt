@@ -708,6 +708,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoResumeOnMotion(enabled: Boolean) {
         tripManager.setAutoResumeOnMotion(enabled)
     }
+
+    fun reanalyzeTripPlaces(onResult: (TripManager.MaintenanceResult) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = tripManager.reanalyzeAllTripPlaces()
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onResult(result)
+            }
+        }
+    }
 }
 
 

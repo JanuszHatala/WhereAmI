@@ -81,6 +81,8 @@ class RoadNameNormalizerTest {
         assertTrue(RoadNameNormalizer.isMajorRoad("Trasa Niepodległości"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Północno-Wschodnia Obwodnica Bielska-Białej"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Droga Bez Nazwy", roadRef = "S52"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Aleja gen. Władysława Andersa"))
         assertFalse(RoadNameNormalizer.isMajorRoad("ul. Kościuszki"))
         assertFalse(RoadNameNormalizer.isMajorRoad("Rynek"))
         assertFalse(RoadNameNormalizer.isMajorRoad("ul. Braterska"))
