@@ -191,12 +191,6 @@ class AppStateManager private constructor(private val context: Context) {
         _isStandbySleeping.value = false
         TelemetryLogger.log("POWER", "Waking up from standby sleep mode.")
 
-        // Cancel sleep notification
-        try {
-            val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-            notifManager?.cancel(LiveTrackingService.NOTIF_SLEEP_ID)
-        } catch (_: Exception) {}
-
         consecutiveFalseBursts = 0
         motionRearmJob?.cancel()
 
@@ -205,6 +199,13 @@ class AppStateManager private constructor(private val context: Context) {
             MotionWakeManager.getInstance(context).arm()
             TelemetryLogger.log("POWER", "Standby sleep wake: MotionWakeManager re-armed for AUTO auto-start.")
         }
+
+        try {
+            val intent = Intent(context, LiveTrackingService::class.java).apply {
+                action = LiveTrackingService.ACTION_STANDBY_ACTIVATE
+            }
+            context.startService(intent)
+        } catch (_: Exception) {}
 
         recalculateState()
     }
@@ -253,9 +254,8 @@ class AppStateManager private constructor(private val context: Context) {
         if (inForeground) {
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
-            if (_isStandbySleeping.value) {
-                wakeStandbySleep()
-            }
+            // Do NOT automatically cancel sleep mode when user simply opens or views the app!
+            // Sleep mode is persistent and only wakes via user action ([▶ Activate] on notification or [▶ Wake] in HUD).
             ensureAutoStandbyServiceRunning()
         }
         recalculateState()
