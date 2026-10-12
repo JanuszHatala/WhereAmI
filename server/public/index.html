@@ -1070,7 +1070,7 @@
         const lastTimeStr = data.current?.t ? new Date(data.current.t).toLocaleTimeString() : '';
 
         const isHostSleeping = Boolean(data.current?.isSleeping);
-        const syncIntervalSec = isHostSleeping ? (15 * 60) : ((data.syncIntervalMinutes || 5) * 60);
+        const syncIntervalSec = isHostSleeping ? (60 * 60) : ((data.syncIntervalMinutes || 5) * 60);
         const disconnectThresholdSec = Math.max(180, (syncIntervalSec * 2) + 30);
 
         const isSessionEnded = Boolean(data.ended) || (data.expiresAt > 0 && Date.now() > data.expiresAt);
@@ -1174,7 +1174,7 @@
           }
 
           const agoSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-          const cadenceText = isHostSleeping ? '🌙 ~15m' : (isChargingBoost ? (spd && spd > 1.0 ? '⚡ ~5s' : '⚡ ~15s') : `${data.syncIntervalMinutes || 1}m`);
+          const cadenceText = isHostSleeping ? '🌙 ~1h' : (isChargingBoost ? (spd && spd > 1.0 ? '⚡ ~5s' : '⚡ ~15s') : `${data.syncIntervalMinutes || 1}m`);
           document.getElementById('updatedVal').textContent = (agoSec < 60 ? (agoSec + 's ago') : (Math.round(agoSec/60) + 'm ago')) + ` (${cadenceText})`;
 
           if (trekking) {

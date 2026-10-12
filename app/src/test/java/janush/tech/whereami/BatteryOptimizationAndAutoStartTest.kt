@@ -529,7 +529,7 @@ class BatteryOptimizationAndAutoStartTest {
         val computeHeartbeatCadence = { baseMinutes: Int, isSleeping: Boolean ->
             val baseIntervalMs = (baseMinutes * 60_000L).coerceAtLeast(60_000L)
             if (isSleeping) {
-                baseIntervalMs.coerceAtLeast(15 * 60_000L)
+                60 * 60_000L
             } else {
                 baseIntervalMs
             }
@@ -538,11 +538,62 @@ class BatteryOptimizationAndAutoStartTest {
         // Active daytime live sharing with 1m interval
         assertEquals(60_000L, computeHeartbeatCadence(1, false))
 
-        // Overnight sleep mode with 1m interval -> relaxed to 15m (900,000 ms)
-        assertEquals(15 * 60_000L, computeHeartbeatCadence(1, true))
+        // Overnight sleep mode with 1m interval -> relaxed to 60m (3,600,000 ms)
+        assertEquals(60 * 60_000L, computeHeartbeatCadence(1, true))
 
-        // Overnight sleep mode with 30m interval -> preserves 30m (1,800,000 ms)
-        assertEquals(30 * 60_000L, computeHeartbeatCadence(30, true))
+        // Overnight sleep mode with 30m interval -> relaxed to 60m (3,600,000 ms)
+        assertEquals(60 * 60_000L, computeHeartbeatCadence(30, true))
+    }
+
+    @Test
+    fun testUnifiedSleepNotificationStateAndActions() {
+        data class SleepNotifState(val title: String, val text: String, val actionCount: Int)
+
+        val buildState = { isLive: Boolean, isAuto: Boolean, isPaused: Boolean ->
+            val title = when {
+                isLive && isAuto -> "🌙 WhereAmI Sleeping (Live & Auto-detect)"
+                isLive -> "🌙 WhereAmI Live Sharing Sleeping"
+                else -> "🌙 WhereAmI Standby Sleeping"
+            }
+            val text = when {
+                isLive && isAuto -> {
+                    val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
+                    "Auto-detect paused • $liveStatus • Tap to wake"
+                }
+                isLive -> {
+                    val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
+                    "Overnight hibernation • $liveStatus • Tap to wake"
+                }
+                else -> "Auto-detect paused for battery savings • Tap to activate"
+            }
+            // 1 action for pure standby ([▶ Activate]); 3 actions for live sharing ([▶ Activate], [⏸/▶], [🛑 Stop])
+            val actions = if (isLive) 3 else 1
+            SleepNotifState(title, text, actions)
+        }
+
+        // 1. Pure Auto-detect Standby Sleep:
+        val standbyOnly = buildState(false, true, false)
+        assertEquals("🌙 WhereAmI Standby Sleeping", standbyOnly.title)
+        assertEquals("Auto-detect paused for battery savings • Tap to activate", standbyOnly.text)
+        assertEquals(1, standbyOnly.actionCount)
+
+        // 2. Both Live Sharing and Auto-detect in Sleep Mode:
+        val liveAndAuto = buildState(true, true, false)
+        assertEquals("🌙 WhereAmI Sleeping (Live & Auto-detect)", liveAndAuto.title)
+        assertTrue(liveAndAuto.text.contains("Auto-detect paused • Live Sharing active (1h sync)"))
+        assertEquals(3, liveAndAuto.actionCount)
+
+        // 3. Both Live Sharing and Auto-detect in Sleep Mode when paused:
+        val liveAndAutoPaused = buildState(true, true, true)
+        assertEquals("🌙 WhereAmI Sleeping (Live & Auto-detect)", liveAndAutoPaused.title)
+        assertTrue(liveAndAutoPaused.text.contains("Live Sharing paused"))
+        assertEquals(3, liveAndAutoPaused.actionCount)
+
+        // 4. Live Sharing only in Sleep Mode (Manual recording mode):
+        val liveOnly = buildState(true, false, false)
+        assertEquals("🌙 WhereAmI Live Sharing Sleeping", liveOnly.title)
+        assertTrue(liveOnly.text.contains("Overnight hibernation • Live Sharing active (1h sync)"))
+        assertEquals(3, liveOnly.actionCount)
     }
 }
 
