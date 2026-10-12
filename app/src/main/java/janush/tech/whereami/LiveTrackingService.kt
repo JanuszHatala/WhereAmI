@@ -105,7 +105,13 @@ class LiveTrackingService : Service() {
             }
             "STOP_TRACKING", ACTION_STOP -> {
                 LiveSharingManager.getInstance(this).stopSession()
+                val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value
                 val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+                if (isSleeping && !hasTrip) {
+                    // Update sleep notification: Live Sharing stopped, show standard Standby Sleep
+                    postSleepNotification(isLiveSharing = false)
+                    return START_NOT_STICKY
+                }
                 if (hasTrip) {
                     updateNotification()
                     return START_STICKY
@@ -177,6 +183,12 @@ class LiveTrackingService : Service() {
                         sharingMgr.pauseSession()
                     }
                 }
+                val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value
+                val hasTrip = TripManager.getInstance(this).activeTrip.value != null
+                if (isSleeping && !hasTrip) {
+                    postSleepNotification(isLiveSharing = true)
+                    return START_NOT_STICKY
+                }
                 updateNotification()
                 return START_NOT_STICKY
             }
@@ -203,6 +215,10 @@ class LiveTrackingService : Service() {
                 this,
                 0,
                 Intent(this, MainActivity::class.java).apply {
+                    if (isLiveSharing) {
+                        action = ACTION_OPEN_LIVE_SHARING
+                        putExtra(EXTRA_OPEN_LIVE_SHARING, true)
+                    }
                     this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
@@ -224,11 +240,26 @@ class LiveTrackingService : Service() {
                 )
             }
 
-            val title = if (isLiveSharing) "🌙 WhereAmI Live Sharing Sleeping" else "🌙 WhereAmI Standby Sleeping"
-            val text = if (isLiveSharing) {
-                "Overnight hibernation • GPS off, low-power presence active • Tap to wake"
-            } else {
-                "Auto-detect paused for battery savings • Tap to activate"
+            val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+            val liveSession = LiveSharingManager.getInstance(this).currentSession.value
+            val isPaused = liveSession?.isPaused == true
+
+            val title = when {
+                isLiveSharing && isAuto -> "🌙 WhereAmI Sleeping (Live & Auto-detect)"
+                isLiveSharing -> "🌙 WhereAmI Live Sharing Sleeping"
+                else -> "🌙 WhereAmI Standby Sleeping"
+            }
+
+            val text = when {
+                isLiveSharing && isAuto -> {
+                    val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
+                    "Auto-detect paused • $liveStatus • Tap to wake"
+                }
+                isLiveSharing -> {
+                    val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
+                    "Overnight hibernation • $liveStatus • Tap to wake"
+                }
+                else -> "Auto-detect paused for battery savings • Tap to activate"
             }
 
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -241,9 +272,31 @@ class LiveTrackingService : Service() {
                 .setOnlyAlertOnce(true)
                 .addAction(0, formatActionTitle("▶ Activate", "#10B981"), activateIntent)
 
+            if (isLiveSharing) {
+                // Action 2: Pause / Resume Live Sharing while staying in Sleep Mode
+                val pauseIntent = android.app.PendingIntent.getService(
+                    this,
+                    1,
+                    Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                val pauseLabel = if (isPaused) "▶ Resume" else "⏸ Pause"
+                val pauseColor = if (isPaused) "#10B981" else "#F59E0B"
+                builder.addAction(0, formatActionTitle(pauseLabel, pauseColor), pauseIntent)
+
+                // Action 3: Stop Live Sharing (retaining standby sleep mode)
+                val stopIntent = android.app.PendingIntent.getService(
+                    this,
+                    3,
+                    Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
+            }
+
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIF_SLEEP_ID, builder.build())
-            TelemetryLogger.log("POWER", "Posted Standby Sleep notification (isLive=$isLiveSharing, NOTIF_SLEEP_ID)")
+            TelemetryLogger.log("POWER", "Posted Standby Sleep notification (isLive=$isLiveSharing, isAuto=$isAuto, isPaused=$isPaused, NOTIF_SLEEP_ID)")
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "Failed to post sleep notification: ${e.message}")
         }
