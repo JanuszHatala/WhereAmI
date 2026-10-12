@@ -37,6 +37,9 @@ class LiveTrackingService : Service() {
         const val ACTION_STANDBY_ACTIVATE = "janush.tech.whereami.ACTION_STANDBY_ACTIVATE"
         const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
         const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
+        const val ACTION_PAUSE_WARNING = "janush.tech.whereami.ACTION_PAUSE_WARNING"
+        const val ACTION_TRIP_RESUME = "janush.tech.whereami.ACTION_TRIP_RESUME"
+        const val ACTION_TRIP_STOP = "janush.tech.whereami.ACTION_TRIP_STOP"
     }
 
     private var lastPlaceName: String = "In Transit"
@@ -89,6 +92,23 @@ class LiveTrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_TRIP_RESUME -> {
+                TripManager.getInstance(this).resumeTrip()
+                updateNotification(force = true)
+                return START_STICKY
+            }
+            ACTION_TRIP_STOP -> {
+                TripManager.getInstance(this).stopManualTrip()
+                return START_STICKY
+            }
+            ACTION_PAUSE_WARNING -> {
+                val pauseDurationMs = intent.getLongExtra("pause_duration_ms", 0L)
+                val hours = pauseDurationMs / 3600000L
+                val minutes = (pauseDurationMs % 3600000L) / 60000L
+                val timeStr = if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+                updateNotification(overrideText = "Trip paused for $timeStr • Tap Resume or Stop", force = true)
+                return START_STICKY
+            }
             ACTION_DISABLE_AUTO_START -> {
                 TripManager.getInstance(this).setTripMode(TripMode.MANUAL)
                 LiveSharingManager.getInstance(this).stopSession()
@@ -428,6 +448,22 @@ class LiveTrackingService : Service() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             builder.addAction(0, formatActionTitle("🛑 Disable Auto-start", "#EF4444"), stopIntent)
+        } else if (activeTrip != null && TripManager.getInstance(this).isPaused.value) {
+            val resumeIntent = android.app.PendingIntent.getService(
+                this,
+                10,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_TRIP_RESUME },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, formatActionTitle("▶ Resume", "#10B981"), resumeIntent)
+
+            val stopTripIntent = android.app.PendingIntent.getService(
+                this,
+                11,
+                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_TRIP_STOP },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, formatActionTitle("🛑 Stop Trip", "#EF4444"), stopTripIntent)
         }
 
         return builder.build()
@@ -460,8 +496,10 @@ class LiveTrackingService : Service() {
             !overrideText.isNullOrBlank() -> overrideText
             activeTrip != null -> {
                 val distKm = activeTrip.distanceMeters / 1000.0
+                val isTripPaused = TripManager.getInstance(this).isPaused.value
                 val statusTag = when {
-                    isLiveActive && liveSession.isPaused -> " • [PAUSED]"
+                    isTripPaused -> " • [PAUSED]"
+                    isLiveActive && liveSession.isPaused -> " • [LIVE PAUSED]"
                     isLiveActive -> " • [LIVE]"
                     else -> ""
                 }
@@ -636,6 +674,11 @@ class LiveTrackingService : Service() {
         serviceScope.launch {
             AppStateManager.getInstance(this@LiveTrackingService).isStandbySleeping.collectLatest {
                 evaluateServiceState()
+            }
+        }
+        serviceScope.launch {
+            TripManager.getInstance(this@LiveTrackingService).isPaused.collectLatest {
+                updateNotification(force = true)
             }
         }
     }
