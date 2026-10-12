@@ -52,8 +52,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 49** | Live Sharing Overnight Hibernation, Zero-GNSS Presence Heartbeat & Standby HUD 1-Tap Sleep/Wake Button (2026-10-11) | 4 | 4 | 0 | 0 |
 | **Round 50** | Field Testing (2026-10-12) Overnight Sleep Lifecycle Resolution, GNSS Complete Shutdown & Single Notification Invariant | 4 | 4 | 0 | 0 |
 | **Round 51** | Live Sharing Overnight 60m One-Shot GNSS Fix & Unified Sleep Notification Actions (2026-10-12) | 3 | 3 | 0 | 0 |
+| **Round 52** | Web Companion Viewer Page Visibility API Gating & Sleep Polling Backoff (2026-10-12) | 1 | 1 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **259** | **251** | **0** | **8** |
+| **Total** | | **260** | **252** | **0** | **8** |
 
 
 ---
@@ -727,6 +728,16 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **GPS51-01** | **Live Sharing Sleep Mode 60m Periodic One-Shot GNSS Fix**: User requested that Live Sharing in sleep mode should not keep GNSS completely off indefinitely, but take an ultra-low-frequency quick location fix while keeping GPS powered off between fixes. **Solution**: In `LiveSharingManager.startStationaryHeartbeat()`, when `isCurrentlySleeping` is true, interval is set to 60 minutes. Every 60 minutes, the app triggers a 10s-bounded one-shot fix via `LocationManager.getCurrentLocationSingle()`. If acquired, fresh coordinates and locality are flushed to the server; if timed out/null (indoors), it falls back safely to last known position. | `LiveSharingManager.kt`, `server/public/index.html`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | Covered by `testOvernightSleepPresenceCadenceRelaxation` in `BatteryOptimizationAndAutoStartTest.kt`. |
 | **NOTIF51-01** | **Unified Sleep Notification Controls & Direct Pause/Stop Actions**: User requested knowing from the system notification that Live Sharing is active, with the ability to pause or stop it while remaining in sleep mode. **Solution**: (1) When Live Sharing is active in sleep mode, `postSleepNotification` shows title `🌙 WhereAmI Sleeping (Live & Auto-detect)` (or `🌙 WhereAmI Live Sharing Sleeping`) and subtext showing Live Sharing sync status. (2) Provides 3 action buttons: `[▶ Activate]` (wake app to full moving tracking), `[⏸ Pause]` / `[▶ Resume]` (toggle Live Sharing pause in-place), and `[🛑 Stop]` (stops Live Sharing session, updating notification in-place to pure Standby Sleep without reviving foreground tracking). | `LiveTrackingService.kt`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | Covered by `testUnifiedSleepNotificationStateAndActions` in `BatteryOptimizationAndAutoStartTest.kt`. |
 | **VER-25** | **Build Gate, Version Increment & On-Device Install**: Monotonically increment `versionCode` to 66 and `versionName` to "1.6.6". Pre-completion build gates passed (`BUILD SUCCESSFUL`). APK successfully assembled and installed on connected device `63160DLCH000RZ`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (`BUILD SUCCESSFUL` with 0 failures across all 226 unit tests). Installed via `adb install -r`. |
+
+---
+
+## 55. Round 52: Web Companion Viewer Page Visibility API Gating & Sleep Polling Backoff (2026-10-12)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **WEB52-01** | **Web Live Sharing Page Visibility Gating & Zero-Background Polling**: Software analyzing battery usage reported Brave browser background Wi-Fi packet wakeups (`2.38 mAh`) due to open Live Sharing tabs maintaining network sockets during screen-off doze. **Solution**: (1) Hooked into the HTML5 Page Visibility API (`document.visibilityState` / `visibilitychange`). When tab is hidden or screen is off (`document.hidden == true`), the polling loop is completely paused, stopping all network fetch requests and background socket keepalives. (2) When returning to the tab / unlocking device, immediately triggers an instant `fetchTrack()` to refresh the map and seamlessly resumes polling. (3) When host is reported in sleep mode (`isHostSleeping == true`), backs off polling cadence from 4s to 30s. | `server/public/index.html` | **Completed** | Verified syntax and event listener integration. |
+
+
 
 
 
