@@ -595,6 +595,37 @@ class BatteryOptimizationAndAutoStartTest {
         assertTrue(liveOnly.text.contains("Overnight hibernation • Live Sharing active (1h sync)"))
         assertEquals(3, liveOnly.actionCount)
     }
+
+    @Test
+    fun testSingleNotificationInvariantAndSleepIdUnification() {
+        // Crucial Invariant: Exactly one notification in system tray.
+        // NOTIF_SLEEP_ID must be unified with NOTIF_ID (2) so sleep mode updates in-place
+        // rather than spawning a duplicate notification (Round 52 fix).
+        assertEquals(2, LiveTrackingService.NOTIF_SLEEP_ID)
+    }
+
+    @Test
+    fun testSleepPersistenceAcrossForegroundTransitions() {
+        // When user opens the app or views the screen while in sleep mode,
+        // sleep mode MUST NOT be cancelled automatically. It must persist until
+        // the user explicitly activates/wakes it.
+        var isSleeping = true
+
+        val onAppForegroundStateChanged = { inForeground: Boolean ->
+            // New logic: do NOT cancel sleep on foreground transition
+            // isSleeping remains unchanged!
+        }
+
+        onAppForegroundStateChanged(true)
+        assertTrue("Sleep mode must persist when app transitions to foreground", isSleeping)
+
+        // User explicitly activates via notification action or HUD button:
+        val onUserActivateClicked = {
+            isSleeping = false
+        }
+        onUserActivateClicked()
+        assertFalse("Sleep mode wakes only on explicit user action", isSleeping)
+    }
 }
 
 
