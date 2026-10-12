@@ -12,11 +12,11 @@ enum class PlaceKind(val iconEmoji: String, val displayName: String) {
 
 data class VisitedPlace(
     val placeName: String,
-    val hierarchySubtitle: String,
+    val hierarchySubtitle: String = "",
     val timestamp: Long,
     val latitude: Double,
     val longitude: Double,
-    val distanceAtEntryMeters: Double,
+    val distanceAtEntryMeters: Double = 0.0,
     val placeKind: PlaceKind = PlaceKind.LOCALITY
 )
 

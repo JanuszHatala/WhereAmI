@@ -45,6 +45,8 @@ object RoadNameNormalizer {
                 trimmed.startsWith("DROGA EKSPRESOWA") ||
                 trimmed.startsWith("EKSPRESOWA") ||
                 trimmed.contains("NIEPODLEGŁOŚCI") ||
+                trimmed.contains("MONTE CASSINO") ||
+                trimmed.contains("ANDERSA") ||
                 trimmed.startsWith("ALEJA") ||
                 trimmed.startsWith("ALEJE") ||
                 trimmed.startsWith("AL.") ||
