@@ -268,8 +268,8 @@ class AppStateManager private constructor(private val context: Context) {
         val hasLive = liveSession != null && liveSession.isActive
         val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-        // Do not auto-restart standby FGS if user/system entered standby sleep
-        if (_isStandbySleeping.value && !hasTrip && !hasLive) {
+        // Do not auto-restart standby FGS if user/system entered standby sleep (unless active trip recording)
+        if (_isStandbySleeping.value && !hasTrip) {
             return
         }
 
@@ -611,6 +611,7 @@ class AppStateManager private constructor(private val context: Context) {
             tripActive -> AppLifecycleMode.TRIP_RECORDING
             isAutoMediaActive -> AppLifecycleMode.ANDROID_AUTO
             isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
+            _isStandbySleeping.value -> AppLifecycleMode.IDLE
             liveActive -> AppLifecycleMode.LIVE_ONLY
             else -> AppLifecycleMode.IDLE
         }
@@ -653,11 +654,18 @@ class AppStateManager private constructor(private val context: Context) {
                 val hasLive = liveSession != null && liveSession.isActive
                 val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-                // In MANUAL mode with no trip and no live share: stop the service completely.
-                // In AUTO mode: DO NOT STOP the service! LiveTrackingService stays running in
+                // In MANUAL mode with no trip and no live share, OR when sleeping: stop the service completely.
+                // In AUTO mode without sleep: DO NOT STOP the service! LiveTrackingService stays running in
                 // zero-CPU standby mode with the persistent standby notification ("Ready to auto-record"),
                 // protecting the process from being killed and holding the FGS token for GPS bursts.
-                if (!hasTrip && !hasLive && !isAuto) {
+                if (_isStandbySleeping.value && !hasTrip) {
+                    try {
+                        val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
+                            action = LiveTrackingService.ACTION_STANDBY_SLEEP
+                        }
+                        context.startService(stopIntent)
+                    } catch (_: Exception) {}
+                } else if (!hasTrip && !hasLive && !isAuto) {
                     try {
                         val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
                             action = LiveTrackingService.ACTION_STOP
