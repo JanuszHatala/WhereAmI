@@ -139,6 +139,7 @@ class LiveTrackingService : Service() {
                 if (!hasTrip) {
                     stopLocationTracking()
                     updateWakeLock(false)
+                    locationManager.stopLocationUpdates()
                     val liveSession = LiveSharingManager.getInstance(this).currentSession.value
                     val hasLive = liveSession != null && liveSession.isActive
                     if (hasLive) {
@@ -152,6 +153,8 @@ class LiveTrackingService : Service() {
                         @Suppress("DEPRECATION")
                         stopForeground(true)
                     }
+                    val notifManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    notifManager.cancel(NOTIF_ID)
                     postSleepNotification(hasLive)
                     stopSelf()
                     return START_NOT_STICKY
@@ -503,12 +506,38 @@ class LiveTrackingService : Service() {
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
+        val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value
 
         if (trip != null) {
+            // Cancel sleep notification if active trip is started
+            try {
+                val notifManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notifManager.cancel(NOTIF_SLEEP_ID)
+            } catch (_: Exception) {}
             startLocationTracking()
             // Strict WakeLock scoping: ONLY hold CPU wake lock during active trip recording.
             updateWakeLock(true)
             updateNotification(force = true)
+        } else if (isSleeping) {
+            // Standby / Live Sharing Sleep engaged: shutdown location tracking and FGS, post single sleep notification
+            stopLocationTracking()
+            updateWakeLock(false)
+            locationManager.stopLocationUpdates()
+            if (hasLive) {
+                LiveSharingManager.getInstance(this).startStationaryHeartbeat()
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            try {
+                val notifManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notifManager.cancel(NOTIF_ID)
+            } catch (_: Exception) {}
+            postSleepNotification(hasLive)
+            stopSelf()
         } else if (hasLive) {
             // Live sharing active without active trip recording:
             // Keep location stream active so fixes are delivered at adaptive cadence (15s moving / 60s stationary)
@@ -534,8 +563,8 @@ class LiveTrackingService : Service() {
     }
 
     private fun startTracking() {
-        // Observe trip, live share, and tripMode changes to dynamically switch between
-        // Active Tracking, Zero-CPU Standby FGS, and Complete Stop (MANUAL mode)
+        // Observe trip, live share, tripMode, and sleep changes to dynamically switch between
+        // Active Tracking, Zero-CPU Standby FGS, Sleep Hibernation, and Complete Stop (MANUAL mode)
         serviceScope.launch {
             TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest {
                 evaluateServiceState()
@@ -548,6 +577,11 @@ class LiveTrackingService : Service() {
         }
         serviceScope.launch {
             TripManager.getInstance(this@LiveTrackingService).tripMode.collectLatest {
+                evaluateServiceState()
+            }
+        }
+        serviceScope.launch {
+            AppStateManager.getInstance(this@LiveTrackingService).isStandbySleeping.collectLatest {
                 evaluateServiceState()
             }
         }
