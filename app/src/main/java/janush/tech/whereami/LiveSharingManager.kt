@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -430,7 +431,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         if (stationaryHeartbeatJob?.isActive == true) return
         stationaryHeartbeatJob = scope.launch {
             val isSleeping = AppStateManager.getInstance(context).isStandbySleeping.value
-            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat started (GPS off, periodic network ping, isSleeping=$isSleeping)")
+            TelemetryLogger.log("LIVE_SHARE", "Stationary presence heartbeat started (isSleeping=$isSleeping)")
             while (isActive) {
                 val session = _currentSession.value
                 if (session == null || !session.isActive || session.isExpired || session.isPaused) break
@@ -439,9 +440,9 @@ class LiveSharingManager private constructor(private val context: Context) {
 
                 val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
                 val baseIntervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
-                // When in sleep mode (overnight hibernation), relax heartbeat to 15-30 minutes so cellular radio sleeps
+                // When in sleep mode (overnight hibernation), relax heartbeat to 60 minutes with ultra-low-frequency one-shot GNSS fix
                 val intervalMs = if (isCurrentlySleeping) {
-                    baseIntervalMs.coerceAtLeast(15 * 60_000L)
+                    60 * 60_000L
                 } else {
                     baseIntervalMs
                 }
@@ -451,21 +452,48 @@ class LiveSharingManager private constructor(private val context: Context) {
                 if (current == null || !current.isActive || current.isExpired || current.isPaused) break
                 if (TripManager.getInstance(context).activeTrip.value != null) break
 
-                if (lastRecordedLat != 0.0 && lastRecordedLng != 0.0) {
+                var effectiveLat = lastRecordedLat
+                var effectiveLng = lastRecordedLng
+                var effectiveCity: String? = null
+                var effectiveAccuracy = lastRecordedAccuracy
+
+                if (isCurrentlySleeping) {
+                    // One-shot quick GNSS fix attempt (with 10-second timeout)
+                    try {
+                        withTimeoutOrNull(10_000L) {
+                            val locData = LocationManager.getInstance(context).getCurrentLocationSingle(DisplayLanguage.PL)
+                            val snap = LocationManager.getInstance(context).lastLocationSnapshot
+                            if (snap != null && snap.lat != 0.0 && snap.lng != 0.0) {
+                                effectiveLat = snap.lat
+                                effectiveLng = snap.lng
+                                lastRecordedLat = snap.lat
+                                lastRecordedLng = snap.lng
+                                effectiveAccuracy = snap.accuracy
+                                lastRecordedAccuracy = snap.accuracy
+                                effectiveCity = snap.multiPlace?.pl?.city?.takeIf { it.isNotBlank() }
+                                TelemetryLogger.log("POWER", "Sleep Mode: 60m one-shot GNSS fix acquired ($effectiveLat, $effectiveLng)")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        TelemetryLogger.log("POWER", "Sleep Mode: one-shot GNSS fix skipped/failed: ${e.message}")
+                    }
+                }
+
+                if (effectiveLat != 0.0 && effectiveLng != 0.0) {
                     val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
-                    val city = LocationManager.getInstance(context).lastLocationSnapshot?.multiPlace?.let {
+                    val city = effectiveCity ?: LocationManager.getInstance(context).lastLocationSnapshot?.multiPlace?.let {
                         it.pl.takeIf { p -> p.isValid() }?.city ?: it.en.city
                     } ?: prefs.getString("last_city", null)
 
                     flushPointsToServer(
-                        lat = lastRecordedLat,
-                        lng = lastRecordedLng,
+                        lat = effectiveLat,
+                        lng = effectiveLng,
                         speedKmh = 0f,
                         altitude = null,
                         bearing = lastRecordedBearing,
                         placeName = city,
                         trekkingBadge = null,
-                        accuracy = lastRecordedAccuracy,
+                        accuracy = effectiveAccuracy,
                         isChargingOverride = null,
                         syncIntervalMsOverride = intervalMs
                     )
