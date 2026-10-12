@@ -1269,27 +1269,58 @@
 
         // Adaptive polling schedule
         const isHostActive = isSessionActive && !isSessionPaused && !isDisconnected;
-        if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 10000))) {
+        if (isHostSleeping) {
+          nextPollIntervalMs = 30000; // Host is sleeping in overnight hibernation; relaxed 30s polling
+        } else if (isHostActive && (isChargingBoost || (syncIntervalMs > 0 && syncIntervalMs <= 10000))) {
           nextPollIntervalMs = 2500; // Snappy 2.5s polling during charging boost
         } else if (isHostActive) {
           nextPollIntervalMs = 4000;
+        } else if (isSessionPaused) {
+          nextPollIntervalMs = 10000; // Session paused; 10s polling
         } else {
-          nextPollIntervalMs = 5000;
+          nextPollIntervalMs = 15000; // Offline / ended / disconnected; 15s polling
         }
       } catch (err) {
         console.error('Fetch error:', err);
-        nextPollIntervalMs = 5000;
+        nextPollIntervalMs = 10000;
       }
     }
 
     let pollTimeoutId = null;
     let nextPollIntervalMs = 4000;
+    let isPollingActive = true;
 
     async function pollLoop() {
+      if (document.hidden) {
+        // Stop background socket keepalives and Wi-Fi packet wakeups when tab is hidden or screen is off
+        isPollingActive = false;
+        return;
+      }
       await fetchTrack();
       if (pollTimeoutId) clearTimeout(pollTimeoutId);
-      pollTimeoutId = setTimeout(pollLoop, nextPollIntervalMs);
+      if (!document.hidden) {
+        isPollingActive = true;
+        pollTimeoutId = setTimeout(pollLoop, nextPollIntervalMs);
+      } else {
+        isPollingActive = false;
+      }
     }
+
+    // Page Visibility Lifecycle: Zero network traffic and socket keepalives when tab is backgrounded / screen off
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        if (pollTimeoutId) clearTimeout(pollTimeoutId);
+        isPollingActive = true;
+        // Instantly refresh track upon tab foreground / device unlock, then resume polling
+        pollLoop();
+      } else {
+        isPollingActive = false;
+        if (pollTimeoutId) {
+          clearTimeout(pollTimeoutId);
+          pollTimeoutId = null;
+        }
+      }
+    });
 
     pollLoop();
   </script>
