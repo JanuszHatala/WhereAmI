@@ -779,3 +779,13 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **UI56-01** | **Settings Sheet Automatic Sleep Mode Card & Time Pickers**: Added high-contrast Settings card with `Auto Sleep Mode` toggle, interactive Bedtime / Wake Up time pickers (`TimePickerSimpleDialog`) with quick presets and +/-1h, +/-15m adjustments, "Follow Do Not Disturb (DND)" and "Sync with Morning Alarm" checkboxes, and immediate "Sleep Now" / "Wake Now" action button. Conforms strictly to `docs/DESIGN_SYSTEM.md`. | `MainActivity.kt` | **Completed** | Visual and compilation verification. |
 | **VER-29** | **Build Gate & Version Increment**: Increment `versionCode` to 70 and `versionName` to "1.7.0". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | Automated test suite and debug APK build. |
 
+---
+
+## 60. Round 57: AppStateManager & AutoSleepManager Circular Initialization Fix (2026-10-13)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :---: |
+| **CRASH57-01** | **Resolve Circular Singleton Initialization StackOverflowError**: User reported app crashed on startup ("Where Am I keeps stopping"). **Root Cause**: `AppStateManager.<init>` called `AutoSleepManager.getInstance().evaluateAutoSleep()`, which in turn invoked `AppStateManager.getInstance()`. Because `AppStateManager.INSTANCE` was only assigned via `.also { INSTANCE = it }` after constructor exit, the recursive call spawned another `AppStateManager`, causing infinite mutual recursion and `StackOverflowError` in AndroidRuntime. **Solution**: (1) Assigned `INSTANCE = this` immediately in `AppStateManager.init` and `AutoSleepManager.init`. (2) Removed `evaluateAutoSleep()` from `AppStateManager.init`, letting it evaluate safely on lifecycle and screen-off events. | `AppStateManager.kt`, `AutoSleepManager.kt` | **Completed** | Verified logcat crash trace eliminated, builds and runs cleanly. |
+| **VER-30** | **Build Gate & Version Increment**: Increment `versionCode` to 71 and `versionName` to "1.7.1". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed. |
+
+
