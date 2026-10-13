@@ -3409,7 +3409,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Spacer(modifier = Modifier.height(12.dp))
 
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(20.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {

@@ -60,7 +60,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoSleepFollowAlarm(follow: Boolean) = autoSleepManager.setFollowAlarm(follow)
 
     fun enterStandbySleep() {
-        appStateManager.enterStandbySleep()
+        appStateManager.enterStandbySleep(isManual = true)
     }
 
     fun wakeStandbySleep() {
@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (appStateManager.isStandbySleeping.value) {
             appStateManager.wakeStandbySleep(isExplicitUserAction = true)
         } else {
-            appStateManager.enterStandbySleep()
+            appStateManager.enterStandbySleep(isManual = true)
         }
     }
 
