@@ -35,6 +35,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -3377,29 +3380,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "🌙 Automatic Sleep Mode",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White
-                                    )
-                                    if (isStandbySleeping) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = Color(0xFF047857)
-                                        ) {
-                                            Text(
-                                                text = "SLEEPING",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                                Text(
+                                    text = "🌙 Automatic Sleep Mode",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                                 Text(
                                     text = "Auto-hibernates GPS & tracking overnight to eliminate idle battery drain.",
                                     fontSize = 11.sp,
@@ -3420,12 +3408,36 @@ fun LocationScreen(viewModel: MainViewModel) {
                         if (autoSleepEnabled) {
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            Text(
-                                text = "Bedtime Window (Night Hours)",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFCBD5E1)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Bedtime Window (Night Hours)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFCBD5E1),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                if (isStandbySleeping) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFF047857)
+                                    ) {
+                                        Text(
+                                            text = "SLEEPING",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -11269,6 +11281,79 @@ fun TripDetailDialog(
 }
 
 @Composable
+private fun TimeWheelColumn(
+    items: List<Int>,
+    selectedIndex: Int,
+    onSelectIndex: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    format: (Int) -> String = { String.format(Locale.getDefault(), "%02d", it) }
+) {
+    val itemHeight = 44.dp
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
+
+    LaunchedEffect(selectedIndex) {
+        if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != selectedIndex) {
+            listState.animateScrollToItem(selectedIndex)
+        }
+    }
+
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress) {
+            val centerIndex = listState.firstVisibleItemIndex +
+                if (listState.firstVisibleItemScrollOffset > 22) 1 else 0
+            val clamped = centerIndex.coerceIn(0, items.size - 1)
+            if (clamped != selectedIndex) {
+                onSelectIndex(clamped)
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .height(itemHeight * 3)
+            .width(68.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Selection glass overlay
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF1E293B),
+            border = BorderStroke(1.5.dp, Color(0xFF0284C7)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+        ) {}
+
+        LazyColumn(
+            state = listState,
+            flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
+            contentPadding = PaddingValues(vertical = itemHeight),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            itemsIndexed(items) { index, value ->
+                val isSelected = index == selectedIndex
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(itemHeight)
+                        .clickable { onSelectIndex(index) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = format(value),
+                        fontSize = if (isSelected) 22.sp else 16.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) Color.White else Color(0xFF64748B),
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TimePickerSimpleDialog(
     title: String,
     initialTime: String,
@@ -11277,14 +11362,18 @@ private fun TimePickerSimpleDialog(
     onConfirm: (String) -> Unit
 ) {
     val (initH, initM) = AutoSleepManager.parseHourMinute(initialTime, if (isBedtime) 22 else 6, 30)
-    var hour by remember { mutableStateOf(initH) }
-    var minute by remember { mutableStateOf(initM) }
+    val hours = remember { (0..23).toList() }
+    val minutes = remember { (0..59).toList() }
 
-    val presets = if (isBedtime) {
-        listOf("21:30", "22:00", "22:30", "23:00", "23:30", "00:00")
-    } else {
-        listOf("05:30", "06:00", "06:30", "07:00", "07:30", "08:00")
-    }
+    var selectedHourIndex by remember { mutableIntStateOf(initH.coerceIn(0, 23)) }
+    var selectedMinuteIndex by remember { mutableIntStateOf(initM.coerceIn(0, 59)) }
+
+    val formattedTime = String.format(
+        Locale.getDefault(),
+        "%02d:%02d",
+        hours[selectedHourIndex],
+        minutes[selectedMinuteIndex]
+    )
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -11302,100 +11391,76 @@ private fun TimePickerSimpleDialog(
                     text = title,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = Color.White,
+                    maxLines = 1,
+                    softWrap = false
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Time Display
-                val formattedTime = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+                // Time Display Header
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color(0xFF1E293B),
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = formattedTime,
                         fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF38BDF8),
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                // Adjustment Buttons
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = { hour = (hour - 1 + 24) % 24 },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFF475569))
-                    ) {
-                        Text("-1h", color = Color.White)
-                    }
-                    OutlinedButton(
-                        onClick = { hour = (hour + 1) % 24 },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFF475569))
-                    ) {
-                        Text("+1h", color = Color.White)
-                    }
-                    OutlinedButton(
-                        onClick = { minute = (minute - 15 + 60) % 60 },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFF475569))
-                    ) {
-                        Text("-15m", color = Color.White)
-                    }
-                    OutlinedButton(
-                        onClick = { minute = (minute + 15) % 60 },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFF475569))
-                    ) {
-                        Text("+15m", color = Color.White)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Quick Presets
-                Text("Quick Presets:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                Spacer(modifier = Modifier.height(6.dp))
+                // Drum Roll / Carousel Picker Columns
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    presets.forEach { p ->
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (formattedTime == p) Color(0xFF0284C7) else Color(0xFF334155),
-                            modifier = Modifier.clickable {
-                                val (ph, pm) = AutoSleepManager.parseHourMinute(p, hour, minute)
-                                hour = ph
-                                minute = pm
-                            }
-                        ) {
-                            Text(
-                                text = p,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
-                        }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("HOUR", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        TimeWheelColumn(
+                            items = hours,
+                            selectedIndex = selectedHourIndex,
+                            onSelectIndex = { selectedHourIndex = it }
+                        )
+                    }
+
+                    Text(
+                        text = ":",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .padding(top = 18.dp)
+                    )
+
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("MINUTE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        TimeWheelColumn(
+                            items = minutes,
+                            selectedIndex = selectedMinuteIndex,
+                            onSelectIndex = { selectedMinuteIndex = it }
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
                 // Actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = Color.White)
