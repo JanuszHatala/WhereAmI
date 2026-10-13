@@ -3314,9 +3314,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
                 Text(
-                    text = "Current Mode: ${lifecycleMode.displayName} • ${powerPolicy.description}",
+                    text = "Current Mode: ${lifecycleMode.displayName}",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8),
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
                 )
                 Column(
@@ -3380,35 +3382,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = "🌙 Automatic Sleep Mode",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                    if (isStandbySleeping) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFF047857)
-                                        ) {
-                                            Text(
-                                                text = "SLEEPING",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                                Text(
+                                    text = "🌙 Automatic Sleep Mode",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                                 Text(
                                     text = "Auto-hibernates GPS & tracking overnight to eliminate idle battery drain.",
                                     fontSize = 11.sp,
@@ -3429,14 +3410,38 @@ fun LocationScreen(viewModel: MainViewModel) {
                         if (autoSleepEnabled) {
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            Text(
-                                text = "Bedtime Window (Night Hours)",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFCBD5E1),
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(24.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Bedtime Window (Night Hours)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFCBD5E1),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                if (isStandbySleeping) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFF047857)
+                                    ) {
+                                        Text(
+                                            text = "SLEEPING",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
