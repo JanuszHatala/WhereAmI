@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <int name="pref_heatmap_min_visits" value="1" />
+    <boolean name="pref_show_borders" value="true" />
+    <set name="pref_heatmap_activities" />
+    <string name="pref_heatmap_date">ALL</string>
+    <boolean name="pref_keep_screen_on" value="true" />
+    <string name="pref_locality_card_style">NORMAL</string>
+    <boolean name="pref_show_heat_map" value="false" />
+    <string name="pref_map_orientation_mode">COURSE_UP</string>
+    <boolean name="compact_street_names" value="false" />
+    <boolean name="pref_heatmap_consolidate" value="true" />
+    <boolean name="pref_heatmap_include_active" value="true" />
+</map>

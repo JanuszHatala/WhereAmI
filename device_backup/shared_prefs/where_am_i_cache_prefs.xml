@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="auto_start_on_charger" value="true" />
+    <boolean name="allow_prefetch_mobile_data" value="true" />
+    <boolean name="allow_prefetch_on_battery" value="true" />
+    <boolean name="auto_start_on_wifi" value="true" />
+</map>

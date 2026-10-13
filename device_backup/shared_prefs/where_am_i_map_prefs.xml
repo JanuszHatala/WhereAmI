@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="profile_HIKING_base_layer">FREEMAP_OUTDOOR</string>
+    <string name="profile_WALKING_font_scale">NORMAL</string>
+    <boolean name="profile_MTB_hiking_overlay" value="true" />
+    <string name="profile_CAR_base_layer">STANDARD</string>
+    <string name="profile_CAR_font_scale">MAXIMUM</string>
+    <string name="base_layer">FREEMAP_OUTDOOR</string>
+    <string name="profile_WALKING_base_layer">STANDARD</string>
+    <boolean name="hiking_overlay" value="false" />
+    <string name="profile_CAR_orientation_mode">COURSE_UP</string>
+    <boolean name="profile_CYCLING_hiking_overlay" value="false" />
+    <string name="profile_CYCLING_base_layer">STANDARD</string>
+    <string name="profile_MTB_base_layer">FREEMAP_OUTDOOR</string>
+    <boolean name="profile_WALKING_hiking_overlay" value="false" />
+    <string name="profile_CYCLING_font_scale">NORMAL</string>
+    <string name="font_scale">NORMAL</string>
+    <boolean name="profile_HIKING_hiking_overlay" value="true" />
+    <string name="profile_HIKING_font_scale">NORMAL</string>
+    <boolean name="profile_CAR_hiking_overlay" value="false" />
+</map>
