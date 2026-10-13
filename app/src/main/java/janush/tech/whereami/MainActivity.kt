@@ -3423,22 +3423,42 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color(0xFFCBD5E1),
                                     maxLines = 1,
-                                    softWrap = false
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
                                 )
                                 if (isStandbySleeping) {
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
                                         color = Color(0xFF047857)
                                     ) {
-                                        Text(
-                                            text = "SLEEPING",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                        )
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(
+                                                text = "SLEEPING",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 10.sp
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
