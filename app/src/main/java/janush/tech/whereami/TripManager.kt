@@ -251,7 +251,6 @@ class TripManager private constructor(private val context: Context) {
 
     init {
         restoreUnclosedTripIfAny()
-        startWatchdog()
     }
 
     private fun restoreUnclosedTripIfAny() {
@@ -300,21 +299,27 @@ class TripManager private constructor(private val context: Context) {
                             TelemetryLogger.logTrip("PAUSE_RESTORED", unclosed.id, "Restored paused state after process death: pause started ${(System.currentTimeMillis() - pauseStartTime) / 60000}m ago")
                         }
                     }
+                    startWatchdog()
                     TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points (isPaused=${_isPaused.value})")
                 }
             }
         }
     }
 
-    private fun startWatchdog() {
+    private fun stopWatchdog() {
         watchdogJob?.cancel()
+        watchdogJob = null
+    }
+
+    private fun startWatchdog() {
+        if (watchdogJob?.isActive == true) return
         watchdogJob = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(15_000L) // check every 15s
-                val active = _activeTrip.value
+                val active = _activeTrip.value ?: break
                 val mode = _tripMode.value
                 // Fix 2: Check if paused trip has exceeded 1-hour warning threshold
-                if (active != null && _isPaused.value && activePause != null) {
+                if (_isPaused.value && activePause != null) {
                     val pauseDurationMs = System.currentTimeMillis() - activePause!!.startTime
                     if (pauseDurationMs >= PAUSE_WARNING_TIMEOUT_MS && !pauseWarningNotified) {
                         pauseWarningNotified = true
@@ -323,13 +328,14 @@ class TripManager private constructor(private val context: Context) {
                     }
                 }
                 // In AUTO mode, stop when stationary duration exceeds configured auto-stop timeout (unless paused)
-                if (active != null && mode == TripMode.AUTO && !_isPaused.value && lastMovingTimestamp != null) {
+                if (mode == TripMode.AUTO && !_isPaused.value && lastMovingTimestamp != null) {
                     val now = System.currentTimeMillis()
                     val stationaryDurationMs = now - lastMovingTimestamp!!
                     val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
                     if (stationaryDurationMs >= timeoutMs) {
                         TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${timeoutMs / 60000}m timeout")
                         stopTrip()
+                        break
                     }
                 }
             }
@@ -446,6 +452,7 @@ class TripManager private constructor(private val context: Context) {
         // Clear live sharing trail buffer so new trip starts with a clean live path
         LiveSharingManager.getInstance(context).resetSessionTrail()
 
+        startWatchdog()
         startLiveTrackingService()
     }
 
@@ -505,6 +512,7 @@ class TripManager private constructor(private val context: Context) {
         _activeTrip.value = null
         _isPaused.value = false
         pauseWarningNotified = false
+        stopWatchdog()
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)

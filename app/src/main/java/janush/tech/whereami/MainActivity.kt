@@ -284,6 +284,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val isCharging by viewModel.isCharging.collectAsState()
     val lifecycleMode by viewModel.lifecycleMode.collectAsState()
     val isStandbySleeping by viewModel.isStandbySleeping.collectAsState()
+    val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
 
     val selectedTripsList = remember(savedTrips, selectedTripIds) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
@@ -938,10 +939,12 @@ fun LocationScreen(viewModel: MainViewModel) {
         if (!showTripsSheet && !isLandscape && activeTrip != null) {
             val recTrip = activeTrip!!
             var recTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
-            LaunchedEffect(recTrip.startTime) {
-                while (true) {
-                    recTickerNow = System.currentTimeMillis()
-                    kotlinx.coroutines.delay(1000L)
+            LaunchedEffect(recTrip.startTime, isAppInForeground) {
+                if (isAppInForeground) {
+                    while (true) {
+                        recTickerNow = System.currentTimeMillis()
+                        kotlinx.coroutines.delay(1000L)
+                    }
                 }
             }
             val elapsedMs = maxOf(0L, recTickerNow - recTrip.startTime)
@@ -1057,16 +1060,21 @@ fun LocationScreen(viewModel: MainViewModel) {
         // ── Floating Compact Standby HUD Bar (Auto-Start Enabled, Waiting for Motion in Portrait) ────
         if (!showTripsSheet && !isLandscape && activeTrip == null && tripMode == TripMode.AUTO) {
             val autoSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
-            val infiniteTransition = rememberInfiniteTransition(label = "autoStandbyPulse")
-            val pulseAlpha by infiniteTransition.animateFloat(
-                initialValue = 0.35f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1000, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "standbyAlpha"
-            )
+            val pulseAlpha = if (!isStandbySleeping && isAppInForeground) {
+                val infiniteTransition = rememberInfiniteTransition(label = "autoStandbyPulse")
+                val animatedAlpha by infiniteTransition.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1000, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "standbyAlpha"
+                )
+                animatedAlpha
+            } else {
+                1.0f
+            }
 
             Surface(
                 modifier = Modifier
@@ -1188,8 +1196,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         if (!showTripsSheet) {
             val recTrip = activeTrip
             var toolbarTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
-            LaunchedEffect(recTrip?.startTime) {
-                if (recTrip != null) {
+            LaunchedEffect(recTrip?.startTime, isAppInForeground) {
+                if (recTrip != null && isAppInForeground) {
                     while (true) {
                         toolbarTickerNow = System.currentTimeMillis()
                         kotlinx.coroutines.delay(1000L)
@@ -8201,9 +8209,10 @@ private fun LocalityCard(
                 .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 6.dp else 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
             var tickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
-            LaunchedEffect(liveSession?.isActive) {
-                if (liveSession?.isActive == true) {
+            LaunchedEffect(liveSession?.isActive, isAppInForeground) {
+                if (liveSession?.isActive == true && isAppInForeground) {
                     while (true) {
                         tickerNow = System.currentTimeMillis()
                         kotlinx.coroutines.delay(5000L)

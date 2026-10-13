@@ -706,8 +706,12 @@ fun OsmMapView(
         }
     }
 
+    val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
+
     // Continuous Frame Loop: smooth dead-reckoning marker & optical camera tracking throttled to ~35fps
-    LaunchedEffect(isFollowing, destinationPoint, selectedSavedPlace, orientationMode, isRecording) {
+    // Strictly suspended when screen is off / app is in background to prevent 350ms background CPU wakeups.
+    LaunchedEffect(isFollowing, destinationPoint, selectedSavedPlace, orientationMode, isRecording, isAppInForeground) {
+        if (!isAppInForeground) return@LaunchedEffect
         var lastRenderedLat = 0.0
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
