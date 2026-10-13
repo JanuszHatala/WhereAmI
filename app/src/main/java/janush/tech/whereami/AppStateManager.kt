@@ -129,6 +129,7 @@ class AppStateManager private constructor(private val context: Context) {
         monitorSubsystems()
         setupMotionWakeListener()
         updateStandbyInactivityWatcherState()
+        AutoSleepManager.getInstance(context).evaluateAutoSleep()
     }
 
     private fun registerBatteryReceiver() {
@@ -207,10 +208,14 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
-    fun wakeStandbySleep() {
+    fun wakeStandbySleep(isExplicitUserAction: Boolean = false) {
         if (!_isStandbySleeping.value) return
         _isStandbySleeping.value = false
-        TelemetryLogger.log("POWER", "Waking up from standby sleep mode.")
+        TelemetryLogger.log("POWER", "Waking up from standby sleep mode (explicitUser=$isExplicitUserAction).")
+
+        if (isExplicitUserAction) {
+            AutoSleepManager.getInstance(context).onUserExplicitWake()
+        }
 
         consecutiveFalseBursts = 0
         motionRearmJob?.cancel()
@@ -257,6 +262,7 @@ class AppStateManager private constructor(private val context: Context) {
             var stationarySinceMs = 0L
             while (isActive) {
                 delay(60_000L) // Check every minute
+                AutoSleepManager.getInstance(context).evaluateAutoSleep()
                 val tripManager = TripManager.getInstance(context)
                 val liveSession = LiveSharingManager.getInstance(context).currentSession.value
                 val hasLive = liveSession != null && liveSession.isActive
@@ -301,6 +307,8 @@ class AppStateManager private constructor(private val context: Context) {
             // Do NOT automatically cancel sleep mode when user simply opens or views the app!
             // Sleep mode is persistent and only wakes via user action ([▶ Activate] on notification or [▶ Wake] in HUD).
             ensureAutoStandbyServiceRunning()
+        } else {
+            AutoSleepManager.getInstance(context).evaluateAutoSleep()
         }
         updateStandbyInactivityWatcherState()
         recalculateState()
