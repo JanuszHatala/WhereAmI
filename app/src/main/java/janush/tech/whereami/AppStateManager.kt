@@ -181,7 +181,7 @@ class AppStateManager private constructor(private val context: Context) {
         recalculateState()
     }
 
-    fun enterStandbySleep() {
+    fun enterStandbySleep(isManual: Boolean = false) {
         if (_isStandbySleeping.value) return
         val tripManager = TripManager.getInstance(context)
         val hasTrip = tripManager.activeTrip.value != null
@@ -193,10 +193,13 @@ class AppStateManager private constructor(private val context: Context) {
         }
 
         _isStandbySleeping.value = true
+        if (isManual) {
+            AutoSleepManager.getInstance(context).onManualSleepEntered()
+        }
         stopStandbyInactivityWatcher()
         motionRearmJob?.cancel()
         MotionWakeManager.getInstance(context).disarm()
-        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS).")
+        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS, manual=$isManual).")
 
         try {
             val intent = Intent(context, LiveTrackingService::class.java).apply {
@@ -206,11 +209,14 @@ class AppStateManager private constructor(private val context: Context) {
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "Failed to send ACTION_STANDBY_SLEEP: ${e.message}")
         }
+
+        recalculateState()
     }
 
     fun wakeStandbySleep(isExplicitUserAction: Boolean = false) {
         if (!_isStandbySleeping.value) return
         _isStandbySleeping.value = false
+        AutoSleepManager.getInstance(context).onSleepWoken()
         TelemetryLogger.log("POWER", "Waking up from standby sleep mode (explicitUser=$isExplicitUserAction).")
 
         if (isExplicitUserAction) {
@@ -663,8 +669,8 @@ class AppStateManager private constructor(private val context: Context) {
         val newMode = when {
             tripActive -> AppLifecycleMode.TRIP_RECORDING
             isAutoMediaActive -> AppLifecycleMode.ANDROID_AUTO
-            isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
             _isStandbySleeping.value -> AppLifecycleMode.IDLE
+            isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
             liveActive -> AppLifecycleMode.LIVE_ONLY
             else -> AppLifecycleMode.IDLE
         }

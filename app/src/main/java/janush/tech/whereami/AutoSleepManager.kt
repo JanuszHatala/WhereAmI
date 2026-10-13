@@ -115,9 +115,16 @@ class AutoSleepManager private constructor(private val context: Context) {
             isDndActive: Boolean,
             followDnd: Boolean,
             isMorning: Boolean,
-            isAlarmFired: Boolean
+            isAlarmFired: Boolean,
+            isManualSleep: Boolean = false
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
+
+            // Manually entered sleep persists until explicit user wake or morning alarm
+            if (isManualSleep) {
+                // If user set alarm and alarm fired in morning, wake even manual sleep
+                return isAlarmFired && isMorning
+            }
 
             // Morning alarm fired
             if (isAlarmFired && isMorning) return true
@@ -151,11 +158,23 @@ class AutoSleepManager private constructor(private val context: Context) {
 
     private var wasManuallyWokenThisCycle = false
     private var lastEvaluatedCycleDate = -1
+    private var isManualSleep = false
 
     init {
         INSTANCE = this
         registerSystemReceivers()
     }
+
+    fun onManualSleepEntered() {
+        isManualSleep = true
+        TelemetryLogger.log("POWER", "AutoSleepManager: Manual sleep registered (will not auto-wake on bedtime window end)")
+    }
+
+    fun onSleepWoken() {
+        isManualSleep = false
+    }
+
+    fun isManualSleepActive(): Boolean = isManualSleep
 
     fun setAutoSleepEnabled(enabled: Boolean) {
         _autoSleepEnabled.value = enabled
@@ -303,7 +322,8 @@ class AutoSleepManager private constructor(private val context: Context) {
                 isDndActive = dndActive,
                 followDnd = _followDnd.value,
                 isMorning = isMorning,
-                isAlarmFired = alarmFired
+                isAlarmFired = alarmFired,
+                isManualSleep = isManualSleep
             )
             if (shouldWake) {
                 val reason = when {
