@@ -3408,7 +3408,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         }
 
                         if (autoSleepEnabled) {
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             Row(
                                 modifier = Modifier
@@ -3442,7 +3442,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
