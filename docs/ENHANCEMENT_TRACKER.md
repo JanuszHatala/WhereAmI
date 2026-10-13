@@ -788,4 +788,14 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **CRASH57-01** | **Resolve Circular Singleton Initialization StackOverflowError**: User reported app crashed on startup ("Where Am I keeps stopping"). **Root Cause**: `AppStateManager.<init>` called `AutoSleepManager.getInstance().evaluateAutoSleep()`, which in turn invoked `AppStateManager.getInstance()`. Because `AppStateManager.INSTANCE` was only assigned via `.also { INSTANCE = it }` after constructor exit, the recursive call spawned another `AppStateManager`, causing infinite mutual recursion and `StackOverflowError` in AndroidRuntime. **Solution**: (1) Assigned `INSTANCE = this` immediately in `AppStateManager.init` and `AutoSleepManager.init`. (2) Removed `evaluateAutoSleep()` from `AppStateManager.init`, letting it evaluate safely on lifecycle and screen-off events. | `AppStateManager.kt`, `AutoSleepManager.kt` | **Completed** | Verified logcat crash trace eliminated, builds and runs cleanly. |
 | **VER-30** | **Build Gate & Version Increment**: Increment `versionCode` to 71 and `versionName` to "1.7.1". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed. |
 
+---
+
+## 61. Round 58: Bedtime Time Picker Wheel Carousel & Status Badge Layout Decompression (2026-10-13)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **UI58-01** | **Bedtime Time Picker Wheel Carousel (`TimeWheelPickerDialog`)**: Replaced +/-1h, +/-15m adjustment buttons and preset chips in `TimePickerSimpleDialog` with a smooth alarm-clock style drum-roll carousel (`LazyColumn` with `rememberSnapFlingBehavior` and centered selection glass indicator) for hours (`00`–`23`) and minutes (`00`–`59`). Eliminates cramped button grids and awkward chip wraps. | `MainActivity.kt` | **Completed** | Verified Compose UI layout and unit/build tests. |
+| **UI58-02** | **SLEEPING Badge Layout Decompression & No-Wrap Guard**: Relocated the `"SLEEPING"` badge from the title `Row` (where it was compressed next to the switch and wrapped into 3 lines `SLE` / `EPI` / `NG`) to the `"Bedtime Window (Night Hours)"` section header with `Arrangement.SpaceBetween`. Enforced `maxLines = 1` and `softWrap = false` per `docs/DESIGN_SYSTEM.md`. | `MainActivity.kt` | **Completed** | Visual verification of layout space and zero wrapping. |
+| **VER-31** | **Build Gate, Version Increment & On-Device Install**: Increment `versionCode` to 72 and `versionName` to "1.7.2". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. Installed via `adb install -r`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (226 tests green). |
+
 
