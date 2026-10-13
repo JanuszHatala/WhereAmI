@@ -626,7 +626,94 @@ class BatteryOptimizationAndAutoStartTest {
         onUserActivateClicked()
         assertFalse("Sleep mode wakes only on explicit user action", isSleeping)
     }
+
+    @Test
+    fun testBatteryBroadcastDebounceAndSleepHeartbeatPreservation() {
+        // Overnight Bug 1 fix:
+        // ACTION_BATTERY_CHANGED fires ~145 times overnight on 1% drops, voltage, or temp shifts.
+        // recalculateState() must ONLY run when actual charging boolean transitions.
+        assertFalse(
+            "1% battery drop while unplugged must not trigger state recalculation",
+            AppStateManager.shouldRecalculateOnChargingChange(previousCharging = false, newCharging = false)
+        )
+        assertFalse(
+            "Battery tick while plugged in must not trigger state recalculation",
+            AppStateManager.shouldRecalculateOnChargingChange(previousCharging = true, newCharging = true)
+        )
+        assertTrue(
+            "Plugging in charger must trigger state recalculation",
+            AppStateManager.shouldRecalculateOnChargingChange(previousCharging = false, newCharging = true)
+        )
+        assertTrue(
+            "Unplugging charger must trigger state recalculation",
+            AppStateManager.shouldRecalculateOnChargingChange(previousCharging = true, newCharging = false)
+        )
+
+        // When in IDLE mode due to Standby Sleep with an active Live Sharing session,
+        // the 60-minute sleep heartbeat MUST NOT be cancelled by applyModeToLocationEngine().
+        assertTrue(
+            "60m sleep heartbeat must be kept alive in IDLE mode when sleeping with active live share",
+            AppStateManager.shouldKeepSleepHeartbeatAlive(
+                mode = AppLifecycleMode.IDLE,
+                isStandbySleeping = true,
+                hasActiveLiveSession = true
+            )
+        )
+        assertFalse(
+            "Sleep heartbeat should not run when no live session is active",
+            AppStateManager.shouldKeepSleepHeartbeatAlive(
+                mode = AppLifecycleMode.IDLE,
+                isStandbySleeping = true,
+                hasActiveLiveSession = false
+            )
+        )
+        assertFalse(
+            "Normal IDLE without sleep should not keep sleep heartbeat alive",
+            AppStateManager.shouldKeepSleepHeartbeatAlive(
+                mode = AppLifecycleMode.IDLE,
+                isStandbySleeping = false,
+                hasActiveLiveSession = false
+            )
+        )
+    }
+
+    @Test
+    fun testNotificationSignatureDeduplicationPreventsRedundantWakelocks() {
+        // Overnight Bug 2 fix:
+        // Calling updateNotification(force = true) when notification title, text, and action state
+        // are identical must be skipped to prevent NotificationManagerService:post partial wakelocks.
+        val sig1 = LiveTrackingService.computeNotificationSignature(
+            title = "🌙 WhereAmI Sleeping (Live & Auto-detect)",
+            text = "Auto-detect paused • Live Sharing active (1h sync) • Tap to wake",
+            isSleeping = true,
+            isLiveActive = true,
+            isLivePaused = false,
+            isAuto = true,
+            hasActiveTrip = false,
+            isTripPaused = false
+        )
+        val sig2 = LiveTrackingService.computeNotificationSignature(
+            title = "🌙 WhereAmI Sleeping (Live & Auto-detect)",
+            text = "Auto-detect paused • Live Sharing active (1h sync) • Tap to wake",
+            isSleeping = true,
+            isLiveActive = true,
+            isLivePaused = false,
+            isAuto = true,
+            hasActiveTrip = false,
+            isTripPaused = false
+        )
+        assertEquals("Identical notification state must produce identical signature", sig1, sig2)
+
+        val sigWoken = LiveTrackingService.computeNotificationSignature(
+            title = "🔴 WhereAmI • Live & Auto-detect",
+            text = "Live Sharing Active • Auto-detect: Car (>10 km/h) • Bestwina",
+            isSleeping = false,
+            isLiveActive = true,
+            isLivePaused = false,
+            isAuto = true,
+            hasActiveTrip = false,
+            isTripPaused = false
+        )
+        org.junit.Assert.assertNotEquals("Waking from sleep must change notification signature", sig1, sigWoken)
+    }
 }
-
-
-

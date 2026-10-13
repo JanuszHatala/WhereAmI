@@ -49,6 +49,18 @@ class AppStateManager private constructor(private val context: Context) {
         const val MOTION_BURST_COOLDOWN_BASE_MS = 60_000L
         const val STANDBY_HIBERNATION_TIMEOUT_MS = 90 * 60 * 1000L // 90 minutes stationary inactivity
 
+        fun shouldRecalculateOnChargingChange(previousCharging: Boolean, newCharging: Boolean): Boolean {
+            return previousCharging != newCharging
+        }
+
+        fun shouldKeepSleepHeartbeatAlive(
+            mode: AppLifecycleMode,
+            isStandbySleeping: Boolean,
+            hasActiveLiveSession: Boolean
+        ): Boolean {
+            return mode == AppLifecycleMode.IDLE && isStandbySleeping && hasActiveLiveSession
+        }
+
         fun computeBurstCooldownMs(falseBursts: Int): Long {
             return when {
                 falseBursts <= 0 -> 0L
@@ -102,6 +114,8 @@ class AppStateManager private constructor(private val context: Context) {
     private val _currentMode = MutableStateFlow(AppLifecycleMode.FOREGROUND_VIEW)
     val currentMode: StateFlow<AppLifecycleMode> = _currentMode.asStateFlow()
 
+    private val _isAppInForegroundFlow = MutableStateFlow(true)
+    val isAppInForegroundFlow: StateFlow<Boolean> = _isAppInForegroundFlow.asStateFlow()
     private var isAppInForeground = true
     private var isAutoMediaActive = false
 
@@ -114,7 +128,7 @@ class AppStateManager private constructor(private val context: Context) {
         registerBatteryReceiver()
         monitorSubsystems()
         setupMotionWakeListener()
-        startStandbyInactivityWatcher()
+        updateStandbyInactivityWatcherState()
     }
 
     private fun registerBatteryReceiver() {
@@ -130,16 +144,22 @@ class AppStateManager private constructor(private val context: Context) {
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    Intent.ACTION_POWER_CONNECTED -> _isCharging.value = true
-                    Intent.ACTION_POWER_DISCONNECTED -> _isCharging.value = false
+                val prevCharging = _isCharging.value
+                val newCharging = when (intent?.action) {
+                    Intent.ACTION_POWER_CONNECTED -> true
+                    Intent.ACTION_POWER_DISCONNECTED -> false
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                        _isCharging.value = (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                        if (status == -1) prevCharging
+                        else (status == BatteryManager.BATTERY_STATUS_CHARGING ||
                                 status == BatteryManager.BATTERY_STATUS_FULL)
                     }
+                    else -> prevCharging
                 }
-                recalculateState()
+                if (shouldRecalculateOnChargingChange(prevCharging, newCharging)) {
+                    _isCharging.value = newCharging
+                    recalculateState()
+                }
             }
         }
         val stickyIntent = context.registerReceiver(receiver, filter)
@@ -172,6 +192,7 @@ class AppStateManager private constructor(private val context: Context) {
         }
 
         _isStandbySleeping.value = true
+        stopStandbyInactivityWatcher()
         motionRearmJob?.cancel()
         MotionWakeManager.getInstance(context).disarm()
         TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS).")
@@ -207,11 +228,31 @@ class AppStateManager private constructor(private val context: Context) {
             context.startService(intent)
         } catch (_: Exception) {}
 
+        updateStandbyInactivityWatcherState()
         recalculateState()
     }
 
-    private fun startStandbyInactivityWatcher() {
+    private fun updateStandbyInactivityWatcherState() {
+        val tripManager = TripManager.getInstance(context)
+        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
+        val hasTrip = tripManager.activeTrip.value != null
+        val isAuto = tripManager.tripMode.value == TripMode.AUTO
+
+        if (!isAppInForeground && isAuto && !hasTrip && !hasLive && !_isStandbySleeping.value) {
+            startStandbyInactivityWatcher()
+        } else {
+            stopStandbyInactivityWatcher()
+        }
+    }
+
+    private fun stopStandbyInactivityWatcher() {
         standbyInactivityJob?.cancel()
+        standbyInactivityJob = null
+    }
+
+    private fun startStandbyInactivityWatcher() {
+        if (standbyInactivityJob?.isActive == true) return
         standbyInactivityJob = scope.launch {
             var stationarySinceMs = 0L
             while (isActive) {
@@ -238,12 +279,14 @@ class AppStateManager private constructor(private val context: Context) {
                             TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m. Auto-entering standby sleep.")
                             enterStandbySleep()
                             stationarySinceMs = 0L
+                            break
                         }
                     } else {
                         stationarySinceMs = 0L
                     }
                 } else {
                     stationarySinceMs = 0L
+                    break
                 }
             }
         }
@@ -251,6 +294,7 @@ class AppStateManager private constructor(private val context: Context) {
 
     fun setAppForegroundState(inForeground: Boolean) {
         isAppInForeground = inForeground
+        _isAppInForegroundFlow.value = inForeground
         if (inForeground) {
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
@@ -258,6 +302,7 @@ class AppStateManager private constructor(private val context: Context) {
             // Sleep mode is persistent and only wakes via user action ([▶ Activate] on notification or [▶ Wake] in HUD).
             ensureAutoStandbyServiceRunning()
         }
+        updateStandbyInactivityWatcherState()
         recalculateState()
     }
 
@@ -625,10 +670,16 @@ class AppStateManager private constructor(private val context: Context) {
         val motionManager = MotionWakeManager.getInstance(context)
         val policy = _powerPolicy.value
         val charging = _isCharging.value
+        val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+        val hasLive = liveSession != null && liveSession.isActive
 
         if (mode != AppLifecycleMode.LIVE_ONLY) {
             liveOnlyWatcherJob?.cancel()
-            LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+            if (!shouldKeepSleepHeartbeatAlive(mode, _isStandbySleeping.value, hasLive)) {
+                LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+            } else {
+                LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+            }
         }
         if (mode != AppLifecycleMode.FOREGROUND_VIEW) {
             foregroundWatcherJob?.cancel()
@@ -650,22 +701,20 @@ class AppStateManager private constructor(private val context: Context) {
 
                 val tripManager = TripManager.getInstance(context)
                 val hasTrip = tripManager.activeTrip.value != null
-                val liveSession = LiveSharingManager.getInstance(context).currentSession.value
-                val hasLive = liveSession != null && liveSession.isActive
                 val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-                // In MANUAL mode with no trip and no live share, OR when sleeping: stop the service completely.
-                // In AUTO mode without sleep: DO NOT STOP the service! LiveTrackingService stays running in
-                // zero-CPU standby mode with the persistent standby notification ("Ready to auto-record"),
-                // protecting the process from being killed and holding the FGS token for GPS bursts.
+                // In MANUAL mode with no trip and no live share: stop the service completely.
+                // When sleeping, only send ACTION_STANDBY_SLEEP on mode transition (enterStandbySleep and StateFlow handle steady state).
                 if (_isStandbySleeping.value && !hasTrip) {
-                    try {
-                        val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
-                            action = LiveTrackingService.ACTION_STANDBY_SLEEP
-                        }
-                        context.startService(stopIntent)
-                    } catch (_: Exception) {}
-                } else if (!hasTrip && !hasLive && !isAuto) {
+                    if (oldMode != AppLifecycleMode.IDLE) {
+                        try {
+                            val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
+                                action = LiveTrackingService.ACTION_STANDBY_SLEEP
+                            }
+                            context.startService(stopIntent)
+                        } catch (_: Exception) {}
+                    }
+                } else if (!hasTrip && !hasLive && !isAuto && oldMode != AppLifecycleMode.IDLE) {
                     try {
                         val stopIntent = Intent(context, LiveTrackingService::class.java).apply {
                             action = LiveTrackingService.ACTION_STOP

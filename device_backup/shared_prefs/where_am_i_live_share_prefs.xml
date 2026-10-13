@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="personal_static_live_id">jh-se8tc5</string>
+    <string name="pref_default_title">Where is Janusz</string>
+    <string name="pref_default_provider">SYNOLOGY</string>
+    <boolean name="active_session_random_paused" value="false" />
+    <string name="active_session_title">Where is Janusz</string>
+    <int name="active_session_interval" value="1" />
+    <long name="active_session_last_sync" value="1791820671445" />
+    <boolean name="active_session_follow_guests" value="true" />
+    <boolean name="active_session_is_active" value="true" />
+    <long name="active_session_expires" value="0" />
+    <boolean name="pref_link_mode_static" value="true" />
+    <string name="active_session_server_url">https://whereami.janush.tech</string>
+    <string name="active_session_id">csrk54wsfz</string>
+    <boolean name="pref_default_follow_guests" value="true" />
+    <boolean name="active_session_trail_visible" value="true" />
+    <long name="active_session_created" value="1791715517013" />
+    <string name="active_session_provider">SYNOLOGY</string>
+    <int name="pref_default_duration_hours" value="0" />
+    <boolean name="active_session_show_guest_distance" value="true" />
+    <boolean name="active_session_is_paused" value="false" />
+    <boolean name="active_session_personal_paused" value="false" />
+    <boolean name="pref_default_show_guest_distance" value="true" />
+</map>
