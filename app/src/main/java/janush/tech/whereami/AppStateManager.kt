@@ -125,11 +125,11 @@ class AppStateManager private constructor(private val context: Context) {
     internal var consecutiveFalseBursts: Int = 0
 
     init {
+        INSTANCE = this
         registerBatteryReceiver()
         monitorSubsystems()
         setupMotionWakeListener()
         updateStandbyInactivityWatcherState()
-        AutoSleepManager.getInstance(context).evaluateAutoSleep()
     }
 
     private fun registerBatteryReceiver() {

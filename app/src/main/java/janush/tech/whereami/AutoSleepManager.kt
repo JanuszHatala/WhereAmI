@@ -153,6 +153,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     private var lastEvaluatedCycleDate = -1
 
     init {
+        INSTANCE = this
         registerSystemReceivers()
     }
 
