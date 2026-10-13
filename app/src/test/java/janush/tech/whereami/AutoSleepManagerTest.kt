@@ -182,4 +182,37 @@ class AutoSleepManagerTest {
         )
         assertFalse("Manual user wake override must suppress auto sleep for the cycle", shouldSleep)
     }
+
+    @Test
+    fun testManualSleepNeverAutoWakesOnBedtimeWindowEnd() {
+        // User manually entered sleep mode (e.g. afternoon or outside bedtime window).
+        // It must NOT auto-wake simply because the bedtime window ended.
+        val shouldWake = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false, // Outside window
+            isDndActive = false,
+            followDnd = true,
+            isMorning = false,
+            isAlarmFired = false,
+            isManualSleep = true // Manually entered sleep
+        )
+        assertFalse("Manually entered sleep must strictly ignore bedtime window expiration", shouldWake)
+    }
+
+    @Test
+    fun testManualSleepWakesOnMorningAlarm() {
+        // User manually entered sleep mode, and in the morning an alarm fires.
+        val shouldWake = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = true,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = true,
+            isManualSleep = true
+        )
+        assertTrue("Morning alarm should still wake manual sleep", shouldWake)
+    }
 }

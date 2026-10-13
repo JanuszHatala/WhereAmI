@@ -174,18 +174,18 @@ class LiveTrackingService : Service() {
                 return START_STICKY
             }
             ACTION_STANDBY_SLEEP -> {
-                val hasTrip = TripManager.getInstance(this).activeTrip.value != null
-                if (!hasTrip) {
-                    val appStateMgr = AppStateManager.getInstance(this)
-                    appStateMgr.enterStandbySleep()
-                    evaluateServiceState()
-                    return START_STICKY
+                val appStateMgr = AppStateManager.getInstance(this)
+                if (!appStateMgr.isStandbySleeping.value) {
+                    appStateMgr.enterStandbySleep(isManual = true)
                 }
+                evaluateServiceState()
                 return START_STICKY
             }
             ACTION_STANDBY_ACTIVATE -> {
                 val appStateMgr = AppStateManager.getInstance(this)
-                appStateMgr.wakeStandbySleep(isExplicitUserAction = true)
+                if (appStateMgr.isStandbySleeping.value) {
+                    appStateMgr.wakeStandbySleep(isExplicitUserAction = true)
+                }
                 evaluateServiceState()
                 return START_STICKY
             }
@@ -530,8 +530,9 @@ class LiveTrackingService : Service() {
         val now = SystemClock.elapsedRealtime()
         val contentChanged = title != lastNotificationTitle || text != lastNotificationText
         val timeElapsed = (now - lastNotificationPostTime) >= 5_000L
+        val minForceElapsed = (now - lastNotificationPostTime) >= 1_000L
 
-        if (force || (contentChanged && timeElapsed)) {
+        if ((force && minForceElapsed) || (contentChanged && timeElapsed)) {
             val notification = buildNotification(title, text)
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIF_ID, notification)
