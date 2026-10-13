@@ -170,6 +170,24 @@ fun EmojiText(
   - Secondary toolbars (e.g. Heat Map controls) must collapse to icon-only representations in landscape (hiding textual labels via `LocalConfiguration.current.orientation`).
   - Where possible, place toolbars side-by-side horizontally along the bottom edge rather than vertically stacked.
 
+### D. Compact Status Badges & Pills Centering Standard
+- **Row Stability Invariant**: Any row displaying optional or dynamic status badges (e.g. `SLEEPING`, `ACTIVE`, `PAUSED`) beside section headers or labels MUST define a fixed container height (e.g. `Modifier.fillMaxWidth().height(24.dp)`) with `Arrangement.SpaceBetween` and `Alignment.CenterVertically`. This ensures zero layout shifts or height jumps when the badge appears or disappears.
+- **Font Metric Normalization**: Default Android font padding adds asymmetrical descender padding that shifts text downward inside pills and relative to adjacent labels.
+- **Mandatory Badge Text & Container Recipe**:
+  Both the row label and the badge text MUST use:
+  ```kotlin
+  style = TextStyle(
+      platformStyle = PlatformTextStyle(includeFontPadding = false),
+      lineHeightStyle = LineHeightStyle(
+          alignment = LineHeightStyle.Alignment.Center,
+          trim = LineHeightStyle.Trim.Both
+      ),
+      lineHeight = fontSize
+  )
+  ```
+  The badge container MUST explicitly center its content via `Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))` inside the `Surface(shape = RoundedCornerShape(6.dp))`.
+- **Dynamic Text Single-Line Guard**: Dynamic status descriptions (such as lifecycle mode or power policy labels) that change based on state MUST declare `maxLines = 1` and `softWrap = false` to prevent multiline wrapping from pushing preceding or subsequent layout blocks down.
+
 ---
 
 ## 6. High-Contrast Interactive Buttons & Controls Invariant (Non-Negotiable)
