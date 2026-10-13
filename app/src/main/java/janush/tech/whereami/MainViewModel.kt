@@ -45,17 +45,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lifecycleMode: StateFlow<AppLifecycleMode> = appStateManager.currentMode
     val isStandbySleeping: StateFlow<Boolean> = appStateManager.isStandbySleeping
 
+    // Automatic Sleep Mode settings
+    private val autoSleepManager = AutoSleepManager.getInstance(application)
+    val autoSleepEnabled: StateFlow<Boolean> = autoSleepManager.autoSleepEnabled
+    val autoSleepStartTime: StateFlow<String> = autoSleepManager.startTime
+    val autoSleepEndTime: StateFlow<String> = autoSleepManager.endTime
+    val autoSleepFollowDnd: StateFlow<Boolean> = autoSleepManager.followDnd
+    val autoSleepFollowAlarm: StateFlow<Boolean> = autoSleepManager.followAlarm
+
+    fun setAutoSleepEnabled(enabled: Boolean) = autoSleepManager.setAutoSleepEnabled(enabled)
+    fun setAutoSleepStartTime(time: String) = autoSleepManager.setStartTime(time)
+    fun setAutoSleepEndTime(time: String) = autoSleepManager.setEndTime(time)
+    fun setAutoSleepFollowDnd(follow: Boolean) = autoSleepManager.setFollowDnd(follow)
+    fun setAutoSleepFollowAlarm(follow: Boolean) = autoSleepManager.setFollowAlarm(follow)
+
     fun enterStandbySleep() {
         appStateManager.enterStandbySleep()
     }
 
     fun wakeStandbySleep() {
-        appStateManager.wakeStandbySleep()
+        appStateManager.wakeStandbySleep(isExplicitUserAction = true)
     }
 
     fun toggleStandbySleep() {
         if (appStateManager.isStandbySleeping.value) {
-            appStateManager.wakeStandbySleep()
+            appStateManager.wakeStandbySleep(isExplicitUserAction = true)
         } else {
             appStateManager.enterStandbySleep()
         }

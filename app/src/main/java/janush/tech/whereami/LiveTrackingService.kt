@@ -185,7 +185,7 @@ class LiveTrackingService : Service() {
             }
             ACTION_STANDBY_ACTIVATE -> {
                 val appStateMgr = AppStateManager.getInstance(this)
-                appStateMgr.wakeStandbySleep()
+                appStateMgr.wakeStandbySleep(isExplicitUserAction = true)
                 evaluateServiceState()
                 return START_STICKY
             }

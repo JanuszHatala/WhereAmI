@@ -286,6 +286,12 @@ fun LocationScreen(viewModel: MainViewModel) {
     val isStandbySleeping by viewModel.isStandbySleeping.collectAsState()
     val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
 
+    val autoSleepEnabled by viewModel.autoSleepEnabled.collectAsState()
+    val autoSleepStartTime by viewModel.autoSleepStartTime.collectAsState()
+    val autoSleepEndTime by viewModel.autoSleepEndTime.collectAsState()
+    val autoSleepFollowDnd by viewModel.autoSleepFollowDnd.collectAsState()
+    val autoSleepFollowAlarm by viewModel.autoSleepFollowAlarm.collectAsState()
+
     val selectedTripsList = remember(savedTrips, selectedTripIds) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
     }
@@ -3356,7 +3362,193 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
 
+                // ── Automatic Sleep Mode (Overnight Hibernation) Section ──
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "🌙 Automatic Sleep Mode",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
+                                    )
+                                    if (isStandbySleeping) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF047857)
+                                        ) {
+                                            Text(
+                                                text = "SLEEPING",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "Auto-hibernates GPS & tracking overnight to eliminate idle battery drain.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF94A3B8),
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                            Switch(
+                                checked = autoSleepEnabled,
+                                onCheckedChange = { viewModel.setAutoSleepEnabled(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF0284C7)
+                                )
+                            )
+                        }
+
+                        if (autoSleepEnabled) {
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text(
+                                text = "Bedtime Window (Night Hours)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                var showStartTimeDialog by remember { mutableStateOf(false) }
+                                var showEndTimeDialog by remember { mutableStateOf(false) }
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF334155),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { showStartTimeDialog = true }
+                                ) {
+                                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                        Text("Bedtime", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                        Text(autoSleepStartTime, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                }
+
+                                Text("to", fontSize = 12.sp, color = Color(0xFF94A3B8))
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF334155),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { showEndTimeDialog = true }
+                                ) {
+                                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                        Text("Wake Up", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                        Text(autoSleepEndTime, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                }
+
+                                if (showStartTimeDialog) {
+                                    TimePickerSimpleDialog(
+                                        title = "Select Bedtime",
+                                        initialTime = autoSleepStartTime,
+                                        isBedtime = true,
+                                        onDismiss = { showStartTimeDialog = false },
+                                        onConfirm = {
+                                            viewModel.setAutoSleepStartTime(it)
+                                            showStartTimeDialog = false
+                                        }
+                                    )
+                                }
+                                if (showEndTimeDialog) {
+                                    TimePickerSimpleDialog(
+                                        title = "Select Wake Up Time",
+                                        initialTime = autoSleepEndTime,
+                                        isBedtime = false,
+                                        onDismiss = { showEndTimeDialog = false },
+                                        onConfirm = {
+                                            viewModel.setAutoSleepEndTime(it)
+                                            showEndTimeDialog = false
+                                        }
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.setAutoSleepFollowDnd(!autoSleepFollowDnd) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = autoSleepFollowDnd,
+                                    onCheckedChange = { viewModel.setAutoSleepFollowDnd(it) },
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Follow Do Not Disturb (DND)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text("Enters sleep early if DND turns on in the evening; wakes if DND turns off in the morning.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.setAutoSleepFollowAlarm(!autoSleepFollowAlarm) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = autoSleepFollowAlarm,
+                                    onCheckedChange = { viewModel.setAutoSleepFollowAlarm(it) },
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Sync with Morning Alarm", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text("Wakes automatically when device alarm fires in the morning.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Button(
+                            onClick = { viewModel.toggleStandbySleep() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isStandbySleeping) Color(0xFF047857) else Color(0xFF334155)
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (isStandbySleeping) "▶ Wake from Sleep Now" else "🌙 Enter Sleep Mode Now",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -11075,5 +11267,151 @@ fun TripDetailDialog(
         )
     }
 }
+
+@Composable
+private fun TimePickerSimpleDialog(
+    title: String,
+    initialTime: String,
+    isBedtime: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val (initH, initM) = AutoSleepManager.parseHourMinute(initialTime, if (isBedtime) 22 else 6, 30)
+    var hour by remember { mutableStateOf(initH) }
+    var minute by remember { mutableStateOf(initM) }
+
+    val presets = if (isBedtime) {
+        listOf("21:30", "22:00", "22:30", "23:00", "23:30", "00:00")
+    } else {
+        listOf("05:30", "06:00", "06:30", "07:00", "07:30", "08:00")
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Time Display
+                val formattedTime = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = formattedTime,
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Adjustment Buttons
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = { hour = (hour - 1 + 24) % 24 },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFF475569))
+                    ) {
+                        Text("-1h", color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = { hour = (hour + 1) % 24 },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFF475569))
+                    ) {
+                        Text("+1h", color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = { minute = (minute - 15 + 60) % 60 },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFF475569))
+                    ) {
+                        Text("-15m", color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = { minute = (minute + 15) % 60 },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFF475569))
+                    ) {
+                        Text("+15m", color = Color.White)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Quick Presets
+                Text("Quick Presets:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    presets.forEach { p ->
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (formattedTime == p) Color(0xFF0284C7) else Color(0xFF334155),
+                            modifier = Modifier.clickable {
+                                val (ph, pm) = AutoSleepManager.parseHourMinute(p, hour, minute)
+                                hour = ph
+                                minute = pm
+                            }
+                        ) {
+                            Text(
+                                text = p,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(formattedTime) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                    ) {
+                        Text("Set Time", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 
