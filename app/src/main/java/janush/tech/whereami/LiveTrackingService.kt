@@ -40,6 +40,19 @@ class LiveTrackingService : Service() {
         const val ACTION_PAUSE_WARNING = "janush.tech.whereami.ACTION_PAUSE_WARNING"
         const val ACTION_TRIP_RESUME = "janush.tech.whereami.ACTION_TRIP_RESUME"
         const val ACTION_TRIP_STOP = "janush.tech.whereami.ACTION_TRIP_STOP"
+
+        fun computeNotificationSignature(
+            title: String,
+            text: String,
+            isSleeping: Boolean,
+            isLiveActive: Boolean,
+            isLivePaused: Boolean,
+            isAuto: Boolean,
+            hasActiveTrip: Boolean,
+            isTripPaused: Boolean
+        ): String {
+            return "$title|$text|sleep=$isSleeping|live=$isLiveActive|livePaused=$isLivePaused|auto=$isAuto|trip=$hasActiveTrip|tripPaused=$isTripPaused"
+        }
     }
 
     private var lastPlaceName: String = "In Transit"
@@ -239,6 +252,19 @@ class LiveTrackingService : Service() {
         }
         val notification = buildNotification(initialTitle, initialText)
         startForeground(NOTIF_ID, notification)
+        lastNotificationPostTime = SystemClock.elapsedRealtime()
+        lastNotificationTitle = initialTitle
+        lastNotificationText = initialText
+        lastNotificationSignature = computeNotificationSignature(
+            title = initialTitle,
+            text = initialText,
+            isSleeping = isSleeping,
+            isLiveActive = hasLive,
+            isLivePaused = liveSession?.isPaused == true,
+            isAuto = isAuto,
+            hasActiveTrip = hasTrip,
+            isTripPaused = TripManager.getInstance(this).isPaused.value
+        )
     }
 
     private fun formatActionTitle(text: String, colorHex: String): CharSequence {
@@ -412,6 +438,8 @@ class LiveTrackingService : Service() {
     private var lastNotificationTitle: String? = null
     @Volatile
     private var lastNotificationText: String? = null
+    @Volatile
+    private var lastNotificationSignature: String? = null
 
     private fun updateNotification(overrideText: String? = null, force: Boolean = false) {
         val activeTrip = TripManager.getInstance(this).activeTrip.value
@@ -421,6 +449,7 @@ class LiveTrackingService : Service() {
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
         val profile = TripManager.getInstance(this).activityProfile.value
         val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value && activeTrip == null
+        val isTripPaused = TripManager.getInstance(this).isPaused.value
 
         val title = when {
             isSleeping && isLiveActive && isAuto -> "🌙 WhereAmI Sleeping (Live & Auto-detect)"
@@ -447,7 +476,6 @@ class LiveTrackingService : Service() {
             isSleeping -> "Auto-detect paused for battery savings • Tap to activate"
             activeTrip != null -> {
                 val distKm = activeTrip.distanceMeters / 1000.0
-                val isTripPaused = TripManager.getInstance(this).isPaused.value
                 val statusTag = when {
                     isTripPaused -> " • [PAUSED]"
                     isLiveActive && liveSession.isPaused -> " • [LIVE PAUSED]"
@@ -483,6 +511,22 @@ class LiveTrackingService : Service() {
             else -> "Recording trip & background location active"
         }
 
+        val signature = computeNotificationSignature(
+            title = title,
+            text = text,
+            isSleeping = isSleeping,
+            isLiveActive = isLiveActive,
+            isLivePaused = isPaused,
+            isAuto = isAuto,
+            hasActiveTrip = activeTrip != null,
+            isTripPaused = isTripPaused
+        )
+
+        // Never re-post an identical notification (even when force=true) to avoid NotificationManagerService:post wakelocks
+        if (signature == lastNotificationSignature) {
+            return
+        }
+
         val now = SystemClock.elapsedRealtime()
         val contentChanged = title != lastNotificationTitle || text != lastNotificationText
         val timeElapsed = (now - lastNotificationPostTime) >= 5_000L
@@ -494,6 +538,7 @@ class LiveTrackingService : Service() {
             lastNotificationPostTime = now
             lastNotificationTitle = title
             lastNotificationText = text
+            lastNotificationSignature = signature
         }
     }
 
