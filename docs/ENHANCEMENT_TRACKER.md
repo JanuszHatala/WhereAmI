@@ -55,8 +55,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 52** | Web Companion Viewer Page Visibility API Gating & Sleep Polling Backoff (2026-10-12) | 1 | 1 | 0 | 0 |
 | **Round 63** | Smooth Position Tracking, Live Polyline Tip & Map Rotation Clamping (2026-10-14) | 4 | 4 | 0 | 0 |
 | **Round 64** | Position Altitude Tracking, Elevation Profile Chart, Vertical Speed & DEM Correction Tool (2026-10-14) | 5 | 5 | 0 | 0 |
+| **Round 65** | Polyline Drawing Race Repair, C0 Position Interpolator Continuity & Profile Commit Thresholds (2026-10-14) | 3 | 3 | 0 | 0 |
+| **Round 66** | LocalityCard Expanded Altitude Display & Triangle Icon Vertical Centering (2026-10-14) | 2 | 2 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **269** | **261** | **0** | **8** |
+| **Total** | | **274** | **266** | **0** | **8** |
 
 
 ---
@@ -867,6 +869,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **TRACK65-02** | **Continuous C0 Position Interpolation (Zero Step Discontinuity & Backward Rubber-Banding)**: User reported position icon moving backwards and jumping forward. **Root Cause**: In `PositionInterpolator`, `blendTargetLat/Lng` did not project for vehicle motion during `blendDurationMs`, causing a sudden step discontinuity of `speed * blendDurationMs` (up to 4-6m cliff) at the transition between blend and forward extrapolation. Furthermore, `onNewFix` sampled `calculateExtrapolatedPosition(timestamp)` rather than actual rendered position `interpolate(timestamp)`. **Solution**: (1) Updated `onNewFix` to sample `interpolate(timestamp)` as blend start. (2) Projected `blendTarget` to `timestamp + blendDurationMs`, ensuring $C^0$ continuity with zero step cliff into forward extrapolation. | `PositionInterpolator.kt`, `PositionInterpolatorTest.kt` | **Completed** | Covered by new automated unit test `transition across blend boundary is continuous with zero jump` in `PositionInterpolatorTest.kt`. |
 | **TRACK65-03** | **Profile-Specific Point Density (Restore High-Resolution Sidewalk & Road Curves)**: Field test showed angular, blocky polyline around corners. **Root Cause**: Commit threshold was set to `8.0m` for speeds $< 15\text{ km/h}$, yielding points only every 10–13m during pedestrian walking, cutting sharp 90° sidewalk corners. **Solution**: Profile-specific commit thresholds: `3.0m` for Walking/Hiking, `4.0m` for Running/Cycling/MTB, `5.0m` for Car. High-fidelity corner curves restored. | `TripManager.kt`, `SpeedKinematicsTest.kt` | **Completed** | Covered by new unit test `testProfileBasedCommitThresholds` in `SpeedKinematicsTest.kt`. |
 | **VER-38** | **Build Gate & Version Increment**: Increment `versionCode` to 84 and `versionName` to "1.9.1". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+
+---
+
+## 69. Round 66: LocalityCard Expanded Altitude Display & Triangle Icon Vertical Centering (2026-10-14)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **ALT66-01** | **Expanded LocalityCard Altitude Display**: Altitude was only visible in compact mode (`Screenshot_20261014-195807.png`) and missing in expanded mode (`Screenshot_20261014-195815.png`). Wrapped bottom telemetry in centered `Row` and appended `AltitudeBadge` alongside Profile & Speed pill with matched styling (`28.dp` height, `12.dp` rounded corners, `#1E293B` background). | `MainActivity.kt` | **Completed** | Verified layout in both compact and expanded modes with zero layout shift when altitude is absent. |
+| **ALT66-02** | **Vertical Centering of Altitude Triangle Icon ("▲")**: Triangle icon was sitting too low on font baseline. Reusable `AltitudeBadge` applies optical upward offset (`(-1.5).dp` compact, `(-1.8).dp` expanded) paired with `PlatformTextStyle(includeFontPadding = false)` and `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)`, centering the triangle optical centroid with altitude text. | `MainActivity.kt` | **Completed** | Visual comparison with field test screenshots; verified optical midline alignment. |
+| **VER-39** | **Build Gate & Version Increment**: Increment `versionCode` to 85 and `versionName` to "1.9.2". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+
 
 
 
