@@ -412,6 +412,7 @@ private fun addOverlayAboveTiles(map: MapView, overlay: org.osmdroid.views.overl
 fun OsmMapView(
     latLng: Triple<Double, Double, Float?>? = null, // (lat, lng, bearing-or-null)
     locationFix: LocationFix? = null,
+    altitudeM: Double? = null,
     trackPoints: List<GeoPoint> = emptyList(),
     selectedTrips: List<TripRecord> = emptyList(),
     savedPlaces: List<SavedPlace> = emptyList(),
@@ -511,6 +512,8 @@ fun OsmMapView(
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
     val accuracyOverlay = remember(context) { AccuracyCircleOverlay(context) }
+    val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
+    var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     val prefs = remember(context) {
@@ -659,6 +662,7 @@ fun OsmMapView(
         var lastRenderedLat = 0.0
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
+        var lastRenderedAltitude = -999.0
         var lastFrameRenderMs = 0L
 
         while (isActive) {
@@ -728,6 +732,16 @@ fun OsmMapView(
                     m.infoWindow = null
                     m.setOnMarkerClickListener { _, _ -> true }
 
+                    if (!map.overlays.contains(altitudeOverlay)) {
+                        map.overlays.add(altitudeOverlay)
+                    }
+                    altitudeOverlay.isEnabled = showAltitudeOnMap
+                    altitudeOverlay.updateData(
+                        geoPoint = gp,
+                        altitude = altitudeM,
+                        savedPlaces = savedPlaces.map { it.geoPoint }
+                    )
+
                     if (lastAppliedHeadingState != hasHeading) {
                         m.icon = if (hasHeading) headingMarkerIcon else dotMarkerIcon
                         lastAppliedHeadingState = hasHeading
@@ -746,15 +760,18 @@ fun OsmMapView(
                     val dLat = kotlin.math.abs(gp.latitude - lastRenderedLat)
                     val dLng = kotlin.math.abs(gp.longitude - lastRenderedLng)
                     val dAngle = kotlin.math.abs(roadScreenAngle - lastRenderedAngle)
+                    val currentAltVal = altitudeM ?: 0.0
+                    val dAlt = kotlin.math.abs(currentAltVal - lastRenderedAltitude)
 
                     // Only update marker position and invalidate if visually meaningful displacement occurred
-                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f) {
+                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f || dAlt > 0.5) {
                         m.position = gp
                         m.rotation = -roadScreenAngle
                         m.title = null
                         lastRenderedLat = gp.latitude
                         lastRenderedLng = gp.longitude
                         lastRenderedAngle = roadScreenAngle
+                        lastRenderedAltitude = currentAltVal
 
                         if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
                             val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
@@ -1774,6 +1791,12 @@ fun OsmMapView(
             onBaseLayerChange = { baseLayer = it },
             hikingOverlayEnabled = showHikingOverlay,
             onHikingOverlayToggle = { showHikingOverlay = it },
+            showAltitudeEnabled = showAltitudeOnMap,
+            onShowAltitudeToggle = {
+                showAltitudeOnMap = it
+                MapProfileConfigHelper.setShowAltitudeOnMap(context, it)
+                mapView?.invalidate()
+            },
             currentFontScale = fontScale,
             onFontScaleChange = { fontScale = it },
             currentOrientationMode = orientationMode,
@@ -1844,6 +1867,8 @@ private fun MapSettingsDialog(
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     hikingOverlayEnabled: Boolean,
     onHikingOverlayToggle: (Boolean) -> Unit,
+    showAltitudeEnabled: Boolean = true,
+    onShowAltitudeToggle: (Boolean) -> Unit = {},
     currentFontScale: MapFontScale,
     onFontScaleChange: (MapFontScale) -> Unit,
     currentOrientationMode: MapOrientationMode,
@@ -2046,6 +2071,43 @@ private fun MapSettingsDialog(
                 Switch(
                     checked = hikingOverlayEnabled,
                     onCheckedChange = { onHikingOverlayToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Altitude on Map (Beside Cursor)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShowAltitudeToggle(!showAltitudeEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Altitude on Map",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White
+                    )
+                    Text(
+                        text = "Show elevation badge beside vehicle cursor",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                }
+                Switch(
+                    checked = showAltitudeEnabled,
+                    onCheckedChange = { onShowAltitudeToggle(it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = ComposeColor.White,
                         checkedTrackColor = ComposeColor(0xFF10B981),
