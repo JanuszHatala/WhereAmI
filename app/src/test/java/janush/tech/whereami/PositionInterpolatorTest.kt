@@ -107,8 +107,26 @@ class PositionInterpolatorTest {
         assertEquals(extAtT1.lat, blendStart.lat, 0.000001)
         assertEquals(extAtT1.lng, blendStart.lng, 0.000001)
         
-        // At t1 + 250ms (end of blend), it smoothly reaches the blended target
-        val blendEnd = interpolator.interpolate(t1 + 250L)
+        // At t1 + blendDurationMs (end of blend), it smoothly reaches the blended target
+        val blendEnd = interpolator.interpolate(t1 + interpolator.blendDurationMs)
         assertTrue(blendEnd.lng >= gpsLng)
+    }
+
+    @Test
+    fun `adaptive blend duration scales with measured GPS cadence`() {
+        val t0 = 10000L
+        interpolator.onNewFix(lat = 49.85, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0)
+
+        // 1000ms cadence fix -> 400ms blend (clamped minimum)
+        interpolator.onNewFix(lat = 49.8501, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 1000L)
+        assertEquals(400L, interpolator.blendDurationMs)
+
+        // 1500ms cadence fix -> 600ms blend (1500 * 0.40)
+        interpolator.onNewFix(lat = 49.8502, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 2500L)
+        assertEquals(600L, interpolator.blendDurationMs)
+
+        // 2500ms cadence fix -> 800ms blend (clamped maximum 800ms)
+        interpolator.onNewFix(lat = 49.8504, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 5000L)
+        assertEquals(800L, interpolator.blendDurationMs)
     }
 }

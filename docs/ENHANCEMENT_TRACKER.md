@@ -53,8 +53,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 50** | Field Testing (2026-10-12) Overnight Sleep Lifecycle Resolution, GNSS Complete Shutdown & Single Notification Invariant | 4 | 4 | 0 | 0 |
 | **Round 51** | Live Sharing Overnight 60m One-Shot GNSS Fix & Unified Sleep Notification Actions (2026-10-12) | 3 | 3 | 0 | 0 |
 | **Round 52** | Web Companion Viewer Page Visibility API Gating & Sleep Polling Backoff (2026-10-12) | 1 | 1 | 0 | 0 |
+| **Round 63** | Smooth Position Tracking, Live Polyline Tip & Map Rotation Clamping (2026-10-14) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **260** | **252** | **0** | **8** |
+| **Total** | | **264** | **256** | **0** | **8** |
 
 
 ---
@@ -816,6 +817,18 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **SLEEP62-01** | **Daytime Sleep Mode Strict Prevention**: Field testing showed that DND active in the morning triggered sleep mode because `AutoSleepManager.isEveningOrNightTime()` used `hour < 10`. Furthermore, 90-minute stationary standby hibernation in `AppStateManager` engaged 24/7 without checking whether it was daytime. **Solution**: (1) Replaced blanket morning hour check with `isNightOrBedtimeTime()`, restricting sleep triggers strictly to bedtime window and 1 hour before scheduled start. (2) Daytime DND unconditionally returns `false` in `shouldAutoSleep()`. (3) In `AppStateManager`, 90-minute standby hibernation is strictly gated by `isCurrentTimeInBedtimeWindow()`. | `AutoSleepManager.kt`, `AppStateManager.kt` | **Completed** | Verified via `AutoSleepManagerTest.kt` and `StickyManualPauseAndAutoResumeTest.kt`. |
 | **TRIP62-02** | **Sticky Manual Pause Precedence Over Auto-Stop**: When a user manually pauses a trip and moves temporarily (e.g. walking around a rest area), the app temporarily auto-resumes to capture movement into the trip track. However, if the user becomes stationary before reaching the permanent continuation threshold, the trip must return to Pause instead of auto-stopping. **Solution**: (1) Added `KEY_MANUAL_PAUSE_STICKY` persisted across process restarts. (2) When stationary timeout is reached with `isManualPauseSticky == true`, calls `pauseTrip(isManual = false)` instead of `stopTrip()`. (3) Permanent continuation threshold (Car: $\ge 400\text{m}$ or $\ge 20\text{ km/h}$ for 45s; Cycling: $\ge 250\text{m}$; Hiking: $\ge 150\text{m}$) or explicit `resumeTrip()` clears sticky pause. (4) Filtered instantaneous GPS jitter from triggering auto-resume. | `TripManager.kt` | **Completed** | Verified with `StickyManualPauseAndAutoResumeTest.kt`. |
 | **VER-35** | **Build Gate, Version Increment & Verification**: Increment `versionCode` to 80 and `versionName` to "1.7.9". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (232 tests green, 0 errors). |
+
+---
+
+## 66. Round 63: Smooth Position Tracking, Live Polyline Tip & Map Rotation Clamping (2026-10-14)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **MAP63-01** | **Adaptive Blend Duration in PositionInterpolator**: Eliminate position icon "jump" upon arrival of new GPS fixes. Fixed 250ms duration replaced with adaptive blend calculated as 40% of measured GPS interval (`[400ms, 800ms]` range), absorbing correction gaps smoothly without discrete snaps. | `PositionInterpolator.kt` | **Completed** | Verified via `PositionInterpolatorTest.kt` (`adaptive blend duration scales with measured GPS cadence`). |
+| **MAP63-02** | **GPS Fix Isolation & De-race (`fixSeqId`)**: Asynchronous reverse geocoding enrichments previously re-emitted previous coordinates into `getLocationRaw()`, creating a race condition where the position icon briefly stepped backwards relative to the polyline. Added monotonic `fixSeqId` assigned only to real GPS fixes in `LocationManager.onLocationResult()`; `getLocationRaw()` filters out re-emissions by `fixSeqId`. | `LocationManager.kt` | **Completed** | Verified via build gate and unit tests. |
+| **MAP63-03** | **Continuous Map Rotation & Velocity Clamp (Eradicate 360° Spin)**: Removed `ValueAnimator` with 600ms cooldown which stacked overlapping animations and traversed long arcs on T-junction turns. Replaced with continuous frame-by-frame EMA map rotation in the 35fps VSYNC loop clamped to max 90°/second via shortest angular delta. | `OsmMapView.kt` | **Completed** | Verified via `MapOrientationSmootherTest.kt` (shortest arc across 0°/360° boundary, rate clamping, convergence). |
+| **MAP63-04** | **Live Polyline Tip Synchronization & Adaptive Commit Threshold**: During active recording, polyline tip dynamically extends to the interpolated icon position in the 35fps render loop, guaranteeing the polyline and icon remain visually joined. `TripManager` commit threshold tuned to 4m ($\ge 15\text{ km/h}$) and 8m (slower speeds) to reduce polyline point churn. | `OsmMapView.kt`, `TripManager.kt` | **Completed** | Verified via build gate and test suite. |
+| **VER-36** | **Build Gate, Version Increment & Verification**: Increment `versionCode` to 81 and `versionName` to "1.8.0". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (272 tests green, 0 errors). |
 
 
 
