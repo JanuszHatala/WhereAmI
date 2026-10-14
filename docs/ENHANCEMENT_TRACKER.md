@@ -892,6 +892,20 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **MAP67-03** | **Map Settings Preference (`pref_show_altitude_on_map`)**: Added toggle in `MapSettingsDialog` ("Altitude on Map", enabled by default) with persistence in `where_am_i_map_prefs` via `MapProfileConfigHelper.getShowAltitudeOnMap/setShowAltitudeOnMap`. | `MapProfileConfigHelper.kt`, `OsmMapView.kt` | **Completed** | Verified settings toggle persistence and dynamic overlay visibility. |
 | **VER-40** | **Build Gate & Version Increment**: Increment `versionCode` to 86 and `versionName` to "1.9.3". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (286 tests green, 0 errors). |
 
+---
+
+## 71. Round 68: Map Pin Altitude Badge, Reactive Map Setting Binding, Elevation Data Progress Notification & Saved Places Elevation (2026-10-14)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **MAP68-01** | **Map Dropped Pin Altitude Badge**: Render altitude badge directly above dropped search / map pins (`destinationPoint`) on the map with loading state (`⛰️ ...`) and resolved elevation (`▲ ...`). Also displayed in destination info card details. | `AltitudeCursorBadgeOverlay.kt`, `MainViewModel.kt`, `MainActivity.kt`, `OsmMapView.kt` | **Completed** | Verified badge rendering, loading indicator, and counter-rotation. |
+| **MAP68-02** | **Reactive Map Setting Binding for Altitude on Map**: Fixed reactivity so toggling "Altitude on Map" immediately toggles overlay visibility without requiring GPS position refreshes. Direct `altitudeOverlay.isEnabled = it` + `postInvalidate()` and reactive `LaunchedEffect` observation. | `OsmMapView.kt` | **Completed** | Verified immediate show/hide response on toggle in Map Settings. |
+| **ELEV68-01** | **Elevation Data Correction Dedicated Notification & Controls**: Added `ElevationCorrectionManager` with persistent progress notification (`elevation_correction_channel`), progress bar, and pause/resume/stop actions via `ElevationActionReceiver`. Clicking notification opens Settings smoothly auto-scrolled to the Elevation Data section. Synchronized pause/resume/stop buttons in Settings UI. | `ElevationCorrectionManager.kt`, `ElevationActionReceiver.kt`, `MainActivity.kt`, `AndroidManifest.xml` | **Completed** | Covered by `SavedPlacesAndElevationCorrectionTest` and notification intent verification. |
+| **ELEV68-02** | **Elevation Correction for Saved Places**: Bulk elevation correction process now audits and backfills DEM altitudes for all saved places in SQLite alongside recorded trips. | `ElevationCorrectionHelper.kt`, `ElevationCorrectionManager.kt`, `TripDatabaseHelper.kt` | **Completed** | Verified with `ElevationCorrectionHelper.correctSavedPlaces` unit tests. |
+| **PLACE68-01** | **Saved Places Elevation Persistence & Display**: Added `altitude` column to `saved_places` table (Database v7 upgrade). Displays altitude badges above saved place map pins, in saved place card details, and in the Saved Places list items. Added action button in saved place details to read and save altitude online with GPS fix fallback. | `SavedPlace.kt`, `TripDatabaseHelper.kt`, `AltitudeCursorBadgeOverlay.kt`, `MainActivity.kt`, `MainViewModel.kt` | **Completed** | Verified in `SavedPlacesAndElevationCorrectionTest` and `ButtonContrastComplianceTest`. |
+| **VER-41** | **Build Gate, Version Increment & On-Device Install**: Increment `versionCode` to 87 and `versionName` to "1.9.4". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. APK installed on connected device `63160DLCH000RZ`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed; on-device streamed install succeeded (`Success`). |
+
+
 
 
 

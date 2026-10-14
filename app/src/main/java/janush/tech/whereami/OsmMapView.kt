@@ -430,6 +430,8 @@ fun OsmMapView(
     fitHeatMapTrigger: Long = 0L,
     fitPlacesTrigger: Long = 0L,
     destinationPoint: GeoPoint? = null,
+    destinationAltitude: Double? = null,
+    destinationAltitudeLoading: Boolean = false,
     selectedSavedPlace: SavedPlace? = null,
     onDestinationMarkerClick: (() -> Unit)? = null,
     onSavedPlaceClick: ((SavedPlace) -> Unit)? = null,
@@ -515,6 +517,23 @@ fun OsmMapView(
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(showAltitudeOnMap, destinationPoint, destinationAltitude, destinationAltitudeLoading, savedPlaces, altitudeM) {
+        val map = mapView ?: return@LaunchedEffect
+        if (!map.overlays.contains(altitudeOverlay)) {
+            map.overlays.add(altitudeOverlay)
+        }
+        altitudeOverlay.isEnabled = showAltitudeOnMap
+        altitudeOverlay.updateData(
+            geoPoint = locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
+            altitude = altitudeM,
+            savedPlaces = savedPlaces,
+            destinationPoint = destinationPoint,
+            destinationAltitude = destinationAltitude,
+            destinationLoading = destinationAltitudeLoading
+        )
+        map.invalidate()
+    }
 
     val prefs = remember(context) {
         context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
@@ -739,7 +758,10 @@ fun OsmMapView(
                     altitudeOverlay.updateData(
                         geoPoint = gp,
                         altitude = altitudeM,
-                        savedPlaces = savedPlaces.map { it.geoPoint }
+                        savedPlaces = savedPlaces,
+                        destinationPoint = destinationPoint,
+                        destinationAltitude = destinationAltitude,
+                        destinationLoading = destinationAltitudeLoading
                     )
 
                     if (lastAppliedHeadingState != hasHeading) {
@@ -1794,8 +1816,9 @@ fun OsmMapView(
             showAltitudeEnabled = showAltitudeOnMap,
             onShowAltitudeToggle = {
                 showAltitudeOnMap = it
+                altitudeOverlay.isEnabled = it
                 MapProfileConfigHelper.setShowAltitudeOnMap(context, it)
-                mapView?.invalidate()
+                mapView?.postInvalidate()
             },
             currentFontScale = fontScale,
             onFontScaleChange = { fontScale = it },
