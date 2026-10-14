@@ -121,4 +121,14 @@ object MapProfileConfigHelper {
             .remove("font_scale")
         editor.apply()
     }
+
+    fun getShowAltitudeOnMap(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean("pref_show_altitude_on_map", true)
+    }
+
+    fun setShowAltitudeOnMap(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("pref_show_altitude_on_map", enabled).apply()
+    }
 }
