@@ -66,7 +66,7 @@ class AutoSleepManagerTest {
             isTimeInWindow = false, // Not yet 22:30!
             isDndActive = true,
             followDnd = true,
-            isEveningOrNight = true, // 21:15 is evening
+            isNightOrBedtime = true, // 21:15 is night/bedtime window
             hasActiveTrip = false,
             wasManuallyWokenThisCycle = false
         )
@@ -80,11 +80,32 @@ class AutoSleepManagerTest {
             isTimeInWindow = false,
             isDndActive = true,
             followDnd = true,
-            isEveningOrNight = false, // Afternoon
+            isNightOrBedtime = false, // Afternoon
             hasActiveTrip = false,
             wasManuallyWokenThisCycle = false
         )
         assertFalse("DND in the afternoon must not trigger sleep mode", shouldSleepAfternoon)
+    }
+
+    @Test
+    fun testDaytimeDndStrictlyForbiddenFromSleeping() {
+        // Morning at 08:30 or 09:20 (broad daylight, outside bedtime window)
+        // User puts phone on DND or in pocket with screen off and stationary
+        val isDaytimeNight = AutoSleepManager.isNightOrBedtimeTime(9, 20, 22, 30, 6, 30)
+        assertFalse("09:20 must not be considered night or bedtime", isDaytimeNight)
+
+        val shouldSleepMorning = AutoSleepManager.shouldAutoSleep(
+            isAutoSleepEnabled = true,
+            isScreenOff = true,
+            isStationary = true,
+            isTimeInWindow = false,
+            isDndActive = true,
+            followDnd = true,
+            isNightOrBedtime = isDaytimeNight,
+            hasActiveTrip = false,
+            wasManuallyWokenThisCycle = false
+        )
+        assertFalse("Daytime DND at 09:20 must strictly forbid entering sleep mode", shouldSleepMorning)
     }
 
     @Test
@@ -97,7 +118,7 @@ class AutoSleepManagerTest {
             isTimeInWindow = true,
             isDndActive = true,
             followDnd = true,
-            isEveningOrNight = true,
+            isNightOrBedtime = true,
             hasActiveTrip = true, // Active recording in progress!
             wasManuallyWokenThisCycle = false
         )
@@ -114,7 +135,7 @@ class AutoSleepManagerTest {
             isTimeInWindow = true,
             isDndActive = true,
             followDnd = true,
-            isEveningOrNight = true,
+            isNightOrBedtime = true,
             hasActiveTrip = false,
             wasManuallyWokenThisCycle = false
         )
@@ -176,7 +197,7 @@ class AutoSleepManagerTest {
             isTimeInWindow = true,
             isDndActive = true,
             followDnd = true,
-            isEveningOrNight = true,
+            isNightOrBedtime = true,
             hasActiveTrip = false,
             wasManuallyWokenThisCycle = true // Explicitly woken by user
         )

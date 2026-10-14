@@ -287,8 +287,9 @@ class AppStateManager private constructor(private val context: Context) {
                             stationarySinceMs = now
                         }
                         val inactiveDuration = now - stationarySinceMs
-                        if (inactiveDuration >= STANDBY_HIBERNATION_TIMEOUT_MS) {
-                            TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m. Auto-entering standby sleep.")
+                        val isBedtime = AutoSleepManager.getInstance(context).isCurrentTimeInBedtimeWindow()
+                        if (inactiveDuration >= STANDBY_HIBERNATION_TIMEOUT_MS && isBedtime) {
+                            TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m during bedtime. Auto-entering standby sleep.")
                             enterStandbySleep()
                             stationarySinceMs = 0L
                             break
