@@ -37,7 +37,8 @@ class PositionInterpolator {
     private var blendTargetLat: Double = 0.0
     private var blendTargetLng: Double = 0.0
     private var blendStartTime: Long = 0L
-    private val blendDurationMs: Long = 250L
+    var blendDurationMs: Long = 600L
+        private set
 
     @Synchronized
     fun onNewFix(
@@ -68,6 +69,14 @@ class PositionInterpolator {
 
         // Compute current estimated position at the moment the new fix arrives
         val currentEst = calculateExtrapolatedPosition(timestamp)
+
+        // Adaptive blend duration: measure actual GPS cadence between fixes
+        val measuredInterval = if (lastFixTimestamp > 0L) (timestamp - lastFixTimestamp) else 1500L
+        if (measuredInterval in 300L..5000L) {
+            blendDurationMs = (measuredInterval * 0.40).toLong().coerceIn(400L, 800L)
+        } else {
+            blendDurationMs = 600L
+        }
 
         // Smooth blending: blend from current displayed position to the new fix over blendDurationMs
         // This eliminates any jump between extrapolation and the newly measured GPS point!

@@ -75,7 +75,8 @@ data class MultiLocationSnapshot(
     val accuracy: Float?,
     val timestamp: Long,
     val error: String? = null,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val fixSeqId: Long = 0L
 ) {
     fun toLocationData(displayLanguage: DisplayLanguage): LocationData {
         val place = when (displayLanguage) {
@@ -106,7 +107,8 @@ data class LocationFix(
     val speedMs: Float,
     val timestamp: Long,
     val accuracy: Float? = null,
-    val isAnchored: Boolean = false
+    val isAnchored: Boolean = false,
+    val fixSeqId: Long = 0L
 )
 
 /** Small data class for OSM Nominatim reverse-geocode results. */
@@ -824,6 +826,9 @@ class LocationManager private constructor(private val context: Context) {
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
+    private var fixSeqCounter: Long = 0L
+
+    @Volatile
     var lastLocationSnapshot: MultiLocationSnapshot? = null
         private set
 
@@ -975,6 +980,7 @@ class LocationManager private constructor(private val context: Context) {
                         )
 
                         // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
+                        val seqId = ++fixSeqCounter
                         val fastSnapshot = MultiLocationSnapshot(
                             multiPlace = committedPlace,
                             speedMs = speed,
@@ -984,7 +990,8 @@ class LocationManager private constructor(private val context: Context) {
                             altitude = alt,
                             bearing = currentBearing,
                             accuracy = if (location.hasAccuracy()) location.accuracy else null,
-                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                            fixSeqId = seqId
                         )
                         lastLocationSnapshot = fastSnapshot
                         trySend(fastSnapshot)
@@ -1029,7 +1036,8 @@ class LocationManager private constructor(private val context: Context) {
                                     altitude = currentSnap?.altitude ?: alt,
                                     bearing = currentSnap?.bearing ?: capturedBearing,
                                     accuracy = currentSnap?.accuracy ?: (if (location.hasAccuracy()) location.accuracy else null),
-                                    timestamp = currentSnap?.timestamp ?: fixTimestamp
+                                    timestamp = currentSnap?.timestamp ?: fixTimestamp,
+                                    fixSeqId = currentSnap?.fixSeqId ?: seqId
                                 )
                                 lastLocationSnapshot = enrichedSnapshot
                                 trySend(enrichedSnapshot)
@@ -1091,7 +1099,11 @@ class LocationManager private constructor(private val context: Context) {
     fun getLocationRaw(): Flow<LocationFix> {
         return masterLocationFlow
             .distinctUntilChanged { old, new ->
-                old.lat == new.lat && old.lng == new.lng && old.timestamp == new.timestamp
+                if (old.fixSeqId > 0L && new.fixSeqId > 0L) {
+                    old.fixSeqId == new.fixSeqId
+                } else {
+                    old.lat == new.lat && old.lng == new.lng && old.timestamp == new.timestamp
+                }
             }
             .map {
                 val movingBearing = if (it.speedMs >= 0.8f) it.bearing else null
@@ -1111,7 +1123,8 @@ class LocationManager private constructor(private val context: Context) {
                     speedMs = it.speedMs,
                     timestamp = it.timestamp,
                     accuracy = stabilized.accuracy,
-                    isAnchored = stabilized.isAnchored
+                    isAnchored = stabilized.isAnchored,
+                    fixSeqId = it.fixSeqId
                 )
             }
     }
