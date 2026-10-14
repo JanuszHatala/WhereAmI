@@ -208,6 +208,22 @@ class LiveGuestTest {
     }
 
     @Test
+    fun `test formatCompactTimeAgo`() {
+        val now = 1700000000000L
+
+        assertEquals("now", LiveGuest.formatCompactTimeAgo(now - 5_000L, now))
+        assertEquals("now", LiveGuest.formatCompactTimeAgo(now - 14_000L, now))
+        assertEquals("15s", LiveGuest.formatCompactTimeAgo(now - 15_000L, now))
+        assertEquals("45s", LiveGuest.formatCompactTimeAgo(now - 45_000L, now))
+        assertEquals("1m", LiveGuest.formatCompactTimeAgo(now - 60_000L, now))
+        assertEquals("12m", LiveGuest.formatCompactTimeAgo(now - 720_000L, now))
+        assertEquals("1h", LiveGuest.formatCompactTimeAgo(now - 3_600_000L, now))
+        assertEquals("2h", LiveGuest.formatCompactTimeAgo(now - 8_100_000L, now))
+        assertEquals("1d", LiveGuest.formatCompactTimeAgo(now - 86_400_000L, now))
+        assertEquals("3d", LiveGuest.formatCompactTimeAgo(now - 3 * 86_400_000L, now))
+    }
+
+    @Test
     fun `test dismissed guest filtering logic`() {
         val g1 = LiveGuest("g1", "Guest 1", 50.0, 20.0)
         val g2 = LiveGuest("g2", "Guest 2", 50.1, 20.1, isInactive = true)
