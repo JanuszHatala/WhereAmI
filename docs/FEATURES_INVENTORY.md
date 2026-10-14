@@ -12,13 +12,13 @@ It tracks the workflow and architectural decisions across all development sessio
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **1. Core Location, Spatial Awareness & Kinematics** | 10 | 10 | 0 | 0 | 0 |
 | **2. Map Engine, Layers & Viewport Navigation** | 8 | 8 | 0 | 0 | 2 |
-| **3. Trip Recording, History & Analytics** | 7 | 7 | 0 | 0 | 0 |
+| **3. Trip Recording, History & Analytics** | 8 | 8 | 0 | 0 | 0 |
 | **4. Live Location Sharing (Self-Hosted Platform)** | 8 | 8 | 0 | 3 | 2 |
 | **5. Saved Places ("My Places") & Search** | 5 | 5 | 0 | 0 | 0 |
 | **6. User Interface, Responsive Layout & UX Polish** | 8 | 8 | 0 | 0 | 1 |
 | **7. Android System Integration & Power Architecture** | 7 | 6 | 0 | 0 | 1 |
 | **8. Diagnostics, Telemetry & CI/CD Pipeline** | 5 | 5 | 0 | 0 | 0 |
-| **Total** | **58** | **52** | **0** | **3** | **6** |
+| **Total** | **59** | **53** | **0** | **3** | **6** |
 
 ---
 
@@ -259,6 +259,16 @@ It tracks the workflow and architectural decisions across all development sessio
 ### TRP-07: Active Trip Visited Places Chronology
 - **Core Value**: Real-time chronology of towns and settlements visited during the current active trip, accessible by tapping the locality card header.
 - **Status**: **Implemented & Verified**
+
+### TRP-08: Trip Altitude Tracking, Elevation Profile Chart & DEM Correction
+- **Core Value**: End-to-end altitude recording, visualization, and correction for recorded trips and live tracking.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `TripDatabaseHelper.kt` (DB v6): Persists altitude in `points_json` as optional `"alt"` attribute with backward compatibility.
+  - `TripModels.kt`: `ElevationStats` computation with moving-average noise reduction for cumulative ascent/descent, elevation range, and peak vertical speed (`m/min`).
+  - `MainActivity.kt`: Live altitude badge (`▲ XXX m`) in LocalityCard compact Row 3; collapsible Elevation Profile section in `TripDetailDialog` with `ElevationProfileChart` Canvas composable and `ElevationOverrideModeDialog` mode selector.
+  - `ElevationRepository.kt` & `ElevationCorrectionHelper.kt`: Open-Elevation DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing; single-trip correction and bulk "Correct All Trips" tool in Settings.
+  - Unit test suite: `ElevationStatsTest.kt`, `PointsAltitudeSerializationTest.kt`.
 
 ---
 

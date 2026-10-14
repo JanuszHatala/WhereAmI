@@ -60,7 +60,8 @@ data class LocationData(
     val secondaryPlace: PlaceInfo?,
     val speedMs: Float?, // Speed in meters per second (smoothed, non-null during active tracking)
     val error: String? = null,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val altitude: Double? = null
 )
 
 /** Unified location snapshot broadcast to all consumers (Single Source of Truth). */
@@ -93,6 +94,7 @@ data class MultiLocationSnapshot(
             primaryPlace = place,
             secondaryPlace = secPlace,
             speedMs = speedMs,
+            altitude = altitude,
             error = error,
             isLoading = isLoading
         )
@@ -960,7 +962,8 @@ class LocationManager private constructor(private val context: Context) {
                             location.longitude,
                             speed,
                             committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
-                            if (location.hasAccuracy()) location.accuracy else null
+                            if (location.hasAccuracy()) location.accuracy else null,
+                            alt
                         )
 
                         // 2. Immediate LiveSharing telemetry notification

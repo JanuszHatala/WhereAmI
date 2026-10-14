@@ -731,6 +731,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    private val _elevationCorrectionProgress = MutableStateFlow(ElevationCorrectionProgress())
+    val elevationCorrectionProgress: StateFlow<ElevationCorrectionProgress> = _elevationCorrectionProgress.asStateFlow()
+
+    fun correctTripElevation(tripId: Long, mode: OverrideMode) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val trip = dbHelper.getTripsByIds(listOf(tripId)).firstOrNull() ?: return@launch
+            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
+                isRunning = true,
+                totalTrips = 1,
+                totalPoints = trip.points.size
+            )
+            ElevationCorrectionHelper.correctTrip(trip, mode, dbHelper) { done, total ->
+                _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
+                    processedPoints = done,
+                    totalPoints = total
+                )
+            }
+            _savedTrips.value = tripManager.getAllTrips()
+            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
+                isDone = true,
+                processedTrips = 1,
+                totalTrips = 1
+            )
+        }
+    }
+
+    fun correctAllTripsElevation(mode: OverrideMode) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val trips = dbHelper.getAllTrips().filter { it.points.isNotEmpty() }
+            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
+                isRunning = true,
+                totalTrips = trips.size
+            )
+            trips.forEachIndexed { idx, trip ->
+                _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
+                    processedTrips = idx,
+                    totalPoints = trip.points.size,
+                    processedPoints = 0
+                )
+                ElevationCorrectionHelper.correctTrip(trip, mode, dbHelper) { done, total ->
+                    _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
+                        processedPoints = done,
+                        totalPoints = total
+                    )
+                }
+            }
+            _savedTrips.value = tripManager.getAllTrips()
+            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
+                isDone = true,
+                processedTrips = trips.size,
+                totalTrips = trips.size
+            )
+        }
+    }
 }
 
 
