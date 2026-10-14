@@ -14,11 +14,21 @@ object ElevationRepository {
     private const val MAX_RETRIES = 3
 
     /**
+     * Fetches DEM altitude for a single coordinate point. Returns null if offline or fetch fails.
+     */
+    suspend fun getElevation(latitude: Double, longitude: Double): Double? {
+        val list = fetchAltitudes(listOf(GeoPoint(latitude, longitude)))
+        return list.firstOrNull()
+    }
+
+    /**
      * Fetches DEM altitudes for [points]. Returns a parallel list (null = fetch failed for that batch/point).
      * [onProgress] receives (completedPoints, totalPoints).
+     * [isCancelled] lambda allows interrupting long batch queries.
      */
     suspend fun fetchAltitudes(
         points: List<GeoPoint>,
+        isCancelled: () -> Boolean = { false },
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): List<Double?> {
         val result = MutableList<Double?>(points.size) { null }
@@ -26,6 +36,7 @@ object ElevationRepository {
 
         val batches = points.indices.chunked(BATCH_SIZE)
         for ((batchIdx, indices) in batches.withIndex()) {
+            if (isCancelled()) break
             val batchPoints = indices.map { points[it] }
             val altitudes = fetchBatchWithRetry(batchPoints)
             if (altitudes != null) {
