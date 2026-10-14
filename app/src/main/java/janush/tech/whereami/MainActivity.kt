@@ -57,6 +57,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -282,6 +284,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val heatMapFilterState by viewModel.heatMapFilterState.collectAsState()
     var showHeatMapSettingsDialog by remember { mutableStateOf(false) }
     var fitHeatMapTrigger by remember { mutableStateOf(0L) }
+    val elevationCorrectionProgress by viewModel.elevationCorrectionProgress.collectAsState()
 
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
@@ -2843,7 +2846,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onMergePause = { tripId, pauseIdx ->
                         viewModel.mergeTripPauses(tripId, pauseIdx)
                         android.widget.Toast.makeText(context, "Merged pause #${pauseIdx + 1} with next", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    },
+                    onCorrectElevation = { tripId, mode ->
+                        viewModel.correctTripElevation(tripId, mode)
+                    },
+                    elevationCorrectionProgress = elevationCorrectionProgress
                 )
             }
         }
@@ -3735,7 +3742,84 @@ fun LocationScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // ── Elevation Data Section ──────────────────────────────────
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "⛰️ Elevation Data & Terrain Correction",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Backfill or correct DEM altitudes for all recorded trips using Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+
+                        var showBulkElevationDialog by remember { mutableStateOf(false) }
+                        val isBulkRunning = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips > 1
+
+                        if (isBulkRunning) {
+                            val totalT = elevationCorrectionProgress.totalTrips.coerceAtLeast(1)
+                            val procT = elevationCorrectionProgress.processedTrips
+                            LinearProgressIndicator(
+                                progress = { procT.toFloat() / totalT },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color(0xFF38BDF8),
+                                trackColor = Color(0xFF0F172A)
+                            )
+                            Text(
+                                text = "Processing trip ${procT + 1}/$totalT • ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts",
+                                fontSize = 11.sp,
+                                color = Color(0xFF38BDF8)
+                            )
+                        } else {
+                            Button(
+                                onClick = { showBulkElevationDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    text = "Correct All Trips Altitude",
+                                    fontSize = 13.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            if (elevationCorrectionProgress.isDone && elevationCorrectionProgress.totalTrips > 1) {
+                                Text(
+                                    text = "✓ Elevation correction complete for ${elevationCorrectionProgress.totalTrips} trips.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF34D399)
+                                )
+                            }
+                        }
+
+                        if (showBulkElevationDialog) {
+                            ElevationOverrideModeDialog(
+                                onConfirm = { mode ->
+                                    showBulkElevationDialog = false
+                                    viewModel.correctAllTripsElevation(mode)
+                                },
+                                onDismiss = { showBulkElevationDialog = false }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 OutlinedButton(
                     onClick = { showResetDefaultsConfirm = true },
@@ -8926,6 +9010,43 @@ private fun LocalityCard(
                             }
                         }
                     }
+
+                    // Altitude Badge
+                    val currentAltitude = locationData.altitude
+                    if (currentAltitude != null && !currentAltitude.isNaN() && currentAltitude != 0.0) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .height(22.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF1E293B))
+                                .padding(horizontal = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "▲",
+                                fontSize = 9.sp,
+                                color = Color(0xFF94A3B8),
+                                softWrap = false
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = String.format(Locale.getDefault(), "%.0f m", currentAltitude),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF34D399),
+                                softWrap = false,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 11.sp
+                                )
+                            )
+                        }
+                    }
                 }
             } else {
                 // ══════════════════════════════════════════════════════════════
@@ -10432,7 +10553,9 @@ fun TripDetailDialog(
     onUpdateProfile: (Long, ActivityProfile) -> Unit,
     onSplitPause: (Long, Int) -> Unit,
     onDeletePause: (Long, Int) -> Unit = { _, _ -> },
-    onMergePause: (Long, Int) -> Unit = { _, _ -> }
+    onMergePause: (Long, Int) -> Unit = { _, _ -> },
+    onCorrectElevation: (Long, OverrideMode) -> Unit = { _, _ -> },
+    elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress()
 ) {
     val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
     val startDateStr = shortDateFmt.format(Date(trip.startTime))
@@ -10977,7 +11100,128 @@ fun TripDetailDialog(
                         }
                     }
 
-                    // 4. Unified Route Timeline (Visited Localities & Interleaved Rest Stops)
+                    // 4. Elevation Profile Card
+                    val hasAltitude = remember(trip.points) {
+                        trip.points.count { it.altitude != 0.0 && !it.altitude.isNaN() } >= 2
+                    }
+                    val elevationStats = remember(trip.points) { computeElevationStats(trip.points) }
+                    var elevationExpanded by remember(hasAltitude) { mutableStateOf(hasAltitude) }
+                    var showCorrectionDialog by remember { mutableStateOf(false) }
+
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                onClick = { elevationExpanded = !elevationExpanded },
+                                color = Color.Transparent
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "ELEVATION PROFILE",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF94A3B8),
+                                        letterSpacing = 0.5.sp
+                                    )
+                                    Icon(
+                                        imageVector = if (elevationExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (elevationExpanded) "Collapse" else "Expand",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(visible = elevationExpanded) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (!hasAltitude) {
+                                        Text(
+                                            text = "No altitude data recorded for this trip. Use 'Correct Altitude' to fetch DEM altitudes from Open-Elevation.",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    } else {
+                                        if (elevationStats != null) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                ElevationStatChip(
+                                                    label = "↑ ${elevationStats.totalAscentM.toInt()} m",
+                                                    color = Color(0xFF34D399)
+                                                )
+                                                ElevationStatChip(
+                                                    label = "↓ ${elevationStats.totalDescentM.toInt()} m",
+                                                    color = Color(0xFFF87171)
+                                                )
+                                                val minA = elevationStats.minAltitudeM?.toInt() ?: 0
+                                                val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
+                                                ElevationStatChip(
+                                                    label = "$minA–$maxA m",
+                                                    color = Color(0xFFFBBF24)
+                                                )
+                                                if (elevationStats.peakVerticalSpeedMpm > 0.1) {
+                                                    ElevationStatChip(
+                                                        label = String.format(Locale.getDefault(), "▲ %.1f m/min", elevationStats.peakVerticalSpeedMpm),
+                                                        color = Color(0xFF38BDF8)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        ElevationProfileChart(
+                                            points = trip.points,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(150.dp)
+                                        )
+                                    }
+
+                                    val isRunningThisTrip = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips == 1
+                                    Button(
+                                        onClick = { showCorrectionDialog = true },
+                                        enabled = !isRunningThisTrip,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                        border = BorderStroke(1.dp, Color(0xFF334155))
+                                    ) {
+                                        Text(
+                                            text = if (isRunningThisTrip) {
+                                                "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
+                                            } else {
+                                                "Correct Altitude (Open-Elevation)"
+                                            },
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (showCorrectionDialog) {
+                        ElevationOverrideModeDialog(
+                            onConfirm = { mode ->
+                                showCorrectionDialog = false
+                                onCorrectElevation(trip.id, mode)
+                            },
+                            onDismiss = { showCorrectionDialog = false }
+                        )
+                    }
+
+                    // 5. Unified Route Timeline (Visited Localities & Interleaved Rest Stops)
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
@@ -11580,5 +11824,179 @@ private fun TimePickerSimpleDialog(
     }
 }
 
+@Composable
+private fun ElevationStatChip(label: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = Color(0xFF0F172A),
+        border = BorderStroke(1.dp, Color(0xFF334155))
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = color,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            style = TextStyle(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both
+                ),
+                lineHeight = 11.sp
+            )
+        )
+    }
+}
 
+@Composable
+fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Modifier = Modifier) {
+    val altPairs = remember(points) {
+        val distances = calculateCumulativeDistances(points)
+        points.mapIndexed { i, p ->
+            val dist = distances.getOrElse(i) { 0.0 }
+            dist to p.altitude
+        }.filter { (_, a) -> a != 0.0 && !a.isNaN() }
+    }
 
+    if (altPairs.size < 2) return
+
+    val minAlt = altPairs.minOf { it.second }
+    val maxAlt = altPairs.maxOf { it.second }
+    val altRange = (maxAlt - minAlt).coerceAtLeast(10.0)
+    val maxDist = altPairs.maxOf { it.first }.coerceAtLeast(1.0)
+
+    val gradientColors = listOf(Color(0x5534D399), Color(0x0534D399))
+
+    androidx.compose.foundation.Canvas(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF0F172A))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        val w = size.width
+        val h = size.height
+
+        fun toX(dist: Double): Float = ((dist / maxDist) * w).toFloat().coerceIn(0f, w)
+        fun toY(alt: Double): Float = (h * (1.0 - (alt - minAlt) / altRange)).toFloat().coerceIn(0f, h)
+
+        val fillPath = androidx.compose.ui.graphics.Path()
+        altPairs.forEachIndexed { i, (d, a) ->
+            val x = toX(d)
+            val y = toY(a)
+            if (i == 0) fillPath.moveTo(x, y) else fillPath.lineTo(x, y)
+        }
+        fillPath.lineTo(toX(altPairs.last().first), h)
+        fillPath.lineTo(toX(altPairs.first().first), h)
+        fillPath.close()
+
+        drawPath(
+            path = fillPath,
+            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                colors = gradientColors,
+                startY = 0f,
+                endY = h
+            )
+        )
+
+        val linePath = androidx.compose.ui.graphics.Path()
+        altPairs.forEachIndexed { i, (d, a) ->
+            val x = toX(d)
+            val y = toY(a)
+            if (i == 0) linePath.moveTo(x, y) else linePath.lineTo(x, y)
+        }
+        drawPath(
+            path = linePath,
+            color = Color(0xFF34D399),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 2.dp.toPx(),
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+        )
+
+        drawContext.canvas.nativeCanvas.apply {
+            val paint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(180, 148, 163, 184)
+                textSize = 9.dp.toPx()
+                isAntiAlias = true
+            }
+            drawText("${minAlt.toInt()} m", 6f, h - 4f, paint)
+            drawText("${maxAlt.toInt()} m", 6f, paint.textSize + 4f, paint)
+            val distKmStr = String.format(Locale.getDefault(), "%.1f km", maxDist / 1000.0)
+            val textW = paint.measureText(distKmStr)
+            drawText(distKmStr, w - textW - 6f, h - 4f, paint)
+        }
+    }
+}
+
+@Composable
+fun ElevationOverrideModeDialog(
+    onConfirm: (OverrideMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedMode by remember { mutableStateOf(OverrideMode.FILL_MISSING) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E293B),
+        title = {
+            Text(
+                text = "Altitude Correction Mode",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Select how to apply Digital Elevation Model (DEM) altitudes from Open-Elevation:",
+                    fontSize = 13.sp,
+                    color = Color(0xFFCBD5E1)
+                )
+
+                listOf(
+                    OverrideMode.FILL_MISSING to "Fill missing only — preserve existing GPS/barometric altitude; only add DEM values to points lacking altitude.",
+                    OverrideMode.OVERRIDE_ALL to "Override all points — overwrite every track point with DEM altitude (~30m terrain resolution, eliminates GPS spikes)."
+                ).forEach { (mode, desc) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { selectedMode = mode }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedMode == mode,
+                            onClick = { selectedMode = mode },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFF38BDF8),
+                                unselectedColor = Color(0xFF94A3B8)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = desc,
+                            fontSize = 12.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(selectedMode) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+            ) {
+                Text("Start Correction", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color.White)
+            }
+        }
+    )
+}
