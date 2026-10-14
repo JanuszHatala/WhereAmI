@@ -631,15 +631,7 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    var orientationAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
-    // Debounce cooldown: prevent starting a new rotation animation within 600ms of the previous one.
-    // Without this, rapid low-speed GPS bearing changes stack overlapping animations → map spinning.
-    var lastOrientationAnimStart by remember { mutableStateOf(0L) }
-    DisposableEffect(Unit) {
-        onDispose {
-            orientationAnimator?.cancel()
-        }
-    }
+    var smoothedMapOrientation by remember { mutableStateOf(mapView?.mapOrientation ?: 0f) }
 
     // Feed new GPS fixes into the interpolator
     LaunchedEffect(currentFix) {
@@ -658,54 +650,6 @@ fun OsmMapView(
         }
     }
 
-    // Auto-rotation with Stationary Bearing Freeze and Debounce
-    LaunchedEffect(currentFix?.bearing, orientationMode, isRecording, isFollowing) {
-        val map = mapView ?: return@LaunchedEffect
-        val rawBearing = currentFix?.bearing
-        if (rawBearing != null) {
-            lastFrozenBearing = rawBearing
-        }
-        val effectiveBearing = rawBearing ?: lastFrozenBearing
-        val isMoving = rawBearing != null
-
-        val targetMapOrientation: Float? = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> {
-                // When user panned the map (not following), do NOT auto-rotate
-                if (!isFollowing) null
-                // When not recording and stationary, do NOT auto-rotate map; allow free manual gesture rotation
-                else if (!isRecording && !isMoving) null
-                else if (effectiveBearing != null) -effectiveBearing
-                else 0f
-            }
-            MapOrientationMode.NORTH -> 0f
-            MapOrientationMode.EAST -> 270f
-            MapOrientationMode.SOUTH -> 180f
-            MapOrientationMode.WEST -> 90f
-        }
-
-        if (targetMapOrientation != null) {
-            val currentRot = map.mapOrientation
-            val diff = (targetMapOrientation - currentRot + 540f) % 360f - 180f
-            val now = System.currentTimeMillis()
-            val cooldownElapsed = (now - lastOrientationAnimStart) >= 600L
-            if (kotlin.math.abs(diff) >= 5.0f && cooldownElapsed) {
-                orientationAnimator?.cancel()
-                lastOrientationAnimStart = now
-                orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                    duration = 350L
-                    setInterpolator(android.view.animation.DecelerateInterpolator())
-                    addUpdateListener { anim ->
-                        val frac = anim.animatedFraction
-                        val stepRot = (currentRot + diff * frac) % 360f
-                        map.mapOrientation = (stepRot + 360f) % 360f
-                        map.invalidate()
-                    }
-                    start()
-                }
-            }
-        }
-    }
-
     val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
 
     // Continuous Frame Loop: smooth dead-reckoning marker & optical camera tracking throttled to ~35fps
@@ -716,6 +660,8 @@ fun OsmMapView(
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
         var lastFrameRenderMs = 0L
+        var lastPolylineTipLat = 0.0
+        var lastPolylineTipLng = 0.0
 
         while (isActive) {
             val map = mapView
@@ -725,9 +671,42 @@ fun OsmMapView(
 
                 if (pt.lat != 0.0 && pt.lng != 0.0) {
                     val gp = GeoPoint(pt.lat, pt.lng)
-                    val effectiveBearing = pt.bearing ?: lastFrozenBearing
+                    val rawBearing = currentFix?.bearing
+                    if (rawBearing != null) {
+                        lastFrozenBearing = rawBearing
+                    }
+                    val effectiveBearing = pt.bearing ?: (rawBearing ?: lastFrozenBearing)
                     val isMoving = !posInterpolator.isStationary()
                     val hasHeading = isMoving && (effectiveBearing != null)
+
+                    // ── Smooth Map Rotation (Continuous frame-by-frame EMA with velocity clamp) ──
+                    val targetMapOrientation: Float? = when (orientationMode) {
+                        MapOrientationMode.COURSE_UP -> {
+                            if (!isFollowing) null
+                            else if (!isRecording && !isMoving) null
+                            else if (effectiveBearing != null) -effectiveBearing
+                            else 0f
+                        }
+                        MapOrientationMode.NORTH -> 0f
+                        MapOrientationMode.EAST -> 270f
+                        MapOrientationMode.SOUTH -> 180f
+                        MapOrientationMode.WEST -> 90f
+                    }
+
+                    if (targetMapOrientation != null) {
+                        val dtSec = if (lastFrameRenderMs > 0L) {
+                            ((nowMs - lastFrameRenderMs).coerceIn(1L, 100L) / 1000.0f)
+                        } else {
+                            0.033f
+                        }
+                        val maxDeltaDeg = 90.0f * dtSec // Clamped at 90°/second to eradicate 360° spin artifacts
+                        val diff = ((targetMapOrientation - smoothedMapOrientation + 540f) % 360f) - 180f
+                        val step = diff.coerceIn(-maxDeltaDeg, maxDeltaDeg)
+                        smoothedMapOrientation = (smoothedMapOrientation + step + 360f) % 360f
+                        if (kotlin.math.abs(map.mapOrientation - smoothedMapOrientation) >= 0.2f) {
+                            map.mapOrientation = smoothedMapOrientation
+                        }
+                    }
 
                     if (!map.overlays.contains(accuracyOverlay)) {
                         val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
@@ -784,6 +763,23 @@ fun OsmMapView(
                             map.controller.setCenter(centerGp)
                         }
                         map.invalidate()
+                    }
+
+                    // ── Live Trip Polyline Tip Synchronization ──
+                    // While recording, smoothly extend the tip of the polyline to match the position icon exactly.
+                    val line = polyline
+                    if (isRecording && line != null && trackPoints.isNotEmpty()) {
+                        val dTipLat = kotlin.math.abs(gp.latitude - lastPolylineTipLat)
+                        val dTipLng = kotlin.math.abs(gp.longitude - lastPolylineTipLng)
+                        if (dTipLat > 0.000005 || dTipLng > 0.000005) {
+                            val livePoints = ArrayList<GeoPoint>(trackPoints.size + 1)
+                            livePoints.addAll(trackPoints)
+                            livePoints.add(gp)
+                            line.setPoints(livePoints)
+                            lastPolylineTipLat = gp.latitude
+                            lastPolylineTipLng = gp.longitude
+                            map.invalidate()
+                        }
                     }
                 }
             }
