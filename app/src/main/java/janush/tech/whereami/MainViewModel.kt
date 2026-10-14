@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class HeatMapFilterState(
     val activityProfiles: Set<ActivityProfile> = emptySet(), // empty = All Modes
@@ -138,6 +139,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _destinationPoint = MutableStateFlow<org.osmdroid.util.GeoPoint?>(null)
     val destinationPoint: StateFlow<org.osmdroid.util.GeoPoint?> = _destinationPoint.asStateFlow()
 
+    private val _destinationAltitude = MutableStateFlow<Double?>(null)
+    val destinationAltitude: StateFlow<Double?> = _destinationAltitude.asStateFlow()
+
+    private val _destinationAltitudeLoading = MutableStateFlow(false)
+    val destinationAltitudeLoading: StateFlow<Boolean> = _destinationAltitudeLoading.asStateFlow()
+
+    private var destinationElevationJob: Job? = null
+
     // Saved Places State
     private val dbHelper = TripDatabaseHelper(application)
     private val _savedPlaces = MutableStateFlow<List<SavedPlace>>(emptyList())
@@ -161,11 +170,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedTripIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedTripIds: StateFlow<Set<Long>> = _selectedTripIds.asStateFlow()
 
-    // Manage Storage / Cache Pre-fetch & Navigation Dialog Target State
     enum class AppDialogTarget {
         NONE,
         CACHE_MANAGER,
-        LIVE_SHARING
+        LIVE_SHARING,
+        ELEVATION_SETTINGS
     }
 
     private val _requestedDialogTarget = MutableStateFlow(AppDialogTarget.NONE)
@@ -180,9 +189,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _showCacheManagerDialog.value = true
     }
 
+    fun openElevationSettings() {
+        dismissAllDialogs()
+        _requestedDialogTarget.value = AppDialogTarget.ELEVATION_SETTINGS
+    }
+
     fun dismissAllDialogs() {
         _showCacheManagerDialog.value = false
-            }
+    }
 
     fun dismissCacheManager() {
         _showCacheManagerDialog.value = false
@@ -259,10 +273,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _orientationMode.value = config.orientationMode
     }
 
+    private fun resolveDestinationAltitude(point: org.osmdroid.util.GeoPoint?) {
+        destinationElevationJob?.cancel()
+        if (point == null) {
+            _destinationAltitude.value = null
+            _destinationAltitudeLoading.value = false
+            return
+        }
+        _destinationAltitude.value = null
+        _destinationAltitudeLoading.value = true
+        destinationElevationJob = viewModelScope.launch(Dispatchers.IO) {
+            val dem = ElevationRepository.getElevation(point.latitude, point.longitude)
+            val effective = dem ?: _locationData.value.altitude?.takeIf { it > 0.0 }
+            if (_destinationPoint.value == point) {
+                _destinationAltitude.value = effective
+                _destinationAltitudeLoading.value = false
+            }
+        }
+    }
+
     fun setDestination(item: SearchResultItem?) {
         _destinationItem.value = item
         _destinationPoint.value = item?.geoPoint
         _pinnedBoundaryPoints.value = null
+        resolveDestinationAltitude(item?.geoPoint)
     }
 
     fun setDestinationPoint(point: org.osmdroid.util.GeoPoint?) {
@@ -271,11 +305,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (point == null) {
             _destinationItem.value = null
         }
+        resolveDestinationAltitude(point)
     }
 
     fun selectMapPoint(point: org.osmdroid.util.GeoPoint) {
         _destinationPoint.value = point
         _pinnedBoundaryPoints.value = null
+        resolveDestinationAltitude(point)
         _destinationItem.value = SearchResultItem(
             title = "Resolving Address...",
             subtitle = String.format(java.util.Locale.US, "%.5f, %.5f", point.latitude, point.longitude),
@@ -329,7 +365,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         geoPoint: org.osmdroid.util.GeoPoint,
         locality: String,
         street: String,
-        colorHex: String = ""
+        colorHex: String = "",
+        altitude: Double? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val finalColor = if (colorHex.isBlank()) PRESET_PIN_COLORS.filter { it.hex.isNotEmpty() }.random().hex else colorHex
@@ -340,10 +377,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 longitude = geoPoint.longitude,
                 locality = locality,
                 street = street,
-                colorHex = finalColor
+                colorHex = finalColor,
+                altitude = altitude
             )
             dbHelper.insertSavedPlace(place)
             loadSavedPlaces()
+        }
+    }
+
+    fun readAndSavePlaceAltitude(place: SavedPlace, onUpdated: ((SavedPlace) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val dem = ElevationRepository.getElevation(place.latitude, place.longitude)
+            val effectiveAlt = dem ?: _locationData.value.altitude?.takeIf { it > 0.0 }
+            if (effectiveAlt != null && effectiveAlt > 0.0) {
+                val updated = place.copy(altitude = effectiveAlt)
+                dbHelper.updateSavedPlace(updated)
+                loadSavedPlaces()
+                withContext(Dispatchers.Main) {
+                    onUpdated?.invoke(updated)
+                }
+            }
         }
     }
 
@@ -732,59 +785,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private val _elevationCorrectionProgress = MutableStateFlow(ElevationCorrectionProgress())
-    val elevationCorrectionProgress: StateFlow<ElevationCorrectionProgress> = _elevationCorrectionProgress.asStateFlow()
+    val elevationCorrectionProgress: StateFlow<ElevationCorrectionProgress> = ElevationCorrectionManager.progress
 
     fun correctTripElevation(tripId: Long, mode: OverrideMode) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val trip = dbHelper.getTripsByIds(listOf(tripId)).firstOrNull() ?: return@launch
-            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
-                isRunning = true,
-                totalTrips = 1,
-                totalPoints = trip.points.size
-            )
-            ElevationCorrectionHelper.correctTrip(trip, mode, dbHelper) { done, total ->
-                _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
-                    processedPoints = done,
-                    totalPoints = total
-                )
+        ElevationCorrectionManager.startSingleTrip(getApplication(), tripId, mode) {
+            viewModelScope.launch(Dispatchers.IO) {
+                _savedTrips.value = tripManager.getAllTrips()
             }
-            _savedTrips.value = tripManager.getAllTrips()
-            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
-                isDone = true,
-                processedTrips = 1,
-                totalTrips = 1
-            )
         }
     }
 
     fun correctAllTripsElevation(mode: OverrideMode) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val trips = dbHelper.getAllTrips().filter { it.points.isNotEmpty() }
-            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
-                isRunning = true,
-                totalTrips = trips.size
-            )
-            trips.forEachIndexed { idx, trip ->
-                _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
-                    processedTrips = idx,
-                    totalPoints = trip.points.size,
-                    processedPoints = 0
-                )
-                ElevationCorrectionHelper.correctTrip(trip, mode, dbHelper) { done, total ->
-                    _elevationCorrectionProgress.value = _elevationCorrectionProgress.value.copy(
-                        processedPoints = done,
-                        totalPoints = total
-                    )
-                }
+        ElevationCorrectionManager.startAll(getApplication(), mode) {
+            viewModelScope.launch(Dispatchers.IO) {
+                _savedTrips.value = tripManager.getAllTrips()
+                loadSavedPlaces()
             }
-            _savedTrips.value = tripManager.getAllTrips()
-            _elevationCorrectionProgress.value = ElevationCorrectionProgress(
-                isDone = true,
-                processedTrips = trips.size,
-                totalTrips = trips.size
-            )
         }
+    }
+
+    fun pauseElevationCorrection() {
+        ElevationCorrectionManager.pause()
+    }
+
+    fun resumeElevationCorrection() {
+        ElevationCorrectionManager.resume()
+    }
+
+    fun stopElevationCorrection() {
+        ElevationCorrectionManager.stop()
     }
 }
 

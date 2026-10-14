@@ -40,9 +40,10 @@ data class SavedPlace(
     val locality: String = "",
     val street: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val colorHex: String = ""
+    val colorHex: String = "",
+    val altitude: Double? = null
 ) {
-    val geoPoint: GeoPoint get() = GeoPoint(latitude, longitude)
+    val geoPoint: GeoPoint get() = if (altitude != null && altitude > 0.0) GeoPoint(latitude, longitude, altitude) else GeoPoint(latitude, longitude)
 
     fun getEffectiveColorHex(): String {
         if (colorHex.isNotBlank()) return colorHex

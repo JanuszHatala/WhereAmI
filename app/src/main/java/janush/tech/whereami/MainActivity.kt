@@ -41,6 +41,7 @@ import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.window.Dialog
@@ -138,7 +139,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNotificationIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(CacheManager.EXTRA_OPEN_CACHE_MANAGER, false) == true ||
+        if (intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS_ELEVATION, false) == true ||
+            intent?.action == ACTION_SHOW_ELEVATION_SETTINGS
+        ) {
+            viewModel.openElevationSettings()
+        } else if (intent?.getBooleanExtra(CacheManager.EXTRA_OPEN_CACHE_MANAGER, false) == true ||
             intent?.action == CacheManager.ACTION_OPEN_CACHE_MANAGER
         ) {
             viewModel.openCacheManager()
@@ -170,6 +175,11 @@ class MainActivity : ComponentActivity() {
         } else {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
+    }
+
+    companion object {
+        const val ACTION_SHOW_ELEVATION_SETTINGS = "janush.tech.whereami.ACTION_SHOW_ELEVATION_SETTINGS"
+        const val EXTRA_OPEN_SETTINGS_ELEVATION = "extra_open_settings_elevation"
     }
 }
 
@@ -274,6 +284,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     val fitPlacesTrigger by viewModel.fitPlacesTrigger.collectAsState()
     val destinationPoint by viewModel.destinationPoint.collectAsState()
     val destinationItem by viewModel.destinationItem.collectAsState()
+    val destinationAltitude by viewModel.destinationAltitude.collectAsState()
+    val destinationAltitudeLoading by viewModel.destinationAltitudeLoading.collectAsState()
     val savedPlaces by viewModel.savedPlaces.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
@@ -317,6 +329,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showTripsSheet by remember { mutableStateOf(false) }
     var sheetTab by remember { mutableStateOf(0) } // 0: Trip History, 1: Saved Places, 2: Stats
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var shouldScrollToElevation by remember { mutableStateOf(false) }
     var showMapSettingsDialog by remember { mutableStateOf(false) }
     var profileToConfigure by remember { mutableStateOf<ActivityProfile?>(null) }
     var showSearchDialog by remember { mutableStateOf(false) }
@@ -373,6 +386,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val dismissAllDialogs = {
         showTripsSheet = false
         showSettingsSheet = false
+        shouldScrollToElevation = false
         profileToConfigure = null
         showSearchDialog = false
         tripToRename = null
@@ -410,6 +424,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                     dismissAllDialogs()
                     showLiveShareDialog = true
                 }
+                viewModel.consumeDialogTarget()
+            }
+            MainViewModel.AppDialogTarget.ELEVATION_SETTINGS -> {
+                dismissAllDialogs()
+                showSettingsSheet = true
+                shouldScrollToElevation = true
                 viewModel.consumeDialogTarget()
             }
             MainViewModel.AppDialogTarget.NONE -> {}
@@ -664,6 +684,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             fitHeatMapTrigger = fitHeatMapTrigger,
             fitPlacesTrigger = fitPlacesTrigger,
             destinationPoint = destinationPoint,
+            destinationAltitude = destinationAltitude,
+            destinationAltitudeLoading = destinationAltitudeLoading,
             selectedSavedPlace = selectedSavedPlace,
             onDestinationMarkerClick = { showDestinationDetailsCard = true },
             onSavedPlaceClick = { sp ->
@@ -766,6 +788,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         destinationPoint = activeTargetPoint,
                         destinationItem = destinationItem,
                         savedPlace = selectedSavedPlace,
+                        destinationAltitude = destinationAltitude,
+                        destinationAltitudeLoading = destinationAltitudeLoading,
                         onClearDestination = {
                             selectedSavedPlace = null
                             viewModel.setDestination(null)
@@ -786,6 +810,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         onDeleteSavedPlace = { sp ->
                             placeToDelete = sp
+                        },
+                        onReadAndSaveAltitude = { sp ->
+                            viewModel.readAndSavePlaceAltitude(sp) { updated ->
+                                if (selectedSavedPlace?.id == updated.id) {
+                                    selectedSavedPlace = updated
+                                }
+                            }
                         },
                         onTogglePinBorders = {
                             if (selectedSavedPlace != null) {
@@ -882,6 +913,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     destinationPoint = activeTargetPoint,
                     destinationItem = destinationItem,
                     savedPlace = selectedSavedPlace,
+                    destinationAltitude = destinationAltitude,
+                    destinationAltitudeLoading = destinationAltitudeLoading,
                     onClearDestination = {
                         selectedSavedPlace = null
                         viewModel.setDestination(null)
@@ -902,6 +935,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onDeleteSavedPlace = { sp ->
                         placeToDelete = sp
+                    },
+                    onReadAndSaveAltitude = { sp ->
+                        viewModel.readAndSavePlaceAltitude(sp) { updated ->
+                            if (selectedSavedPlace?.id == updated.id) {
+                                selectedSavedPlace = updated
+                            }
+                        }
                     },
                     onTogglePinBorders = {
                         if (selectedSavedPlace != null) {
@@ -1758,6 +1798,35 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             maxLines = 1,
                                                                             softWrap = false
                                                                         )
+                                                                    }
+                                                                }
+                                                                if (place.altitude != null && place.altitude > 0.0) {
+                                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                                    Surface(
+                                                                        color = Color(0xFF0F172A),
+                                                                        shape = RoundedCornerShape(4.dp)
+                                                                    ) {
+                                                                        Row(
+                                                                            verticalAlignment = Alignment.CenterVertically,
+                                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                                        ) {
+                                                                            Text(
+                                                                                text = "▲",
+                                                                                color = Color(0xFF94A3B8),
+                                                                                fontSize = 8.sp,
+                                                                                lineHeight = 8.sp
+                                                                            )
+                                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                                            Text(
+                                                                                text = "${place.altitude.toInt()} m",
+                                                                                color = Color(0xFF34D399),
+                                                                                fontSize = 10.sp,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                lineHeight = 10.sp,
+                                                                                maxLines = 1,
+                                                                                softWrap = false
+                                                                            )
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -2951,6 +3020,17 @@ fun LocationScreen(viewModel: MainViewModel) {
     // ── 5. Quick Settings & Options Dialog ─────────────────────────────────────
     if (showSettingsSheet) {
         val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val settingsScrollState = rememberScrollState()
+        var elevationSectionY by remember { mutableStateOf(0) }
+
+        LaunchedEffect(shouldScrollToElevation, elevationSectionY) {
+            if (shouldScrollToElevation && elevationSectionY > 0) {
+                kotlinx.coroutines.delay(200L)
+                settingsScrollState.animateScrollTo(elevationSectionY)
+                shouldScrollToElevation = false
+            }
+        }
+
         ModalBottomSheet(
             onDismissRequest = { showSettingsSheet = false },
             sheetState = settingsSheetState,
@@ -2962,7 +3042,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .align(Alignment.CenterHorizontally)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(settingsScrollState)
                     .padding(horizontal = 20.dp, vertical = 12.dp)
                     .navigationBarsPadding()
             ) {
@@ -3749,7 +3829,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned {
+                            elevationSectionY = it.positionInParent().y.toInt()
+                        }
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -3762,28 +3846,116 @@ fun LocationScreen(viewModel: MainViewModel) {
                             color = Color.White
                         )
                         Text(
-                            text = "Backfill or correct DEM altitudes for all recorded trips using Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
+                            text = "Backfill or correct DEM altitudes for recorded trips and saved places using Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
 
                         var showBulkElevationDialog by remember { mutableStateOf(false) }
-                        val isBulkRunning = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips > 1
 
-                        if (isBulkRunning) {
-                            val totalT = elevationCorrectionProgress.totalTrips.coerceAtLeast(1)
-                            val procT = elevationCorrectionProgress.processedTrips
-                            LinearProgressIndicator(
-                                progress = { procT.toFloat() / totalT },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF38BDF8),
-                                trackColor = Color(0xFF0F172A)
-                            )
-                            Text(
-                                text = "Processing trip ${procT + 1}/$totalT • ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts",
-                                fontSize = 11.sp,
-                                color = Color(0xFF38BDF8)
-                            )
+                        if (elevationCorrectionProgress.isRunning) {
+                            if (elevationCorrectionProgress.phase == ElevationCorrectionPhase.SAVED_PLACES) {
+                                val totalP = elevationCorrectionProgress.totalPlaces.coerceAtLeast(1)
+                                val procP = elevationCorrectionProgress.processedPlaces
+                                LinearProgressIndicator(
+                                    progress = { procP.toFloat() / totalP },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                                    color = Color(0xFF38BDF8),
+                                    trackColor = Color(0xFF0F172A)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Saved Places: $procP/$totalP",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                    if (elevationCorrectionProgress.isPaused) {
+                                        Text(
+                                            text = "⏸ Paused",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFF59E0B)
+                                        )
+                                    }
+                                }
+                            } else {
+                                val totalT = elevationCorrectionProgress.totalTrips.coerceAtLeast(1)
+                                val procT = elevationCorrectionProgress.processedTrips
+                                LinearProgressIndicator(
+                                    progress = { procT.toFloat() / totalT },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                                    color = Color(0xFF38BDF8),
+                                    trackColor = Color(0xFF0F172A)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Trip ${procT + 1}/$totalT • ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                    if (elevationCorrectionProgress.isPaused) {
+                                        Text(
+                                            text = "⏸ Paused",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFF59E0B)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!elevationCorrectionProgress.isPaused) {
+                                    Button(
+                                        onClick = { viewModel.pauseElevationCorrection() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Pause, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Pause", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { viewModel.resumeElevationCorrection() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Resume", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                Button(
+                                    onClick = { viewModel.stopElevationCorrection() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f).height(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Stop", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         } else {
                             Button(
                                 onClick = { showBulkElevationDialog = true },
@@ -3792,16 +3964,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 shape = RoundedCornerShape(10.dp)
                             ) {
                                 Text(
-                                    text = "Correct All Trips Altitude",
+                                    text = "Correct All Trips & Places Altitude",
                                     fontSize = 13.sp,
                                     color = Color.White,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
 
-                            if (elevationCorrectionProgress.isDone && elevationCorrectionProgress.totalTrips > 1) {
+                            if (elevationCorrectionProgress.isDone) {
                                 Text(
-                                    text = "✓ Elevation correction complete for ${elevationCorrectionProgress.totalTrips} trips.",
+                                    text = "✓ ${elevationCorrectionProgress.statusMessage.ifBlank { "Elevation correction complete." }}",
                                     fontSize = 11.sp,
                                     color = Color(0xFF34D399)
                                 )
@@ -4217,7 +4389,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
                                 locality = placeToSaveLocality.trim(),
                                 street = placeToSaveStreet.trim(),
-                                colorHex = placeToSaveColor
+                                colorHex = placeToSaveColor,
+                                altitude = destinationAltitude ?: locationData.altitude
                             )
                         }
                         showSavePlaceDialog = false
@@ -10006,12 +10179,15 @@ private fun DestinationPlaceCard(
     destinationPoint: org.osmdroid.util.GeoPoint,
     destinationItem: SearchResultItem?,
     savedPlace: SavedPlace? = null,
+    destinationAltitude: Double? = null,
+    destinationAltitudeLoading: Boolean = false,
     onClearDestination: () -> Unit,
     onNavigate: (Double, Double) -> Unit,
     onGoogleMaps: (Double, Double, String) -> Unit,
     onSavePlace: ((Double, Double, SearchResultItem?) -> Unit)? = null,
     onEditSavedPlace: ((SavedPlace) -> Unit)? = null,
     onDeleteSavedPlace: ((SavedPlace) -> Unit)? = null,
+    onReadAndSaveAltitude: ((SavedPlace) -> Unit)? = null,
     onTogglePinBorders: () -> Unit,
     isPinBorderVisible: Boolean,
     onShare: () -> Unit,
@@ -10052,8 +10228,50 @@ private fun DestinationPlaceCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         lineHeight = 18.sp,
-                        maxLines = 2
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+
+                    // Altitude Badge for destination or saved place
+                    val effectiveAlt = savedPlace?.altitude ?: destinationAltitude
+                    if (destinationAltitudeLoading) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            color = Color(0xFF0F172A),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, Color(0xFF334155))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text("⛰️", fontSize = 10.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("...", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } else if (effectiveAlt != null && effectiveAlt > 0.0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            color = Color(0xFF0F172A),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, Color(0xFF334155))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text("▲", color = Color(0xFF94A3B8), fontSize = 8.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    "${effectiveAlt.toInt()} m",
+                                    color = Color(0xFF34D399),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
 
                 IconButton(
@@ -10151,7 +10369,19 @@ private fun DestinationPlaceCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (savedPlace != null) {
-                    // Saved Place: Edit, Delete, Borders
+                    // Saved Place: Read Alt, Edit, Delete, Borders
+                    Button(
+                        onClick = { onReadAndSaveAltitude?.invoke(savedPlace) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Icon(Icons.Default.Landscape, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Alt", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    }
+
                     Button(
                         onClick = { onEditSavedPlace?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
@@ -10173,7 +10403,7 @@ private fun DestinationPlaceCard(
                     ) {
                         Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
-                        Text("Delete", color = Color(0xFFF87171), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        Text("Delete", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 } else {
                     // Unsaved Pin: Save, Borders
