@@ -129,4 +129,24 @@ class PositionInterpolatorTest {
         interpolator.onNewFix(lat = 49.8504, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 5000L)
         assertEquals(800L, interpolator.blendDurationMs)
     }
+
+    @Test
+    fun `transition across blend boundary is continuous with zero jump`() {
+        val t0 = 10000L
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 0f, speedMs = 10f, timestamp = t0)
+
+        // Fix at t1 = 11000L
+        val t1 = t0 + 1000L
+        interpolator.onNewFix(lat = 49.8501, lng = 19.2800, bearing = 0f, speedMs = 10f, timestamp = t1)
+
+        val blendDuration = interpolator.blendDurationMs
+        // Point right at the end of the blend window
+        val atBlendEnd = interpolator.interpolate(t1 + blendDuration)
+        // Point 1ms into dead-reckoning extrapolation
+        val atExtrapolationStart = interpolator.interpolate(t1 + blendDuration + 1L)
+
+        // The displacement over 1ms at 10 m/s should be ~0.01m (1cm), never a meter-scale cliff!
+        val dLatMeters = (atExtrapolationStart.lat - atBlendEnd.lat) * 111320.0
+        assertEquals(0.01, dLatMeters, 0.05)
+    }
 }
