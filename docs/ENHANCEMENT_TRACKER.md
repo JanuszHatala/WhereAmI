@@ -54,8 +54,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 51** | Live Sharing Overnight 60m One-Shot GNSS Fix & Unified Sleep Notification Actions (2026-10-12) | 3 | 3 | 0 | 0 |
 | **Round 52** | Web Companion Viewer Page Visibility API Gating & Sleep Polling Backoff (2026-10-12) | 1 | 1 | 0 | 0 |
 | **Round 63** | Smooth Position Tracking, Live Polyline Tip & Map Rotation Clamping (2026-10-14) | 4 | 4 | 0 | 0 |
+| **Round 64** | Position Altitude Tracking, Elevation Profile Chart, Vertical Speed & DEM Correction Tool (2026-10-14) | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **264** | **256** | **0** | **8** |
+| **Total** | | **269** | **261** | **0** | **8** |
 
 
 ---
@@ -842,6 +843,20 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **MAP63-03** | **Continuous Map Rotation & Velocity Clamp (Eradicate 360° Spin)**: Removed `ValueAnimator` with 600ms cooldown which stacked overlapping animations and traversed long arcs on T-junction turns. Replaced with continuous frame-by-frame EMA map rotation in the 35fps VSYNC loop clamped to max 90°/second via shortest angular delta. | `OsmMapView.kt` | **Completed** | Verified via `MapOrientationSmootherTest.kt` (shortest arc across 0°/360° boundary, rate clamping, convergence). |
 | **MAP63-04** | **Live Polyline Tip Synchronization & Adaptive Commit Threshold**: During active recording, polyline tip dynamically extends to the interpolated icon position in the 35fps render loop, guaranteeing the polyline and icon remain visually joined. `TripManager` commit threshold tuned to 4m ($\ge 15\text{ km/h}$) and 8m (slower speeds) to reduce polyline point churn. | `OsmMapView.kt`, `TripManager.kt` | **Completed** | Verified via build gate and test suite. |
 | **VER-36** | **Build Gate, Version Increment & Verification**: Increment `versionCode` to 81 and `versionName` to "1.8.0". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (272 tests green, 0 errors). |
+
+---
+
+## 67. Round 64: Position Altitude Tracking, Elevation Profile Chart, Vertical Speed & DEM Correction Tool (2026-10-14)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **ALT64-01** | **Track Point Altitude Persistence & DB Version 6**: Persist GNSS/barometric altitude in `points_json` as optional `"alt"` attribute. Upgraded `DATABASE_VERSION` from 5 to 6 in `TripDatabaseHelper`. Backward-compatible: existing legacy records load with default `0.0` altitude. `TripManager` captures `altitude` from location update into `GeoPoint(lat, lng, altitude)`. | `TripDatabaseHelper.kt`, `TripManager.kt`, `TripModels.kt` | **Completed** | Verified with `PointsAltitudeSerializationTest` (JSON round-trip, legacy compatibility, zero-altitude fallback). |
+| **ALT64-02** | **Real-Time LocalityCard Altitude Display**: Added `altitude: Double? = null` to `LocationData` and mapped from `MultiLocationSnapshot`. Rendered inline in `LocalityCard` compact Row 3 beside the Profile & Speed pill as a crisp `▲ XXX m` badge (`#34D399` text on `#1E293B` background). | `LocationManager.kt`, `MainActivity.kt` | **Completed** | Verified in LocalityCard layout, zero row height expansion. |
+| **ALT64-03** | **Elevation Statistics & Noise-Smoothed Vertical Speed**: Added `computeElevationStats()` helper computing cumulative ascent (m), cumulative descent (m), min/max altitude (m), and peak vertical speed (m/min). Moving-average windowing suppresses GPS barometric/GNSS micro-jitter from inflating ascent metrics. | `TripModels.kt` | **Completed** | Verified with `ElevationStatsTest` (ascent/descent accuracy, jitter filtering, vertical speed calculation). |
+| **ALT64-04** | **TripDetailDialog Elevation Profile Chart & Single-Trip Correction**: Added collapsible "ELEVATION PROFILE" card in `TripDetailDialog` featuring: (1) metric chips for ascent, descent, min-max altitude, and vertical speed, (2) custom Compose Canvas `ElevationProfileChart` rendering elevation curve with gradient fill and scale markers, (3) "Correct Altitude" action with `ElevationOverrideModeDialog` (`FILL_MISSING` vs `OVERRIDE_ALL`). | `MainActivity.kt` | **Completed** | Verified Compose UI layout, high-contrast button compliance, and progress feedback. |
+| **ALT64-05** | **Open-Elevation Repository & Bulk Correction in Settings**: Created `ElevationRepository` fetching DEM terrain elevations from Open-Elevation API in 100-point batches with exponential backoff and 150ms inter-batch delay. Created `ElevationCorrectionHelper` and `MainViewModel` coroutine jobs. Added "⛰️ Elevation Data & Terrain Correction" card in Settings sheet with full-database bulk correction and linear progress bar. | `ElevationRepository.kt`, `ElevationCorrectionHelper.kt`, `MainViewModel.kt`, `MainActivity.kt` | **Completed** | Unit tests passing, sequential execution prevents API rate limits. |
+| **VER-37** | **Build Gate & Version Increment**: Increment `versionCode` to 83 and `versionName` to "1.9.0". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (281 tests green, 0 errors). |
+
 
 
 

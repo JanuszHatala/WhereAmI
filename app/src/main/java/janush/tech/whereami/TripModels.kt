@@ -71,6 +71,59 @@ fun calculateCumulativeDistances(points: List<GeoPoint>): DoubleArray {
     return arr
 }
 
+data class ElevationStats(
+    val totalAscentM: Double,
+    val totalDescentM: Double,
+    val minAltitudeM: Double?,
+    val maxAltitudeM: Double?,
+    val peakVerticalSpeedMpm: Double = 0.0
+)
+
+fun computeElevationStats(
+    points: List<GeoPoint>,
+    smoothingWindowSize: Int = 5,
+    timestampsMs: List<Long>? = null
+): ElevationStats? {
+    val validIndices = points.indices.filter {
+        val a = points[it].altitude
+        !a.isNaN() && a != 0.0
+    }
+    if (validIndices.size < 2) return null
+
+    val rawAlts = validIndices.map { points[it].altitude }
+    val smoothed = rawAlts.windowed(smoothingWindowSize.coerceAtLeast(1), 1, partialWindows = true) { it.average() }
+
+    var ascent = 0.0
+    var descent = 0.0
+    for (i in 1 until smoothed.size) {
+        val diff = smoothed[i] - smoothed[i - 1]
+        if (diff > 0.0) ascent += diff else descent += -diff
+    }
+
+    var peakVSpeedMpm = 0.0
+    if (timestampsMs != null && timestampsMs.size == points.size) {
+        for (i in 1 until validIndices.size) {
+            val idx1 = validIndices[i - 1]
+            val idx2 = validIndices[i]
+            val a1 = points[idx1].altitude
+            val a2 = points[idx2].altitude
+            val dtMin = (timestampsMs[idx2] - timestampsMs[idx1]) / 60000.0
+            if (dtMin > 0.0) {
+                val speed = kotlin.math.abs(a2 - a1) / dtMin
+                if (speed > peakVSpeedMpm) peakVSpeedMpm = speed
+            }
+        }
+    }
+
+    return ElevationStats(
+        totalAscentM = ascent,
+        totalDescentM = descent,
+        minAltitudeM = rawAlts.minOrNull(),
+        maxAltitudeM = rawAlts.maxOrNull(),
+        peakVerticalSpeedMpm = peakVSpeedMpm
+    )
+}
+
 data class TripRecord(
     val id: Long = 0,
     val title: String = "",
@@ -85,6 +138,7 @@ data class TripRecord(
     val placesVisited: List<VisitedPlace> = emptyList(),
     val pauses: List<TripPause> = emptyList()
 )
+
 
 enum class TripMode {
     MANUAL,
