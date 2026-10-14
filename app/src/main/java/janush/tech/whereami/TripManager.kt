@@ -676,7 +676,8 @@ class TripManager private constructor(private val context: Context) {
         lng: Double,
         speedMs: Float?,
         currentPlace: PlaceInfo?,
-        accuracy: Float? = null
+        accuracy: Float? = null,
+        altitude: Double? = null
     ) {
         val now = System.currentTimeMillis()
         val speedKmh = (speedMs ?: 0f) * 3.6f
@@ -897,7 +898,11 @@ class TripManager private constructor(private val context: Context) {
         // New points list: measure displacement from LAST COMMITTED POINT (not just 1-sec fix)
         // to prevent dropping continuous movement at slow speeds (< 18 km/h).
         val newPoints = current.points.toMutableList()
-        val newGeoPoint = GeoPoint(lat, lng)
+        val newGeoPoint = if (altitude != null && !altitude.isNaN() && altitude != 0.0) {
+            GeoPoint(lat, lng, altitude)
+        } else {
+            GeoPoint(lat, lng)
+        }
         val lastCommittedPoint = newPoints.lastOrNull()
         val distFromLastCommitted = if (lastCommittedPoint != null) {
             val results = FloatArray(1)

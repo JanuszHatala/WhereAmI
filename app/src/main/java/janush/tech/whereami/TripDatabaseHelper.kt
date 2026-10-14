@@ -17,7 +17,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
-        private const val DATABASE_VERSION = 5
+        private const val DATABASE_VERSION = 6
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -139,6 +139,37 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             } catch (_: Exception) {}
             return list
         }
+
+        internal fun pointsToJson(points: List<GeoPoint>): String {
+            val array = JSONArray()
+            for (p in points) {
+                val obj = JSONObject().apply {
+                    put("lat", p.latitude)
+                    put("lng", p.longitude)
+                    val alt = p.altitude
+                    if (!alt.isNaN() && alt != 0.0) {
+                        put("alt", alt)
+                    }
+                }
+                array.put(obj)
+            }
+            return array.toString()
+        }
+
+        internal fun jsonToPoints(jsonStr: String): List<GeoPoint> {
+            val list = mutableListOf<GeoPoint>()
+            try {
+                val array = JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val lat = obj.getDouble("lat")
+                    val lng = obj.getDouble("lng")
+                    val alt = if (obj.has("alt") && !obj.isNull("alt")) obj.getDouble("alt") else 0.0
+                    list.add(if (alt != 0.0 && !alt.isNaN()) GeoPoint(lat, lng, alt) else GeoPoint(lat, lng))
+                }
+            } catch (_: Exception) {}
+            return list
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -201,6 +232,10 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             try {
                 db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_PAUSES_JSON TEXT DEFAULT '[]'")
             } catch (_: Exception) {}
+        }
+        if (oldVersion < 6) {
+            // Version 6: points_json optionally carries 'alt' (altitude in meters).
+            // TEXT column stores JSON, no DDL alteration needed.
         }
     }
 
@@ -722,29 +757,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return list
     }
 
-    private fun pointsToJson(points: List<GeoPoint>): String {
-        val array = JSONArray()
-        for (p in points) {
-            val obj = JSONObject().apply {
-                put("lat", p.latitude)
-                put("lng", p.longitude)
-            }
-            array.put(obj)
-        }
-        return array.toString()
-    }
 
-    private fun jsonToPoints(jsonStr: String): List<GeoPoint> {
-        val list = mutableListOf<GeoPoint>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(GeoPoint(obj.getDouble("lat"), obj.getDouble("lng")))
-            }
-        } catch (_: Exception) {}
-        return list
-    }
 
     fun splitTripAtPause(tripId: Long, pauseIndex: Int): Pair<Long, Long>? {
         val trip = getTripsByIds(listOf(tripId)).firstOrNull() ?: return null
