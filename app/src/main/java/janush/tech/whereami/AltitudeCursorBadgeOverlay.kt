@@ -15,14 +15,13 @@ import kotlin.math.sin
 
 /**
  * Lightweight, high-contrast altitude badge overlay rendered on the OSM map canvas
- * beside the user's position cursor.
+ * for:
+ * 1. The user's position cursor (with dynamic collision avoidance relative to pins).
+ * 2. Pinned destination locations (with loading state and DEM elevation).
+ * 3. Saved place pins (displaying their stored elevation).
  *
- * Features:
- * 1. Screen-stabilized upright rendering: Counter-rotates the canvas by -mapView.mapOrientation
- *    around the badge center so text and glyph remain strictly upright on screen.
- * 2. Dynamic collision avoidance: Automatically shifts between quadrants (top-right, bottom-right,
- *    bottom-left, top-left) via [AltitudeBadgePositionEvaluator] when near a saved place map pin.
- * 3. Optical glyph vertical alignment: Centers "▲" centroid with cap-height of altitude text.
+ * All badges are screen-stabilized (counter-rotated by -mapOrientation around their centers)
+ * so text and glyphs remain strictly horizontal and upright on screen.
  */
 class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
 
@@ -35,7 +34,16 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     private var altitudeM: Double? = null
 
     @Volatile
-    private var savedPlacesGeoPoints: List<GeoPoint> = emptyList()
+    private var savedPlacesList: List<SavedPlace> = emptyList()
+
+    @Volatile
+    private var destGeoPoint: GeoPoint? = null
+
+    @Volatile
+    private var destAltitudeM: Double? = null
+
+    @Volatile
+    private var destLoading: Boolean = false
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xEE0F172A.toInt() // Rich Dark Slate, ~93% opacity
@@ -49,7 +57,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         strokeWidth = 1f * density
     }
 
-    private val trianglePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF94A3B8.toInt() // Slate 400
         textSize = 10f * density
         textAlign = Paint.Align.LEFT
@@ -69,15 +77,44 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     fun updateData(
         geoPoint: GeoPoint?,
         altitude: Double?,
-        savedPlaces: List<GeoPoint>
+        savedPlaces: List<SavedPlace> = emptyList(),
+        destinationPoint: GeoPoint? = null,
+        destinationAltitude: Double? = null,
+        destinationLoading: Boolean = false
     ) {
         centerGeoPoint = geoPoint
         altitudeM = altitude
-        savedPlacesGeoPoints = savedPlaces
+        savedPlacesList = savedPlaces
+        destGeoPoint = destinationPoint
+        destAltitudeM = destinationAltitude
+        destLoading = destinationLoading
     }
 
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow || !isEnabled) return
+
+        val orientationDeg = mapView.mapOrientation
+        val rad = Math.toRadians(orientationDeg.toDouble())
+        val cosRot = cos(rad).toFloat()
+        val sinRot = sin(rad).toFloat()
+
+        // 1. Draw User Cursor Altitude Badge (with collision avoidance)
+        drawCursorBadge(canvas, mapView, orientationDeg, cosRot, sinRot)
+
+        // 2. Draw Destination Pin Altitude Badge (above pinned location)
+        drawDestinationBadge(canvas, mapView, orientationDeg, cosRot, sinRot)
+
+        // 3. Draw Saved Places Altitude Badges (above saved place icons)
+        drawSavedPlacesBadges(canvas, mapView, orientationDeg, cosRot, sinRot)
+    }
+
+    private fun drawCursorBadge(
+        canvas: Canvas,
+        mapView: MapView,
+        orientationDeg: Float,
+        cosRot: Float,
+        sinRot: Float
+    ) {
         val alt = altitudeM ?: return
         if (alt.isNaN() || alt == 0.0) return
         val pt = centerGeoPoint ?: return
@@ -87,25 +124,23 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
             val cursorCanvasX = screenPoint.x.toFloat()
             val cursorCanvasY = screenPoint.y.toFloat()
 
-            // Map orientation in degrees and radians
-            val orientationDeg = mapView.mapOrientation
-            val rad = Math.toRadians(orientationDeg.toDouble())
-            val cosRot = cos(rad).toFloat()
-            val sinRot = sin(rad).toFloat()
+            // Gather collision threat points in screen space: all saved places + destination pin
+            val threatPoints = ArrayList<GeoPoint>(savedPlacesList.size + 1)
+            for (sp in savedPlacesList) {
+                threatPoints.add(sp.geoPoint)
+            }
+            destGeoPoint?.let { threatPoints.add(it) }
 
-            // Convert saved places into screen-space displacement relative to cursor
-            val threatScreenPoints = ArrayList<Pair<Float, Float>>(savedPlacesGeoPoints.size)
-            for (sp in savedPlacesGeoPoints) {
-                mapView.projection.toPixels(sp, tempPoint)
+            val threatScreenPoints = ArrayList<Pair<Float, Float>>(threatPoints.size)
+            for (tp in threatPoints) {
+                mapView.projection.toPixels(tp, tempPoint)
                 val cDx = tempPoint.x.toFloat() - cursorCanvasX
                 val cDy = tempPoint.y.toFloat() - cursorCanvasY
-                // Rotate canvas vector into screen space: rotate by +orientationDeg
                 val sDx = cDx * cosRot - cDy * sinRot
                 val sDy = cDx * sinRot + cDy * cosRot
                 threatScreenPoints.add(Pair(sDx, sDy))
             }
 
-            // Select best screen-space offset relative to cursor
             val bestOffset = AltitudeBadgePositionEvaluator.selectBestOffset(
                 cursorX = 0f,
                 cursorY = 0f,
@@ -117,54 +152,165 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
             val screenDx = bestOffset.dxDp * density
             val screenDy = bestOffset.dyDp * density
 
-            // Convert screen-space offset (screenDx, screenDy) back to canvas space: rotate by -orientationDeg
             val canvasDx = screenDx * cosRot + screenDy * sinRot
             val canvasDy = -screenDx * sinRot + screenDy * cosRot
 
             val badgeCenterX = cursorCanvasX + canvasDx
             val badgeCenterY = cursorCanvasY + canvasDy
 
-            // Prepare text and measurements
-            val triangleStr = "▲"
             val altText = String.format(Locale.getDefault(), "%.0f m", alt)
-
-            val triangleWidth = trianglePaint.measureText(triangleStr)
-            val textWidth = textPaint.measureText(altText)
-
-            val padH = 6f * density
-            val padV = 3.5f * density
-            val gap = 3f * density
-
-            val totalContentWidth = triangleWidth + gap + textWidth
-            val badgeWidth = totalContentWidth + (padH * 2)
-            val badgeHeight = 19f * density
-            val cornerRadius = 6f * density
-
-            // Draw upright badge on canvas:
-            // Counter-rotate canvas by -orientationDeg around badge center
-            canvas.save()
-            canvas.rotate(-orientationDeg, badgeCenterX, badgeCenterY)
-
-            val left = badgeCenterX - (badgeWidth / 2f)
-            val top = badgeCenterY - (badgeHeight / 2f)
-            val right = left + badgeWidth
-            val bottom = top + badgeHeight
-
-            pillRect.set(left, top, right, bottom)
-            canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, bgPaint)
-            canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, strokePaint)
-
-            // Vertical alignment:
-            // Center text and triangle vertically inside the pill
-            val textY = top + padV + (10.5f * density)
-            // Optical offset for triangle "▲" so its centroid aligns with text cap-height
-            val triangleY = textY - (1.5f * density)
-
-            val startX = left + padH
-            canvas.drawText(triangleStr, startX, triangleY, trianglePaint)
-            canvas.drawText(altText, startX + triangleWidth + gap, textY, textPaint)
-
-            canvas.restore()
+            drawPill(
+                canvas = canvas,
+                badgeCenterX = badgeCenterX,
+                badgeCenterY = badgeCenterY,
+                orientationDeg = orientationDeg,
+                glyph = "▲",
+                text = altText,
+                textColor = 0xFF34D399.toInt()
+            )
         } catch (_: Exception) {}
+    }
+
+    private fun drawDestinationBadge(
+        canvas: Canvas,
+        mapView: MapView,
+        orientationDeg: Float,
+        cosRot: Float,
+        sinRot: Float
+    ) {
+        val destPt = destGeoPoint ?: return
+        val isLoading = destLoading
+        val alt = destAltitudeM
+
+        if (!isLoading && (alt == null || alt == 0.0 || alt.isNaN())) {
+            return
+        }
+
+        try {
+            mapView.projection.toPixels(destPt, screenPoint)
+            val pinX = screenPoint.x.toFloat()
+            val pinY = screenPoint.y.toFloat()
+
+            // Destination pin anchor is bottom-center, height is 36dp.
+            // Badge placed ~46dp above anchor point in screen coordinates.
+            val screenDx = 0f
+            val screenDy = -46f * density
+
+            val canvasDx = screenDx * cosRot + screenDy * sinRot
+            val canvasDy = -screenDx * sinRot + screenDy * cosRot
+
+            val badgeCenterX = pinX + canvasDx
+            val badgeCenterY = pinY + canvasDy
+
+            if (isLoading) {
+                drawPill(
+                    canvas = canvas,
+                    badgeCenterX = badgeCenterX,
+                    badgeCenterY = badgeCenterY,
+                    orientationDeg = orientationDeg,
+                    glyph = "⛰️",
+                    text = "...",
+                    textColor = 0xFF38BDF8.toInt()
+                )
+            } else if (alt != null) {
+                val altText = String.format(Locale.getDefault(), "%.0f m", alt)
+                drawPill(
+                    canvas = canvas,
+                    badgeCenterX = badgeCenterX,
+                    badgeCenterY = badgeCenterY,
+                    orientationDeg = orientationDeg,
+                    glyph = "▲",
+                    text = altText,
+                    textColor = 0xFF34D399.toInt()
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun drawSavedPlacesBadges(
+        canvas: Canvas,
+        mapView: MapView,
+        orientationDeg: Float,
+        cosRot: Float,
+        sinRot: Float
+    ) {
+        if (savedPlacesList.isEmpty()) return
+
+        for (place in savedPlacesList) {
+            val alt = place.altitude ?: continue
+            if (alt.isNaN() || alt == 0.0) continue
+
+            try {
+                mapView.projection.toPixels(place.geoPoint, screenPoint)
+                val pinX = screenPoint.x.toFloat()
+                val pinY = screenPoint.y.toFloat()
+
+                // Saved place pin anchor is center, radius is 17dp (height 34dp).
+                // Badge placed ~27dp above center in screen coordinates.
+                val screenDx = 0f
+                val screenDy = -27f * density
+
+                val canvasDx = screenDx * cosRot + screenDy * sinRot
+                val canvasDy = -screenDx * sinRot + screenDy * cosRot
+
+                val badgeCenterX = pinX + canvasDx
+                val badgeCenterY = pinY + canvasDy
+
+                val altText = String.format(Locale.getDefault(), "%.0f m", alt)
+                drawPill(
+                    canvas = canvas,
+                    badgeCenterX = badgeCenterX,
+                    badgeCenterY = badgeCenterY,
+                    orientationDeg = orientationDeg,
+                    glyph = "▲",
+                    text = altText,
+                    textColor = 0xFF34D399.toInt()
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun drawPill(
+        canvas: Canvas,
+        badgeCenterX: Float,
+        badgeCenterY: Float,
+        orientationDeg: Float,
+        glyph: String,
+        text: String,
+        textColor: Int
+    ) {
+        val glyphWidth = glyphPaint.measureText(glyph)
+        textPaint.color = textColor
+        val textWidth = textPaint.measureText(text)
+
+        val padH = 6f * density
+        val padV = 3.5f * density
+        val gap = 3f * density
+
+        val totalContentWidth = glyphWidth + gap + textWidth
+        val badgeWidth = totalContentWidth + (padH * 2)
+        val badgeHeight = 19f * density
+        val cornerRadius = 6f * density
+
+        canvas.save()
+        canvas.rotate(-orientationDeg, badgeCenterX, badgeCenterY)
+
+        val left = badgeCenterX - (badgeWidth / 2f)
+        val top = badgeCenterY - (badgeHeight / 2f)
+        val right = left + badgeWidth
+        val bottom = top + badgeHeight
+
+        pillRect.set(left, top, right, bottom)
+        canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, bgPaint)
+        canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, strokePaint)
+
+        val textY = top + padV + (10.5f * density)
+        val glyphY = if (glyph == "▲") textY - (1.5f * density) else textY
+
+        val startX = left + padH
+        canvas.drawText(glyph, startX, glyphY, glyphPaint)
+        canvas.drawText(text, startX + glyphWidth + gap, textY, textPaint)
+
+        canvas.restore()
     }
 }

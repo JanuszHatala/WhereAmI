@@ -17,7 +17,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
-        private const val DATABASE_VERSION = 6
+        private const val DATABASE_VERSION = 7
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -45,6 +45,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_SP_STREET = "street"
         private const val COL_SP_CREATED_AT = "created_at"
         private const val COL_SP_COLOR = "color"
+        private const val COL_SP_ALTITUDE = "altitude"
 
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
@@ -206,7 +207,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COL_SP_LOCALITY TEXT DEFAULT '',
                 $COL_SP_STREET TEXT DEFAULT '',
                 $COL_SP_CREATED_AT INTEGER NOT NULL,
-                $COL_SP_COLOR TEXT DEFAULT ''
+                $COL_SP_COLOR TEXT DEFAULT '',
+                $COL_SP_ALTITUDE REAL DEFAULT NULL
             )
         """.trimIndent()
         db.execSQL(createPlacesTable)
@@ -236,6 +238,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 6) {
             // Version 6: points_json optionally carries 'alt' (altitude in meters).
             // TEXT column stores JSON, no DDL alteration needed.
+        }
+        if (oldVersion < 7) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
+            } catch (_: Exception) {}
         }
     }
 
@@ -284,6 +291,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     private fun ensureSavedPlacesColumns(db: SQLiteDatabase) {
         try {
             db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_COLOR TEXT DEFAULT ''")
+        } catch (_: Exception) {}
+        try {
+            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
         } catch (_: Exception) {}
     }
 
@@ -682,6 +692,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_SP_STREET, place.street)
             put(COL_SP_CREATED_AT, place.createdAt)
             put(COL_SP_COLOR, place.colorHex)
+            if (place.altitude != null) {
+                put(COL_SP_ALTITUDE, place.altitude)
+            } else {
+                putNull(COL_SP_ALTITUDE)
+            }
         }
         return db.insert(TABLE_SAVED_PLACES, null, values)
     }
@@ -697,6 +712,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_SP_LOCALITY, place.locality)
             put(COL_SP_STREET, place.street)
             put(COL_SP_COLOR, place.colorHex)
+            if (place.altitude != null) {
+                put(COL_SP_ALTITUDE, place.altitude)
+            } else {
+                putNull(COL_SP_ALTITUDE)
+            }
         }
         db.update(TABLE_SAVED_PLACES, values, "$COL_SP_ID = ?", arrayOf(place.id.toString()))
     }
@@ -731,6 +751,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 val createdAt = it.getLong(it.getColumnIndexOrThrow(COL_SP_CREATED_AT))
                 val colorIdx = it.getColumnIndex(COL_SP_COLOR)
                 val colorHex = if (colorIdx >= 0) it.getString(colorIdx) ?: "" else ""
+                val altIdx = it.getColumnIndex(COL_SP_ALTITUDE)
+                val altitude = if (altIdx >= 0 && !it.isNull(altIdx)) it.getDouble(altIdx) else null
 
                 val category = try {
                     PlaceCategory.valueOf(catStr)
@@ -749,7 +771,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                         locality = locality,
                         street = street,
                         createdAt = createdAt,
-                        colorHex = colorHex
+                        colorHex = colorHex,
+                        altitude = altitude
                     )
                 )
             }
