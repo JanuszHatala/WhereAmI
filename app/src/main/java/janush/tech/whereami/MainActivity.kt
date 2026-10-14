@@ -8553,6 +8553,66 @@ fun computeRealisticVisitCounts(trips: List<TripRecord>): List<Pair<String, Int>
     return visitCounts.toList().sortedByDescending { it.second }
 }
 
+/**
+ * Sleek, high-contrast altitude badge displaying current elevation (m AMSL).
+ * Applies an upward optical offset to the "▲" triangle glyph so its visual centroid
+ * aligns dead-center with the cap-height of adjacent numerical text.
+ */
+@Composable
+private fun AltitudeBadge(
+    altitudeM: Double?,
+    height: Dp = 22.dp,
+    triangleFontSize: TextUnit = 9.sp,
+    textFontSize: TextUnit = 11.sp,
+    triangleOffsetDp: Dp = (-1.5).dp,
+    horizontalPadding: Dp = 5.dp,
+    cornerRadius: Dp = 6.dp,
+    modifier: Modifier = Modifier
+) {
+    if (altitudeM == null || altitudeM.isNaN() || altitudeM == 0.0) return
+
+    Row(
+        modifier = modifier
+            .height(height)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(Color(0xFF1E293B))
+            .padding(horizontal = horizontalPadding),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "▲",
+            fontSize = triangleFontSize,
+            color = Color(0xFF94A3B8),
+            softWrap = false,
+            modifier = Modifier.offset(y = triangleOffsetDp),
+            style = TextStyle(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both
+                ),
+                lineHeight = triangleFontSize
+            )
+        )
+        Spacer(modifier = Modifier.width(2.5.dp))
+        Text(
+            text = String.format(Locale.getDefault(), "%.0f m", altitudeM),
+            fontSize = textFontSize,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF34D399),
+            softWrap = false,
+            style = TextStyle(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both
+                ),
+                lineHeight = textFontSize
+            )
+        )
+    }
+}
+
 @Composable
 private fun LocalityCard(
     locationData: LocationData,
@@ -9015,37 +9075,15 @@ private fun LocalityCard(
                     val currentAltitude = locationData.altitude
                     if (currentAltitude != null && !currentAltitude.isNaN() && currentAltitude != 0.0) {
                         Spacer(modifier = Modifier.width(4.dp))
-                        Row(
-                            modifier = Modifier
-                                .height(22.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF1E293B))
-                                .padding(horizontal = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "▲",
-                                fontSize = 9.sp,
-                                color = Color(0xFF94A3B8),
-                                softWrap = false
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text(
-                                text = String.format(Locale.getDefault(), "%.0f m", currentAltitude),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF34D399),
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 11.sp
-                                )
-                            )
-                        }
+                        AltitudeBadge(
+                            altitudeM = currentAltitude,
+                            height = 22.dp,
+                            triangleFontSize = 9.sp,
+                            textFontSize = 11.sp,
+                            triangleOffsetDp = (-1.5).dp,
+                            horizontalPadding = 5.dp,
+                            cornerRadius = 6.dp
+                        )
                     }
                 }
             } else {
@@ -9423,37 +9461,77 @@ private fun LocalityCard(
                 var profileMenuExpanded by remember { mutableStateOf(false) }
 
                 Row(
-                    modifier = Modifier
-                        .padding(top = 3.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1E293B))
-                        .padding(horizontal = 8.dp)
-                        .height(28.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.padding(top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    // Visited Places Badge (Left of Activity Profile)
-                    // Note: Exact height 20dp and 0 vertical padding ensures zero height expansion when toggled
-                    if (activeTrip != null) {
-                        Surface(
-                            onClick = onShowActiveTripRoute,
-                            shape = RoundedCornerShape(6.dp),
-                            color = Color(0x330284C7),
-                            border = BorderStroke(1.dp, Color(0x5538BDF8)),
-                            modifier = Modifier.height(20.dp)
-                        ) {
+                    // Profile & Speed Pill
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1E293B))
+                            .padding(horizontal = 8.dp)
+                            .height(28.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Visited Places Badge (Left of Activity Profile)
+                        // Note: Exact height 20dp and 0 vertical padding ensures zero height expansion when toggled
+                        if (activeTrip != null) {
+                            Surface(
+                                onClick = onShowActiveTripRoute,
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0x330284C7),
+                                border = BorderStroke(1.dp, Color(0x5538BDF8)),
+                                modifier = Modifier.height(20.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    EmojiText(emoji = "🚩", fontSize = 11.sp, yOffsetDp = 0.dp)
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "${activeTrip.placesVisited.size}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8),
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+
+                        // Compact Dropdown Trigger Pill
+                        Box {
                             Row(
                                 modifier = Modifier
-                                    .fillMaxHeight()
-                                    .padding(horizontal = 6.dp),
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { profileMenuExpanded = true }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                EmojiText(emoji = "🚩", fontSize = 11.sp, yOffsetDp = 0.dp)
-                                Spacer(modifier = Modifier.width(3.dp))
+                                EmojiText(
+                                    emoji = activityProfile.iconEmoji,
+                                    fontSize = 13.sp
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "${activeTrip.placesVisited.size}",
+                                    text = activityProfile.displayName.uppercase(),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8),
+                                    color = Color(0xFFFBBF24),
+                                    maxLines = 1,
                                     softWrap = false,
                                     style = TextStyle(
                                         platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -9464,177 +9542,158 @@ private fun LocalityCard(
                                         lineHeight = 11.sp
                                     )
                                 )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-
-                    // Compact Dropdown Trigger Pill
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { profileMenuExpanded = true }
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            EmojiText(
-                                emoji = activityProfile.iconEmoji,
-                                fontSize = 13.sp
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = activityProfile.displayName.uppercase(),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFBBF24),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 11.sp
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Activity Profile",
+                                    tint = Color(0xFFFBBF24),
+                                    modifier = Modifier.size(16.dp)
                                 )
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Select Activity Profile",
-                                tint = Color(0xFFFBBF24),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                            }
 
-                        DropdownMenu(
-                            expanded = profileMenuExpanded,
-                            onDismissRequest = { profileMenuExpanded = false },
-                            modifier = Modifier.background(Color(0xFF0F172A))
-                        ) {
-                            ActivityProfile.values().forEach { profile ->
-                                val isSelected = activityProfile == profile
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = profile.displayName,
-                                                color = if (isSelected) Color(0xFF38BDF8) else Color.White,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                fontSize = 14.sp,
-                                                style = TextStyle(
-                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                    lineHeightStyle = LineHeightStyle(
-                                                        alignment = LineHeightStyle.Alignment.Center,
-                                                        trim = LineHeightStyle.Trim.Both
-                                                    ),
-                                                    lineHeight = 14.sp
+                            DropdownMenu(
+                                expanded = profileMenuExpanded,
+                                onDismissRequest = { profileMenuExpanded = false },
+                                modifier = Modifier.background(Color(0xFF0F172A))
+                            ) {
+                                ActivityProfile.values().forEach { profile ->
+                                    val isSelected = activityProfile == profile
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                EmojiText(emoji = profile.iconEmoji, fontSize = 14.sp)
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = profile.displayName,
+                                                    color = if (isSelected) Color(0xFF38BDF8) else Color.White,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    fontSize = 14.sp,
+                                                    style = TextStyle(
+                                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                        lineHeightStyle = LineHeightStyle(
+                                                            alignment = LineHeightStyle.Alignment.Center,
+                                                            trim = LineHeightStyle.Trim.Both
+                                                        ),
+                                                        lineHeight = 14.sp
+                                                    )
                                                 )
-                                            )
+                                            }
+                                        },
+                                        onClick = {
+                                            onSetActivityProfile(profile)
+                                            profileMenuExpanded = false
                                         }
-                                    },
-                                    onClick = {
-                                        onSetActivityProfile(profile)
-                                        profileMenuExpanded = false
-                                    }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
+                        when (activityProfile) {
+                            ActivityProfile.CAR -> {
+                                Text(
+                                    text = speedStr,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                            }
+                            ActivityProfile.CYCLING, ActivityProfile.MTB -> {
+                                Text(
+                                    text = speedStr,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "($paceStr)",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF94A3B8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
+                                )
+                            }
+                            ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
+                                Text(
+                                    text = paceStr,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "($speedStr)",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF94A3B8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.sp
+                                    )
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
-                    when (activityProfile) {
-                        ActivityProfile.CAR -> {
-                            Text(
-                                text = speedStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
-                            )
-                        }
-                        ActivityProfile.CYCLING, ActivityProfile.MTB -> {
-                            Text(
-                                text = speedStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "($paceStr)",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 12.sp
-                                )
-                            )
-                        }
-                        ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
-                            Text(
-                                text = paceStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "($speedStr)",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 12.sp
-                                )
-                            )
-                        }
+                    // Altitude Badge
+                    val currentAltitude = locationData.altitude
+                    if (currentAltitude != null && !currentAltitude.isNaN() && currentAltitude != 0.0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        AltitudeBadge(
+                            altitudeM = currentAltitude,
+                            height = 28.dp,
+                            triangleFontSize = 10.sp,
+                            textFontSize = 13.sp,
+                            triangleOffsetDp = (-1.8).dp,
+                            horizontalPadding = 8.dp,
+                            cornerRadius = 12.dp
+                        )
                     }
                 }
             }
