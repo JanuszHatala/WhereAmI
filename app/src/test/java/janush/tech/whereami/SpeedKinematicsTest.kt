@@ -156,4 +156,26 @@ class SpeedKinematicsTest {
 
         assertEquals("lastMovingTimestamp must NOT be reset by sub-threshold drift/walking", 1000L, lastMovingTimestamp)
     }
+
+    @Test
+    fun testProfileBasedCommitThresholds() {
+        fun getCommitThreshold(profile: ActivityProfile): Double {
+            return when (profile) {
+                ActivityProfile.WALKING, ActivityProfile.HIKING -> 3.0
+                ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 4.0
+                ActivityProfile.CAR -> 5.0
+            }
+        }
+
+        // Walking & Hiking: tight 3m threshold to capture sharp sidewalk corners without angular chord cuts
+        assertEquals(3.0, getCommitThreshold(ActivityProfile.WALKING), 0.001)
+        assertEquals(3.0, getCommitThreshold(ActivityProfile.HIKING), 0.001)
+
+        // Running & Cycling: 4m threshold
+        assertEquals(4.0, getCommitThreshold(ActivityProfile.RUNNING), 0.001)
+        assertEquals(4.0, getCommitThreshold(ActivityProfile.CYCLING), 0.001)
+
+        // Driving: 5m threshold
+        assertEquals(5.0, getCommitThreshold(ActivityProfile.CAR), 0.001)
+    }
 }
