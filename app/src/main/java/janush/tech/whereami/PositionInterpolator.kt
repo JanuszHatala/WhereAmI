@@ -67,8 +67,10 @@ class PositionInterpolator {
             return
         }
 
-        // Compute current estimated position at the moment the new fix arrives
-        val currentEst = calculateExtrapolatedPosition(timestamp)
+        // 1. Capture current visually rendered position at the exact arrival timestamp
+        val currentRendered = if (lastFixTimestamp > 0L) interpolate(timestamp) else null
+        val startLat = if (currentRendered != null && currentRendered.lat != 0.0) currentRendered.lat else lat
+        val startLng = if (currentRendered != null && currentRendered.lng != 0.0) currentRendered.lng else lng
 
         // Adaptive blend duration: measure actual GPS cadence between fixes
         val measuredInterval = if (lastFixTimestamp > 0L) (timestamp - lastFixTimestamp) else 1500L
@@ -78,19 +80,22 @@ class PositionInterpolator {
             blendDurationMs = 600L
         }
 
-        // Smooth blending: blend from current displayed position to the new fix over blendDurationMs
-        // This eliminates any jump between extrapolation and the newly measured GPS point!
-        blendStartLat = currentEst.first
-        blendStartLng = currentEst.second
-        blendTargetLat = lat
-        blendTargetLng = lng
-        blendStartTime = timestamp
-
+        // 2. Commit new fix parameters
         lastFixLat = lat
         lastFixLng = lng
         lastFixBearing = bearing
         lastFixSpeedMs = speedMs
         lastFixTimestamp = timestamp
+
+        // 3. Project target position to the end of the blend window along the new trajectory.
+        // This eliminates the step discontinuity at (timestamp + blendDurationMs), ensuring
+        // seamless C0 continuity into forward dead-reckoning without jumps or backward rubber-banding.
+        val targetEst = calculateExtrapolatedPosition(timestamp + blendDurationMs)
+        blendStartLat = startLat
+        blendStartLng = startLng
+        blendTargetLat = targetEst.first
+        blendTargetLng = targetEst.second
+        blendStartTime = timestamp
     }
 
     private fun calculateExtrapolatedPosition(nowMs: Long): Pair<Double, Double> {

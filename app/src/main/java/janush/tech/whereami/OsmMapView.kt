@@ -660,8 +660,6 @@ fun OsmMapView(
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
         var lastFrameRenderMs = 0L
-        var lastPolylineTipLat = 0.0
-        var lastPolylineTipLng = 0.0
 
         while (isActive) {
             val map = mapView
@@ -763,23 +761,6 @@ fun OsmMapView(
                             map.controller.setCenter(centerGp)
                         }
                         map.invalidate()
-                    }
-
-                    // ── Live Trip Polyline Tip Synchronization ──
-                    // While recording, smoothly extend the tip of the polyline to match the position icon exactly.
-                    val line = polyline
-                    if (isRecording && line != null && trackPoints.isNotEmpty()) {
-                        val dTipLat = kotlin.math.abs(gp.latitude - lastPolylineTipLat)
-                        val dTipLng = kotlin.math.abs(gp.longitude - lastPolylineTipLng)
-                        if (dTipLat > 0.000005 || dTipLng > 0.000005) {
-                            val livePoints = ArrayList<GeoPoint>(trackPoints.size + 1)
-                            livePoints.addAll(trackPoints)
-                            livePoints.add(gp)
-                            line.setPoints(livePoints)
-                            lastPolylineTipLat = gp.latitude
-                            lastPolylineTipLng = gp.longitude
-                            map.invalidate()
-                        }
                     }
                 }
             }
