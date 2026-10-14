@@ -69,9 +69,24 @@ class AutoSleepManager private constructor(private val context: Context) {
             }
         }
 
+        fun isNightOrBedtimeTime(
+            nowHour: Int,
+            nowMinute: Int,
+            startHour: Int,
+            startMinute: Int,
+            endHour: Int,
+            endMinute: Int
+        ): Boolean {
+            // Bedtime window itself OR up to 60 minutes before scheduled start time
+            val startMinus60 = (startHour * 60 + startMinute - 60 + 1440) % 1440
+            val startMinusH = startMinus60 / 60
+            val startMinusM = startMinus60 % 60
+            return isTimeInWindow(nowHour, nowMinute, startMinusH, startMinusM, endHour, endMinute)
+        }
+
         fun isEveningOrNightTime(hour: Int): Boolean {
-            // Evening hours from 20:00 (8 PM) until morning 10:00 (10 AM)
-            return hour >= 20 || hour < 10
+            // Strict night hours from 21:00 until 06:00 (never daylight morning)
+            return hour >= 21 || hour < 6
         }
 
         fun isMorningTime(hour: Int): Boolean {
@@ -86,7 +101,7 @@ class AutoSleepManager private constructor(private val context: Context) {
             isTimeInWindow: Boolean,
             isDndActive: Boolean,
             followDnd: Boolean,
-            isEveningOrNight: Boolean,
+            isNightOrBedtime: Boolean,
             hasActiveTrip: Boolean,
             wasManuallyWokenThisCycle: Boolean
         ): Boolean {
@@ -95,8 +110,11 @@ class AutoSleepManager private constructor(private val context: Context) {
             if (wasManuallyWokenThisCycle) return false // Explicit user wake honored
             if (!isScreenOff) return false // Screen on does not auto-enter sleep
 
+            // Daytime protection: Outside night/bedtime, auto-sleep is strictly forbidden
+            if (!isNightOrBedtime && !isTimeInWindow) return false
+
             // Trigger 1: DND enabled in the evening/night with screen off
-            if (followDnd && isDndActive && isEveningOrNight) {
+            if (followDnd && isDndActive && isNightOrBedtime) {
                 return true
             }
 
@@ -267,6 +285,15 @@ class AutoSleepManager private constructor(private val context: Context) {
         }
     }
 
+    fun isCurrentTimeInBedtimeWindow(): Boolean {
+        val cal = Calendar.getInstance()
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        val minute = cal.get(Calendar.MINUTE)
+        val (startH, startM) = parseHourMinute(_startTime.value, 22, 30)
+        val (endH, endM) = parseHourMinute(_endTime.value, 6, 30)
+        return isTimeInWindow(hour, minute, startH, startM, endH, endM)
+    }
+
     fun evaluateAutoSleep() {
         if (!_autoSleepEnabled.value) return
 
@@ -292,8 +319,8 @@ class AutoSleepManager private constructor(private val context: Context) {
         val (endH, endM) = parseHourMinute(_endTime.value, 6, 30)
 
         val inWindow = isTimeInWindow(hour, minute, startH, startM, endH, endM)
+        val isNightOrBedtime = isNightOrBedtimeTime(hour, minute, startH, startM, endH, endM)
         val dndActive = isDndActive()
-        val isEveningNight = isEveningOrNightTime(hour)
         val isMorning = isMorningTime(hour)
         val alarmFired = isAlarmFiredRecently()
 
@@ -305,12 +332,12 @@ class AutoSleepManager private constructor(private val context: Context) {
                 isTimeInWindow = inWindow,
                 isDndActive = dndActive,
                 followDnd = _followDnd.value,
-                isEveningOrNight = isEveningNight,
+                isNightOrBedtime = isNightOrBedtime,
                 hasActiveTrip = hasTrip,
                 wasManuallyWokenThisCycle = wasManuallyWokenThisCycle
             )
             if (shouldSleep) {
-                val reason = if (dndActive && _followDnd.value) "DND active in evening/night" else "Bedtime schedule ($startH:$startM-$endH:$endM)"
+                val reason = if (dndActive && _followDnd.value) "DND active in night/bedtime window" else "Bedtime schedule ($startH:$startM-$endH:$endM)"
                 TelemetryLogger.log("POWER", "AutoSleep triggered: $reason. Entering standby sleep mode.")
                 appStateMgr.enterStandbySleep()
             }

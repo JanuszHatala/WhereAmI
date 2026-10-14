@@ -38,6 +38,7 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_PAUSE_POINT_INDEX = "pref_trip_pause_point_index"
         private const val KEY_PAUSE_DIST = "pref_trip_pause_dist"
         private const val PAUSE_WARNING_TIMEOUT_MS = 60 * 60 * 1000L // 1 hour
+        const val KEY_MANUAL_PAUSE_STICKY = "pref_trip_manual_pause_sticky"
 
         val POLISH_CITY_CENTROIDS = mapOf(
             "kraków" to Pair(50.064, 19.945),
@@ -92,6 +93,14 @@ class TripManager private constructor(private val context: Context) {
 
     private val _autoResumeOnMotion = MutableStateFlow(prefs.getBoolean(KEY_AUTO_RESUME_ON_MOTION, true))
     val autoResumeOnMotion: StateFlow<Boolean> = _autoResumeOnMotion.asStateFlow()
+
+    private var isManualPauseSticky: Boolean = prefs.getBoolean(KEY_MANUAL_PAUSE_STICKY, false)
+    private var autoResumeStartDistance: Double = 0.0
+    private var autoResumeStartTime: Long = 0L
+    private var pauseAutoResumeFirstLocation: Location? = null
+    private var pauseAutoResumeFirstTime: Long = 0L
+
+    fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
     fun setAutoResumeOnMotion(enabled: Boolean) {
         _autoResumeOnMotion.value = enabled
@@ -163,10 +172,14 @@ class TripManager private constructor(private val context: Context) {
 
     private var pauseWarningNotified = false
 
-    fun pauseTrip() {
+    fun pauseTrip(isManual: Boolean = true) {
         val current = _activeTrip.value ?: return
         if (_isPaused.value) return
         _isPaused.value = true
+        if (isManual) {
+            isManualPauseSticky = true
+            prefs.edit().putBoolean(KEY_MANUAL_PAUSE_STICKY, true).apply()
+        }
         val now = System.currentTimeMillis()
         val loc = lastLocation
         val lat = loc?.latitude ?: current.points.lastOrNull()?.latitude ?: 0.0
@@ -179,6 +192,8 @@ class TripManager private constructor(private val context: Context) {
             distanceMeters = current.distanceMeters
         )
         pauseWarningNotified = false
+        pauseAutoResumeFirstLocation = null
+        pauseAutoResumeFirstTime = 0L
         prefs.edit()
             .putBoolean(KEY_IS_PAUSED, true)
             .putLong(KEY_PAUSE_START_TIME, now)
@@ -187,13 +202,21 @@ class TripManager private constructor(private val context: Context) {
             .putInt(KEY_PAUSE_POINT_INDEX, current.points.size)
             .putFloat(KEY_PAUSE_DIST, current.distanceMeters.toFloat())
             .apply()
-        TelemetryLogger.logTrip("PAUSE_MANUAL", current.id, "Trip paused manually at point ${current.points.size}")
+        val eventTag = if (isManual) "PAUSE_MANUAL" else "PAUSE_STICKY_RESTORED"
+        TelemetryLogger.logTrip(eventTag, current.id, "Trip paused (manual=$isManual, sticky=$isManualPauseSticky) at point ${current.points.size}")
     }
 
-    fun resumeTrip() {
+    fun resumeTrip(isManual: Boolean = true) {
         val current = _activeTrip.value ?: return
         if (!_isPaused.value) return
         _isPaused.value = false
+        if (isManual) {
+            isManualPauseSticky = false
+            prefs.edit().remove(KEY_MANUAL_PAUSE_STICKY).apply()
+        } else {
+            autoResumeStartDistance = current.distanceMeters
+            autoResumeStartTime = System.currentTimeMillis()
+        }
         val now = System.currentTimeMillis()
         if (activePause != null) {
             val finalized = activePause!!.copy(
@@ -203,10 +226,13 @@ class TripManager private constructor(private val context: Context) {
             val updatedPauses = current.pauses.toMutableList()
             updatedPauses.add(finalized)
             _activeTrip.value = current.copy(pauses = updatedPauses)
-            TelemetryLogger.logTrip("RESUME_MANUAL", current.id, "Trip resumed manually after ${finalized.durationMs / 1000}s")
+            val eventTag = if (isManual) "RESUME_MANUAL" else "RESUME_AUTO"
+            TelemetryLogger.logTrip(eventTag, current.id, "Trip resumed (manual=$isManual, sticky=$isManualPauseSticky) after ${finalized.durationMs / 1000}s")
             activePause = null
         }
         pauseWarningNotified = false
+        pauseAutoResumeFirstLocation = null
+        pauseAutoResumeFirstTime = 0L
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)
@@ -216,6 +242,28 @@ class TripManager private constructor(private val context: Context) {
             .remove(KEY_PAUSE_DIST)
             .apply()
         lastMovingTimestamp = now
+    }
+
+    private fun checkPermanentContinuation(current: TripRecord, speedKmh: Float, now: Long) {
+        if (!isManualPauseSticky) return
+        val profile = _activityProfile.value
+        val distSinceResume = current.distanceMeters - autoResumeStartDistance
+        val timeSinceResume = now - autoResumeStartTime
+
+        val (requiredDist, requiredSpeed, requiredSpeedDuration) = when (profile) {
+            ActivityProfile.CAR -> Triple(400.0, 20.0f, 45_000L)
+            ActivityProfile.CYCLING, ActivityProfile.MTB -> Triple(250.0, 12.0f, 45_000L)
+            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING -> Triple(150.0, 4.0f, 180_000L)
+        }
+
+        val isDistanceMet = distSinceResume >= requiredDist
+        val isSustainedSpeedMet = speedKmh >= requiredSpeed && timeSinceResume >= requiredSpeedDuration
+
+        if (isDistanceMet || isSustainedSpeedMet) {
+            isManualPauseSticky = false
+            prefs.edit().remove(KEY_MANUAL_PAUSE_STICKY).apply()
+            TelemetryLogger.logTrip("STICKY_PAUSE_CLEARED", current.id, "Permanent trip continuation confirmed (${distSinceResume.toInt()}m, ${speedKmh.toInt()} km/h). Sticky pause cleared.")
+        }
     }
 
     // Internal state for auto-start / auto-stop
@@ -266,6 +314,7 @@ class TripManager private constructor(private val context: Context) {
                 if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs) && !wasPaused) {
                     val closed = unclosed.copy(endTime = lastPointTime)
                     dbHelper.updateTrip(closed)
+                    isManualPauseSticky = false
                     prefs.edit()
                         .remove(KEY_IS_PAUSED)
                         .remove(KEY_PAUSE_START_TIME)
@@ -273,6 +322,7 @@ class TripManager private constructor(private val context: Context) {
                         .remove(KEY_PAUSE_LNG)
                         .remove(KEY_PAUSE_POINT_INDEX)
                         .remove(KEY_PAUSE_DIST)
+                        .remove(KEY_MANUAL_PAUSE_STICKY)
                         .apply()
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
                 } else {
@@ -284,6 +334,7 @@ class TripManager private constructor(private val context: Context) {
                             longitude = it.longitude
                         }
                     }
+                    isManualPauseSticky = prefs.getBoolean(KEY_MANUAL_PAUSE_STICKY, false)
                     if (wasPaused) {
                         val pauseStartTime = prefs.getLong(KEY_PAUSE_START_TIME, 0L)
                         if (pauseStartTime > 0L) {
@@ -333,9 +384,14 @@ class TripManager private constructor(private val context: Context) {
                     val stationaryDurationMs = now - lastMovingTimestamp!!
                     val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
                     if (stationaryDurationMs >= timeoutMs) {
-                        TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${timeoutMs / 60000}m timeout")
-                        stopTrip()
-                        break
+                        if (isManualPauseSticky) {
+                            TelemetryLogger.logTrip("STICKY_PAUSE_RETURN", active.id, "Stationary for ${stationaryDurationMs / 60000}m with sticky pause active: returning to Pause.")
+                            pauseTrip(isManual = false)
+                        } else {
+                            TelemetryLogger.logTrip("AUTO_STOP_WATCHDOG", active.id, "Stationary for ${stationaryDurationMs / 60000}m >= ${timeoutMs / 60000}m timeout")
+                            stopTrip()
+                            break
+                        }
                     }
                 }
             }
@@ -439,6 +495,7 @@ class TripManager private constructor(private val context: Context) {
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
         pauseWarningNotified = false
+        isManualPauseSticky = false
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)
@@ -446,6 +503,7 @@ class TripManager private constructor(private val context: Context) {
             .remove(KEY_PAUSE_LNG)
             .remove(KEY_PAUSE_POINT_INDEX)
             .remove(KEY_PAUSE_DIST)
+            .remove(KEY_MANUAL_PAUSE_STICKY)
             .apply()
         TelemetryLogger.logTrip("STARTED", id, "isAuto=$isAuto, profile=${profile.displayName}")
 
@@ -513,6 +571,7 @@ class TripManager private constructor(private val context: Context) {
         _isPaused.value = false
         pauseWarningNotified = false
         stopWatchdog()
+        isManualPauseSticky = false
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)
@@ -520,6 +579,7 @@ class TripManager private constructor(private val context: Context) {
             .remove(KEY_PAUSE_LNG)
             .remove(KEY_PAUSE_POINT_INDEX)
             .remove(KEY_PAUSE_DIST)
+            .remove(KEY_MANUAL_PAUSE_STICKY)
             .apply()
         lastLocation = null
         lastMovingTimestamp = null
@@ -665,15 +725,33 @@ class TripManager private constructor(private val context: Context) {
                     movingSinceTimestamp = null
                 }
             } else {
+                val active = _activeTrip.value ?: return
                 if (_isPaused.value) {
                     // Suppress auto-stop completely while paused!
-                    // Check auto-resume on motion if enabled
+                    // Check auto-resume on motion if enabled with sustained locomotion confirmation
                     val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
                     if (_autoResumeOnMotion.value && speedKmh >= targetSpeed) {
-                        resumeTrip()
-                        TelemetryLogger.logTrip("AUTO_RESUME", _activeTrip.value?.id ?: 0, "Motion detected while paused: auto-resumed trip")
+                        if (pauseAutoResumeFirstLocation == null) {
+                            pauseAutoResumeFirstLocation = Location(newLoc)
+                            pauseAutoResumeFirstTime = now
+                        } else {
+                            val elapsed = now - pauseAutoResumeFirstTime
+                            val distMoved = newLoc.distanceTo(pauseAutoResumeFirstLocation!!)
+                            val requiredDurationMs = currentProfile.autoStartDurationMs.coerceAtMost(30_000L)
+                            val requiredDisplacement = if (currentProfile == ActivityProfile.CAR) 30.0 else 15.0
+                            if (elapsed >= requiredDurationMs && distMoved >= requiredDisplacement) {
+                                resumeTrip(isManual = false)
+                                TelemetryLogger.logTrip("AUTO_RESUME", active.id, "Confirmed motion while paused (${elapsed/1000}s, ${distMoved.toInt()}m): auto-resumed trip")
+                            }
+                        }
+                    } else if (speedKmh < 1.0f && pauseAutoResumeFirstLocation != null && (now - pauseAutoResumeFirstTime) > 15_000L) {
+                        pauseAutoResumeFirstLocation = null
+                        pauseAutoResumeFirstTime = 0L
                     }
                 } else {
+                    // Check if permanent continuation threshold reached to clear isManualPauseSticky
+                    checkPermanentContinuation(active, speedKmh, now)
+
                     // Auto-stop check: stop when stationary duration exceeds configured auto-stop timeout
                     if (speedKmh >= currentProfile.autoStopSpeedKmh) {
                         lastMovingTimestamp = now
@@ -684,8 +762,14 @@ class TripManager private constructor(private val context: Context) {
                         val stationaryDurationMs = now - lastMovingTimestamp!!
                         val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
                         if (stationaryDurationMs >= timeoutMs) {
-                            stopTrip()
-                            return
+                            if (isManualPauseSticky) {
+                                TelemetryLogger.logTrip("STICKY_PAUSE_RETURN", active.id, "Stationary for ${stationaryDurationMs / 60000}m with sticky pause active: returning to Pause.")
+                                pauseTrip(isManual = false)
+                                return
+                            } else {
+                                stopTrip()
+                                return
+                            }
                         }
                     }
                 }
@@ -857,6 +941,7 @@ class TripManager private constructor(private val context: Context) {
             pauses = updatedPauses
         )
         _activeTrip.value = updated
+        checkPermanentContinuation(updated, speedKmh, now)
 
         // Persist progress periodically (every 10 points, pause recorded, or place change)
         if (newPoints.size % 10 == 0 || newPlaces.size != current.placesVisited.size || updatedPauses.size != current.pauses.size) {
