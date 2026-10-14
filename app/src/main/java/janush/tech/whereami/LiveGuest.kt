@@ -83,6 +83,17 @@ data class LiveGuest(
             }
         }
 
+        fun formatCompactTimeAgo(timestamp: Long, now: Long = System.currentTimeMillis()): String {
+            val diffSec = Math.max(0L, (now - timestamp) / 1000L)
+            return when {
+                diffSec < 15 -> "now"
+                diffSec < 60 -> "${diffSec}s"
+                diffSec < 3600 -> "${diffSec / 60}m"
+                diffSec < 86400 -> "${diffSec / 3600}h"
+                else -> "${diffSec / 86400}d"
+            }
+        }
+
         fun formatDurationElapsed(fromTimestamp: Long, toTimestamp: Long = System.currentTimeMillis()): String {
             val diffSec = Math.max(0L, (toTimestamp - fromTimestamp) / 1000L)
             return when {

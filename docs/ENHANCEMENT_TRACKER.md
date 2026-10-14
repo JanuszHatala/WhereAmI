@@ -439,7 +439,20 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 26. Features Inventory & Future Backlog
+## 26. Round 24: UI & UX Enhancements (Pin Card Placement, LocalityCard Spacing, Guest Marker Badge, Unified HUD Height, Fixed REC Button & Live Sharing Stats)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT24-01** | **Map Pin Panel HUD Clearance (sc 1)**: When trip HUD or standby bar is active, `DestinationPlaceCard` was rendered behind it. Fix: dynamically stack pin panel above the HUD (`bottom = 136.dp` when HUD active, `96.dp` when absent). | `MainActivity.kt` | **Completed** | Dynamic bottom padding based on `hasBottomHud` ensures zero overlap with HUD bar while keeping bottom action buttons fully accessible. |
+| **FT24-02** | **LocalityCard Action Row Spacing (sc 2)**: Add small spacing between top action icons row and primary locality name. Fix: added subtle 6dp vertical spacer. | `MainActivity.kt` | **Completed** | Clean optical breathing room between utility icons and locality header without pushing card content down excessively. |
+| **FT24-03** | **Guest Map Marker Distance + Last Seen Badge (sc 3, 4)**: In addition to distance, display last seen ago time on the guest map marker badge (`4.0 km • 2m` / `296 m • now`). | `LiveGuest.kt`, `OsmMapView.kt`, `LiveGuestTest.kt` | **Completed** | Added `LiveGuest.formatCompactTimeAgo()`, integrated into `makeGuestMarkerIcon` combined badge text. Verified with unit tests covering boundary durations. |
+| **FT24-04** | **Standby & Recording HUD Height Parity (sc 2, 4)**: Standby bar was shorter than recording HUD, causing vertical expansion/jump when starting recording. Fix: standardize both surfaces to explicit 42dp height with vertically centered content. | `MainActivity.kt` | **Completed** | Both HUD bars now share identical 42dp container height and 82dp bottom offset, eliminating all vertical shift. |
+| **FT24-05** | **REC / STOP Button Width Parity (sc 2, 4)**: REC button width was smaller than STOP button, causing adjacent toolbar icons to shift horizontally. Fix: fixed width to 68dp with centered contents. | `MainActivity.kt` | **Completed** | Bottom toolbar icons remain strictly static with zero horizontal layout shift when toggling recording state. |
+| **FT24-06** | **Live Sharing Modal Guest & View Stats (sc 3)**: Display unique guest count and total session view count in the Live Sharing Active modal. Fix: added dedicated stats summary card (`👥 X Guests • 👁️ Y Views`). | `MainActivity.kt` | **Completed** | Added responsive stats card between header and share actions with normalized typography and icon badges. |
+
+---
+
+## 27. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |

@@ -873,6 +873,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
             val activeTargetPoint = selectedSavedPlace?.geoPoint ?: destinationPoint
             if (!showTripsSheet && activeTargetPoint != null) {
+                val hasBottomHud = (activeTrip != null || tripMode == TripMode.AUTO)
                 DestinationPlaceCard(
                     destinationPoint = activeTargetPoint,
                     destinationItem = destinationItem,
@@ -935,7 +936,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
+                        .padding(start = 16.dp, end = 16.dp, bottom = if (hasBottomHud) 136.dp else 96.dp)
                         .fillMaxWidth()
                         .onGloballyPositioned {
                             bottomControlsTopPx = it.positionInRoot().y.toInt()
@@ -977,7 +978,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         bottom = if (isLandscape) 70.dp else 82.dp
                     )
                     .widthIn(max = if (isLandscape) 360.dp else 380.dp)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .height(42.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xF20F172A),
                 border = BorderStroke(1.dp, if (isTripPaused) Color(0xFFF59E0B) else Color(0xFFEF4444)),
@@ -986,7 +988,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -1092,14 +1094,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                         start = 16.dp,
                         end = 16.dp,
                         bottom = 82.dp
-                    ),
+                    )
+                    .height(42.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xF20F172A),
                 border = BorderStroke(1.dp, if (isStandbySleeping) Color(0xFF64748B) else Color(0xFF38BDF8)),
                 shadowElevation = 8.dp
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -6210,7 +6213,71 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Telemetry stats summary card (Unique Guests & Total Views)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Unique Guests
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            EmojiText(emoji = "👥", fontSize = 14.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${activeGuests.size} Guests",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 13.sp
+                                )
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .height(16.dp)
+                                .width(1.dp)
+                                .background(Color(0xFF334155))
+                        )
+
+                        // Total Views
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            EmojiText(emoji = "👁️", fontSize = 14.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${session.viewCount} Views",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 13.sp
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Action 1: 1-Tap Share Trip Link
                 Button(
@@ -9114,6 +9181,8 @@ private fun LocalityCard(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(6.dp))
+
                 // Main Place Name (Largest Font, Top Priority, 100% clean horizontal width, multi-line wrap)
                 Box(
                     modifier = Modifier
@@ -9510,11 +9579,12 @@ private fun MainBottomControlsCard(
             Row(
                 modifier = Modifier
                     .height(40.dp)
+                    .width(68.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(if (isRecording) Color(0x33EF4444) else Color(0xFF1E293B))
-                    .clickable { onToggleTripRecording() }
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .clickable { onToggleTripRecording() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
                 Box(
                     modifier = Modifier
@@ -9522,12 +9592,20 @@ private fun MainBottomControlsCard(
                         .clip(CircleShape)
                         .background(Color(0xFFEF4444))
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = if (isRecording) "STOP" else "REC",
                     color = if (isRecording) Color(0xFFEF4444) else Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        ),
+                        lineHeight = 12.sp
+                    )
                 )
             }
 

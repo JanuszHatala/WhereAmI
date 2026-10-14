@@ -2606,10 +2606,12 @@ internal fun makeGuestMarkerIcon(
 ): GuestMarkerIconResult {
     val density = context.resources.displayMetrics.density
     val avatarDiameter = (32f * density).toInt()
-    val badgeHeight = if (showDistance && distanceMeters != null) (18f * density).toInt() else 0
+    val timeAgoText = LiveGuest.formatCompactTimeAgo(guest.lastUpdated)
+    val distanceText = if (showDistance) {
+        if (distanceMeters != null) "${LiveGuest.formatDistance(distanceMeters)} • $timeAgoText" else timeAgoText
+    } else ""
+    val badgeHeight = if (distanceText.isNotEmpty()) (18f * density).toInt() else 0
     val badgeSpacing = (3f * density).toInt()
-
-    val distanceText = if (showDistance && distanceMeters != null) LiveGuest.formatDistance(distanceMeters) else ""
 
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
