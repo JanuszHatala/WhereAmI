@@ -63,8 +63,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 70** | Smooth Tracking & Map Rotation Repair: 250ms Interpolation Ease-Out, Shortest-Arc Rotation Slew, Low-Speed Polyline Resolution & Stationary Gate Disarm (2026-10-15) | 5 | 5 | 0 | 0 |
 | **Round 71** | Saved Place Altitude Editing, DEM Fetching, Custom Source Flag, Places-First Batch Correction & Single-Line Dialog Buttons (2026-10-15) | 4 | 4 | 0 | 0 |
 | **Round 72** | OpenTopoData Multi-Provider Failover, 429 Quota Backoff & Immediate Places Refresh (2026-10-15) | 3 | 3 | 0 | 0 |
+| **Round 73** | DEM Coroutine Dispatcher & Main-Thread Exception Fix (2026-10-15) | 2 | 2 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **295** | **287** | **0** | **8** |
+| **Total** | | **297** | **289** | **0** | **8** |
 
 
 ---
@@ -958,6 +959,15 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **ELEV72-02** | **HTTP 429 Quota Failover Fast-Path**: On HTTP 429 / quota error, provider is flagged blocked for 30 minutes (`openMeteoBlockedUntil`, `openElevationBlockedUntil`). Skips futile retries and immediately falls through to OpenTopoData. | `ElevationRepository.kt` | **Completed** | Verified failover path in `ElevationRepository.kt`. |
 | **PLACE72-03** | **Immediate Saved Places UI Refresh**: Previously, `loadSavedPlaces()` only ran in `onAllCompleted` after all trips finished. Added `onPlacesCompleted` to `ElevationCorrectionManager.startAll` invoked immediately upon Phase 1 completion, triggering `loadSavedPlaces()` in `MainViewModel`. | `ElevationCorrectionManager.kt`, `MainViewModel.kt` | **Completed** | UI list updates the moment Saved Places correction finishes. |
 | **VER-45** | **Build Gate & Version Increment**: Increment `versionCode` to 91 and `versionName` to "1.9.8". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+ 
+---
+
+## 76. Round 73: DEM Coroutine Dispatcher & Main-Thread Exception Fix (2026-10-15)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **ELEV73-01** | **Dispatchers.IO Coroutine Enforcement & Error Logging**: In Edit Saved Place dialog, DEM lookup failed with "Could not resolve DEM altitude for this location" because the dialog coroutine scope ran on `Dispatchers.Main`, and `ElevationRepository.getElevation` / `MainViewModel.fetchDemAltitudeForLocation` did not switch to `Dispatchers.IO`, throwing `NetworkOnMainThreadException` inside `HttpsURLConnection`. Wrapped all `ElevationRepository` suspend functions (`getElevation`, `fetchAltitudes`) and `MainViewModel.fetchDemAltitudeForLocation` in `withContext(Dispatchers.IO)`. Added detailed `Log.w(TAG, ...)` across all DEM catch blocks. | `ElevationRepository.kt`, `MainViewModel.kt` | **Completed** | Verified with unit tests and device build. |
+| **VER-46** | **Build Gate & Version Increment**: Increment `versionCode` to 92 and `versionName` to "1.9.9". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
 
 
 
