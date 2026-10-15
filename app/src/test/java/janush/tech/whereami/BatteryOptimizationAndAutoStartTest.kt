@@ -716,4 +716,29 @@ class BatteryOptimizationAndAutoStartTest {
         )
         org.junit.Assert.assertNotEquals("Waking from sleep must change notification signature", sig1, sigWoken)
     }
+
+    @Test
+    fun testLiveOnlyStationaryGpsShutdownOnBatteryWhenScreenOff() {
+        val shouldShutdownGpsWhenStationary = { isCharging: Boolean, inForeground: Boolean ->
+            !isCharging && !inForeground
+        }
+
+        // On battery with screen off: GPS must power down completely to allow sustained Doze!
+        assertTrue(
+            "Screen off and unplugged: GPS must shut down when stationary",
+            shouldShutdownGpsWhenStationary(false, false)
+        )
+
+        // When charging: GPS sampling can remain active (relaxed cadence)
+        assertFalse(
+            "When charging: GPS updates do not drain battery",
+            shouldShutdownGpsWhenStationary(true, false)
+        )
+
+        // When in foreground: screen is on, GPS remains active for map view
+        assertFalse(
+            "When in foreground: GPS updates remain active for user view",
+            shouldShutdownGpsWhenStationary(false, true)
+        )
+    }
 }

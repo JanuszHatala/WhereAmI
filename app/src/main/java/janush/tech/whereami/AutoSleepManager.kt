@@ -2,6 +2,7 @@ package janush.tech.whereami
 
 import android.app.AlarmManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -36,6 +37,35 @@ class AutoSleepManager private constructor(private val context: Context) {
 
         const val DEFAULT_START_TIME = "22:30"
         const val DEFAULT_END_TIME = "06:30"
+
+        const val ACTION_BEDTIME_TRANSITION = "janush.tech.whereami.ACTION_BEDTIME_TRANSITION"
+        private const val REQUEST_CODE_BEDTIME_ALARM = 8821
+
+        fun computeNextBoundaryTriggerMillis(
+            nowMillis: Long,
+            isCurrentlySleeping: Boolean,
+            startH: Int,
+            startM: Int,
+            endH: Int,
+            endM: Int
+        ): Long {
+            val (targetH, targetM) = if (isCurrentlySleeping) {
+                Pair(endH, endM)
+            } else {
+                Pair(startH, startM)
+            }
+            val cal = Calendar.getInstance().apply {
+                timeInMillis = nowMillis
+                set(Calendar.HOUR_OF_DAY, targetH)
+                set(Calendar.MINUTE, targetM)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (cal.timeInMillis <= nowMillis) {
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+            return cal.timeInMillis
+        }
 
         fun parseHourMinute(timeStr: String, defaultHour: Int, defaultMinute: Int): Pair<Int, Int> {
             val parts = timeStr.trim().split(":")
@@ -198,6 +228,9 @@ class AutoSleepManager private constructor(private val context: Context) {
         _autoSleepEnabled.value = enabled
         prefs.edit().putBoolean(KEY_AUTO_SLEEP_ENABLED, enabled).apply()
         TelemetryLogger.log("SETTINGS", "AutoSleepEnabled set to $enabled")
+        if (!enabled) {
+            cancelBoundaryAlarm()
+        }
         evaluateAutoSleep()
     }
 
@@ -262,12 +295,68 @@ class AutoSleepManager private constructor(private val context: Context) {
         }
     }
 
+    fun scheduleBoundaryAlarm() {
+        if (!_autoSleepEnabled.value) return
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(ACTION_BEDTIME_TRANSITION).apply {
+            setPackage(context.packageName)
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pi = PendingIntent.getBroadcast(context, REQUEST_CODE_BEDTIME_ALARM, intent, flags)
+
+        val (startH, startM) = parseHourMinute(_startTime.value, 22, 30)
+        val (endH, endM) = parseHourMinute(_endTime.value, 6, 30)
+        val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
+        val triggerAtMs = computeNextBoundaryTriggerMillis(
+            nowMillis = System.currentTimeMillis(),
+            isCurrentlySleeping = isCurrentlySleeping,
+            startH = startH,
+            startM = startM,
+            endH = endH,
+            endM = endM
+        )
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
+            } else {
+                am.set(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
+            }
+            val cal = Calendar.getInstance().apply { timeInMillis = triggerAtMs }
+            TelemetryLogger.log("POWER", "Scheduled bedtime boundary alarm for ${String.format("%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))}")
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to schedule bedtime boundary alarm: ${e.message}")
+        }
+    }
+
+    fun cancelBoundaryAlarm() {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(ACTION_BEDTIME_TRANSITION).apply {
+            setPackage(context.packageName)
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_NO_CREATE
+        }
+        val pi = PendingIntent.getBroadcast(context, REQUEST_CODE_BEDTIME_ALARM, intent, flags)
+        if (pi != null) {
+            am.cancel(pi)
+            pi.cancel()
+        }
+    }
+
     private fun registerSystemReceivers() {
         val filter = IntentFilter().apply {
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(ACTION_BEDTIME_TRANSITION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)
             }
@@ -279,10 +368,15 @@ class AutoSleepManager private constructor(private val context: Context) {
             }
         }
         try {
-            context.registerReceiver(receiver, filter)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(receiver, filter)
+            }
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "Failed to register AutoSleep receiver: ${e.message}")
         }
+        scheduleBoundaryAlarm()
     }
 
     fun isCurrentTimeInBedtimeWindow(): Boolean {
@@ -362,5 +456,6 @@ class AutoSleepManager private constructor(private val context: Context) {
                 appStateMgr.wakeStandbySleep()
             }
         }
+        scheduleBoundaryAlarm()
     }
 }
