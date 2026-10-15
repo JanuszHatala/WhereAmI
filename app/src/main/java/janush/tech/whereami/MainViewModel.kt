@@ -886,12 +886,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun correctAllTripsElevation(mode: OverrideMode) {
-        ElevationCorrectionManager.startAll(getApplication(), mode) {
-            viewModelScope.launch(Dispatchers.IO) {
-                _savedTrips.value = tripManager.getAllTrips()
-                loadSavedPlaces()
+        ElevationCorrectionManager.startAll(
+            context = getApplication(),
+            mode = mode,
+            onPlacesCompleted = {
+                viewModelScope.launch(Dispatchers.IO) {
+                    loadSavedPlaces()
+                }
+            },
+            onAllCompleted = {
+                viewModelScope.launch(Dispatchers.IO) {
+                    _savedTrips.value = tripManager.getAllTrips()
+                    loadSavedPlaces()
+                }
             }
-        }
+        )
     }
 
     fun pauseElevationCorrection() {

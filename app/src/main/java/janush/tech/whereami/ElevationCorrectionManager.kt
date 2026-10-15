@@ -134,6 +134,7 @@ object ElevationCorrectionManager {
     fun startAll(
         context: Context,
         mode: OverrideMode,
+        onPlacesCompleted: (() -> Unit)? = null,
         onAllCompleted: (() -> Unit)? = null
     ) {
         if (isRunningInternal) return
@@ -197,6 +198,9 @@ object ElevationCorrectionManager {
                     )
                     updateNotification(appCtx, _progress.value)
                 }
+
+                // Immediately trigger callback so UI reloads saved places without waiting for trips
+                onPlacesCompleted?.invoke()
             }
 
             // Phase 2: Trips

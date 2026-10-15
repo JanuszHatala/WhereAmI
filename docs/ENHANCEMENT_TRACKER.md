@@ -62,8 +62,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 69** | Open-Meteo Multi-Provider DEM & SQLite Cache, Saved Places Callout Badge, Map Font Scaling, Altitude Source Mode & Dashed GPS Fallback (2026-10-15) | 6 | 6 | 0 | 0 |
 | **Round 70** | Smooth Tracking & Map Rotation Repair: 250ms Interpolation Ease-Out, Shortest-Arc Rotation Slew, Low-Speed Polyline Resolution & Stationary Gate Disarm (2026-10-15) | 5 | 5 | 0 | 0 |
 | **Round 71** | Saved Place Altitude Editing, DEM Fetching, Custom Source Flag, Places-First Batch Correction & Single-Line Dialog Buttons (2026-10-15) | 4 | 4 | 0 | 0 |
+| **Round 72** | OpenTopoData Multi-Provider Failover, 429 Quota Backoff & Immediate Places Refresh (2026-10-15) | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **292** | **284** | **0** | **8** |
+| **Total** | | **295** | **287** | **0** | **8** |
 
 
 ---
@@ -946,6 +947,18 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **CORR71-03** | **Places-First Execution in Bulk Elevation Correction**: In `ElevationCorrectionManager.startAll`, inverted the phase execution order so Saved Places are corrected first (Phase 1: `SAVED_PLACES`) before the larger trip point sets (Phase 2: `TRIPS`). Notification and UI progress dynamically reflect Saved Places progress (e.g. `0/N`) first, providing immediate feedback for critical location pins. | `ElevationCorrectionManager.kt` | **Completed** | Verified phase sequencing and progress tracking logic. |
 | **UI71-04** | **Single-Line Altitude Correction Dialog Buttons & Responsive Width**: In `ElevationOverrideModeDialog`, applied `DialogProperties(usePlatformDefaultWidth = false)` with `Modifier.fillMaxWidth(0.92f).widthIn(max = 480.dp)`. Added explicit content padding (`14.dp` horizontal, `8.dp` vertical) and `maxLines = 1`, `softWrap = false` to the "Start Correction" button, completely eliminating two-line text wrapping on all phone screen dimensions. Removed em-dashes and updated description text to reference Open-Meteo & Open-Elevation. | `MainActivity.kt` | **Completed** | Verified Compose layout constraints and single-line button rendering. |
 | **VER-44** | **Build Gate & Version Increment**: Increment `versionCode` to 90 and `versionName` to "1.9.7". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL` (all 42 test suites passed). | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+
+---
+
+## 75. Round 72: OpenTopoData Multi-Provider Failover, 429 Quota Backoff & Immediate Places Refresh (2026-10-15)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **ELEV72-01** | **OpenTopoData Multi-Provider Failover (EU-DEM 25m & SRTM 30m)**: Device telemetry revealed bulk correction over 87 trips hit Open-Meteo's 10,000/day IP limit (`HTTP 429: Daily API request limit exceeded`) while Open-Elevation hit monthly anonymous quota (`quota_exceeded`), failing lookups for uncached places. Added OpenTopoData (`api.opentopodata.org/v1/eudem25m` Europe, `srtm30m` worldwide) as third zero-key DEM provider with batched lookups. | `ElevationRepository.kt` | **Completed** | Verified curl and batch queries for Timebook (318.2m), wrong borders (489.4m), and wrong Czernichów (571.8m). |
+| **ELEV72-02** | **HTTP 429 Quota Failover Fast-Path**: On HTTP 429 / quota error, provider is flagged blocked for 30 minutes (`openMeteoBlockedUntil`, `openElevationBlockedUntil`). Skips futile retries and immediately falls through to OpenTopoData. | `ElevationRepository.kt` | **Completed** | Verified failover path in `ElevationRepository.kt`. |
+| **PLACE72-03** | **Immediate Saved Places UI Refresh**: Previously, `loadSavedPlaces()` only ran in `onAllCompleted` after all trips finished. Added `onPlacesCompleted` to `ElevationCorrectionManager.startAll` invoked immediately upon Phase 1 completion, triggering `loadSavedPlaces()` in `MainViewModel`. | `ElevationCorrectionManager.kt`, `MainViewModel.kt` | **Completed** | UI list updates the moment Saved Places correction finishes. |
+| **VER-45** | **Build Gate & Version Increment**: Increment `versionCode` to 91 and `versionName` to "1.9.8". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL`. | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+
 
 
 

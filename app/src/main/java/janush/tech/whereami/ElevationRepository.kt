@@ -10,10 +10,18 @@ import javax.net.ssl.HttpsURLConnection
 
 object ElevationRepository {
     private const val OPEN_METEO_BASE = "https://api.open-meteo.com/v1/elevation"
+    private const val OPENTOPO_EUDEM_BASE = "https://api.opentopodata.org/v1/eudem25m"
+    private const val OPENTOPO_SRTM_BASE = "https://api.opentopodata.org/v1/srtm30m"
     private const val OPEN_ELEVATION_BASE = "https://api.open-elevation.com/api/v1/lookup"
     private const val BATCH_SIZE = 80
     private const val INTER_BATCH_DELAY_MS = 100L
     private const val MAX_RETRIES = 2
+
+    @Volatile
+    private var openMeteoBlockedUntil = 0L
+
+    @Volatile
+    private var openElevationBlockedUntil = 0L
 
     /**
      * Synchronous cache-only check. Returns cached elevation if present in SQLite, null otherwise.
@@ -82,11 +90,19 @@ object ElevationRepository {
             if (isCancelled()) break
             val batchPoints = indices.map { points[it] }
 
-            // 1. Try Open-Meteo Primary
-            var altitudes = fetchBatchOpenMeteo(batchPoints)
+            // 1. Try Open-Meteo Primary (if not quota-blocked)
+            var altitudes: List<Double>? = null
+            if (System.currentTimeMillis() >= openMeteoBlockedUntil) {
+                altitudes = fetchBatchOpenMeteo(batchPoints)
+            }
 
-            // 2. Fallback to Open-Elevation if Open-Meteo failed
+            // 2. Try OpenTopoData (EU-DEM 25m / SRTM 30m)
             if (altitudes == null) {
+                altitudes = fetchBatchOpenTopoData(batchPoints)
+            }
+
+            // 3. Fallback to Open-Elevation (if not quota-blocked)
+            if (altitudes == null && System.currentTimeMillis() >= openElevationBlockedUntil) {
                 altitudes = fetchBatchOpenElevation(batchPoints)
             }
 
@@ -135,7 +151,12 @@ object ElevationRepository {
                 }
 
                 val code = conn.responseCode
-                if (code == 429 || code >= 500) {
+                if (code == 429) {
+                    // Daily limit exceeded on Open-Meteo -> failover immediately for 30 min
+                    openMeteoBlockedUntil = System.currentTimeMillis() + 1_800_000L
+                    return null
+                }
+                if (code >= 500) {
                     delay(800L * (attempt + 1))
                     return@repeat
                 }
@@ -170,6 +191,62 @@ object ElevationRepository {
     }
 
     /**
+     * OpenTopoData query (EU-DEM 25m for Europe, SRTM 30m global fallback).
+     * No API key required, highly reliable open-source elevation server.
+     */
+    private suspend fun fetchBatchOpenTopoData(points: List<GeoPoint>): List<Double>? {
+        if (points.isEmpty()) return emptyList()
+        val locParam = points.joinToString("|") { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) }
+
+        // 1. Try EU-DEM 25m (~25m high-resolution European DEM)
+        val euResults = queryOpenTopoDataset(OPENTOPO_EUDEM_BASE, locParam, points.size)
+        if (euResults != null && euResults.all { it > 0.0 }) {
+            return euResults
+        }
+
+        // 2. Fallback to SRTM 30m (~30m global elevation)
+        val srtmResults = queryOpenTopoDataset(OPENTOPO_SRTM_BASE, locParam, points.size)
+        if (srtmResults != null) {
+            if (euResults != null) {
+                return euResults.mapIndexed { i, alt -> if (alt > 0.0) alt else srtmResults.getOrElse(i) { 0.0 } }
+            }
+            return srtmResults
+        }
+
+        return euResults
+    }
+
+    private suspend fun queryOpenTopoDataset(baseUrl: String, locParam: String, expectedSize: Int): List<Double>? {
+        var conn: HttpsURLConnection? = null
+        try {
+            val urlStr = "$baseUrl?locations=$locParam"
+            conn = (URL(urlStr).openConnection() as HttpsURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/json")
+                connectTimeout = 8_000
+                readTimeout = 12_000
+            }
+            if (conn.responseCode != 200) return null
+            val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+            val root = JSONObject(jsonStr)
+            if (root.optString("status") != "OK" || !root.has("results")) return null
+            val arr = root.getJSONArray("results")
+            val list = mutableListOf<Double>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val elev = if (obj.isNull("elevation")) 0.0 else obj.getDouble("elevation")
+                list.add(elev)
+            }
+            if (list.size == expectedSize) return list
+        } catch (_: Exception) {
+            return null
+        } finally {
+            conn?.disconnect()
+        }
+        return null
+    }
+
+    /**
      * Open-Elevation fallback query (POST JSON).
      */
     private suspend fun fetchBatchOpenElevation(points: List<GeoPoint>): List<Double>? {
@@ -199,7 +276,11 @@ object ElevationRepository {
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
 
                 val code = conn.responseCode
-                if (code == 429 || code >= 500) {
+                if (code == 429 || code == 400) {
+                    openElevationBlockedUntil = System.currentTimeMillis() + 1_800_000L
+                    return null
+                }
+                if (code >= 500) {
                     delay(800L * (attempt + 1))
                     return@repeat
                 }
