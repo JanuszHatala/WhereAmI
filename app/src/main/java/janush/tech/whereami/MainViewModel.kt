@@ -480,6 +480,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun fetchDemAltitudeForLocation(lat: Double, lng: Double): Double? {
+        return ElevationRepository.getElevation(lat, lng, dbHelper)
+    }
+
     fun deleteSavedPlace(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             dbHelper.deleteSavedPlace(id)

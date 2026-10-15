@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.input.KeyboardType
@@ -4772,6 +4773,16 @@ fun LocationScreen(viewModel: MainViewModel) {
         var editLocality by remember(placeToEdit.id) { mutableStateOf(placeToEdit.locality) }
         var editRadius by remember(placeToEdit.id) { mutableFloatStateOf(placeToEdit.radiusMeters) }
         var editColor by remember(placeToEdit.id) { mutableStateOf(placeToEdit.colorHex) }
+        val initialAltText = if (placeToEdit.altitude != null && placeToEdit.altitude > 0.0) {
+            placeToEdit.altitude.toInt().toString()
+        } else {
+            ""
+        }
+        var editAltitudeText by remember(placeToEdit.id) { mutableStateOf(initialAltText) }
+        var editAltitudeSource by remember(placeToEdit.id) { mutableStateOf(placeToEdit.altitudeSource) }
+        var isFetchingDemAlt by remember(placeToEdit.id) { mutableStateOf(false) }
+        val editPlaceScope = rememberCoroutineScope()
+        val editPlaceContext = LocalContext.current
 
         AlertDialog(
             onDismissRequest = { editingSavedPlace = null },
@@ -4957,6 +4968,129 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     )
 
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Altitude",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (editAltitudeSource != null) {
+                            Surface(
+                                color = when (editAltitudeSource) {
+                                    "CUSTOM" -> Color(0xFF0284C7).copy(alpha = 0.25f)
+                                    "DEM" -> Color(0xFF10B981).copy(alpha = 0.25f)
+                                    "GPS" -> Color(0xFF64748B).copy(alpha = 0.25f)
+                                    else -> Color(0xFF334155)
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    when (editAltitudeSource) {
+                                        "CUSTOM" -> Color(0xFF38BDF8)
+                                        "DEM" -> Color(0xFF34D399)
+                                        "GPS" -> Color(0xFF94A3B8)
+                                        else -> Color(0xFF475569)
+                                    }
+                                )
+                            ) {
+                                Text(
+                                    text = editAltitudeSource ?: "",
+                                    color = when (editAltitudeSource) {
+                                        "CUSTOM" -> Color(0xFF38BDF8)
+                                        "DEM" -> Color(0xFF34D399)
+                                        "GPS" -> Color(0xFFCBD5E1)
+                                        else -> Color.White
+                                    },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = editAltitudeText,
+                            onValueChange = { newText ->
+                                if (newText.isEmpty() || newText.matches(Regex("^-?\\d*\\.?\\d*$"))) {
+                                    editAltitudeText = newText
+                                    editAltitudeSource = if (newText.isBlank()) null else "CUSTOM"
+                                }
+                            },
+                            label = { Text("Altitude (m)") },
+                            placeholder = { Text("e.g. 350") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF10B981),
+                                unfocusedBorderColor = Color(0xFF64748B)
+                            )
+                        )
+
+                        Button(
+                            onClick = {
+                                editPlaceScope.launch {
+                                    isFetchingDemAlt = true
+                                    val dem = viewModel.fetchDemAltitudeForLocation(placeToEdit.latitude, placeToEdit.longitude)
+                                    isFetchingDemAlt = false
+                                    if (dem != null && dem > 0.0) {
+                                        editAltitudeText = dem.toInt().toString()
+                                        editAltitudeSource = "DEM"
+                                        Toast.makeText(editPlaceContext, "DEM altitude resolved: ${dem.toInt()} m", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(editPlaceContext, "Could not resolve DEM altitude for this location", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            enabled = !isFetchingDemAlt,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0284C7),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color(0xFF334155),
+                                disabledContentColor = Color(0xFF94A3B8)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.height(56.dp).padding(top = 8.dp)
+                        ) {
+                            if (isFetchingDemAlt) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    EmojiText(emoji = "⛰️", fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Get DEM",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
@@ -5000,13 +5134,22 @@ fun LocationScreen(viewModel: MainViewModel) {
             confirmButton = {
                 Button(
                     onClick = {
+                        val parsedAlt = editAltitudeText.toDoubleOrNull()
+                        val finalAltitude = if (parsedAlt != null && parsedAlt > 0.0) parsedAlt else null
+                        val finalSource = if (finalAltitude != null) {
+                            editAltitudeSource ?: "CUSTOM"
+                        } else {
+                            null
+                        }
                         val updated = placeToEdit.copy(
                             name = editName.ifBlank { editCategory.displayName },
                             category = editCategory,
                             street = editStreet.trim(),
                             locality = editLocality.trim(),
                             radiusMeters = editRadius,
-                            colorHex = editColor
+                            colorHex = editColor,
+                            altitude = finalAltitude,
+                            altitudeSource = finalSource
                         )
                         viewModel.updateSavedPlace(updated)
                         editingSavedPlace = null
@@ -12174,6 +12317,10 @@ fun ElevationOverrideModeDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .fillMaxWidth(0.92f)
+            .widthIn(max = 480.dp),
         containerColor = Color(0xFF1E293B),
         title = {
             Text(
@@ -12186,14 +12333,14 @@ fun ElevationOverrideModeDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Select how to apply Digital Elevation Model (DEM) altitudes from Open-Elevation:",
+                    text = "Select how to apply Digital Elevation Model (DEM) altitudes from Open-Meteo & Open-Elevation:",
                     fontSize = 13.sp,
                     color = Color(0xFFCBD5E1)
                 )
 
                 listOf(
-                    OverrideMode.FILL_MISSING to "Fill missing only — preserve existing GPS/barometric altitude; only add DEM values to points lacking altitude.",
-                    OverrideMode.OVERRIDE_ALL to "Override all points — overwrite every track point with DEM altitude (~30m terrain resolution, eliminates GPS spikes)."
+                    OverrideMode.FILL_MISSING to "Fill missing only: preserve existing GPS/barometric altitude; only add DEM values to points lacking altitude.",
+                    OverrideMode.OVERRIDE_ALL to "Override all points: overwrite every track point with DEM altitude (~30m terrain resolution, eliminates GPS spikes)."
                 ).forEach { (mode, desc) ->
                     Row(
                         modifier = Modifier
@@ -12227,16 +12374,26 @@ fun ElevationOverrideModeDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = Color.White)
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text("Cancel", color = Color.White, maxLines = 1, softWrap = false)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = { onConfirm(selectedMode) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text("Start Correction", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Start Correction",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         },
