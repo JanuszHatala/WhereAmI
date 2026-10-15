@@ -623,6 +623,7 @@ class TripManager private constructor(private val context: Context) {
                 context.startService(intent)
             } catch (_: Exception) {}
         }
+        AppStateManager.getInstance(context).onTripEnded()
     }
 
     private fun sanitizeTrailingPauses(
