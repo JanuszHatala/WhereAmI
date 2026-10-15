@@ -1,6 +1,9 @@
 package janush.tech.whereami
 
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
@@ -9,6 +12,7 @@ import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 
 object ElevationRepository {
+    private const val TAG = "ElevationRepository"
     private const val OPEN_METEO_BASE = "https://api.open-meteo.com/v1/elevation"
     private const val OPENTOPO_EUDEM_BASE = "https://api.opentopodata.org/v1/eudem25m"
     private const val OPENTOPO_SRTM_BASE = "https://api.opentopodata.org/v1/srtm30m"
@@ -40,15 +44,15 @@ object ElevationRepository {
         latitude: Double,
         longitude: Double,
         db: TripDatabaseHelper? = null
-    ): Double? {
+    ): Double? = withContext(Dispatchers.IO) {
         if (db != null) {
             val cached = db.getCachedElevation(latitude, longitude)
             if (cached != null && cached > 0.0) {
-                return cached
+                return@withContext cached
             }
         }
         val list = fetchAltitudes(listOf(GeoPoint(latitude, longitude)), db = db)
-        return list.firstOrNull()
+        list.firstOrNull()
     }
 
     /**
@@ -61,9 +65,9 @@ object ElevationRepository {
         db: TripDatabaseHelper? = null,
         isCancelled: () -> Boolean = { false },
         onProgress: (Int, Int) -> Unit = { _, _ -> }
-    ): List<Double?> {
+    ): List<Double?> = withContext(Dispatchers.IO) {
         val result = MutableList<Double?>(points.size) { null }
-        if (points.isEmpty()) return result
+        if (points.isEmpty()) return@withContext result
 
         val missingIndices = mutableListOf<Int>()
         for (i in points.indices) {
@@ -78,7 +82,7 @@ object ElevationRepository {
 
         if (missingIndices.isEmpty()) {
             onProgress(points.size, points.size)
-            return result
+            return@withContext result
         }
 
         onProgress(points.size - missingIndices.size, points.size)
@@ -129,7 +133,7 @@ object ElevationRepository {
             }
         }
 
-        return result
+        result
     }
 
     /**
@@ -179,7 +183,8 @@ object ElevationRepository {
                 if (list.size == points.size) {
                     return list
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w(TAG, "Open-Meteo elevation fetch attempt $attempt failed: ${e.message}")
                 if (attempt < MAX_RETRIES - 1) {
                     delay(600L * (attempt + 1))
                 }
@@ -238,7 +243,8 @@ object ElevationRepository {
                 list.add(elev)
             }
             if (list.size == expectedSize) return list
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "OpenTopoData query failed ($baseUrl): ${e.message}")
             return null
         } finally {
             conn?.disconnect()
@@ -299,7 +305,8 @@ object ElevationRepository {
                 if (list.size == points.size) {
                     return list
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w(TAG, "Open-Elevation query attempt $attempt failed: ${e.message}")
                 if (attempt < MAX_RETRIES - 1) {
                     delay(600L * (attempt + 1))
                 }
