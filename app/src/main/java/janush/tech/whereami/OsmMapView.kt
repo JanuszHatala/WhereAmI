@@ -413,6 +413,9 @@ fun OsmMapView(
     latLng: Triple<Double, Double, Float?>? = null, // (lat, lng, bearing-or-null)
     locationFix: LocationFix? = null,
     altitudeM: Double? = null,
+    isAltitudeFallback: Boolean = false,
+    altitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
+    onAltitudeSourceModeChange: ((AltitudeSourceMode) -> Unit)? = null,
     trackPoints: List<GeoPoint> = emptyList(),
     selectedTrips: List<TripRecord> = emptyList(),
     savedPlaces: List<SavedPlace> = emptyList(),
@@ -514,27 +517,6 @@ fun OsmMapView(
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
     val accuracyOverlay = remember(context) { AccuracyCircleOverlay(context) }
-    val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
-    var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
-    var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
-
-    LaunchedEffect(showAltitudeOnMap, destinationPoint, destinationAltitude, destinationAltitudeLoading, savedPlaces, altitudeM) {
-        val map = mapView ?: return@LaunchedEffect
-        if (!map.overlays.contains(altitudeOverlay)) {
-            map.overlays.add(altitudeOverlay)
-        }
-        altitudeOverlay.isEnabled = showAltitudeOnMap
-        altitudeOverlay.updateData(
-            geoPoint = locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
-            altitude = altitudeM,
-            savedPlaces = savedPlaces,
-            destinationPoint = destinationPoint,
-            destinationAltitude = destinationAltitude,
-            destinationLoading = destinationAltitudeLoading
-        )
-        map.invalidate()
-    }
-
     val prefs = remember(context) {
         context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
     }
@@ -553,6 +535,39 @@ fun OsmMapView(
 
     var fontScale by remember(activityProfile) {
         mutableStateOf(initialProfileConfig.fontScale)
+    }
+
+    val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
+    var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
+    var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(
+        showAltitudeOnMap,
+        mapView,
+        destinationPoint,
+        destinationAltitude,
+        destinationAltitudeLoading,
+        savedPlaces,
+        altitudeM,
+        isAltitudeFallback,
+        fontScale
+    ) {
+        val map = mapView ?: return@LaunchedEffect
+        if (!map.overlays.contains(altitudeOverlay)) {
+            map.overlays.add(altitudeOverlay)
+        }
+        altitudeOverlay.isEnabled = showAltitudeOnMap
+        altitudeOverlay.updateData(
+            geoPoint = locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
+            altitude = altitudeM,
+            isGpsFallback = isAltitudeFallback,
+            fontScaleFactor = fontScale.scaleFactor,
+            savedPlaces = savedPlaces,
+            destinationPoint = destinationPoint,
+            destinationAltitude = destinationAltitude,
+            destinationLoading = destinationAltitudeLoading
+        )
+        map.invalidate()
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -676,12 +691,25 @@ fun OsmMapView(
 
     // Continuous Frame Loop: smooth dead-reckoning marker & optical camera tracking throttled to ~35fps
     // Strictly suspended when screen is off / app is in background to prevent 350ms background CPU wakeups.
-    LaunchedEffect(isFollowing, destinationPoint, selectedSavedPlace, orientationMode, isRecording, isAppInForeground) {
+    LaunchedEffect(
+        isFollowing,
+        destinationPoint,
+        selectedSavedPlace,
+        orientationMode,
+        isRecording,
+        isAppInForeground,
+        showAltitudeOnMap,
+        isAltitudeFallback,
+        fontScale
+    ) {
         if (!isAppInForeground) return@LaunchedEffect
         var lastRenderedLat = 0.0
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
         var lastRenderedAltitude = -999.0
+        var lastRenderedAltitudeEnabled: Boolean? = null
+        var lastRenderedIsFallback: Boolean? = null
+        var lastRenderedFontScaleFactor: Float = fontScale.scaleFactor
         var lastFrameRenderMs = 0L
 
         while (isActive) {
@@ -758,6 +786,8 @@ fun OsmMapView(
                     altitudeOverlay.updateData(
                         geoPoint = gp,
                         altitude = altitudeM,
+                        isGpsFallback = isAltitudeFallback,
+                        fontScaleFactor = fontScale.scaleFactor,
                         savedPlaces = savedPlaces,
                         destinationPoint = destinationPoint,
                         destinationAltitude = destinationAltitude,
@@ -784,9 +814,13 @@ fun OsmMapView(
                     val dAngle = kotlin.math.abs(roadScreenAngle - lastRenderedAngle)
                     val currentAltVal = altitudeM ?: 0.0
                     val dAlt = kotlin.math.abs(currentAltVal - lastRenderedAltitude)
+                    val altEnabledChanged = lastRenderedAltitudeEnabled != showAltitudeOnMap
+                    val fallbackChanged = lastRenderedIsFallback != isAltitudeFallback
+                    val fontScaleChanged = lastRenderedFontScaleFactor != fontScale.scaleFactor
 
-                    // Only update marker position and invalidate if visually meaningful displacement occurred
-                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f || dAlt > 0.5) {
+                    // Only update marker position and invalidate if visually meaningful displacement occurred or settings changed
+                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f || dAlt > 0.5 ||
+                        altEnabledChanged || fallbackChanged || fontScaleChanged) {
                         m.position = gp
                         m.rotation = -roadScreenAngle
                         m.title = null
@@ -794,6 +828,9 @@ fun OsmMapView(
                         lastRenderedLng = gp.longitude
                         lastRenderedAngle = roadScreenAngle
                         lastRenderedAltitude = currentAltVal
+                        lastRenderedAltitudeEnabled = showAltitudeOnMap
+                        lastRenderedIsFallback = isAltitudeFallback
+                        lastRenderedFontScaleFactor = fontScale.scaleFactor
 
                         if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
                             val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
@@ -1818,8 +1855,11 @@ fun OsmMapView(
                 showAltitudeOnMap = it
                 altitudeOverlay.isEnabled = it
                 MapProfileConfigHelper.setShowAltitudeOnMap(context, it)
+                mapView?.invalidate()
                 mapView?.postInvalidate()
             },
+            currentAltitudeSourceMode = altitudeSourceMode,
+            onAltitudeSourceModeChange = { onAltitudeSourceModeChange?.invoke(it) },
             currentFontScale = fontScale,
             onFontScaleChange = { fontScale = it },
             currentOrientationMode = orientationMode,
@@ -1868,6 +1908,7 @@ fun OsmMapView(
             },
             onDismiss = {
                 showSettingsDialog = false
+                mapView?.invalidate()
                 onDismissMapSettings?.invoke()
             }
         )
@@ -1892,6 +1933,8 @@ private fun MapSettingsDialog(
     onHikingOverlayToggle: (Boolean) -> Unit,
     showAltitudeEnabled: Boolean = true,
     onShowAltitudeToggle: (Boolean) -> Unit = {},
+    currentAltitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
+    onAltitudeSourceModeChange: (AltitudeSourceMode) -> Unit = {},
     currentFontScale: MapFontScale,
     onFontScaleChange: (MapFontScale) -> Unit,
     currentOrientationMode: MapOrientationMode,
@@ -2138,6 +2181,59 @@ private fun MapSettingsDialog(
                         uncheckedTrackColor = ComposeColor(0xFF334155)
                     )
                 )
+            }
+
+            if (showAltitudeEnabled) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp)
+                ) {
+                    Text(
+                        text = "Altitude Source",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            AltitudeSourceMode.DEM to "DEM (Elevation Model)",
+                            AltitudeSourceMode.GPS to "GPS Direct"
+                        ).forEach { (mode, label) ->
+                            val isSelected = currentAltitudeSourceMode == mode
+                            Button(
+                                onClick = { onAltitudeSourceModeChange(mode) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ComposeColor.White,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = if (currentAltitudeSourceMode == AltitudeSourceMode.DEM)
+                            "Topographic elevation model (Open-Meteo) with SQLite caching & instant GPS fallback (dashed border while resolving)"
+                        else
+                            "Raw direct GPS satellite altitude (dashed border)",
+                        fontSize = 10.5.sp,
+                        color = ComposeColor(0xFF64748B),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))

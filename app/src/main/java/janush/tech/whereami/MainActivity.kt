@@ -297,6 +297,9 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showHeatMapSettingsDialog by remember { mutableStateOf(false) }
     var fitHeatMapTrigger by remember { mutableStateOf(0L) }
     val elevationCorrectionProgress by viewModel.elevationCorrectionProgress.collectAsState()
+    val displayAltitude by viewModel.displayAltitude.collectAsState()
+    val isAltitudeFallback by viewModel.isAltitudeFallback.collectAsState()
+    val altitudeSourceMode by viewModel.altitudeSourceMode.collectAsState()
 
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
@@ -702,7 +705,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                 viewModel.selectMapPoint(gp)
             },
             activityProfile = activityProfile,
-            altitudeM = locationData.altitude,
+            altitudeM = displayAltitude ?: locationData.altitude,
+            isAltitudeFallback = isAltitudeFallback,
+            altitudeSourceMode = altitudeSourceMode,
+            onAltitudeSourceModeChange = { viewModel.setAltitudeSourceMode(it) },
             isCompact = localityCardStyle == LocalityCardStyle.COMPACT,
             opticalOffsetX = measuredOpticalOffsetX,
             opticalOffsetY = measuredOpticalOffsetY,
@@ -3846,10 +3852,45 @@ fun LocationScreen(viewModel: MainViewModel) {
                             color = Color.White
                         )
                         Text(
-                            text = "Backfill or correct DEM altitudes for recorded trips and saved places using Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
+                            text = "Backfill or correct DEM altitudes for recorded trips and saved places using Open-Meteo & Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
+
+                        Text(
+                            text = "Primary Altitude Source",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF94A3B8)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                AltitudeSourceMode.DEM to "DEM (Elevation Model)",
+                                AltitudeSourceMode.GPS to "GPS Direct"
+                            ).forEach { (mode, label) ->
+                                val isSelected = altitudeSourceMode == mode
+                                Button(
+                                    onClick = { viewModel.setAltitudeSourceMode(mode) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSelected) Color(0xFF0284C7) else Color(0xFF0F172A)
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
 
                         var showBulkElevationDialog by remember { mutableStateOf(false) }
 
@@ -12181,17 +12222,24 @@ fun ElevationOverrideModeDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onConfirm(selectedMode) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Start Correction", color = Color.White, fontWeight = FontWeight.Bold)
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color.White)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { onConfirm(selectedMode) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Start Correction", color = Color.White, fontWeight = FontWeight.Bold)
+                }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color.White)
-            }
-        }
+        dismissButton = null
     )
 }
