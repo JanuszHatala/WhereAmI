@@ -236,4 +236,92 @@ class AutoSleepManagerTest {
         )
         assertTrue("Morning alarm should still wake manual sleep", shouldWake)
     }
+
+    @Test
+    fun testComputeNextBoundaryTriggerMillisWhenAwake() {
+        // At 15:00 (afternoon), next boundary when awake is 22:30 today
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 15)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val triggerAt = AutoSleepManager.computeNextBoundaryTriggerMillis(
+            nowMillis = cal.timeInMillis,
+            isCurrentlySleeping = false,
+            startH = 22,
+            startM = 30,
+            endH = 6,
+            endM = 30
+        )
+        val triggerCal = java.util.Calendar.getInstance().apply { timeInMillis = triggerAt }
+        assertEquals(22, triggerCal.get(java.util.Calendar.HOUR_OF_DAY))
+        assertEquals(30, triggerCal.get(java.util.Calendar.MINUTE))
+        assertEquals(cal.get(java.util.Calendar.DAY_OF_YEAR), triggerCal.get(java.util.Calendar.DAY_OF_YEAR))
+    }
+
+    @Test
+    fun testComputeNextBoundaryTriggerMillisWhenSleeping() {
+        // At 23:45 (night), next boundary when sleeping is 06:30 tomorrow
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 45)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val triggerAt = AutoSleepManager.computeNextBoundaryTriggerMillis(
+            nowMillis = cal.timeInMillis,
+            isCurrentlySleeping = true,
+            startH = 22,
+            startM = 30,
+            endH = 6,
+            endM = 30
+        )
+        val triggerCal = java.util.Calendar.getInstance().apply { timeInMillis = triggerAt }
+        assertEquals(6, triggerCal.get(java.util.Calendar.HOUR_OF_DAY))
+        assertEquals(30, triggerCal.get(java.util.Calendar.MINUTE))
+        val expectedDay = cal.get(java.util.Calendar.DAY_OF_YEAR) + 1
+        assertEquals(expectedDay, triggerCal.get(java.util.Calendar.DAY_OF_YEAR))
+    }
+
+    @Test
+    fun testLiveSharingEligibleForOvernightSleepWhenStationary() {
+        // In LIVE_ONLY mode, live sharing is active without active trip.
+        // When stationary on nightstand during bedtime window (23:40) with screen off:
+        val shouldSleep = AutoSleepManager.shouldAutoSleep(
+            isAutoSleepEnabled = true,
+            isScreenOff = true,
+            isStationary = true,
+            isTimeInWindow = true, // 23:40 is within 22:30-06:30
+            isDndActive = false,
+            followDnd = true,
+            isNightOrBedtime = true,
+            hasActiveTrip = false,
+            wasManuallyWokenThisCycle = false
+        )
+        assertTrue("Live sharing stationary dwell during bedtime MUST trigger auto sleep", shouldSleep)
+    }
+
+    @Test
+    fun testStandbyInactivityWatcherActiveForLiveSharing() {
+        // Evaluates watcher condition: !isAppInForeground && !hasTrip && !_isStandbySleeping && (isAuto || hasLive)
+        val shouldWatch = { inForeground: Boolean, hasTrip: Boolean, isSleeping: Boolean, isAuto: Boolean, hasLive: Boolean ->
+            !inForeground && !hasTrip && !isSleeping && (isAuto || hasLive)
+        }
+
+        // 1. Live sharing in background without trip: watcher MUST run to evaluate auto sleep and hibernation!
+        assertTrue("Watcher must be active for live sharing in background", shouldWatch(false, false, false, false, true))
+
+        // 2. Auto-detect standby in background: watcher MUST run
+        assertTrue("Watcher must be active for auto-detect standby", shouldWatch(false, false, false, true, false))
+
+        // 3. Active trip recording: watcher must NOT run
+        assertFalse("Watcher must not run during active trip", shouldWatch(false, true, false, true, true))
+
+        // 4. App in foreground: watcher must NOT run
+        assertFalse("Watcher must not run in foreground", shouldWatch(true, false, false, true, true))
+
+        // 5. Already sleeping: watcher must NOT run
+        assertFalse("Watcher must not run when already sleeping", shouldWatch(false, false, true, true, true))
+    }
 }
