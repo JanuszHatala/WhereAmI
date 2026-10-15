@@ -41,7 +41,8 @@ data class SavedPlace(
     val street: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val colorHex: String = "",
-    val altitude: Double? = null
+    val altitude: Double? = null,
+    val altitudeSource: String? = null // "DEM" or "GPS"
 ) {
     val geoPoint: GeoPoint get() = if (altitude != null && altitude > 0.0) GeoPoint(latitude, longitude, altitude) else GeoPoint(latitude, longitude)
 

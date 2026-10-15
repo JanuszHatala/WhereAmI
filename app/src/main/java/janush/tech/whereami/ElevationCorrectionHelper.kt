@@ -43,11 +43,13 @@ object ElevationCorrectionHelper {
             return true
         }
 
+        val (_, currentSources) = db.getTripPointsWithSources(trip.id)
         val indicesToFetch = when (mode) {
             OverrideMode.OVERRIDE_ALL -> trip.points.indices.toList()
             OverrideMode.FILL_MISSING -> trip.points.indices.filter { i ->
                 val a = trip.points[i].altitude
-                a == 0.0 || a.isNaN()
+                val src = currentSources.getOrNull(i) ?: "GPS"
+                a == 0.0 || a.isNaN() || src != "DEM"
             }
         }
 
@@ -57,22 +59,24 @@ object ElevationCorrectionHelper {
         }
 
         val pointsToQuery = indicesToFetch.map { trip.points[it] }
-        val fetchedAltitudes = ElevationRepository.fetchAltitudes(pointsToQuery, isCancelled = isCancelled) { done, total ->
+        val fetchedAltitudes = ElevationRepository.fetchAltitudes(pointsToQuery, db = db, isCancelled = isCancelled) { done, total ->
             onProgress(done, total)
         }
 
         if (isCancelled()) return false
 
         val updatedPoints = trip.points.toMutableList()
+        val updatedSources = if (currentSources.size == trip.points.size) currentSources.toMutableList() else MutableList(trip.points.size) { "GPS" }
         indicesToFetch.forEachIndexed { fetchIdx, origIdx ->
             val alt = fetchedAltitudes.getOrNull(fetchIdx)
             if (alt != null) {
                 val orig = updatedPoints[origIdx]
                 updatedPoints[origIdx] = GeoPoint(orig.latitude, orig.longitude, alt)
+                updatedSources[origIdx] = "DEM"
             }
         }
 
-        db.updateTrip(trip.copy(points = updatedPoints))
+        db.updateTrip(trip.copy(points = updatedPoints), updatedSources)
         return true
     }
 
@@ -92,7 +96,7 @@ object ElevationCorrectionHelper {
             OverrideMode.OVERRIDE_ALL -> places
             OverrideMode.FILL_MISSING -> places.filter { p ->
                 val a = p.altitude
-                a == null || a == 0.0 || a.isNaN()
+                a == null || a == 0.0 || a.isNaN() || p.altitudeSource == "GPS"
             }
         }
 
@@ -102,7 +106,7 @@ object ElevationCorrectionHelper {
         }
 
         val pointsToQuery = placesToFetch.map { it.geoPoint }
-        val fetchedAltitudes = ElevationRepository.fetchAltitudes(pointsToQuery, isCancelled = isCancelled) { done, total ->
+        val fetchedAltitudes = ElevationRepository.fetchAltitudes(pointsToQuery, db = db, isCancelled = isCancelled) { done, total ->
             onProgress(done, total)
         }
 
@@ -111,7 +115,7 @@ object ElevationCorrectionHelper {
         placesToFetch.forEachIndexed { fetchIdx, place ->
             val alt = fetchedAltitudes.getOrNull(fetchIdx)
             if (alt != null && alt > 0.0) {
-                db.updateSavedPlace(place.copy(altitude = alt))
+                db.updateSavedPlace(place.copy(altitude = alt, altitudeSource = "DEM"))
             }
         }
 

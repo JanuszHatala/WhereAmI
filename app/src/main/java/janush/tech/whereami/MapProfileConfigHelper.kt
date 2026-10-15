@@ -131,4 +131,24 @@ object MapProfileConfigHelper {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean("pref_show_altitude_on_map", enabled).apply()
     }
+
+    fun getAltitudeSourceMode(context: Context): AltitudeSourceMode {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val name = prefs.getString("pref_altitude_source", AltitudeSourceMode.DEM.name) ?: AltitudeSourceMode.DEM.name
+        return try {
+            AltitudeSourceMode.valueOf(name)
+        } catch (_: Exception) {
+            AltitudeSourceMode.DEM
+        }
+    }
+
+    fun setAltitudeSourceMode(context: Context, mode: AltitudeSourceMode) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("pref_altitude_source", mode.name).apply()
+    }
+}
+
+enum class AltitudeSourceMode(val label: String, val description: String) {
+    DEM("DEM (Online & Cache)", "Digital Elevation Model with fallback to GPS"),
+    GPS("GPS Direct", "Raw device GNSS / barometric sensor altitude")
 }
