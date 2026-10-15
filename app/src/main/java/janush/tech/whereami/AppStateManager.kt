@@ -243,18 +243,25 @@ class AppStateManager private constructor(private val context: Context) {
         recalculateState()
     }
 
-    private fun updateStandbyInactivityWatcherState() {
+    fun updateStandbyInactivityWatcherState() {
         val tripManager = TripManager.getInstance(context)
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
         val hasTrip = tripManager.activeTrip.value != null
         val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-        if (!isAppInForeground && isAuto && !hasTrip && !hasLive && !_isStandbySleeping.value) {
+        val shouldWatch = !isAppInForeground && !hasTrip && !_isStandbySleeping.value && (isAuto || hasLive)
+        if (shouldWatch) {
             startStandbyInactivityWatcher()
         } else {
             stopStandbyInactivityWatcher()
         }
+    }
+
+    fun onTripEnded() {
+        updateStandbyInactivityWatcherState()
+        AutoSleepManager.getInstance(context).evaluateAutoSleep()
+        recalculateState()
     }
 
     private fun stopStandbyInactivityWatcher() {
@@ -275,8 +282,9 @@ class AppStateManager private constructor(private val context: Context) {
                 val hasTrip = tripManager.activeTrip.value != null
                 val isAuto = tripManager.tripMode.value == TripMode.AUTO
 
-                // Only evaluate inactivity sleep when screen off (not in foreground), AUTO mode, no trip, no live share
-                if (!isAppInForeground && isAuto && !hasTrip && !hasLive && !_isStandbySleeping.value) {
+                // Evaluate inactivity sleep when screen off (not in foreground), no active trip, not already sleeping
+                val shouldWatch = !isAppInForeground && !hasTrip && !_isStandbySleeping.value && (isAuto || hasLive)
+                if (shouldWatch) {
                     val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
                     val currentSpeed = LocationManager.getInstance(context).getLastValidSpeedMs()
                     val isSpeedZero = currentSpeed < 0.35f
@@ -368,6 +376,8 @@ class AppStateManager private constructor(private val context: Context) {
                 if (isAppInForeground) {
                     ensureAutoStandbyServiceRunning()
                 }
+                updateStandbyInactivityWatcherState()
+                AutoSleepManager.getInstance(context).evaluateAutoSleep()
                 recalculateState()
             }
         }
@@ -380,6 +390,8 @@ class AppStateManager private constructor(private val context: Context) {
                 if (isAppInForeground) {
                     ensureAutoStandbyServiceRunning()
                 }
+                updateStandbyInactivityWatcherState()
+                AutoSleepManager.getInstance(context).evaluateAutoSleep()
                 recalculateState()
             }
         }
@@ -390,6 +402,8 @@ class AppStateManager private constructor(private val context: Context) {
                 if (isAppInForeground) {
                     ensureAutoStandbyServiceRunning()
                 }
+                updateStandbyInactivityWatcherState()
+                AutoSleepManager.getInstance(context).evaluateAutoSleep()
                 recalculateState()
             }
         }
@@ -637,13 +651,25 @@ class AppStateManager private constructor(private val context: Context) {
                     val stationaryDuration = now - stationarySinceMs
                     // After 30 seconds of verified stationary dwell, relax GPS sampling to stationary cadence
                     if (stationaryDuration >= 30_000L && !isStationaryCadenceApplied) {
-                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Relaxing GPS cadence and arming MotionWakeManager.")
-                        val stationaryInterval = if (_isCharging.value) 30_000L else 60_000L
-                        val stationaryMinInterval = if (_isCharging.value) 15_000L else 30_000L
-                        locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
+                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Arming MotionWakeManager.")
                         motionManager.arm()
                         LiveSharingManager.getInstance(context).startStationaryHeartbeat()
                         isStationaryCadenceApplied = true
+
+                        // Zero-idle drain in screen-off: on battery, continuous 60s GNSS requests hold GPS lock
+                        // and prevent sustained Doze state. Power down GPS completely; MotionWakeManager will
+                        // instantly wake and restore moving GPS cadence on locomotion.
+                        if (!_isCharging.value && !isAppInForeground) {
+                            TelemetryLogger.log("POWER", "LIVE_ONLY: Screen off and unplugged: Shutting down GPS updates to allow sustained Doze.")
+                            locManager.stopLocationUpdates()
+                        } else {
+                            val stationaryInterval = if (_isCharging.value) 30_000L else 60_000L
+                            val stationaryMinInterval = if (_isCharging.value) 15_000L else 30_000L
+                            locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
+                        }
+
+                        // Immediately evaluate auto-sleep (bedtime schedule or DND)
+                        AutoSleepManager.getInstance(context).evaluateAutoSleep()
                     }
                 } else {
                     stationarySinceMs = 0L
