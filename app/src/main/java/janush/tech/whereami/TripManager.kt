@@ -99,6 +99,7 @@ class TripManager private constructor(private val context: Context) {
     private var autoResumeStartTime: Long = 0L
     private var pauseAutoResumeFirstLocation: Location? = null
     private var pauseAutoResumeFirstTime: Long = 0L
+    private val activeTripPointSources = java.util.Collections.synchronizedList(mutableListOf<String>())
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -325,8 +326,10 @@ class TripManager private constructor(private val context: Context) {
                         .remove(KEY_MANUAL_PAUSE_STICKY)
                         .apply()
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
-                } else {
                     _activeTrip.value = unclosed
+                    val (_, restoredSources) = dbHelper.getTripPointsWithSources(unclosed.id)
+                    activeTripPointSources.clear()
+                    activeTripPointSources.addAll(restoredSources)
                     lastMovingTimestamp = System.currentTimeMillis() // Reset watchdog timer on restore
                     lastLocation = unclosed.points.lastOrNull()?.let {
                         Location("").apply {
@@ -479,6 +482,7 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = now
         movingSinceTimestamp = null
         pendingCandidate = null
+        activeTripPointSources.clear()
 
         val profile = _activityProfile.value
 
@@ -559,13 +563,27 @@ class TripManager private constructor(private val context: Context) {
             // Discard "empty" accidental / instant start-stop trip (e.g. 0m in 1s or stationary jitter)
             dbHelper.deleteTrip(current.id)
             TelemetryLogger.logTrip("DISCARDED_TRIVIAL", current.id, "Trip discarded: dist=${current.distanceMeters.toInt()}m < ${profile.minValidDistanceMeters}m and duration=${durationMs / 1000}s < ${profile.minValidDurationMs / 1000}s")
-        } else {
             val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
-            dbHelper.updateTrip(finishedTrip)
+            val sourcesSnapshot = activeTripPointSources.toList()
+            dbHelper.updateTrip(finishedTrip, sourcesSnapshot)
+            val hadGpsFallback = sourcesSnapshot.any { it != "DEM" }
+            activeTripPointSources.clear()
             TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
             try {
                 CacheManager.getInstance(context).onTripFinished()
             } catch (_: Exception) {}
+
+            if (finishedTrip.points.isNotEmpty() && hadGpsFallback && MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM) {
+                scope.launch {
+                    try {
+                        ElevationCorrectionHelper.correctTrip(
+                            trip = finishedTrip,
+                            mode = OverrideMode.FILL_MISSING,
+                            db = dbHelper
+                        ) { _, _ -> }
+                    } catch (_: Exception) {}
+                }
+            }
         }
         _activeTrip.value = null
         _isPaused.value = false
@@ -898,8 +916,15 @@ class TripManager private constructor(private val context: Context) {
         // New points list: measure displacement from LAST COMMITTED POINT (not just 1-sec fix)
         // to prevent dropping continuous movement at slow speeds (< 18 km/h).
         val newPoints = current.points.toMutableList()
-        val newGeoPoint = if (altitude != null && !altitude.isNaN() && altitude != 0.0) {
-            GeoPoint(lat, lng, altitude)
+        val mode = MapProfileConfigHelper.getAltitudeSourceMode(context)
+        val cachedDem = if (mode == AltitudeSourceMode.DEM) {
+            dbHelper.getCachedElevation(lat, lng)
+        } else null
+
+        val effectiveAlt = cachedDem ?: altitude
+        val altSource = if (cachedDem != null) "DEM" else if (altitude != null && altitude > 0.0) "GPS" else null
+        val newGeoPoint = if (effectiveAlt != null && !effectiveAlt.isNaN() && effectiveAlt != 0.0) {
+            GeoPoint(lat, lng, effectiveAlt)
         } else {
             GeoPoint(lat, lng)
         }
@@ -928,6 +953,7 @@ class TripManager private constructor(private val context: Context) {
         }
         if (newPoints.isEmpty() || (distFromLastCommitted >= commitThreshold && isLocallyMoving)) {
             newPoints.add(newGeoPoint)
+            activeTripPointSources.add(altSource ?: "GPS")
         }
 
         // Check for newly entered locality (with intentional visit filter: penetrate > 150m OR stay > 45s)
@@ -955,8 +981,9 @@ class TripManager private constructor(private val context: Context) {
 
         // Persist progress periodically (every 10 points, pause recorded, or place change)
         if (newPoints.size % 10 == 0 || newPlaces.size != current.placesVisited.size || updatedPauses.size != current.pauses.size) {
+            val sourcesSnapshot = activeTripPointSources.toList()
             scope.launch {
-                dbHelper.updateTrip(updated)
+                dbHelper.updateTrip(updated, sourcesSnapshot)
             }
         }
     }

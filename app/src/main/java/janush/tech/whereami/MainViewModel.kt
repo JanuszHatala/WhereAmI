@@ -147,6 +147,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var destinationElevationJob: Job? = null
 
+    // Altitude Source Mode (DEM vs GPS Direct)
+    private val _altitudeSourceMode = MutableStateFlow(
+        MapProfileConfigHelper.getAltitudeSourceMode(application)
+    )
+    val altitudeSourceMode: StateFlow<AltitudeSourceMode> = _altitudeSourceMode.asStateFlow()
+
+    private val _currentDemAltitude = MutableStateFlow<Double?>(null)
+    val currentDemAltitude: StateFlow<Double?> = _currentDemAltitude.asStateFlow()
+
+    private val _isAltitudeFallback = MutableStateFlow(false)
+    val isAltitudeFallback: StateFlow<Boolean> = _isAltitudeFallback.asStateFlow()
+
+    private val _displayAltitude = MutableStateFlow<Double?>(null)
+    val displayAltitude: StateFlow<Double?> = _displayAltitude.asStateFlow()
+
+    private var demLookupJob: Job? = null
+    private var lastDemLookupLat: Double = 0.0
+    private var lastDemLookupLng: Double = 0.0
+
+    fun setAltitudeSourceMode(mode: AltitudeSourceMode) {
+        _altitudeSourceMode.value = mode
+        MapProfileConfigHelper.setAltitudeSourceMode(getApplication(), mode)
+        val cur = _currentLatLng.value
+        if (cur != null) {
+            updatePositionAltitude(cur.first, cur.second, _locationData.value.altitude)
+        }
+    }
+
+    private fun updatePositionAltitude(lat: Double, lng: Double, gpsAlt: Double?) {
+        val mode = _altitudeSourceMode.value
+        if (mode == AltitudeSourceMode.GPS) {
+            _isAltitudeFallback.value = true
+            _displayAltitude.value = gpsAlt
+            return
+        }
+
+        // Mode is DEM:
+        // 1. Check local SQLite cache first (< 1ms synchronous)
+        val cachedDem = dbHelper.getCachedElevation(lat, lng)
+        if (cachedDem != null && cachedDem > 0.0) {
+            _currentDemAltitude.value = cachedDem
+            _isAltitudeFallback.value = false
+            _displayAltitude.value = cachedDem
+            return
+        }
+
+        // 2. If displacement from last DEM lookup is < 15m and we already have a DEM altitude, keep it
+        val dist = FloatArray(1)
+        android.location.Location.distanceBetween(lastDemLookupLat, lastDemLookupLng, lat, lng, dist)
+        if (dist[0] < 15f && _currentDemAltitude.value != null) {
+            _isAltitudeFallback.value = false
+            _displayAltitude.value = _currentDemAltitude.value
+            return
+        }
+
+        // 3. Fallback temporarily to GPS altitude with dashed border indicator
+        _isAltitudeFallback.value = true
+        _displayAltitude.value = _currentDemAltitude.value ?: gpsAlt
+
+        // 4. Asynchronously query DEM without blocking kinematics or UI
+        demLookupJob?.cancel()
+        demLookupJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(250L) // Debounce rapid GPS bursts
+            lastDemLookupLat = lat
+            lastDemLookupLng = lng
+            val dem = ElevationRepository.getElevation(lat, lng, dbHelper)
+            withContext(Dispatchers.Main) {
+                if (dem != null && dem > 0.0) {
+                    _currentDemAltitude.value = dem
+                    _isAltitudeFallback.value = false
+                    _displayAltitude.value = dem
+                } else {
+                    _isAltitudeFallback.value = true
+                    _displayAltitude.value = gpsAlt
+                }
+            }
+        }
+    }
+
     // Saved Places State
     private val dbHelper = TripDatabaseHelper(application)
     private val _savedPlaces = MutableStateFlow<List<SavedPlace>>(emptyList())
@@ -283,7 +362,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _destinationAltitude.value = null
         _destinationAltitudeLoading.value = true
         destinationElevationJob = viewModelScope.launch(Dispatchers.IO) {
-            val dem = ElevationRepository.getElevation(point.latitude, point.longitude)
+            val dem = ElevationRepository.getElevation(point.latitude, point.longitude, dbHelper)
             val effective = dem ?: _locationData.value.altitude?.takeIf { it > 0.0 }
             if (_destinationPoint.value == point) {
                 _destinationAltitude.value = effective
@@ -387,10 +466,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun readAndSavePlaceAltitude(place: SavedPlace, onUpdated: ((SavedPlace) -> Unit)? = null) {
         viewModelScope.launch(Dispatchers.IO) {
-            val dem = ElevationRepository.getElevation(place.latitude, place.longitude)
+            val dem = ElevationRepository.getElevation(place.latitude, place.longitude, dbHelper)
             val effectiveAlt = dem ?: _locationData.value.altitude?.takeIf { it > 0.0 }
+            val src = if (dem != null) "DEM" else if (effectiveAlt != null) "GPS" else null
             if (effectiveAlt != null && effectiveAlt > 0.0) {
-                val updated = place.copy(altitude = effectiveAlt)
+                val updated = place.copy(altitude = effectiveAlt, altitudeSource = src)
                 dbHelper.updateSavedPlace(updated)
                 loadSavedPlaces()
                 withContext(Dispatchers.Main) {
@@ -705,6 +785,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val previousCity = _locationData.value.primaryPlace?.city
                 _locationData.value = data
 
+                val cur = _currentLatLng.value
+                if (cur != null) {
+                    updatePositionAltitude(cur.first, cur.second, data.altitude)
+                }
+
                 if (_showBorders.value) {
                     val newCity = data.primaryPlace?.city
                     if (newCity != null && newCity != previousCity && newCity != "Unknown City") {
@@ -718,6 +803,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             locationManager.getLocationRaw().collect { fix ->
                 _currentLatLng.value = Triple(fix.lat, fix.lng, fix.bearing)
                 _currentLocationFix.value = fix
+                updatePositionAltitude(fix.lat, fix.lng, _locationData.value.altitude)
             }
         }
     }
