@@ -61,8 +61,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 68** | Map Pin Altitude Badge, Reactive Map Setting Binding, Elevation Data Progress Notification & Saved Places Elevation (2026-10-14) | 5 | 5 | 0 | 0 |
 | **Round 69** | Open-Meteo Multi-Provider DEM & SQLite Cache, Saved Places Callout Badge, Map Font Scaling, Altitude Source Mode & Dashed GPS Fallback (2026-10-15) | 6 | 6 | 0 | 0 |
 | **Round 70** | Smooth Tracking & Map Rotation Repair: 250ms Interpolation Ease-Out, Shortest-Arc Rotation Slew, Low-Speed Polyline Resolution & Stationary Gate Disarm (2026-10-15) | 5 | 5 | 0 | 0 |
+| **Round 71** | Saved Place Altitude Editing, DEM Fetching, Custom Source Flag, Places-First Batch Correction & Single-Line Dialog Buttons (2026-10-15) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **288** | **280** | **0** | **8** |
+| **Total** | | **292** | **284** | **0** | **8** |
 
 
 ---
@@ -933,6 +934,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **TRK70-03** | **Stationary Anchoring Speed Gate Disarm (`PositionStabilizer`)**: Fused stationary anchoring candidate check with strict velocity gate `speedMs < BREAKOUT_SPEED_THRESHOLD_MPS` (0.8 m/s = 2.9 km/h). In-car mount accelerometer stillness during smooth driving can no longer trigger stationary anchoring or turn cursor into a stationary blue dot. | `PositionStabilizer.kt`, `OsmMapView.kt` | **Completed** | Heading preservation verified in 35 FPS render loop and stabilizer gating logic. |
 | **TRK70-04** | **Low-Speed Polyline Resolution & Curve Fidelity (`TripManager`)**: Decoupled `isLocallyMoving` from `autoStopSpeedKmh` (8 km/h). Checked `speedKmh >= 1.5f`, allowing low-speed turns (3-7 km/h) in parking lots and intersections to commit at profile thresholds (3m-5m) rather than dropping fixes until 25m displacement occurred, eliminating 80m building chords. | `TripManager.kt` | **Completed** | Low-speed maneuvering now commits points with full profile fidelity. |
 | **VER-43** | **Build Gate, Version Increment & On-Device Installation**: Increment `versionCode` to 89 and `versionName` to "1.9.6". Unit test verification across `PositionInterpolatorTest`, `MapOrientationSmootherTest`, etc. APK installed on connected device `63160DLCH000RZ`. | `app/build.gradle.kts` | **Completed** | Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed. |
+
+---
+
+## 74. Round 71: Saved Place Altitude Editing, DEM Fetching, Custom Source Flag, Places-First Batch Correction & Single-Line Dialog Buttons (2026-10-15)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **PLACE71-01** | **Editable Altitude & Online DEM Fetching in Edit Saved Place**: In Edit Saved Place dialog, added an altitude input field displaying the place's current altitude and source badge (`CUSTOM`, `DEM`, or `GPS`). Added a dedicated `[⛰️ Get DEM]` button fetching terrain elevation via `MainViewModel.fetchDemAltitudeForLocation` in an asynchronous coroutine with loading spinner and Toast notification. If the user edits the altitude text manually, the source is automatically tagged as `"CUSTOM"` and persisted to the SQLite database. | `SavedPlace.kt`, `MainActivity.kt`, `MainViewModel.kt` | **Completed** | Verified with unit tests covering `SavedPlace.isCustomAltitude` and round-trip persistence. |
+| **CORR71-02** | **Custom Altitude Protection Against Automatic Overwrite**: In `ElevationCorrectionHelper.correctSavedPlaces`, places with `altitudeSource == "CUSTOM"` are explicitly filtered out from batch correction in both `OVERRIDE_ALL` and `FILL_MISSING` modes, ensuring user-defined manual elevations are permanently preserved during bulk terrain corrections. | `ElevationCorrectionHelper.kt`, `ElevationSourceAndFallbackTest.kt` | **Completed** | Verified via `OverrideMode filtering protects CUSTOM altitude from being overwritten` unit test. |
+| **CORR71-03** | **Places-First Execution in Bulk Elevation Correction**: In `ElevationCorrectionManager.startAll`, inverted the phase execution order so Saved Places are corrected first (Phase 1: `SAVED_PLACES`) before the larger trip point sets (Phase 2: `TRIPS`). Notification and UI progress dynamically reflect Saved Places progress (e.g. `0/N`) first, providing immediate feedback for critical location pins. | `ElevationCorrectionManager.kt` | **Completed** | Verified phase sequencing and progress tracking logic. |
+| **UI71-04** | **Single-Line Altitude Correction Dialog Buttons & Responsive Width**: In `ElevationOverrideModeDialog`, applied `DialogProperties(usePlatformDefaultWidth = false)` with `Modifier.fillMaxWidth(0.92f).widthIn(max = 480.dp)`. Added explicit content padding (`14.dp` horizontal, `8.dp` vertical) and `maxLines = 1`, `softWrap = false` to the "Start Correction" button, completely eliminating two-line text wrapping on all phone screen dimensions. Removed em-dashes and updated description text to reference Open-Meteo & Open-Elevation. | `MainActivity.kt` | **Completed** | Verified Compose layout constraints and single-line button rendering. |
+| **VER-44** | **Build Gate & Version Increment**: Increment `versionCode` to 90 and `versionName` to "1.9.7". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL` (all 42 test suites passed). | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed (0 test failures, 0 compilation errors). |
+
 
 
 

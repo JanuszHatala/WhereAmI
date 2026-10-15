@@ -79,6 +79,50 @@ class ElevationSourceAndFallbackTest {
         )
         assertNull(placeNull.altitudeSource)
         assertNull(placeNull.altitude)
+
+        val placeCustom = SavedPlace(
+            id = 4L,
+            name = "Dom Custom",
+            category = PlaceCategory.HOME,
+            latitude = 49.850,
+            longitude = 19.120,
+            altitude = 385.0,
+            altitudeSource = "CUSTOM"
+        )
+        assertEquals("CUSTOM", placeCustom.altitudeSource)
+        assertTrue(placeCustom.isCustomAltitude)
+        assertEquals(385.0, placeCustom.altitude)
+        assertFalse(placeDem.isCustomAltitude)
+        assertFalse(placeGps.isCustomAltitude)
+    }
+
+    @Test
+    fun `OverrideMode filtering protects CUSTOM altitude from being overwritten`() {
+        val placeDem = SavedPlace(id = 1L, name = "Work", category = PlaceCategory.WORK, latitude = 49.8, longitude = 19.0, altitude = 320.0, altitudeSource = "DEM")
+        val placeGps = SavedPlace(id = 2L, name = "Park", category = PlaceCategory.FAVORITE, latitude = 49.8, longitude = 19.0, altitude = 310.0, altitudeSource = "GPS")
+        val placeCustom = SavedPlace(id = 3L, name = "Home", category = PlaceCategory.HOME, latitude = 49.8, longitude = 19.0, altitude = 380.0, altitudeSource = "CUSTOM")
+        val placeMissing = SavedPlace(id = 4L, name = "Shop", category = PlaceCategory.CUSTOM, latitude = 49.8, longitude = 19.0, altitude = null, altitudeSource = null)
+
+        val allPlaces = listOf(placeDem, placeGps, placeCustom, placeMissing)
+
+        // In OVERRIDE_ALL, CUSTOM is protected:
+        val overrideAllTargets = allPlaces.filter { it.altitudeSource != "CUSTOM" }
+        assertEquals(3, overrideAllTargets.size)
+        assertFalse(overrideAllTargets.contains(placeCustom))
+        assertTrue(overrideAllTargets.contains(placeDem))
+        assertTrue(overrideAllTargets.contains(placeGps))
+        assertTrue(overrideAllTargets.contains(placeMissing))
+
+        // In FILL_MISSING, only missing or GPS are fetched, and CUSTOM is strictly protected:
+        val fillMissingTargets = allPlaces.filter { p ->
+            val a = p.altitude
+            (a == null || a == 0.0 || a.isNaN() || p.altitudeSource == "GPS") && p.altitudeSource != "CUSTOM"
+        }
+        assertEquals(2, fillMissingTargets.size)
+        assertTrue(fillMissingTargets.contains(placeGps))
+        assertTrue(fillMissingTargets.contains(placeMissing))
+        assertFalse(fillMissingTargets.contains(placeCustom))
+        assertFalse(fillMissingTargets.contains(placeDem))
     }
 
     @Test
