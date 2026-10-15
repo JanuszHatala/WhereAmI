@@ -37,8 +37,7 @@ class PositionInterpolator {
     private var blendTargetLat: Double = 0.0
     private var blendTargetLng: Double = 0.0
     private var blendStartTime: Long = 0L
-    var blendDurationMs: Long = 600L
-        private set
+    internal val blendDurationMs: Long = 250L
 
     @Synchronized
     fun onNewFix(
@@ -67,35 +66,22 @@ class PositionInterpolator {
             return
         }
 
-        // 1. Capture current visually rendered position at the exact arrival timestamp
-        val currentRendered = if (lastFixTimestamp > 0L) interpolate(timestamp) else null
-        val startLat = if (currentRendered != null && currentRendered.lat != 0.0) currentRendered.lat else lat
-        val startLng = if (currentRendered != null && currentRendered.lng != 0.0) currentRendered.lng else lng
+        // Compute current estimated position at the moment the new fix arrives
+        val currentEst = calculateExtrapolatedPosition(timestamp)
 
-        // Adaptive blend duration: measure actual GPS cadence between fixes
-        val measuredInterval = if (lastFixTimestamp > 0L) (timestamp - lastFixTimestamp) else 1500L
-        if (measuredInterval in 300L..5000L) {
-            blendDurationMs = (measuredInterval * 0.40).toLong().coerceIn(400L, 800L)
-        } else {
-            blendDurationMs = 600L
-        }
+        // Smooth blending: blend from current displayed position to the new fix over blendDurationMs
+        // This eliminates any jump between extrapolation and the newly measured GPS point!
+        blendStartLat = currentEst.first
+        blendStartLng = currentEst.second
+        blendTargetLat = lat
+        blendTargetLng = lng
+        blendStartTime = timestamp
 
-        // 2. Commit new fix parameters
         lastFixLat = lat
         lastFixLng = lng
         lastFixBearing = bearing
         lastFixSpeedMs = speedMs
         lastFixTimestamp = timestamp
-
-        // 3. Project target position to the end of the blend window along the new trajectory.
-        // This eliminates the step discontinuity at (timestamp + blendDurationMs), ensuring
-        // seamless C0 continuity into forward dead-reckoning without jumps or backward rubber-banding.
-        val targetEst = calculateExtrapolatedPosition(timestamp + blendDurationMs)
-        blendStartLat = startLat
-        blendStartLng = startLng
-        blendTargetLat = targetEst.first
-        blendTargetLng = targetEst.second
-        blendStartTime = timestamp
     }
 
     private fun calculateExtrapolatedPosition(nowMs: Long): Pair<Double, Double> {
@@ -128,8 +114,10 @@ class PositionInterpolator {
             return InterpolatedPoint(0.0, 0.0, null, 0f, false)
         }
 
-        // If stationary (< 0.35 m/s or ~1.2 km/h) or anchored, lock strictly to fix coordinates without drifting
-        if (lastFixIsAnchored || lastFixSpeedMs < 0.35f) {
+        val blendElapsed = (nowMs - blendStartTime).coerceAtLeast(0L)
+
+        // If stationary (< 0.35 m/s or ~1.2 km/h) or anchored, lock strictly to fix after blend completes
+        if (lastFixIsAnchored || (lastFixSpeedMs < 0.35f && blendElapsed >= blendDurationMs)) {
             return InterpolatedPoint(
                 lat = lastFixLat,
                 lng = lastFixLng,
@@ -142,7 +130,6 @@ class PositionInterpolator {
         }
 
         // Blending phase after new fix (first 250ms)
-        val blendElapsed = (nowMs - blendStartTime).coerceAtLeast(0L)
         val (lat, lng, isExtrapolated) = if (blendElapsed < blendDurationMs && blendDurationMs > 0L) {
             val progress = (blendElapsed.toFloat() / blendDurationMs).coerceIn(0f, 1f)
             // Ease-out interpolation: smooth deceleration into target
