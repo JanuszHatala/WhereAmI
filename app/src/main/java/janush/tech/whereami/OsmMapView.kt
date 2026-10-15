@@ -668,7 +668,59 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    var smoothedMapOrientation by remember { mutableStateOf(mapView?.mapOrientation ?: 0f) }
+    var orientationAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
+    var lastOrientationAnimStart by remember { mutableStateOf(0L) }
+    DisposableEffect(Unit) {
+        onDispose {
+            orientationAnimator?.cancel()
+        }
+    }
+
+    // Auto-rotation with Shortest-Arc Animation and 0°/360° Wrap Protection
+    LaunchedEffect(currentFix?.bearing, orientationMode, isRecording, isFollowing) {
+        val map = mapView ?: return@LaunchedEffect
+        val rawBearing = currentFix?.bearing
+        if (rawBearing != null) {
+            lastFrozenBearing = rawBearing
+        }
+        val effectiveBearing = rawBearing ?: lastFrozenBearing
+        val isMoving = (currentFix?.speedMs ?: 0f) >= 0.8f || rawBearing != null
+
+        val targetMapOrientation: Float? = when (orientationMode) {
+            MapOrientationMode.COURSE_UP -> {
+                if (!isFollowing) null
+                else if (!isRecording && !isMoving) null
+                else if (effectiveBearing != null) -effectiveBearing
+                else 0f
+            }
+            MapOrientationMode.NORTH -> 0f
+            MapOrientationMode.EAST -> 270f
+            MapOrientationMode.SOUTH -> 180f
+            MapOrientationMode.WEST -> 90f
+        }
+
+        if (targetMapOrientation != null) {
+            val currentRot = map.mapOrientation
+            val delta = shortestAngularDelta(currentRot, targetMapOrientation)
+            val now = System.currentTimeMillis()
+            val cooldownElapsed = (now - lastOrientationAnimStart) >= 400L
+            if (kotlin.math.abs(delta) >= 3.0f && cooldownElapsed) {
+                orientationAnimator?.cancel()
+                lastOrientationAnimStart = now
+                val startRot = currentRot
+                orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 350L
+                    interpolator = android.view.animation.DecelerateInterpolator()
+                    addUpdateListener { anim ->
+                        val frac = anim.animatedFraction
+                        map.mapOrientation = startRot + delta * frac
+                        map.invalidate()
+                    }
+                    start()
+                }
+            }
+        }
+    }
 
     // Feed new GPS fixes into the interpolator
     LaunchedEffect(currentFix) {
@@ -720,42 +772,13 @@ fun OsmMapView(
 
                 if (pt.lat != 0.0 && pt.lng != 0.0) {
                     val gp = GeoPoint(pt.lat, pt.lng)
-                    val rawBearing = currentFix?.bearing
+                    val rawBearing = currentFix.bearing
                     if (rawBearing != null) {
                         lastFrozenBearing = rawBearing
                     }
                     val effectiveBearing = pt.bearing ?: (rawBearing ?: lastFrozenBearing)
-                    val isMoving = !posInterpolator.isStationary()
+                    val isMoving = currentFix.speedMs >= 0.8f || !posInterpolator.isStationary()
                     val hasHeading = isMoving && (effectiveBearing != null)
-
-                    // ── Smooth Map Rotation (Continuous frame-by-frame EMA with velocity clamp) ──
-                    val targetMapOrientation: Float? = when (orientationMode) {
-                        MapOrientationMode.COURSE_UP -> {
-                            if (!isFollowing) null
-                            else if (!isRecording && !isMoving) null
-                            else if (effectiveBearing != null) -effectiveBearing
-                            else 0f
-                        }
-                        MapOrientationMode.NORTH -> 0f
-                        MapOrientationMode.EAST -> 270f
-                        MapOrientationMode.SOUTH -> 180f
-                        MapOrientationMode.WEST -> 90f
-                    }
-
-                    if (targetMapOrientation != null) {
-                        val dtSec = if (lastFrameRenderMs > 0L) {
-                            ((nowMs - lastFrameRenderMs).coerceIn(1L, 100L) / 1000.0f)
-                        } else {
-                            0.033f
-                        }
-                        val maxDeltaDeg = 90.0f * dtSec // Clamped at 90°/second to eradicate 360° spin artifacts
-                        val diff = ((targetMapOrientation - smoothedMapOrientation + 540f) % 360f) - 180f
-                        val step = diff.coerceIn(-maxDeltaDeg, maxDeltaDeg)
-                        smoothedMapOrientation = (smoothedMapOrientation + step + 360f) % 360f
-                        if (kotlin.math.abs(map.mapOrientation - smoothedMapOrientation) >= 0.2f) {
-                            map.mapOrientation = smoothedMapOrientation
-                        }
-                    }
 
                     if (!map.overlays.contains(accuracyOverlay)) {
                         val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
@@ -765,7 +788,7 @@ fun OsmMapView(
                             map.overlays.add(accuracyOverlay)
                         }
                     }
-                    val effectiveAccuracy = pt.accuracy ?: currentFix?.accuracy
+                    val effectiveAccuracy = pt.accuracy ?: currentFix.accuracy
                     accuracyOverlay.updatePosition(pt.lat, pt.lng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
@@ -803,7 +826,7 @@ fun OsmMapView(
                     // Since the canvas itself is pre-rotated by +map.mapOrientation, the net marker angle on SCREEN is -m.rotation.
                     // The vehicle's heading vector on screen (relative to top of screen) is:
                     //   roadScreenAngle = (effectiveBearing + map.mapOrientation + 360f) % 360f.
-                    val roadScreenAngle = if (hasHeading && effectiveBearing != null) {
+                    val roadScreenAngle = if (hasHeading) {
                         (effectiveBearing + map.mapOrientation + 360f) % 360f
                     } else {
                         0f
@@ -3016,3 +3039,14 @@ fun HeatMapLegend(
     }
 }
 
+internal fun normalizeAngle(deg: Float): Float {
+    val mod = deg % 360f
+    return if (mod < 0f) mod + 360f else mod
+}
+
+internal fun shortestAngularDelta(fromDeg: Float, toDeg: Float): Float {
+    val normFrom = normalizeAngle(fromDeg)
+    val normTo = normalizeAngle(toDeg)
+    val diff = (normTo - normFrom + 540f) % 360f - 180f
+    return if (diff < -180f) diff + 360f else diff
+}

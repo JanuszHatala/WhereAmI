@@ -57,6 +57,8 @@ class PositionStabilizer {
     ): StabilizedFix {
         val safeAcc = accuracy.coerceIn(1.0f, 200.0f)
 
+        val isSubLocomotion = speedMs < BREAKOUT_SPEED_THRESHOLD_MPS
+
         // 1. Cold start initialization
         if (lastKalmanTimeMs == 0L) {
             kalmanLat = lat
@@ -66,7 +68,7 @@ class PositionStabilizer {
             varianceLng = degAcc * degAcc
             lastKalmanTimeMs = timestamp
 
-            if (isPhysicalStationary || speedMs < STATIONARY_SPEED_THRESHOLD_MPS) {
+            if (speedMs < STATIONARY_SPEED_THRESHOLD_MPS || (isPhysicalStationary && isSubLocomotion)) {
                 anchorLat = lat
                 anchorLng = lng
                 anchorAccuracy = safeAcc
@@ -76,7 +78,8 @@ class PositionStabilizer {
         }
 
         // 2. Stationary Gate Evaluation
-        val candidateStationary = isPhysicalStationary || speedMs < STATIONARY_SPEED_THRESHOLD_MPS
+        // Physical accelerometer stillness must NEVER anchor during active locomotion (speed >= 0.8 m/s or 2.9 km/h)
+        val candidateStationary = (speedMs < STATIONARY_SPEED_THRESHOLD_MPS) || (isPhysicalStationary && isSubLocomotion)
 
         if (candidateStationary) {
             val curAnchorLat = anchorLat
