@@ -93,10 +93,10 @@ object ElevationCorrectionHelper {
         }
 
         val placesToFetch = when (mode) {
-            OverrideMode.OVERRIDE_ALL -> places
+            OverrideMode.OVERRIDE_ALL -> places.filter { it.altitudeSource != "CUSTOM" }
             OverrideMode.FILL_MISSING -> places.filter { p ->
                 val a = p.altitude
-                a == null || a == 0.0 || a.isNaN() || p.altitudeSource == "GPS"
+                (a == null || a == 0.0 || a.isNaN() || p.altitudeSource == "GPS") && p.altitudeSource != "CUSTOM"
             }
         }
 
