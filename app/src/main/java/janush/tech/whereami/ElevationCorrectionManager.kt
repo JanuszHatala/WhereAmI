@@ -155,14 +155,51 @@ object ElevationCorrectionManager {
             _progress.value = ElevationCorrectionProgress(
                 isRunning = true,
                 isPaused = false,
-                phase = ElevationCorrectionPhase.TRIPS,
+                phase = if (allSavedPlaces.isNotEmpty()) ElevationCorrectionPhase.SAVED_PLACES else ElevationCorrectionPhase.TRIPS,
                 totalTrips = totalTripsCount,
                 totalPlaces = totalPlacesCount,
                 statusMessage = "Starting elevation correction..."
             )
             updateNotification(appCtx, _progress.value)
 
-            // Phase 1: Trips
+            // Phase 1: Saved Places
+            if (allSavedPlaces.isNotEmpty() && isRunningInternal) {
+                while (isPausedInternal && isRunningInternal) {
+                    delay(250L)
+                }
+                if (!isRunningInternal) {
+                    dismissNotification(appCtx)
+                    return@launch
+                }
+
+                _progress.value = _progress.value.copy(
+                    phase = ElevationCorrectionPhase.SAVED_PLACES,
+                    processedTrips = 0,
+                    processedPlaces = 0,
+                    totalPlaces = totalPlacesCount,
+                    statusMessage = "Processing Saved Places (0/$totalPlacesCount)..."
+                )
+                updateNotification(appCtx, _progress.value)
+
+                ElevationCorrectionHelper.correctSavedPlaces(
+                    places = allSavedPlaces,
+                    mode = mode,
+                    db = dbHelper,
+                    isCancelled = { !isRunningInternal }
+                ) { done, total ->
+                    while (isPausedInternal && isRunningInternal) {
+                        Thread.sleep(200)
+                    }
+                    _progress.value = _progress.value.copy(
+                        processedPlaces = done,
+                        totalPlaces = total,
+                        statusMessage = "Processing Saved Places ($done/$total)"
+                    )
+                    updateNotification(appCtx, _progress.value)
+                }
+            }
+
+            // Phase 2: Trips
             for ((idx, trip) in allTrips.withIndex()) {
                 while (isPausedInternal && isRunningInternal) {
                     delay(250L)
@@ -198,41 +235,9 @@ object ElevationCorrectionManager {
                 }
             }
 
-            // Phase 2: Saved Places
-            if (allSavedPlaces.isNotEmpty() && isRunningInternal) {
-                while (isPausedInternal && isRunningInternal) {
-                    delay(250L)
-                }
-                if (!isRunningInternal) {
-                    dismissNotification(appCtx)
-                    return@launch
-                }
-
-                _progress.value = _progress.value.copy(
-                    phase = ElevationCorrectionPhase.SAVED_PLACES,
-                    processedTrips = totalTripsCount,
-                    totalPlaces = totalPlacesCount,
-                    statusMessage = "Checking Saved Places..."
-                )
-                updateNotification(appCtx, _progress.value)
-
-                ElevationCorrectionHelper.correctSavedPlaces(
-                    places = allSavedPlaces,
-                    mode = mode,
-                    db = dbHelper,
-                    isCancelled = { !isRunningInternal }
-                ) { done, total ->
-                    _progress.value = _progress.value.copy(
-                        processedPlaces = done,
-                        totalPlaces = total
-                    )
-                    updateNotification(appCtx, _progress.value)
-                }
-            }
-
             if (isRunningInternal) {
                 onAllCompleted?.invoke()
-                val summary = "Complete: $totalTripsCount trips, $totalPlacesCount saved places updated."
+                val summary = "Complete: $totalPlacesCount saved places and $totalTripsCount trips updated."
                 _progress.value = ElevationCorrectionProgress(
                     isRunning = false,
                     isDone = true,
