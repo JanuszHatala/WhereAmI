@@ -113,21 +113,15 @@ class PositionInterpolatorTest {
     }
 
     @Test
-    fun `adaptive blend duration scales with measured GPS cadence`() {
+    fun `blend duration is stable at 250ms across varying GPS intervals`() {
         val t0 = 10000L
         interpolator.onNewFix(lat = 49.85, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0)
 
-        // 1000ms cadence fix -> 400ms blend (clamped minimum)
         interpolator.onNewFix(lat = 49.8501, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 1000L)
-        assertEquals(400L, interpolator.blendDurationMs)
+        assertEquals(250L, interpolator.blendDurationMs)
 
-        // 1500ms cadence fix -> 600ms blend (1500 * 0.40)
         interpolator.onNewFix(lat = 49.8502, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 2500L)
-        assertEquals(600L, interpolator.blendDurationMs)
-
-        // 2500ms cadence fix -> 800ms blend (clamped maximum 800ms)
-        interpolator.onNewFix(lat = 49.8504, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 5000L)
-        assertEquals(800L, interpolator.blendDurationMs)
+        assertEquals(250L, interpolator.blendDurationMs)
     }
 
     @Test

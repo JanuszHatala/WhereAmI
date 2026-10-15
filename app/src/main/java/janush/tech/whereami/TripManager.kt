@@ -944,8 +944,10 @@ class TripManager private constructor(private val context: Context) {
             return
         }
 
-        // Suppress stationary polyline jitter: do not commit micro jitter points when vehicle/hiker is stopped
-        val isLocallyMoving = isMoving || distFromLastCommitted >= 25.0
+        // Suppress stationary polyline jitter: do not commit micro jitter points when vehicle/hiker is completely stopped.
+        // True physical locomotion (speed >= 1.5 km/h) or displacement >= 15m commits points at high fidelity
+        val isKinematicallyMoving = speedKmh >= 1.5f || isMoving
+        val isLocallyMoving = isKinematicallyMoving || distFromLastCommitted >= 15.0
         val commitThreshold = when (currentProfile) {
             ActivityProfile.WALKING, ActivityProfile.HIKING -> 3.0
             ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 4.0
