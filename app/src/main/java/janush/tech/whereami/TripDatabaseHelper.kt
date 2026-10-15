@@ -17,7 +17,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
-        private const val DATABASE_VERSION = 7
+        private const val DATABASE_VERSION = 8
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -46,6 +46,13 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_SP_CREATED_AT = "created_at"
         private const val COL_SP_COLOR = "color"
         private const val COL_SP_ALTITUDE = "altitude"
+        private const val COL_SP_ALTITUDE_SOURCE = "altitude_source"
+
+        // Local SQLite Elevation Cache
+        private const val TABLE_ELEVATION_CACHE = "elevation_cache"
+        private const val COL_EC_GRID_KEY = "grid_key"
+        private const val COL_EC_ELEVATION = "elevation"
+        private const val COL_EC_UPDATED_AT = "updated_at"
 
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
@@ -141,15 +148,20 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             return list
         }
 
-        internal fun pointsToJson(points: List<GeoPoint>): String {
+        internal fun pointsToJson(points: List<GeoPoint>, sources: List<String>? = null, defaultSource: String? = null): String {
             val array = JSONArray()
-            for (p in points) {
+            for (i in points.indices) {
+                val p = points[i]
                 val obj = JSONObject().apply {
                     put("lat", p.latitude)
                     put("lng", p.longitude)
                     val alt = p.altitude
                     if (!alt.isNaN() && alt != 0.0) {
                         put("alt", alt)
+                        val src = sources?.getOrNull(i) ?: defaultSource
+                        if (src != null) {
+                            put("src", src)
+                        }
                     }
                 }
                 array.put(obj)
@@ -170,6 +182,24 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 }
             } catch (_: Exception) {}
             return list
+        }
+
+        internal fun jsonToPointsWithSources(jsonStr: String): Pair<List<GeoPoint>, List<String>> {
+            val pts = mutableListOf<GeoPoint>()
+            val srcs = mutableListOf<String>()
+            try {
+                val array = JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val lat = obj.getDouble("lat")
+                    val lng = obj.getDouble("lng")
+                    val alt = if (obj.has("alt") && !obj.isNull("alt")) obj.getDouble("alt") else 0.0
+                    val src = obj.optString("src", "GPS")
+                    pts.add(if (alt != 0.0 && !alt.isNaN()) GeoPoint(lat, lng, alt) else GeoPoint(lat, lng))
+                    srcs.add(src)
+                }
+            } catch (_: Exception) {}
+            return Pair(pts, srcs)
         }
     }
 
@@ -193,6 +223,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         db.execSQL(createTripsTable)
 
         createSavedPlacesTable(db)
+        createElevationCacheTable(db)
     }
 
     private fun createSavedPlacesTable(db: SQLiteDatabase) {
@@ -208,10 +239,22 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COL_SP_STREET TEXT DEFAULT '',
                 $COL_SP_CREATED_AT INTEGER NOT NULL,
                 $COL_SP_COLOR TEXT DEFAULT '',
-                $COL_SP_ALTITUDE REAL DEFAULT NULL
+                $COL_SP_ALTITUDE REAL DEFAULT NULL,
+                $COL_SP_ALTITUDE_SOURCE TEXT DEFAULT NULL
             )
         """.trimIndent()
         db.execSQL(createPlacesTable)
+    }
+
+    private fun createElevationCacheTable(db: SQLiteDatabase) {
+        val createCacheTable = """
+            CREATE TABLE IF NOT EXISTS $TABLE_ELEVATION_CACHE (
+                $COL_EC_GRID_KEY TEXT PRIMARY KEY,
+                $COL_EC_ELEVATION REAL NOT NULL,
+                $COL_EC_UPDATED_AT INTEGER NOT NULL
+            )
+        """.trimIndent()
+        db.execSQL(createCacheTable)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -242,6 +285,14 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 7) {
             try {
                 db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 8) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE_SOURCE TEXT DEFAULT NULL")
+            } catch (_: Exception) {}
+            try {
+                createElevationCacheTable(db)
             } catch (_: Exception) {}
         }
     }
@@ -295,6 +346,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         try {
             db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
         } catch (_: Exception) {}
+        try {
+            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE_SOURCE TEXT DEFAULT NULL")
+        } catch (_: Exception) {}
+        try {
+            createElevationCacheTable(db)
+        } catch (_: Exception) {}
     }
 
     private fun cleanUpTrailingDestinationPauses(db: SQLiteDatabase) {
@@ -347,7 +404,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun insertTrip(trip: TripRecord): Long {
+    fun insertTrip(trip: TripRecord, pointSources: List<String>? = null): Long {
         val db = writableDatabase
         val values = ContentValues().apply {
             put(COL_TITLE, trip.title)
@@ -358,14 +415,14 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_AVG_SPEED, trip.avgSpeedKmh)
             put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
             put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
-            put(COL_POINTS_JSON, pointsToJson(trip.points))
+            put(COL_POINTS_JSON, pointsToJson(trip.points, pointSources))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
             put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
         }
         return db.insert(TABLE_TRIPS, null, values)
     }
 
-    fun updateTrip(trip: TripRecord) {
+    fun updateTrip(trip: TripRecord, pointSources: List<String>? = null) {
         val db = writableDatabase
         val values = ContentValues().apply {
             put(COL_TITLE, trip.title)
@@ -376,11 +433,23 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             put(COL_AVG_SPEED, trip.avgSpeedKmh)
             put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
             put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
-            put(COL_POINTS_JSON, pointsToJson(trip.points))
+            put(COL_POINTS_JSON, pointsToJson(trip.points, pointSources))
             put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
             put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
         }
         db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(trip.id.toString()))
+    }
+
+    fun getTripPointsWithSources(id: Long): Pair<List<GeoPoint>, List<String>> {
+        val db = readableDatabase
+        val cursor = db.query(TABLE_TRIPS, arrayOf(COL_POINTS_JSON), "$COL_ID = ?", arrayOf(id.toString()), null, null, null)
+        cursor.use {
+            if (it.moveToFirst()) {
+                val json = it.getString(0) ?: "[]"
+                return jsonToPointsWithSources(json)
+            }
+        }
+        return Pair(emptyList(), emptyList())
     }
 
     fun updateTripActivityProfile(id: Long, profile: ActivityProfile) {
@@ -697,6 +766,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             } else {
                 putNull(COL_SP_ALTITUDE)
             }
+            if (place.altitudeSource != null) {
+                put(COL_SP_ALTITUDE_SOURCE, place.altitudeSource)
+            } else {
+                putNull(COL_SP_ALTITUDE_SOURCE)
+            }
         }
         return db.insert(TABLE_SAVED_PLACES, null, values)
     }
@@ -716,6 +790,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 put(COL_SP_ALTITUDE, place.altitude)
             } else {
                 putNull(COL_SP_ALTITUDE)
+            }
+            if (place.altitudeSource != null) {
+                put(COL_SP_ALTITUDE_SOURCE, place.altitudeSource)
+            } else {
+                putNull(COL_SP_ALTITUDE_SOURCE)
             }
         }
         db.update(TABLE_SAVED_PLACES, values, "$COL_SP_ID = ?", arrayOf(place.id.toString()))
@@ -753,6 +832,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 val colorHex = if (colorIdx >= 0) it.getString(colorIdx) ?: "" else ""
                 val altIdx = it.getColumnIndex(COL_SP_ALTITUDE)
                 val altitude = if (altIdx >= 0 && !it.isNull(altIdx)) it.getDouble(altIdx) else null
+                val altSrcIdx = it.getColumnIndex(COL_SP_ALTITUDE_SOURCE)
+                val altitudeSource = if (altSrcIdx >= 0 && !it.isNull(altSrcIdx)) it.getString(altSrcIdx) else null
 
                 val category = try {
                     PlaceCategory.valueOf(catStr)
@@ -772,12 +853,55 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                         street = street,
                         createdAt = createdAt,
                         colorHex = colorHex,
-                        altitude = altitude
+                        altitude = altitude,
+                        altitudeSource = altitudeSource
                     )
                 )
             }
         }
         return list
+    }
+
+    // ── Local Elevation Cache ──────────────────────────────────────────────────
+    fun getCachedElevation(lat: Double, lng: Double): Double? {
+        val gridKey = "%.4f,%.4f".format(java.util.Locale.US, lat, lng)
+        val db = readableDatabase
+        return try {
+            val cursor = db.query(
+                TABLE_ELEVATION_CACHE,
+                arrayOf(COL_EC_ELEVATION),
+                "$COL_EC_GRID_KEY = ?",
+                arrayOf(gridKey),
+                null, null, null
+            )
+            cursor.use {
+                if (it.moveToFirst()) it.getDouble(0) else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun putCachedElevations(entries: List<Triple<Double, Double, Double>>) {
+        if (entries.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val now = System.currentTimeMillis()
+            for ((lat, lng, elev) in entries) {
+                val gridKey = "%.4f,%.4f".format(java.util.Locale.US, lat, lng)
+                val cv = ContentValues().apply {
+                    put(COL_EC_GRID_KEY, gridKey)
+                    put(COL_EC_ELEVATION, elev)
+                    put(COL_EC_UPDATED_AT, now)
+                }
+                db.insertWithOnConflict(TABLE_ELEVATION_CACHE, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } catch (_: Exception) {
+        } finally {
+            db.endTransaction()
+        }
     }
 
 
