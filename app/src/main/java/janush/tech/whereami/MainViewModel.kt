@@ -166,24 +166,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastDemLookupLat: Double = 0.0
     private var lastDemLookupLng: Double = 0.0
 
+    private val _pendingDemTripPrompt = MutableStateFlow<TripRecord?>(null)
+    val pendingDemTripPrompt: StateFlow<TripRecord?> = _pendingDemTripPrompt.asStateFlow()
+
+    fun dismissDemTripPrompt() {
+        _pendingDemTripPrompt.value = null
+    }
+
+    fun confirmDemTripSupplement(tripId: Long) {
+        _pendingDemTripPrompt.value = null
+        correctTripElevation(tripId, OverrideMode.FILL_MISSING)
+    }
+
     fun setAltitudeSourceMode(mode: AltitudeSourceMode) {
         _altitudeSourceMode.value = mode
         MapProfileConfigHelper.setAltitudeSourceMode(getApplication(), mode)
         val cur = _currentLatLng.value
+        val speedKmh = (_currentLocationFix.value?.speedMs ?: 0f) * 3.6f
         if (cur != null) {
-            updatePositionAltitude(cur.first, cur.second, _locationData.value.altitude)
+            updatePositionAltitude(cur.first, cur.second, _locationData.value.altitude, speedKmh)
         }
     }
 
-    private fun updatePositionAltitude(lat: Double, lng: Double, gpsAlt: Double?) {
+    private fun updatePositionAltitude(lat: Double, lng: Double, gpsAlt: Double?, speedKmh: Float = 0f) {
         val mode = _altitudeSourceMode.value
         if (mode == AltitudeSourceMode.GPS) {
             _isAltitudeFallback.value = true
-            _displayAltitude.value = gpsAlt
+            _displayAltitude.value = if (speedKmh < 15f) gpsAlt else null
             return
         }
 
         // Mode is DEM:
+        // Speed gating: at speed >= 15 km/h, clear display altitude and cancel pending DEM jobs
+        if (speedKmh >= 15f) {
+            demLookupJob?.cancel()
+            _isAltitudeFallback.value = true
+            _displayAltitude.value = null
+            return
+        }
+
         // 1. Check local SQLite cache first (< 1ms synchronous)
         val cachedDem = dbHelper.getCachedElevation(lat, lng)
         if (cachedDem != null && cachedDem > 0.0) {
@@ -193,18 +214,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 2. If displacement from last DEM lookup is < 15m and we already have a DEM altitude, keep it
+        // 2. If displacement from last DEM lookup is < 15m and we already have a valid DEM altitude, keep it
         val dist = FloatArray(1)
         android.location.Location.distanceBetween(lastDemLookupLat, lastDemLookupLng, lat, lng, dist)
-        if (dist[0] < 15f && _currentDemAltitude.value != null) {
-            _isAltitudeFallback.value = false
+        if (dist[0] < 15f && _currentDemAltitude.value != null && !_isAltitudeFallback.value) {
             _displayAltitude.value = _currentDemAltitude.value
             return
         }
 
-        // 3. Fallback temporarily to GPS altitude with dashed border indicator
+        // 3. Uncached and speed < 15 km/h: do NOT show stale value from far away; mark fallback and clear display
         _isAltitudeFallback.value = true
-        _displayAltitude.value = _currentDemAltitude.value ?: gpsAlt
+        _displayAltitude.value = null
 
         // 4. Asynchronously query DEM without blocking kinematics or UI
         demLookupJob?.cancel()
@@ -220,7 +240,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _displayAltitude.value = dem
                 } else {
                     _isAltitudeFallback.value = true
-                    _displayAltitude.value = gpsAlt
+                    _displayAltitude.value = null
                 }
             }
         }
@@ -340,6 +360,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (finishedId != null && trips.any { t -> t.id == finishedId }) {
                         _selectedTripIds.value = setOf(finishedId)
                         _fitTrackTrigger.value = System.currentTimeMillis()
+
+                        if (_altitudeSourceMode.value == AltitudeSourceMode.DEM) {
+                            val needsDem = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                                dbHelper.tripHasGpsAltitudePoints(finishedId)
+                            }
+                            if (needsDem) {
+                                _pendingDemTripPrompt.value = trips.firstOrNull { it.id == finishedId }
+                            }
+                        }
                     }
                 }
             }
@@ -790,8 +819,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _locationData.value = data
 
                 val cur = _currentLatLng.value
+                val speedKmh = (_currentLocationFix.value?.speedMs ?: 0f) * 3.6f
                 if (cur != null) {
-                    updatePositionAltitude(cur.first, cur.second, data.altitude)
+                    updatePositionAltitude(cur.first, cur.second, data.altitude, speedKmh)
                 }
 
                 if (_showBorders.value) {
@@ -807,7 +837,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             locationManager.getLocationRaw().collect { fix ->
                 _currentLatLng.value = Triple(fix.lat, fix.lng, fix.bearing)
                 _currentLocationFix.value = fix
-                updatePositionAltitude(fix.lat, fix.lng, _locationData.value.altitude)
+                val speedKmh = fix.speedMs * 3.6f
+                updatePositionAltitude(fix.lat, fix.lng, _locationData.value.altitude, speedKmh)
             }
         }
     }

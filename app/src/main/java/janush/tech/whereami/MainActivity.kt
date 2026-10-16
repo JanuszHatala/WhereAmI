@@ -301,6 +301,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val displayAltitude by viewModel.displayAltitude.collectAsState()
     val isAltitudeFallback by viewModel.isAltitudeFallback.collectAsState()
     val altitudeSourceMode by viewModel.altitudeSourceMode.collectAsState()
+    val pendingDemTripPrompt by viewModel.pendingDemTripPrompt.collectAsState()
 
     val powerPolicy by viewModel.powerPolicy.collectAsState()
     val isCharging by viewModel.isCharging.collectAsState()
@@ -7331,6 +7332,19 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+
+    if (pendingDemTripPrompt != null) {
+        val trip = pendingDemTripPrompt!!
+        PostTripDemSupplementDialog(
+            trip = trip,
+            onConfirm = {
+                viewModel.confirmDemTripSupplement(trip.id)
+            },
+            onDismiss = {
+                viewModel.dismissDemTripPrompt()
+            }
+        )
+    }
 }
 
 @Composable
@@ -12398,5 +12412,77 @@ fun ElevationOverrideModeDialog(
             }
         },
         dismissButton = null
+    )
+}
+
+@Composable
+fun PostTripDemSupplementDialog(
+    trip: TripRecord,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E293B),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                EmojiText("⛰️", fontSize = 18.sp, yOffsetDp = 0.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Supplement DEM Altitude?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Trip \"${trip.title.ifBlank { "Recorded Trip" }}\" was completed with preferred DEM altitude source, but some track points were recorded with GPS altitude while moving.",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Would you like to fetch high-accuracy DEM elevations in the background to refine the elevation profile and climb statistics?",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Supplement DEM",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Keep GPS / Later",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
     )
 }
