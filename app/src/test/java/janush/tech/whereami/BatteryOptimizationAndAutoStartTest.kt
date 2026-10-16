@@ -741,4 +741,35 @@ class BatteryOptimizationAndAutoStartTest {
             shouldShutdownGpsWhenStationary(false, true)
         )
     }
+
+    @Test
+    fun testAltitudeBadgeSpeedGatingRule() {
+        val shouldShowAltitudeBadge = { speedKmh: Float, hasValidDem: Boolean, isGpsMode: Boolean ->
+            if (speedKmh >= 15f) {
+                false
+            } else if (!isGpsMode && !hasValidDem) {
+                false
+            } else {
+                true
+            }
+        }
+
+        // Stationary / walking (< 15 km/h) with valid DEM: visible
+        assertTrue(shouldShowAltitudeBadge(0f, true, false))
+        assertTrue(shouldShowAltitudeBadge(5f, true, false))
+        assertTrue(shouldShowAltitudeBadge(14.9f, true, false))
+
+        // Moving at driving speed (>= 15 km/h): hidden even if DEM is available
+        assertFalse(shouldShowAltitudeBadge(15f, true, false))
+        assertTrue(!shouldShowAltitudeBadge(25f, true, false))
+        assertTrue(!shouldShowAltitudeBadge(60f, true, false))
+
+        // In DEM mode, if DEM is not valid (fallback), hidden even when stationary
+        assertFalse(shouldShowAltitudeBadge(0f, false, false))
+
+        // In GPS mode, visible when stationary regardless of DEM
+        assertTrue(shouldShowAltitudeBadge(0f, false, true))
+        // In GPS mode, hidden at high speed
+        assertFalse(shouldShowAltitudeBadge(30f, false, true))
+    }
 }
