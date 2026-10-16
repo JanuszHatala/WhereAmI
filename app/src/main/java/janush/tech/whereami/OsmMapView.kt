@@ -550,18 +550,23 @@ fun OsmMapView(
         savedPlaces,
         altitudeM,
         isAltitudeFallback,
-        fontScale
+        altitudeSourceMode,
+        fontScale,
+        locationFix?.speedMs
     ) {
         val map = mapView ?: return@LaunchedEffect
         if (!map.overlays.contains(altitudeOverlay)) {
             map.overlays.add(altitudeOverlay)
         }
+        val currentSpeed = (locationFix?.speedMs ?: 0f) * 3.6f
         altitudeOverlay.isEnabled = showAltitudeOnMap
         altitudeOverlay.updateData(
             geoPoint = locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
             altitude = altitudeM,
             isGpsFallback = isAltitudeFallback,
             fontScaleFactor = fontScale.scaleFactor,
+            currentSpeedKmh = currentSpeed,
+            isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
             savedPlaces = savedPlaces,
             destinationPoint = destinationPoint,
             destinationAltitude = destinationAltitude,
@@ -805,12 +810,15 @@ fun OsmMapView(
                     if (!map.overlays.contains(altitudeOverlay)) {
                         map.overlays.add(altitudeOverlay)
                     }
+                    val frameSpeed = (locationFix?.speedMs ?: currentFix?.speedMs ?: 0f) * 3.6f
                     altitudeOverlay.isEnabled = showAltitudeOnMap
                     altitudeOverlay.updateData(
                         geoPoint = gp,
                         altitude = altitudeM,
                         isGpsFallback = isAltitudeFallback,
                         fontScaleFactor = fontScale.scaleFactor,
+                        currentSpeedKmh = frameSpeed,
+                        isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
                         savedPlaces = savedPlaces,
                         destinationPoint = destinationPoint,
                         destinationAltitude = destinationAltitude,
