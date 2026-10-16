@@ -164,7 +164,8 @@ class AutoSleepManager private constructor(private val context: Context) {
             followDnd: Boolean,
             isMorning: Boolean,
             isAlarmFired: Boolean,
-            isManualSleep: Boolean = false
+            isManualSleep: Boolean = false,
+            wasDndActiveInSession: Boolean = false
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
 
@@ -177,8 +178,8 @@ class AutoSleepManager private constructor(private val context: Context) {
             // Morning alarm fired
             if (isAlarmFired && isMorning) return true
 
-            // DND turned off in the morning
-            if (followDnd && !isDndActive && isMorning) return true
+            // DND was active during sleep, and user turned it off in the morning
+            if (followDnd && wasDndActiveInSession && !isDndActive && isMorning) return true
 
             // Bedtime window completely ended and DND is not holding it
             if (!isTimeInWindow && (!followDnd || !isDndActive)) return true
@@ -207,6 +208,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     private var wasManuallyWokenThisCycle = false
     private var lastEvaluatedCycleDate = -1
     private var isManualSleep = false
+    private var wasDndActiveInSession = false
 
     init {
         INSTANCE = this
@@ -215,11 +217,13 @@ class AutoSleepManager private constructor(private val context: Context) {
 
     fun onManualSleepEntered() {
         isManualSleep = true
+        wasDndActiveInSession = isDndActive()
         TelemetryLogger.log("POWER", "AutoSleepManager: Manual sleep registered (will not auto-wake on bedtime window end)")
     }
 
     fun onSleepWoken() {
         isManualSleep = false
+        wasDndActiveInSession = false
     }
 
     fun isManualSleepActive(): Boolean = isManualSleep
@@ -431,11 +435,15 @@ class AutoSleepManager private constructor(private val context: Context) {
                 wasManuallyWokenThisCycle = wasManuallyWokenThisCycle
             )
             if (shouldSleep) {
+                wasDndActiveInSession = dndActive
                 val reason = if (dndActive && _followDnd.value) "DND active in night/bedtime window" else "Bedtime schedule ($startH:$startM-$endH:$endM)"
                 TelemetryLogger.log("POWER", "AutoSleep triggered: $reason. Entering standby sleep mode.")
                 appStateMgr.enterStandbySleep()
             }
         } else {
+            if (dndActive) {
+                wasDndActiveInSession = true
+            }
             val shouldWake = shouldAutoWake(
                 isAutoSleepEnabled = _autoSleepEnabled.value,
                 isCurrentlySleeping = true,
@@ -444,12 +452,18 @@ class AutoSleepManager private constructor(private val context: Context) {
                 followDnd = _followDnd.value,
                 isMorning = isMorning,
                 isAlarmFired = alarmFired,
-                isManualSleep = isManualSleep
+                isManualSleep = isManualSleep,
+                wasDndActiveInSession = wasDndActiveInSession
             )
             if (shouldWake) {
+                val isEarlyWake = inWindow && (alarmFired || (!dndActive && wasDndActiveInSession))
+                if (isEarlyWake) {
+                    wasManuallyWokenThisCycle = true
+                    TelemetryLogger.log("POWER", "AutoSleep early wake: suppressed auto-sleep for remainder of bedtime window")
+                }
                 val reason = when {
                     alarmFired -> "Morning alarm fired"
-                    !dndActive && isMorning && _followDnd.value -> "DND turned off in morning"
+                    !dndActive && isMorning && _followDnd.value && wasDndActiveInSession -> "DND turned off in morning"
                     else -> "Bedtime window ended"
                 }
                 TelemetryLogger.log("POWER", "AutoSleep waking up: $reason.")
