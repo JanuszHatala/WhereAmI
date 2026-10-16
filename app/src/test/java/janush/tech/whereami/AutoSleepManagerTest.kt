@@ -144,7 +144,7 @@ class AutoSleepManagerTest {
 
     @Test
     fun testDndOffInMorningTriggersEarlyWake() {
-        // Morning at 05:45 (before 06:30 bedtime end), user turns off DND
+        // Morning at 05:45 (before 06:30 bedtime end), user had DND on during sleep and turns off DND
         val shouldWake = AutoSleepManager.shouldAutoWake(
             isAutoSleepEnabled = true,
             isCurrentlySleeping = true,
@@ -152,9 +152,73 @@ class AutoSleepManagerTest {
             isDndActive = false, // DND turned off!
             followDnd = true,
             isMorning = true, // 05:45 is morning window
-            isAlarmFired = false
+            isAlarmFired = false,
+            wasDndActiveInSession = true // Prior DND active during sleep!
         )
         assertTrue("DND turned off in morning must trigger early wake", shouldWake)
+    }
+
+    @Test
+    fun testNoPriorDndInMorningDoesNotWakeInsideBedtimeWindow() {
+        // Morning at 05:45 (before 06:30 bedtime end), user never used DND
+        val shouldWake = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = true, // Still within 22:30-06:30 schedule
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            wasDndActiveInSession = false // No prior DND!
+        )
+        assertFalse("Without prior DND, phone must stay asleep inside bedtime window", shouldWake)
+    }
+
+    @Test
+    fun testNoSleepWakeOscillationInMorning() {
+        // At 05:30 (inside bedtime window), stationary, screen off, DND never enabled
+        val shouldSleep = AutoSleepManager.shouldAutoSleep(
+            isAutoSleepEnabled = true,
+            isScreenOff = true,
+            isStationary = true,
+            isTimeInWindow = true,
+            isDndActive = false,
+            followDnd = true,
+            isNightOrBedtime = true,
+            hasActiveTrip = false,
+            wasManuallyWokenThisCycle = false
+        )
+        assertTrue("Inside bedtime window, stationary device enters/maintains sleep", shouldSleep)
+
+        val shouldWake = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = true,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            wasDndActiveInSession = false
+        )
+        assertFalse("Device must NOT wake up early if DND was never active", shouldWake)
+    }
+
+    @Test
+    fun testEarlyWakeSuppressesReenteringSleepInSameWindow() {
+        // User woke up early via morning alarm at 06:00 (inside 22:30-06:30 window)
+        // wasManuallyWokenThisCycle is set to true to prevent immediate oscillation back into sleep
+        val shouldSleepAfterEarlyWake = AutoSleepManager.shouldAutoSleep(
+            isAutoSleepEnabled = true,
+            isScreenOff = true,
+            isStationary = true,
+            isTimeInWindow = true,
+            isDndActive = false,
+            followDnd = true,
+            isNightOrBedtime = true,
+            hasActiveTrip = false,
+            wasManuallyWokenThisCycle = true // Early wake override!
+        )
+        assertFalse("After early wake, auto-sleep must be suppressed for remainder of bedtime window", shouldSleepAfterEarlyWake)
     }
 
     @Test

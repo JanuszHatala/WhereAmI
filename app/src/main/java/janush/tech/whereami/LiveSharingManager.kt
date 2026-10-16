@@ -458,25 +458,12 @@ class LiveSharingManager private constructor(private val context: Context) {
                 var effectiveAccuracy = lastRecordedAccuracy
 
                 if (isCurrentlySleeping) {
-                    // One-shot quick GNSS fix attempt (with 10-second timeout)
-                    try {
-                        withTimeoutOrNull(10_000L) {
-                            val locData = LocationManager.getInstance(context).getCurrentLocationSingle(DisplayLanguage.PL)
-                            val snap = LocationManager.getInstance(context).lastLocationSnapshot
-                            if (snap != null && snap.lat != 0.0 && snap.lng != 0.0) {
-                                effectiveLat = snap.lat
-                                effectiveLng = snap.lng
-                                lastRecordedLat = snap.lat
-                                lastRecordedLng = snap.lng
-                                effectiveAccuracy = snap.accuracy
-                                lastRecordedAccuracy = snap.accuracy
-                                effectiveCity = snap.multiPlace?.pl?.city?.takeIf { it.isNotBlank() }
-                                TelemetryLogger.log("POWER", "Sleep Mode: 60m one-shot GNSS fix acquired ($effectiveLat, $effectiveLng)")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        TelemetryLogger.log("POWER", "Sleep Mode: one-shot GNSS fix skipped/failed: ${e.message}")
-                    }
+                    // Zero GNSS drain during sleep mode: Device is resting indoors/in bed.
+                    // Transmit presence heartbeat using cached/last recorded coordinates without powering up GPS chip.
+                    effectiveLat = lastRecordedLat
+                    effectiveLng = lastRecordedLng
+                    effectiveAccuracy = lastRecordedAccuracy
+                    TelemetryLogger.log("POWER", "Sleep Mode: transmitting presence heartbeat with cached coordinates ($effectiveLat, $effectiveLng)")
                 }
 
                 if (effectiveLat != 0.0 && effectiveLng != 0.0) {
