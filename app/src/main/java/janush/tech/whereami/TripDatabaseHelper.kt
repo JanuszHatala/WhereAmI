@@ -987,6 +987,19 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     fun getTrip(tripId: Long): TripRecord? = getTripsByIds(listOf(tripId)).firstOrNull()
 
+    fun tripHasGpsAltitudePoints(tripId: Long): Boolean {
+        val db = readableDatabase
+        val cursor = db.query(TABLE_TRIPS, arrayOf(COL_POINTS_JSON), "$COL_ID = ?", arrayOf(tripId.toString()), null, null, null)
+        cursor.use {
+            if (it.moveToFirst()) {
+                val jsonStr = it.getString(0) ?: ""
+                val (_, sources) = jsonToPointsWithSources(jsonStr)
+                return sources.any { s -> s == "GPS" }
+            }
+        }
+        return false
+    }
+
     fun deleteTripPause(tripId: Long, pauseIndex: Int): Boolean {
         val trip = getTrip(tripId) ?: return false
         if (pauseIndex < 0 || pauseIndex >= trip.pauses.size) return false
