@@ -1136,8 +1136,12 @@ class LocationManager private constructor(private val context: Context) {
     @SuppressLint("MissingPermission")
     suspend fun getCurrentLocationSingle(displayLanguage: DisplayLanguage): LocationData =
         suspendCancellableCoroutine { cont ->
+            val cts = com.google.android.gms.tasks.CancellationTokenSource()
+            cont.invokeOnCancellation {
+                cts.cancel()
+            }
             try {
-                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
                     .addOnSuccessListener { location ->
                         if (location != null) {
                             val rawSpeed = if (location.hasSpeed()) location.speed else null
