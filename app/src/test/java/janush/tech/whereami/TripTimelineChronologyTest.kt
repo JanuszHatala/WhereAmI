@@ -209,4 +209,49 @@ class TripTimelineChronologyTest {
         // Travel duration from Pause END (16:25:00) to Kojszówka (16:26:57) = 117s (1m 57s)
         assertEquals(117 * 1000L, kojszowkaItem.legDurationMs)
     }
+
+    @Test
+    fun testRoundTripDestinationArrivalSynthesis() {
+        // Given a round-trip starting and ending in Czaniec
+        val tStart = 1727878000000L
+        val tEnd = tStart + 3600 * 1000L // 1 hour later
+        val totalTripDist = 23200.0 // 23.2 km
+
+        val czaniecStart = VisitedPlace(
+            placeName = "Czaniec",
+            hierarchySubtitle = "gm. Porąbka",
+            timestamp = tStart,
+            distanceAtEntryMeters = 0.0,
+            latitude = 49.85,
+            longitude = 19.25
+        )
+
+        val items = mutableListOf<RouteTimelineItem>()
+        var placeOrder = 1
+        items.add(RouteTimelineItem.Place(czaniecStart, placeOrder++, 0.0, 0L))
+
+        // Check synthesis condition: totalTripDist > 300m and totalTripDist - lastPlace.distanceAtEntryMeters > 300m
+        val lastPlaceItem = items.filterIsInstance<RouteTimelineItem.Place>().lastOrNull()
+        if (lastPlaceItem != null && totalTripDist > 300.0 && (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters) > 300.0) {
+            val destinationPlace = czaniecStart.copy(
+                timestamp = tEnd,
+                distanceAtEntryMeters = totalTripDist
+            )
+            val finalLegDist = totalTripDist - lastPlaceItem.place.distanceAtEntryMeters
+            val finalLegDur = tEnd - lastPlaceItem.place.timestamp
+            items.add(RouteTimelineItem.Place(destinationPlace, placeOrder++, finalLegDist, finalLegDur))
+        }
+
+        assertEquals(2, items.size)
+        val firstItem = items[0] as RouteTimelineItem.Place
+        val lastItem = items[1] as RouteTimelineItem.Place
+
+        assertEquals("Czaniec", firstItem.place.placeName)
+        assertEquals(0.0, firstItem.place.distanceAtEntryMeters, 0.001)
+
+        assertEquals("Czaniec", lastItem.place.placeName)
+        assertEquals(23200.0, lastItem.place.distanceAtEntryMeters, 0.001)
+        assertEquals(23200.0, lastItem.legDistanceMeters, 0.001)
+        assertEquals(3600 * 1000L, lastItem.legDurationMs)
+    }
 }
