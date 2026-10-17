@@ -63,6 +63,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -779,7 +780,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                             onSetActivityProfile = { viewModel.setActivityProfile(it) },
-                            modifier = Modifier.widthIn(max = 360.dp)
+                            modifier = Modifier.widthIn(max = 410.dp)
                         )
                     }
 
@@ -9519,85 +9520,102 @@ private fun LocalityCard(
 
                     // ── Right Utility Icons: Saved Places & Direct Collapse ──
                     Row(
+                        modifier = Modifier.weight(1f, fill = false),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (nearbySavedPlace != null) {
-                            // Responsive Saved Place badge in Row 1:
-                            // Dynamically scale font size to display the full name comfortably without premature truncation.
-                            // If the name is excessively long (> 18 chars), smoothly fall back to a clean icon-only pill.
-                            val isLiveSharingActive = liveSession?.isActive == true
-                            val maxBadgeWidth = if (isLiveSharingActive) 155.dp else 185.dp
-                            val placeName = nearbySavedPlace.name.trim()
+                            BoxWithConstraints(
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                val maxAvailableWidth = maxWidth
+                                val density = LocalDensity.current
+                                val isLiveSharingActive = liveSession?.isActive == true
+                                val maxBadgeWidth = if (isLiveSharingActive) 155.dp else 185.dp
+                                val placeName = nearbySavedPlace.name.trim()
 
-                            // Dynamic font size: scale down font size as name length increases
-                            val badgeFontSize = when {
-                                placeName.length <= 8 -> 11.sp
-                                placeName.length <= 13 -> 10.sp
-                                else -> 9.sp
-                            }
+                                // Dynamic font size: scale down font size as name length increases
+                                val badgeFontSize = when {
+                                    placeName.length <= 8 -> 11.sp
+                                    placeName.length <= 13 -> 10.sp
+                                    else -> 9.sp
+                                }
 
-                            // Show icon-only only if name is excessively long
-                            val showIconOnly = placeName.length > 18
-
-                            if (showIconOnly) {
-                                Surface(
-                                    onClick = onOpenSavedPlaces,
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0x3310B981),
-                                    border = BorderStroke(1.dp, Color(0x5510B981)),
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        EmojiText(
-                                            emoji = nearbySavedPlace.category.iconEmoji,
-                                            fontSize = 16.sp,
-                                            yOffsetDp = 0.dp
-                                        )
+                                val textPaint = remember(badgeFontSize, density) {
+                                    android.text.TextPaint().apply {
+                                        textSize = with(density) { badgeFontSize.toPx() }
+                                        typeface = android.graphics.Typeface.DEFAULT_BOLD
                                     }
                                 }
-                            } else {
-                                Surface(
-                                    onClick = onOpenSavedPlaces,
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0x3310B981),
-                                    border = BorderStroke(1.dp, Color(0x5510B981)),
-                                    modifier = Modifier
-                                        .height(40.dp)
-                                        .widthIn(min = 40.dp, max = maxBadgeWidth)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .padding(horizontal = 7.dp)
+
+                                // Internal badge horizontal padding (7dp * 2 = 14dp), emoji icon (16dp), and spacer (4dp) = 34dp
+                                val availableTextWidthPx = with(density) { (maxAvailableWidth - 34.dp).coerceAtLeast(0.dp).toPx() }
+
+                                val showIconOnly = SavedPlaceBadgeLayoutHelper.shouldShowIconOnly(
+                                    placeName = placeName,
+                                    availableTextWidthPx = availableTextWidthPx,
+                                    textMeasurer = { textPaint.measureText(it) }
+                                )
+
+                                if (showIconOnly) {
+                                    Surface(
+                                        onClick = onOpenSavedPlaces,
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0x3310B981),
+                                        border = BorderStroke(1.dp, Color(0x5510B981)),
+                                        modifier = Modifier.size(40.dp)
                                     ) {
-                                        EmojiText(
-                                            emoji = nearbySavedPlace.category.iconEmoji,
-                                            fontSize = if (placeName.length > 12) 13.sp else 14.sp,
-                                            yOffsetDp = 0.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = placeName,
-                                            fontSize = badgeFontSize,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF10B981),
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeightStyle = LineHeightStyle(
-                                                    alignment = LineHeightStyle.Alignment.Center,
-                                                    trim = LineHeightStyle.Trim.Both
-                                                ),
-                                                lineHeight = badgeFontSize
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            EmojiText(
+                                                emoji = nearbySavedPlace.category.iconEmoji,
+                                                fontSize = 16.sp,
+                                                yOffsetDp = 0.dp
                                             )
-                                        )
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        onClick = onOpenSavedPlaces,
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0x3310B981),
+                                        border = BorderStroke(1.dp, Color(0x5510B981)),
+                                        modifier = Modifier
+                                            .height(40.dp)
+                                            .widthIn(min = 40.dp, max = minOf(maxBadgeWidth, maxAvailableWidth))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .padding(horizontal = 7.dp)
+                                        ) {
+                                            EmojiText(
+                                                emoji = nearbySavedPlace.category.iconEmoji,
+                                                fontSize = if (placeName.length > 12) 13.sp else 14.sp,
+                                                yOffsetDp = 0.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = placeName,
+                                                fontSize = badgeFontSize,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF10B981),
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = badgeFontSize
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
