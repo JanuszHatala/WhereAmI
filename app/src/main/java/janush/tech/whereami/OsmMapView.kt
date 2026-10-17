@@ -508,6 +508,7 @@ fun OsmMapView(
     var marker by remember { mutableStateOf<Marker?>(null) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     var polyline by remember { mutableStateOf<Polyline?>(null) }
+    val liveRecordedPoints = remember { ArrayList<GeoPoint>() }
     var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
@@ -673,58 +674,17 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    var orientationAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
-    var lastOrientationAnimStart by remember { mutableStateOf(0L) }
-    DisposableEffect(Unit) {
-        onDispose {
-            orientationAnimator?.cancel()
-        }
-    }
-
-    // Auto-rotation with Shortest-Arc Animation and 0°/360° Wrap Protection
-    LaunchedEffect(currentFix?.bearing, orientationMode, isRecording, isFollowing) {
+    // Direct orientation for fixed modes; COURSE_UP is smoothly slewed at 35 FPS in the continuous frame loop
+    LaunchedEffect(orientationMode) {
         val map = mapView ?: return@LaunchedEffect
-        val rawBearing = currentFix?.bearing
-        if (rawBearing != null) {
-            lastFrozenBearing = rawBearing
+        when (orientationMode) {
+            MapOrientationMode.NORTH -> map.mapOrientation = 0f
+            MapOrientationMode.EAST -> map.mapOrientation = 270f
+            MapOrientationMode.SOUTH -> map.mapOrientation = 180f
+            MapOrientationMode.WEST -> map.mapOrientation = 90f
+            MapOrientationMode.COURSE_UP -> { /* smoothly handled at 35 FPS in frame loop */ }
         }
-        val effectiveBearing = rawBearing ?: lastFrozenBearing
-        val isMoving = (currentFix?.speedMs ?: 0f) >= 0.8f || rawBearing != null
-
-        val targetMapOrientation: Float? = when (orientationMode) {
-            MapOrientationMode.COURSE_UP -> {
-                if (!isFollowing) null
-                else if (!isRecording && !isMoving) null
-                else if (effectiveBearing != null) -effectiveBearing
-                else 0f
-            }
-            MapOrientationMode.NORTH -> 0f
-            MapOrientationMode.EAST -> 270f
-            MapOrientationMode.SOUTH -> 180f
-            MapOrientationMode.WEST -> 90f
-        }
-
-        if (targetMapOrientation != null) {
-            val currentRot = map.mapOrientation
-            val delta = shortestAngularDelta(currentRot, targetMapOrientation)
-            val now = System.currentTimeMillis()
-            val cooldownElapsed = (now - lastOrientationAnimStart) >= 400L
-            if (kotlin.math.abs(delta) >= 3.0f && cooldownElapsed) {
-                orientationAnimator?.cancel()
-                lastOrientationAnimStart = now
-                val startRot = currentRot
-                orientationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                    duration = 350L
-                    interpolator = android.view.animation.DecelerateInterpolator()
-                    addUpdateListener { anim ->
-                        val frac = anim.animatedFraction
-                        map.mapOrientation = startRot + delta * frac
-                        map.invalidate()
-                    }
-                    start()
-                }
-            }
-        }
+        map.invalidate()
     }
 
     // Feed new GPS fixes into the interpolator
@@ -810,7 +770,7 @@ fun OsmMapView(
                     if (!map.overlays.contains(altitudeOverlay)) {
                         map.overlays.add(altitudeOverlay)
                     }
-                    val frameSpeed = (locationFix?.speedMs ?: currentFix?.speedMs ?: 0f) * 3.6f
+                    val frameSpeed = (locationFix?.speedMs ?: currentFix.speedMs) * 3.6f
                     altitudeOverlay.isEnabled = showAltitudeOnMap
                     altitudeOverlay.updateData(
                         geoPoint = gp,
@@ -824,6 +784,59 @@ fun OsmMapView(
                         destinationAltitude = destinationAltitude,
                         destinationLoading = destinationAltitudeLoading
                     )
+
+                    // Continuous Shortest-Arc Rotation Slerp in COURSE_UP mode
+                    if (orientationMode == MapOrientationMode.COURSE_UP && isFollowing) {
+                        if (hasHeading) {
+                            val targetRot = -effectiveBearing
+                            val currentRot = map.mapOrientation
+                            val delta = shortestAngularDelta(currentRot, targetRot)
+                            if (kotlin.math.abs(delta) > 0.2f && isMoving) {
+                                val dtSec = if (lastFrameRenderMs > 0L) {
+                                    ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
+                                } else 0.028f
+                                val factor = (1.0f - kotlin.math.exp(-dtSec / 0.20f)).coerceIn(0.04f, 0.40f)
+                                map.mapOrientation = normalizeAngle(currentRot + delta * factor)
+                            }
+                        }
+                    }
+
+                    // Dynamic live polyline attachment during active recording:
+                    // Polyline tip connects directly to cursor gp, guaranteeing zero leading/disconnect
+                    if (isRecording) {
+                        val line = polyline ?: Polyline(map).also {
+                            it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
+                            it.outlinePaint.strokeWidth = 12f
+                            it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                            it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                            it.infoWindow = null
+                            it.setOnClickListener { _, _, _ -> true }
+                            addOverlayAboveTiles(map, it)
+                            polyline = it
+                        }
+                        val lastCommitted = if (liveRecordedPoints.size >= 2) liveRecordedPoints[liveRecordedPoints.size - 2] else liveRecordedPoints.lastOrNull()
+                        val distToLast = if (lastCommitted != null) {
+                            val results = FloatArray(1)
+                            android.location.Location.distanceBetween(
+                                lastCommitted.latitude, lastCommitted.longitude,
+                                gp.latitude, gp.longitude, results
+                            )
+                            results[0].toDouble()
+                        } else Double.MAX_VALUE
+
+                        if (liveRecordedPoints.isEmpty()) {
+                            liveRecordedPoints.add(gp)
+                            liveRecordedPoints.add(gp)
+                            line.setPoints(liveRecordedPoints)
+                        } else if (distToLast >= 3.0) {
+                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                            liveRecordedPoints.add(gp)
+                            line.setPoints(liveRecordedPoints)
+                        } else {
+                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                            line.setPoints(liveRecordedPoints)
+                        }
+                    }
 
                     if (lastAppliedHeadingState != hasHeading) {
                         m.icon = if (hasHeading) headingMarkerIcon else dotMarkerIcon
@@ -850,7 +863,7 @@ fun OsmMapView(
                     val fontScaleChanged = lastRenderedFontScaleFactor != fontScale.scaleFactor
 
                     // Only update marker position and invalidate if visually meaningful displacement occurred or settings changed
-                    if (dLat > 0.000003 || dLng > 0.000003 || dAngle > 0.5f || dAlt > 0.5 ||
+                    if (dLat > 0.0000005 || dLng > 0.0000005 || dAngle > 0.2f || dAlt > 0.5 ||
                         altEnabledChanged || fallbackChanged || fontScaleChanged) {
                         m.position = gp
                         m.rotation = -roadScreenAngle
@@ -965,30 +978,38 @@ fun OsmMapView(
     }
 
     // Update live trip polyline (Vivid Red #EF4444)
-    LaunchedEffect(trackPoints) {
+    LaunchedEffect(trackPoints, isRecording) {
         val map = mapView ?: return@LaunchedEffect
-        if (trackPoints.isEmpty()) {
-            polyline?.let { map.overlays.remove(it) }
-            polyline = null
+        if (!isRecording) {
+            liveRecordedPoints.clear()
+            if (trackPoints.isEmpty()) {
+                polyline?.let { map.overlays.remove(it) }
+                polyline = null
+                map.invalidate()
+                return@LaunchedEffect
+            }
+
+            val line = polyline ?: Polyline(map).also {
+                it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
+                it.outlinePaint.strokeWidth = 12f
+                it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                it.infoWindow = null
+                it.setOnClickListener { _, _, _ -> true }
+                addOverlayAboveTiles(map, it)
+                polyline = it
+            }
+
+            addOverlayAboveTiles(map, line)
+            line.setPoints(trackPoints)
             map.invalidate()
-            return@LaunchedEffect
+        } else {
+            if (trackPoints.isEmpty()) {
+                liveRecordedPoints.clear()
+            } else if (liveRecordedPoints.isEmpty()) {
+                liveRecordedPoints.addAll(trackPoints)
+            }
         }
-
-        val line = polyline ?: Polyline(map).also {
-            it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
-            it.outlinePaint.strokeWidth = 12f
-            it.outlinePaint.strokeCap = Paint.Cap.ROUND
-            it.outlinePaint.strokeJoin = Paint.Join.ROUND
-            it.infoWindow = null
-            it.setOnClickListener { _, _, _ -> true }
-            addOverlayAboveTiles(map, it)
-            polyline = it
-        }
-
-        // Ensure polyline remains above any dynamically loaded tile overlays
-        addOverlayAboveTiles(map, line)
-        line.setPoints(trackPoints)
-        map.invalidate()
     }
 
     // Render Rest Stops / Pauses along polyline
