@@ -19,6 +19,12 @@ The absolute core purpose of this application is **ultra-fast, unambiguous, and 
 2. **Canonical Road / Street Display**: Instantly showing the current road designation (canonical Polish designations `DK52`, `DW946`, `A4`, `S7`, `E77` without house numbers on major corridors, or formatted residential streets `ul. Mickiewicza 12`).
 3. **Core Supremacy**: All supplementary features (trip recording, live sharing, map overlays, GPX export, statistics) exist to support this primary experience. **Never compromise, regress, or visually obstruct the primary locality and road awareness display.**
 
+### The AI Pair Programming Covenant & Quality Invariant (Non-Negotiable)
+Every AI agent (Antigravity, Gemini, Claude, Cursor) contributing to this codebase is strictly bound by this operational covenant:
+1. **Zero Degradation of Core Value**: Never degrade locality hierarchy formatting, road designation precision, kinematic filtering, or spatial cache integrity for expedience, brevity, or lazy shortcuts.
+2. **Zero Battery & GNSS Leaks**: Never introduce unbounded GPS subscriptions, continuous high-frequency background sensor listening (e.g. 60Hz accelerometer polling), or notification wake-lock storms. All lifecycle transitions must be verified with automated unit tests.
+3. **Rigorous Iteration Over Quick Hacks**: Always iterate as many times as necessary to produce flawless, production-ready code. Workarounds and temporary hacks are strictly forbidden unless explicitly requested by the user and heavily documented.
+
 ---
 
 ## 2. Crucial Architectural Priorities

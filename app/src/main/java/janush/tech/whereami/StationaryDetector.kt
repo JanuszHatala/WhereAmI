@@ -1,4 +1,4 @@
-﻿package janush.tech.whereami
+package janush.tech.whereami
 
 import android.content.Context
 import android.hardware.Sensor
@@ -60,18 +60,26 @@ class StationaryDetector private constructor(context: Context) : SensorEventList
 
     fun startListening() {
         if (isListening || sensorManager == null || accelerometer == null) return
-        sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_NORMAL)
         isListening = true
-        TelemetryLogger.log("SENSOR", "StationaryDetector started listening to accelerometer")
+        TelemetryLogger.log("SENSOR", "StationaryDetector started listening to accelerometer (SENSOR_DELAY_NORMAL)")
     }
 
-    fun stopListening() {
+    fun stopListening(preserveStationaryState: Boolean = false) {
         if (!isListening) return
         sensorManager?.unregisterListener(this)
         isListening = false
+        if (!preserveStationaryState) {
+            _isPhysicallyStationary.value = false
+        }
+        magnitudeWindow.clear()
+        TelemetryLogger.log("SENSOR", "StationaryDetector stopped listening (preserved=$preserveStationaryState)")
+    }
+
+    fun unlatchStationary() {
         _isPhysicallyStationary.value = false
         magnitudeWindow.clear()
-        TelemetryLogger.log("SENSOR", "StationaryDetector stopped listening")
+        TelemetryLogger.log("SENSOR", "StationaryDetector stationary state unlatched")
     }
 
     override fun onSensorChanged(event: SensorEvent?) {

@@ -6,7 +6,27 @@ Whether driving, mountain biking, or trekking in alpine environments, WhereAmI p
 
 ---
 
-## Key Capabilities
+## 🧬 App DNA & Core Mission
+
+The foundational philosophy and non-negotiable mission of WhereAmI is defined by three cornerstones:
+
+1. **The Ultimate Answer to "Where Am I?"**:
+   - Deliver ultra-fast, unambiguous, and reliable real-time spatial awareness.
+   - Instantly show the **current place name** (City, Town, Village, or Settlement) with its complete, unambiguous **structural administrative hierarchy** (Municipality `gm.`, County `pow.`, Voivodeship `woj.`, Country).
+   - Instantly show the **canonical road designation** (`DK52`, `DW946`, `A4`, `S7`, `E77` without house numbers on major corridors, or formatted residential streets `ul. Mickiewicza 12`).
+   - All supplementary features (trip recording, live sharing, elevation charts, statistics) exist solely to elevate and support this primary experience. Never compromise or visually obstruct this awareness.
+
+2. **Zero-Idle-Drain & Adaptive Outdoor Endurance**:
+   - The app must run effortlessly on all-day mountain expeditions and outdoor activities without burning the battery.
+   - Intelligently adapt to environment:
+     - **Charging**: High-performance, low-latency sampling and aggressive boundary/tile pre-caching.
+     - **On Battery**: Kinetic profile adaptation (Hiking, Cycling, Driving) ensuring long runtime without loss of GPX track precision.
+     - **Stationary Rest**: Power down GPS hardware completely during dwell; rely on Android hardware motion triggers (~0 mW) to re-arm tracking upon true locomotion.
+     - **Sleep Mode**: Complete GNSS power-down during night/sleep; periodic 15-second bounded fix once per hour for live sharing presence updates.
+
+3. **Remote & Alpine Offline Resilience**:
+   - In wilderness or mountains with weak cellular coverage, the app never blocks, hangs, or burns battery retrying online services.
+   - Instant fallback to local SQLite caches, hardware GPS elevation, and offline boundaries. Post-trip DEM elevation enhancement handles high-precision altitude refinement when back on Wi-Fi or charger.
 
 - 📍 **Instant Multi-Tier Geocoding**: Dual-tier fallback (Android Geocoder + OSM Nominatim) identifying city, commune (`gm.`), county (`pow.`), voivodeship (`woj.`), and country.
 - 🚗 **Android Auto Integration**: Broadcasts location and destination updates to car heads-up infotainment screens via Automotive Media Browser.

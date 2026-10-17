@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -146,7 +147,7 @@ class LocationManager private constructor(private val context: Context) {
         @Volatile
         private var currentMinIntervalMs: Long = 1000L
         @Volatile
-        private var isGpsStopped: Boolean = false
+        var isGpsStopped: Boolean = false
 
         private val activeCallbacks = Collections.synchronizedSet(mutableSetOf<LocationCallback>())
 
@@ -308,16 +309,44 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    fun stopLocationUpdates() {
+    fun stopLocationUpdates(preserveStationaryState: Boolean = false) {
         isGpsStopped = true
         try {
-            StationaryDetector.getInstance(context).stopListening()
+            StationaryDetector.getInstance(context).stopListening(preserveStationaryState)
         } catch (_: Exception) {}
         synchronized(activeCallbacks) {
             for (cb in activeCallbacks) {
                 try {
                     fusedLocationClient.removeLocationUpdates(cb)
                 } catch (_: Exception) {}
+            }
+        }
+    }
+
+    var isGpsStopped: Boolean
+        get() = LocationManager.isGpsStopped
+        set(value) { LocationManager.isGpsStopped = value }
+
+    @SuppressLint("MissingPermission")
+    suspend fun getCurrentLocationBounded(
+        timeoutMs: Long = 15_000L,
+        priority: Int = Priority.PRIORITY_HIGH_ACCURACY
+    ): AndroidLocation? = withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont ->
+            val cts = com.google.android.gms.tasks.CancellationTokenSource()
+            cont.invokeOnCancellation {
+                cts.cancel()
+            }
+            try {
+                fusedLocationClient.getCurrentLocation(priority, cts.token)
+                    .addOnSuccessListener { loc ->
+                        if (cont.isActive) cont.resume(loc)
+                    }
+                    .addOnFailureListener {
+                        if (cont.isActive) cont.resume(null)
+                    }
+            } catch (_: Exception) {
+                if (cont.isActive) cont.resume(null)
             }
         }
     }
