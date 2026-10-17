@@ -108,11 +108,13 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         AppStateManager.getInstance(this).setAppForegroundState(true)
         CacheManager.getInstance(this).calculateCacheDeficit()
+        viewModel.startTracking()
         viewModel.requestOneShotLocation()
     }
 
     override fun onStop() {
         super.onStop()
+        viewModel.stopTracking()
         AppStateManager.getInstance(this).setAppForegroundState(false)
     }
 
