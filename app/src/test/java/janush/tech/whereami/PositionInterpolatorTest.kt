@@ -3,6 +3,7 @@ package janush.tech.whereami
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import kotlin.math.cos
 
 class PositionInterpolatorTest {
 
@@ -57,7 +58,7 @@ class PositionInterpolatorTest {
         assertEquals(49.85, later.lat, 0.0001)
         // Lng should increase (moved east by 20m)
         assertTrue("Longitude should increase when heading East", later.lng > 19.28)
-        val dMeters = (later.lng - 19.28) * (111320.0 * kotlin.math.cos(Math.toRadians(49.85)))
+        val dMeters = (later.lng - 19.28) * (111320.0 * cos(Math.toRadians(49.85)))
         assertEquals(20.0, dMeters, 2.0)
     }
 
@@ -89,58 +90,73 @@ class PositionInterpolatorTest {
     }
 
     @Test
-    fun `new fix blends smoothly without backward jump`() {
+    fun `buffered hermite spline smooth playback between two fixes`() {
         val t0 = 10000L
+        val t1 = 11000L
+        // Fix 0 at 49.8500, 19.2800 heading East at 10 m/s
         interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 90f, speedMs = 10f, timestamp = t0)
-        
-        // Extrapolate for 1.0 second (moved east ~10m)
-        val t1 = t0 + 1000L
-        val extAtT1 = interpolator.interpolate(t1)
-        
-        // Now new GPS fix arrives at t1, slightly behind the pure extrapolation (e.g. at 8m instead of 10m)
-        val gpsLat = 49.8500
-        val gpsLng = 19.2800 + (8.0 / (111320.0 * kotlin.math.cos(Math.toRadians(49.85))))
-        interpolator.onNewFix(lat = gpsLat, lng = gpsLng, bearing = 90f, speedMs = 10f, timestamp = t1)
-        
-        // At t1, the blended position must start at extAtT1 (zero jump!)
-        val blendStart = interpolator.interpolate(t1)
-        assertEquals(extAtT1.lat, blendStart.lat, 0.000001)
-        assertEquals(extAtT1.lng, blendStart.lng, 0.000001)
-        
-        // At t1 + blendDurationMs (end of blend), it smoothly reaches the blended target
-        val blendEnd = interpolator.interpolate(t1 + interpolator.blendDurationMs)
-        assertTrue(blendEnd.lng >= gpsLng)
+        // Fix 1 at 49.8500, 19.2800 + 10m heading East at 10 m/s
+        val dLng10m = 10.0 / (111320.0 * cos(Math.toRadians(49.8500)))
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + dLng10m, bearing = 90f, speedMs = 10f, timestamp = t1)
+
+        val delay = interpolator.bufferDelayMs
+
+        // At clock = t0 + delay, playback is at Fix 0
+        val pStart = interpolator.interpolate(t0 + delay)
+        assertEquals(49.8500, pStart.lat, 0.00001)
+        assertEquals(19.2800, pStart.lng, 0.00001)
+
+        // At clock = (t0 + t1)/2 + delay, playback is at midpoint ~5m
+        val pMid = interpolator.interpolate((t0 + t1) / 2 + delay)
+        val dMidMeters = (pMid.lng - 19.2800) * 111320.0 * cos(Math.toRadians(49.8500))
+        assertEquals(5.0, dMidMeters, 0.5)
+
+        // At clock = t1 + delay, playback reaches Fix 1
+        val pEnd = interpolator.interpolate(t1 + delay)
+        val dEndMeters = (pEnd.lng - 19.2800) * 111320.0 * cos(Math.toRadians(49.8500))
+        assertEquals(10.0, dEndMeters, 0.5)
     }
 
     @Test
-    fun `blend duration is stable at 250ms across varying GPS intervals`() {
+    fun `tangent bearing aligns with curve on 90 degree turn`() {
         val t0 = 10000L
-        interpolator.onNewFix(lat = 49.85, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0)
+        val t1 = 11000L
+        // Fix 0 heading East (90°) at 10 m/s
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 90f, speedMs = 10f, timestamp = t0)
+        // Fix 1 turning North (0°) after moving East and curving North
+        val dLng = 8.0 / (111320.0 * cos(Math.toRadians(49.8500)))
+        val dLat = 8.0 / 111320.0
+        interpolator.onNewFix(lat = 49.8500 + dLat, lng = 19.2800 + dLng, bearing = 0f, speedMs = 10f, timestamp = t1)
 
-        interpolator.onNewFix(lat = 49.8501, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 1000L)
-        assertEquals(250L, interpolator.blendDurationMs)
+        val delay = interpolator.bufferDelayMs
 
-        interpolator.onNewFix(lat = 49.8502, lng = 19.28, bearing = 0f, speedMs = 10f, timestamp = t0 + 2500L)
-        assertEquals(250L, interpolator.blendDurationMs)
+        // Midpoint of the turn (45° curve)
+        val pMid = interpolator.interpolate((t0 + t1) / 2 + delay)
+        assertNotNull(pMid.bearing)
+        // Bearing should smoothly bend between 90° (East) and 0° (North), roughly 35°–55°
+        val b = pMid.bearing!!
+        assertTrue("Midpoint bearing $b should be in curve transition (20°..70°)", b in 20f..70f)
     }
 
     @Test
-    fun `transition across blend boundary is continuous with zero jump`() {
+    fun `continuous motion across fix boundary with zero jump`() {
         val t0 = 10000L
-        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 0f, speedMs = 10f, timestamp = t0)
+        val t1 = 11000L
+        val t2 = 12000L
+        val dLng10m = 10.0 / (111320.0 * cos(Math.toRadians(49.8500)))
 
-        // Fix at t1 = 11000L
-        val t1 = t0 + 1000L
-        interpolator.onNewFix(lat = 49.8501, lng = 19.2800, bearing = 0f, speedMs = 10f, timestamp = t1)
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 90f, speedMs = 10f, timestamp = t0)
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + dLng10m, bearing = 90f, speedMs = 10f, timestamp = t1)
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + 2 * dLng10m, bearing = 90f, speedMs = 10f, timestamp = t2)
 
-        val blendDuration = interpolator.blendDurationMs
-        // Point right at the end of the blend window
-        val atBlendEnd = interpolator.interpolate(t1 + blendDuration)
-        // Point 1ms into dead-reckoning extrapolation
-        val atExtrapolationStart = interpolator.interpolate(t1 + blendDuration + 1L)
+        val delay = interpolator.bufferDelayMs
+        // Point right before boundary
+        val beforeBoundary = interpolator.interpolate(t1 + delay - 1L)
+        // Point right after boundary
+        val afterBoundary = interpolator.interpolate(t1 + delay + 1L)
 
-        // The displacement over 1ms at 10 m/s should be ~0.01m (1cm), never a meter-scale cliff!
-        val dLatMeters = (atExtrapolationStart.lat - atBlendEnd.lat) * 111320.0
-        assertEquals(0.01, dLatMeters, 0.05)
+        // Displacement over 2ms at 10 m/s should be ~0.02m (2cm), never a meter-scale jump
+        val dLngMeters = (afterBoundary.lng - beforeBoundary.lng) * 111320.0 * cos(Math.toRadians(49.8500))
+        assertEquals(0.02, dLngMeters, 0.05)
     }
 }
