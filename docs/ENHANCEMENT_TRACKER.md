@@ -66,8 +66,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 73** | DEM Coroutine Dispatcher & Main-Thread Exception Fix (2026-10-15) | 2 | 2 | 0 | 0 |
 | **Round 75** | Field Testing (2026-10-16) Sleep/Standby Oscillation Resolution & GNSS Zero-Drain Enforcement | 3 | 3 | 0 | 0 |
 | **Round 76** | Field Testing (2026-10-16) Altitude Speed Gating, Frozen Altitude Fix, Map Pins Dem-Decoupling & Post-Trip DEM Supplementation | 4 | 4 | 0 | 0 |
+| **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **304** | **296** | **0** | **8** |
+| **Total** | | **309** | **301** | **0** | **8** |
 
 
 ---
@@ -1009,6 +1010,19 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **ALT76-02** | **Frozen Altitude Display Fix & Speed Gating ($\ge 15\text{ km/h}$)**: Fix frozen altitude during driving (incoming raw GPS fixes cancelled debounced DEM lookups while fallback retained stale DEM). Implement speed cutoff: hide cursor altitude badge when speed $\ge 15\text{ km/h}$. Show badge only when stationary or moving slowly ($< 15\text{ km/h}$) with valid DEM (or GPS when in GPS mode). | `MainViewModel.kt`, `AltitudeCursorBadgeOverlay.kt`, `OsmMapView.kt`, `BatteryOptimizationAndAutoStartTest.kt` | **Completed** | In `MainViewModel.kt`, cancelled jobs clear display altitude when $\ge 15\text{ km/h}$; slow movement checks SQLite cache immediately and debounces HTTP lookup without freezing stale data. Speed gating covered by unit test `testAltitudeBadgeSpeedGatingRule`. |
 | **ALT76-03** | **Live GPS Tagging & Post-Trip Background DEM Supplementation**: While recording with preferred DEM mode, record raw GPS altitude tagged as `"GPS"` for uncached points to keep live elevation profile and vertical gain charts functional without HTTP delays. Upon trip completion, if any points have `"GPS"` source, prompt user with `PostTripDemSupplementDialog` to trigger background DEM batch correction via `ElevationCorrectionEngine`. | `TripDatabaseHelper.kt`, `MainViewModel.kt`, `MainActivity.kt` | **Completed** | Implemented `tripHasGpsAltitudePoints` query, `pendingDemTripPrompt` flow, and `PostTripDemSupplementDialog` composable with high-contrast buttons (`Supplement DEM` / `Keep GPS / Later`). |
 | **VER-49** | **Build Gate & Version Increment**: Increment `versionCode` to 95 and `versionName` to "1.10.0". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL` (0 test failures, 0 compilation errors). | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed. |
+
+---
+
+## 80. Round 77: Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **TRK77-01** | **Buffered Cubic Hermite Spline Interpolator (`PositionInterpolator`)**: Replaced 250ms blend and forward extrapolation cliff with a calibrated 1000ms delay buffer (`bufferDelayMs = 1000L`). Playback interpolates between confirmed fixes A and B using cubic Hermite splines with continuous velocity and tangent derivation. Eliminates forward overshoots, backward rubber-banding, and step jumps. Glides smoothly into stops. Speed HUD on app and Android Auto remains instant from raw GPS fix. | `PositionInterpolator.kt`, `PositionInterpolatorTest.kt` | **Completed** | Covered by `buffered hermite spline smooth playback between two fixes` and `continuous motion across fix boundary with zero jump` unit tests. |
+| **TRK77-02** | **Zero-Allocation Dynamic Live Polyline Tip Anchoring (`OsmMapView`)**: Decoupled live polyline tip during active trip recording from future un-interpolated GPS fixes. Polyline tip is dynamically anchored directly to `gp` (the visually rendered cursor coordinates) in-place without per-frame allocations. Polyline can never lead ahead of the cursor or become disconnected. Upon trip completion, final committed points are seamlessly displayed. | `OsmMapView.kt` | **Completed** | Verified with 35 FPS zero-allocation floating tip in `OsmMapView.kt`. |
+| **TRK77-03** | **Continuous Frame-Rate Shortest-Arc Rotation Slerp (`OsmMapView`)**: Removed discrete event-driven `ValueAnimator` that caused 30°-40° discrete rotation snaps and 650ms freezes on roundabouts and turns. Implemented continuous shortest-arc exponential decay slerp inside the 35 FPS frame loop ($\tau = 0.20\text{s}$, factor $1 - e^{-\Delta t / \tau}$). Map rotates continuously and silky-smoothly on turns and roundabouts with zero 360° carousel spins. | `OsmMapView.kt`, `MapOrientationSmootherTest.kt` | **Completed** | Verified continuous slerp in 35 FPS loop with `shortestAngularDelta` wrap protection. |
+| **TRK77-04** | **Exact Path-Tangent Bearing Alignment (`PositionInterpolator`)**: Computed vehicle heading directly from the spatial derivative $(\frac{\partial y}{\partial u}, \frac{\partial x}{\partial u})$ of the Hermite spline trajectory via `atan2(dLngMeters, dLatMeters)`. Guarantees vehicle arrow is always strictly tangent to the road curve being traversed, completely eliminating sideways or perpendicular cursor rotations in turns and parking lots. | `PositionInterpolator.kt`, `PositionInterpolatorTest.kt` | **Completed** | Verified via `tangent bearing aligns with curve on 90 degree turn` unit test. |
+| **VER-50** | **Build Gate & Version Increment**: Increment `versionCode` to 96 and `versionName` to "1.10.1". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL` (0 test failures, 0 compilation errors). | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` passed. |
+
 
 
 
