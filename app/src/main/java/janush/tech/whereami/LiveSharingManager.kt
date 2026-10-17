@@ -458,12 +458,20 @@ class LiveSharingManager private constructor(private val context: Context) {
                 var effectiveAccuracy = lastRecordedAccuracy
 
                 if (isCurrentlySleeping) {
-                    // Zero GNSS drain during sleep mode: Device is resting indoors/in bed.
-                    // Transmit presence heartbeat using cached/last recorded coordinates without powering up GPS chip.
-                    effectiveLat = lastRecordedLat
-                    effectiveLng = lastRecordedLng
-                    effectiveAccuracy = lastRecordedAccuracy
-                    TelemetryLogger.log("POWER", "Sleep Mode: transmitting presence heartbeat with cached coordinates ($effectiveLat, $effectiveLng)")
+                    TelemetryLogger.log("POWER", "Sleep Mode periodic heartbeat: requesting 15s bounded GNSS fix...")
+                    val freshLoc = LocationManager.getInstance(context).getCurrentLocationBounded(15_000L)
+                    if (freshLoc != null && freshLoc.latitude != 0.0 && freshLoc.longitude != 0.0) {
+                        effectiveLat = freshLoc.latitude
+                        effectiveLng = freshLoc.longitude
+                        effectiveAccuracy = if (freshLoc.hasAccuracy()) freshLoc.accuracy else lastRecordedAccuracy
+                        TelemetryLogger.log("POWER", "Sleep Mode: refreshed position via 15s GNSS fix ($effectiveLat, $effectiveLng, acc=$effectiveAccuracy)")
+                    } else {
+                        effectiveLat = lastRecordedLat
+                        effectiveLng = lastRecordedLng
+                        effectiveAccuracy = lastRecordedAccuracy
+                        TelemetryLogger.log("POWER", "Sleep Mode: one-shot GNSS fix timed out/unavailable; transmitting cached coordinates ($effectiveLat, $effectiveLng)")
+                    }
+                    LocationManager.getInstance(context).stopLocationUpdates(preserveStationaryState = true)
                 }
 
                 if (effectiveLat != 0.0 && effectiveLng != 0.0) {

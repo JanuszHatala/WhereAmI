@@ -51,7 +51,7 @@ object ElevationRepository {
                 return@withContext cached
             }
         }
-        val list = fetchAltitudes(listOf(GeoPoint(latitude, longitude)), db = db)
+        val list = fetchAltitudes(listOf(GeoPoint(latitude, longitude)), db = db, isSingleLookup = true)
         list.firstOrNull()
     }
 
@@ -64,6 +64,7 @@ object ElevationRepository {
         points: List<GeoPoint>,
         db: TripDatabaseHelper? = null,
         isCancelled: () -> Boolean = { false },
+        isSingleLookup: Boolean = false,
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): List<Double?> = withContext(Dispatchers.IO) {
         val result = MutableList<Double?>(points.size) { null }
@@ -97,17 +98,17 @@ object ElevationRepository {
             // 1. Try Open-Meteo Primary (if not quota-blocked)
             var altitudes: List<Double>? = null
             if (System.currentTimeMillis() >= openMeteoBlockedUntil) {
-                altitudes = fetchBatchOpenMeteo(batchPoints)
+                altitudes = fetchBatchOpenMeteo(batchPoints, isSingleLookup)
             }
 
             // 2. Try OpenTopoData (EU-DEM 25m / SRTM 30m)
             if (altitudes == null) {
-                altitudes = fetchBatchOpenTopoData(batchPoints)
+                altitudes = fetchBatchOpenTopoData(batchPoints, isSingleLookup)
             }
 
             // 3. Fallback to Open-Elevation (if not quota-blocked)
             if (altitudes == null && System.currentTimeMillis() >= openElevationBlockedUntil) {
-                altitudes = fetchBatchOpenElevation(batchPoints)
+                altitudes = fetchBatchOpenElevation(batchPoints, isSingleLookup)
             }
 
             if (altitudes != null) {
@@ -139,8 +140,12 @@ object ElevationRepository {
     /**
      * Open-Meteo elevation query (comma-separated coordinates in GET URL).
      */
-    private suspend fun fetchBatchOpenMeteo(points: List<GeoPoint>): List<Double>? {
-        repeat(MAX_RETRIES) { attempt ->
+    private suspend fun fetchBatchOpenMeteo(points: List<GeoPoint>, isSingleLookup: Boolean = false): List<Double>? {
+        val retries = if (isSingleLookup) 1 else MAX_RETRIES
+        val connTimeout = if (isSingleLookup) 3_000 else 8_000
+        val rTimeout = if (isSingleLookup) 3_000 else 12_000
+
+        repeat(retries) { attempt ->
             var conn: HttpsURLConnection? = null
             try {
                 val lats = points.joinToString(",") { String.format(Locale.US, "%.5f", it.latitude) }
@@ -150,8 +155,8 @@ object ElevationRepository {
                 conn = (URL(urlStr).openConnection() as HttpsURLConnection).apply {
                     requestMethod = "GET"
                     setRequestProperty("Accept", "application/json")
-                    connectTimeout = 8_000
-                    readTimeout = 12_000
+                    connectTimeout = connTimeout
+                    readTimeout = rTimeout
                 }
 
                 val code = conn.responseCode
@@ -199,18 +204,18 @@ object ElevationRepository {
      * OpenTopoData query (EU-DEM 25m for Europe, SRTM 30m global fallback).
      * No API key required, highly reliable open-source elevation server.
      */
-    private suspend fun fetchBatchOpenTopoData(points: List<GeoPoint>): List<Double>? {
+    private suspend fun fetchBatchOpenTopoData(points: List<GeoPoint>, isSingleLookup: Boolean = false): List<Double>? {
         if (points.isEmpty()) return emptyList()
         val locParam = points.joinToString("|") { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) }
 
         // 1. Try EU-DEM 25m (~25m high-resolution European DEM)
-        val euResults = queryOpenTopoDataset(OPENTOPO_EUDEM_BASE, locParam, points.size)
+        val euResults = queryOpenTopoDataset(OPENTOPO_EUDEM_BASE, locParam, points.size, isSingleLookup)
         if (euResults != null && euResults.all { it > 0.0 }) {
             return euResults
         }
 
         // 2. Fallback to SRTM 30m (~30m global elevation)
-        val srtmResults = queryOpenTopoDataset(OPENTOPO_SRTM_BASE, locParam, points.size)
+        val srtmResults = queryOpenTopoDataset(OPENTOPO_SRTM_BASE, locParam, points.size, isSingleLookup)
         if (srtmResults != null) {
             if (euResults != null) {
                 return euResults.mapIndexed { i, alt -> if (alt > 0.0) alt else srtmResults.getOrElse(i) { 0.0 } }
@@ -221,15 +226,17 @@ object ElevationRepository {
         return euResults
     }
 
-    private suspend fun queryOpenTopoDataset(baseUrl: String, locParam: String, expectedSize: Int): List<Double>? {
+    private suspend fun queryOpenTopoDataset(baseUrl: String, locParam: String, expectedSize: Int, isSingleLookup: Boolean = false): List<Double>? {
         var conn: HttpsURLConnection? = null
+        val connTimeout = if (isSingleLookup) 3_000 else 8_000
+        val rTimeout = if (isSingleLookup) 3_000 else 12_000
         try {
             val urlStr = "$baseUrl?locations=$locParam"
             conn = (URL(urlStr).openConnection() as HttpsURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json")
-                connectTimeout = 8_000
-                readTimeout = 12_000
+                connectTimeout = connTimeout
+                readTimeout = rTimeout
             }
             if (conn.responseCode != 200) return null
             val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
@@ -255,8 +262,12 @@ object ElevationRepository {
     /**
      * Open-Elevation fallback query (POST JSON).
      */
-    private suspend fun fetchBatchOpenElevation(points: List<GeoPoint>): List<Double>? {
-        repeat(MAX_RETRIES) { attempt ->
+    private suspend fun fetchBatchOpenElevation(points: List<GeoPoint>, isSingleLookup: Boolean = false): List<Double>? {
+        val retries = if (isSingleLookup) 1 else MAX_RETRIES
+        val connTimeout = if (isSingleLookup) 3_000 else 8_000
+        val rTimeout = if (isSingleLookup) 3_000 else 12_000
+
+        repeat(retries) { attempt ->
             var conn: HttpsURLConnection? = null
             try {
                 val body = JSONObject().apply {
@@ -275,8 +286,8 @@ object ElevationRepository {
                     setRequestProperty("Content-Type", "application/json")
                     setRequestProperty("Accept", "application/json")
                     doOutput = true
-                    connectTimeout = 8_000
-                    readTimeout = 12_000
+                    connectTimeout = connTimeout
+                    readTimeout = rTimeout
                 }
 
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }

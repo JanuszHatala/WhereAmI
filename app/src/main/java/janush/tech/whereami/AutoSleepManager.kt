@@ -281,22 +281,33 @@ class AutoSleepManager private constructor(private val context: Context) {
         }
     }
 
+    private var lastRecordedAlarmTriggerTime = 0L
+    private var lastScheduledBoundaryTriggerMs = 0L
+
+    fun checkAndRecordAlarmState() {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val next = am.nextAlarmClock
+        if (next != null) {
+            lastRecordedAlarmTriggerTime = next.triggerTime
+        }
+    }
+
     fun isAlarmFiredRecently(): Boolean {
         if (!_followAlarm.value) return false
-        return try {
-            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            val nextAlarm = am?.nextAlarmClock
-            if (nextAlarm != null) {
-                val now = System.currentTimeMillis()
-                val trigger = nextAlarm.triggerTime
-                // Fired in the last 15 minutes
-                trigger in (now - 15 * 60_000L)..now
-            } else {
-                false
-            }
-        } catch (_: Exception) {
-            false
+        val now = System.currentTimeMillis()
+        if (lastRecordedAlarmTriggerTime in (now - 15 * 60_000L)..now) {
+            return true
         }
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
+        val next = am.nextAlarmClock
+        if (next != null) {
+            val trigger = next.triggerTime
+            if (trigger in (now - 15 * 60_000L)..now) {
+                return true
+            }
+            lastRecordedAlarmTriggerTime = trigger
+        }
+        return false
     }
 
     fun scheduleBoundaryAlarm() {
@@ -323,6 +334,9 @@ class AutoSleepManager private constructor(private val context: Context) {
             endH = endH,
             endM = endM
         )
+
+        if (triggerAtMs == lastScheduledBoundaryTriggerMs) return
+        lastScheduledBoundaryTriggerMs = triggerAtMs
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -352,12 +366,12 @@ class AutoSleepManager private constructor(private val context: Context) {
             am.cancel(pi)
             pi.cancel()
         }
+        lastScheduledBoundaryTriggerMs = 0L
     }
 
     private fun registerSystemReceivers() {
         val filter = IntentFilter().apply {
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
-            addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
             addAction(ACTION_BEDTIME_TRANSITION)
@@ -368,6 +382,9 @@ class AutoSleepManager private constructor(private val context: Context) {
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED) {
+                    checkAndRecordAlarmState()
+                }
                 evaluateAutoSleep()
             }
         }
