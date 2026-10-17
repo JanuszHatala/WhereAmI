@@ -11023,14 +11023,19 @@ fun TripDetailDialog(
     onCorrectElevation: (Long, OverrideMode) -> Unit = { _, _ -> },
     elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress()
 ) {
+    val effectiveEndTime = trip.endTime?.takeIf { it > trip.startTime }
+        ?: if (trip.avgSpeedKmh > 0.5f && trip.distanceMeters > 50.0) {
+            trip.startTime + ((trip.distanceMeters / (trip.avgSpeedKmh * (1000.0 / 3600.0))) * 1000L).toLong()
+        } else null
+
     val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
     val startDateStr = shortDateFmt.format(Date(trip.startTime))
-    val endDateStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
-        shortDateFmt.format(Date(trip.endTime))
+    val endDateStr = if (effectiveEndTime != null) {
+        shortDateFmt.format(Date(effectiveEndTime))
     } else null
 
     val startCal = Calendar.getInstance().apply { timeInMillis = trip.startTime }
-    val endCal = trip.endTime?.let { Calendar.getInstance().apply { timeInMillis = it } }
+    val endCal = effectiveEndTime?.let { Calendar.getInstance().apply { timeInMillis = it } }
     val isSameDay = endCal == null || (
         startCal.get(Calendar.YEAR) == endCal.get(Calendar.YEAR) &&
         startCal.get(Calendar.DAY_OF_YEAR) == endCal.get(Calendar.DAY_OF_YEAR)
@@ -11039,15 +11044,17 @@ fun TripDetailDialog(
     val startTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
     val endTimeStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.endTime))
+    } else if (effectiveEndTime != null) {
+        DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(effectiveEndTime)) + " (est.)"
     } else {
         "In Progress / Live"
     }
 
     val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
 
-    val timelineItems = remember(trip, cumulativeDistances) {
+    val timelineItems = remember(trip, cumulativeDistances, effectiveEndTime) {
         val totalTripDist = (cumulativeDistances.lastOrNull() ?: trip.distanceMeters).coerceAtLeast(0.0)
-        val tripEndTime = trip.endTime ?: (trip.startTime + 60_000L)
+        val tripEndTime = effectiveEndTime ?: (trip.startTime + 60_000L)
         val items = mutableListOf<RouteTimelineItem>()
 
         // 1. Resolve pause distances
@@ -11132,10 +11139,24 @@ fun TripDetailDialog(
                 curDist = pauseDist
             }
         }
+
+        // 3. For round trips (ended back at initial locality) or trips with substantial distance past last place entry,
+        // synthesize destination arrival item if total distance is at least 300m further than the last place entry.
+        val lastPlaceItem = items.filterIsInstance<RouteTimelineItem.Place>().lastOrNull()
+        if (lastPlaceItem != null && totalTripDist > 300.0 && (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters) > 300.0) {
+            val destinationPlace = getActivePlaceAt(tripEndTime).copy(
+                timestamp = tripEndTime,
+                distanceAtEntryMeters = totalTripDist
+            )
+            val finalLegDist = (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters).coerceAtLeast(0.0)
+            val finalLegDur = (tripEndTime - lastPlaceItem.place.timestamp).coerceAtLeast(0L)
+            items.add(RouteTimelineItem.Place(destinationPlace, placeOrder++, finalLegDist, finalLegDur))
+        }
+
         items
     }
 
-    val durationMs = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
+    val durationMs = if (effectiveEndTime != null && effectiveEndTime > trip.startTime) effectiveEndTime - trip.startTime else 0L
     val durationSec = durationMs / 1000L
     val durHours = durationSec / 3600L
     val durMinutes = (durationSec % 3600L) / 60L
@@ -11350,12 +11371,16 @@ fun TripDetailDialog(
 
                     // 2. Key Metrics Grid
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Distance Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11373,7 +11398,9 @@ fun TripDetailDialog(
 
                         // Duration Card (Total & Moving Time)
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11398,12 +11425,16 @@ fun TripDetailDialog(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Speed Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11412,16 +11443,20 @@ fun TripDetailDialog(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
-                                    fontSize = 15.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFBBF24)
+                                    color = Color(0xFFFBBF24),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
 
                         // Activity Profile Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11623,17 +11658,17 @@ fun TripDetailDialog(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 ElevationStatChip(
-                                                    label = "↑ ${elevationStats.totalAscentM.toInt()} m",
+                                                    label = "↑ Gain: ${elevationStats.totalAscentM.toInt()} m",
                                                     color = Color(0xFF34D399)
                                                 )
                                                 ElevationStatChip(
-                                                    label = "↓ ${elevationStats.totalDescentM.toInt()} m",
+                                                    label = "↓ Loss: ${elevationStats.totalDescentM.toInt()} m",
                                                     color = Color(0xFFF87171)
                                                 )
                                                 val minA = elevationStats.minAltitudeM?.toInt() ?: 0
                                                 val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
                                                 ElevationStatChip(
-                                                    label = "$minA–$maxA m",
+                                                    label = "⛰️ Alt: $minA–$maxA m",
                                                     color = Color(0xFFFBBF24)
                                                 )
                                                 if (elevationStats.peakVerticalSpeedMpm > 0.1) {
@@ -11654,23 +11689,58 @@ fun TripDetailDialog(
                                     }
 
                                     val isRunningThisTrip = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips == 1
+                                    val pointsWithoutAlt = remember(trip.points) {
+                                        trip.points.count { it.altitude == 0.0 || it.altitude.isNaN() }
+                                    }
+
                                     Button(
                                         onClick = { showCorrectionDialog = true },
                                         enabled = !isRunningThisTrip,
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
-                                        border = BorderStroke(1.dp, Color(0xFF334155))
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF1E293B),
+                                            contentColor = Color.White
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp)
                                     ) {
-                                        Text(
-                                            text = if (isRunningThisTrip) {
-                                                "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
-                                            } else {
-                                                "Correct Altitude (Open-Elevation)"
-                                            },
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudDownload,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column(horizontalAlignment = Alignment.Start) {
+                                                Text(
+                                                    text = if (isRunningThisTrip) {
+                                                        "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
+                                                    } else {
+                                                        "Correct Altitude (Open-Elevation)"
+                                                    },
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                if (!isRunningThisTrip && trip.points.isNotEmpty()) {
+                                                    Text(
+                                                        text = if (pointsWithoutAlt > 0) {
+                                                            "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
+                                                        } else {
+                                                            "✓ All ${trip.points.size} points have altitude"
+                                                        },
+                                                        color = if (pointsWithoutAlt > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -11805,8 +11875,9 @@ fun TripDetailDialog(
                                                         )
                                                     )
                                                     val allPlacesInTimeline = timelineItems.filterIsInstance<RouteTimelineItem.Place>()
+                                                    val isFirstPlace = item == allPlacesInTimeline.firstOrNull()
                                                     val isLastPlace = item == allPlacesInTimeline.lastOrNull() && allPlacesInTimeline.size > 1
-                                                    if (item.orderNumber == 1) {
+                                                    if (isFirstPlace) {
                                                         Text(
                                                             text = "Trip Start",
                                                             fontSize = 10.sp,
@@ -11833,7 +11904,7 @@ fun TripDetailDialog(
                                                         val legKm = item.legDistanceMeters / 1000.0
                                                         val legTimeStr = formatDurationShort(item.legDurationMs)
                                                         Text(
-                                                            text = String.format(Locale.getDefault(), "+%.2f km • %s", legKm, legTimeStr),
+                                                            text = String.format(Locale.getDefault(), "Leg: +%.2f km (%s)", legKm, legTimeStr),
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Medium,
                                                             color = Color(0xFF38BDF8),
@@ -11905,7 +11976,7 @@ fun TripDetailDialog(
                                                         )
                                                         if (item.legDurationMs > 0 || item.legDistanceMeters > 0) {
                                                             Text(
-                                                                text = String.format(Locale.getDefault(), "+%.2f km • %s travel to stop", legKm, legTimeStr),
+                                                                text = String.format(Locale.getDefault(), "Travel to stop: +%.2f km (%s)", legKm, legTimeStr),
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.Medium,
                                                                 color = Color(0xFF38BDF8),
