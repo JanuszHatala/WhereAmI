@@ -342,6 +342,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
     private var trackingJob: Job? = null
+    private var rawTrackingJob: Job? = null
 
     init {
         startTracking()
@@ -820,6 +821,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startTracking() {
         trackingJob?.cancel()
+        rawTrackingJob?.cancel()
         trackingJob = viewModelScope.launch {
             locationManager.getLocationUpdates(_displayLanguage.value).collect { data ->
                 val previousCity = _locationData.value.primaryPlace?.city
@@ -840,7 +842,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        viewModelScope.launch {
+        rawTrackingJob = viewModelScope.launch {
             locationManager.getLocationRaw().collect { fix ->
                 _currentLatLng.value = Triple(fix.lat, fix.lng, fix.bearing)
                 _currentLocationFix.value = fix
@@ -848,6 +850,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatePositionAltitude(fix.lat, fix.lng, _locationData.value.altitude, speedKmh)
             }
         }
+    }
+
+    fun stopTracking() {
+        trackingJob?.cancel()
+        trackingJob = null
+        rawTrackingJob?.cancel()
+        rawTrackingJob = null
     }
 
     fun requestOneShotLocation() {
