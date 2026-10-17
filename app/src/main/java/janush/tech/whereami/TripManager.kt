@@ -326,6 +326,7 @@ class TripManager private constructor(private val context: Context) {
                         .remove(KEY_MANUAL_PAUSE_STICKY)
                         .apply()
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
+                } else {
                     _activeTrip.value = unclosed
                     val (_, restoredSources) = dbHelper.getTripPointsWithSources(unclosed.id)
                     activeTripPointSources.clear()
@@ -563,6 +564,7 @@ class TripManager private constructor(private val context: Context) {
             // Discard "empty" accidental / instant start-stop trip (e.g. 0m in 1s or stationary jitter)
             dbHelper.deleteTrip(current.id)
             TelemetryLogger.logTrip("DISCARDED_TRIVIAL", current.id, "Trip discarded: dist=${current.distanceMeters.toInt()}m < ${profile.minValidDistanceMeters}m and duration=${durationMs / 1000}s < ${profile.minValidDurationMs / 1000}s")
+        } else {
             val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
             val sourcesSnapshot = activeTripPointSources.toList()
             dbHelper.updateTrip(finishedTrip, sourcesSnapshot)

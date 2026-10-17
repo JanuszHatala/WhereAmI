@@ -3006,22 +3006,28 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = saveRenameAction,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF0284C7),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save", color = Color.White)
+                    TextButton(onClick = { tripToRename = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = saveRenameAction,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { tripToRename = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4179,27 +4185,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                if (destinationPoint != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (destinationPoint != null) {
+                        TextButton(
+                            onClick = {
+                                viewModel.setDestinationPoint(null)
+                                showSearchDialog = false
+                            }
+                        ) {
+                            Text("Clear Pin", color = Color(0xFFF87171))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     TextButton(
                         onClick = {
-                            viewModel.setDestinationPoint(null)
                             showSearchDialog = false
+                            viewModel.clearSearch()
                         }
                     ) {
-                        Text("Clear Pin", color = Color(0xFFF87171))
+                        Text("Close", color = Color.White)
                     }
                 }
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showSearchDialog = false
-                        viewModel.clearSearch()
-                    }
-                ) {
-                    Text("Close", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4423,36 +4435,42 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val c = placeToSaveCoords
-                        if (c != null) {
-                            viewModel.savePlace(
-                                name = placeToSaveName.ifBlank { placeToSaveCategory.displayName },
-                                category = placeToSaveCategory,
-                                geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
-                                locality = placeToSaveLocality.trim(),
-                                street = placeToSaveStreet.trim(),
-                                colorHex = placeToSaveColor,
-                                altitude = destinationAltitude ?: locationData.altitude
-                            )
-                        }
-                        showSavePlaceDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save", color = Color.White)
+                    TextButton(onClick = { showSavePlaceDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val c = placeToSaveCoords
+                            if (c != null) {
+                                viewModel.savePlace(
+                                    name = placeToSaveName.ifBlank { placeToSaveCategory.displayName },
+                                    category = placeToSaveCategory,
+                                    geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
+                                    locality = placeToSaveLocality.trim(),
+                                    street = placeToSaveStreet.trim(),
+                                    colorHex = placeToSaveColor,
+                                    altitude = destinationAltitude ?: locationData.altitude
+                                )
+                            }
+                            showSavePlaceDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF10B981),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showSavePlaceDialog = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4469,27 +4487,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Text("Are you sure you want to delete '${sp.name}'?", color = Color(0xFFCBD5E1))
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteSavedPlace(sp.id)
-                        placeToDelete = null
-                        selectedSavedPlace = null
-                        viewModel.clearPinnedBorders()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Delete", color = Color.White)
+                    TextButton(onClick = { placeToDelete = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.deleteSavedPlace(sp.id)
+                            placeToDelete = null
+                            selectedSavedPlace = null
+                            viewModel.clearPinnedBorders()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Delete", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { placeToDelete = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4510,25 +4534,31 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Text("Are you sure you want to permanently delete trip '$displayTitle'? This cannot be undone.", color = Color(0xFFCBD5E1))
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteTrip(trip.id)
-                        tripToDelete = null
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Delete", color = Color.White)
+                    TextButton(onClick = { tripToDelete = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.deleteTrip(trip.id)
+                            tripToDelete = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Delete", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { tripToDelete = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4701,29 +4731,35 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val titleToUse = mergeTitleInput.trim().ifBlank { defaultMergedTitle }
-                        viewModel.mergeSelectedTrips(
-                            customTitle = titleToUse,
-                            targetProfile = chosenProfile
-                        )
-                        showMergeConfirmationDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF8B5CF6),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Merge Trips", color = Color.White)
+                    TextButton(onClick = { showMergeConfirmationDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val titleToUse = mergeTitleInput.trim().ifBlank { defaultMergedTitle }
+                            viewModel.mergeSelectedTrips(
+                                customTitle = titleToUse,
+                                targetProfile = chosenProfile
+                            )
+                            showMergeConfirmationDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF8B5CF6),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Merge Trips", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showMergeConfirmationDialog = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4742,26 +4778,32 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.resetAllSettingsToDefaults()
-                        showResetDefaultsConfirm = false
-                        android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Restore Defaults", color = Color.White)
+                    TextButton(onClick = { showResetDefaultsConfirm = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.resetAllSettingsToDefaults()
+                            showResetDefaultsConfirm = false
+                            android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Restore Defaults", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showResetDefaultsConfirm = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -5134,45 +5176,51 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val parsedAlt = editAltitudeText.toDoubleOrNull()
-                        val finalAltitude = if (parsedAlt != null && parsedAlt > 0.0) parsedAlt else null
-                        val finalSource = if (finalAltitude != null) {
-                            editAltitudeSource ?: "CUSTOM"
-                        } else {
-                            null
-                        }
-                        val updated = placeToEdit.copy(
-                            name = editName.ifBlank { editCategory.displayName },
-                            category = editCategory,
-                            street = editStreet.trim(),
-                            locality = editLocality.trim(),
-                            radiusMeters = editRadius,
-                            colorHex = editColor,
-                            altitude = finalAltitude,
-                            altitudeSource = finalSource
-                        )
-                        viewModel.updateSavedPlace(updated)
-                        editingSavedPlace = null
-                        if (selectedSavedPlace?.id == updated.id) {
-                            selectedSavedPlace = updated
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save Changes", color = Color.White)
+                    TextButton(onClick = { editingSavedPlace = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val parsedAlt = editAltitudeText.toDoubleOrNull()
+                            val finalAltitude = if (parsedAlt != null && parsedAlt > 0.0) parsedAlt else null
+                            val finalSource = if (finalAltitude != null) {
+                                editAltitudeSource ?: "CUSTOM"
+                            } else {
+                                null
+                            }
+                            val updated = placeToEdit.copy(
+                                name = editName.ifBlank { editCategory.displayName },
+                                category = editCategory,
+                                street = editStreet.trim(),
+                                locality = editLocality.trim(),
+                                radiusMeters = editRadius,
+                                colorHex = editColor,
+                                altitude = finalAltitude,
+                                altitudeSource = finalSource
+                            )
+                            viewModel.updateSavedPlace(updated)
+                            editingSavedPlace = null
+                            if (selectedSavedPlace?.id == updated.id) {
+                                selectedSavedPlace = updated
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF10B981),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save Changes", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { editingSavedPlace = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -7871,27 +7919,33 @@ private fun ProfileConfigSheet(
                             }
                         },
                         confirmButton = {
-                            Button(
-                                onClick = {
-                                    val normalized = customSpeedInput.replace(',', '.')
-                                    val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: profile.autoStartSpeedKmh
-                                    autoStartSpeed = speedVal
-                                    viewModel.setAutoStartSpeedForProfile(profile, speedVal)
-                                    showCustomSpeedDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0284C7),
-                                    contentColor = Color.White
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set", color = Color.White)
+                                TextButton(onClick = { showCustomSpeedDialog = false }) {
+                                    Text("Cancel", color = Color.White)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        val normalized = customSpeedInput.replace(',', '.')
+                                        val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: profile.autoStartSpeedKmh
+                                        autoStartSpeed = speedVal
+                                        viewModel.setAutoStartSpeedForProfile(profile, speedVal)
+                                        showCustomSpeedDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Text("Set", color = Color.White)
+                                }
                             }
                         },
-                        dismissButton = {
-                            TextButton(onClick = { showCustomSpeedDialog = false }) {
-                                Text("Cancel", color = Color.White)
-                            }
-                        },
+                        dismissButton = null,
                         containerColor = Color(0xFF0F172A)
                     )
                 }
@@ -8012,27 +8066,33 @@ private fun ProfileConfigSheet(
                             }
                         },
                         confirmButton = {
-                            Button(
-                                onClick = {
-                                    val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
-                                    val secVal = minVal * 60
-                                    autoStartSec = secVal
-                                    viewModel.setAutoStartSecondsForProfile(profile, secVal)
-                                    showCustomAutoStartDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0284C7),
-                                    contentColor = Color.White
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set", color = Color.White)
+                                TextButton(onClick = { showCustomAutoStartDialog = false }) {
+                                    Text("Cancel", color = Color.White)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
+                                        val secVal = minVal * 60
+                                        autoStartSec = secVal
+                                        viewModel.setAutoStartSecondsForProfile(profile, secVal)
+                                        showCustomAutoStartDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Text("Set", color = Color.White)
+                                }
                             }
                         },
-                        dismissButton = {
-                            TextButton(onClick = { showCustomAutoStartDialog = false }) {
-                                Text("Cancel", color = Color.White)
-                            }
-                        },
+                        dismissButton = null,
                         containerColor = Color(0xFF0F172A)
                     )
                 }
@@ -8188,26 +8248,32 @@ private fun ProfileConfigSheet(
                         }
                     },
                     confirmButton = {
-                        Button(
-                            onClick = {
-                                val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
-                                autoStopMin = minVal
-                                viewModel.setAutoStopMinutesForProfile(profile, minVal)
-                                showCustomAutoStopDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0284C7),
-                                contentColor = Color.White
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Set", color = Color.White)
+                            TextButton(onClick = { showCustomAutoStopDialog = false }) {
+                                Text("Cancel", color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
+                                    autoStopMin = minVal
+                                    viewModel.setAutoStopMinutesForProfile(profile, minVal)
+                                    showCustomAutoStopDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Text("Set", color = Color.White)
+                            }
                         }
                     },
-                    dismissButton = {
-                        TextButton(onClick = { showCustomAutoStopDialog = false }) {
-                            Text("Cancel", color = Color.White)
-                        }
-                    },
+                    dismissButton = null,
                     containerColor = Color(0xFF0F172A)
                 )
             }
@@ -11988,20 +12054,26 @@ fun TripDetailDialog(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeletePause(trip.id, idx)
-                        pauseToDeleteIndex = null
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Remove", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { pauseToDeleteIndex = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            onDeletePause(trip.id, idx)
+                            pauseToDeleteIndex = null
+                        }
+                    ) {
+                        Text("Remove", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pauseToDeleteIndex = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -12018,20 +12090,26 @@ fun TripDetailDialog(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        onMergePause(trip.id, idx)
-                        pauseToMergeIndex = null
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Merge", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { pauseToMergeIndex = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            onMergePause(trip.id, idx)
+                            pauseToMergeIndex = null
+                        }
+                    ) {
+                        Text("Merge", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pauseToMergeIndex = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -12472,35 +12550,41 @@ fun PostTripDemSupplementDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Supplement DEM",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Keep GPS / Later",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Supplement DEM",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = "Keep GPS / Later",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-        }
+        dismissButton = null
     )
 }

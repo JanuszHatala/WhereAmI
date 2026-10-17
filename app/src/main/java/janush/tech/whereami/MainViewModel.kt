@@ -168,12 +168,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _pendingDemTripPrompt = MutableStateFlow<TripRecord?>(null)
     val pendingDemTripPrompt: StateFlow<TripRecord?> = _pendingDemTripPrompt.asStateFlow()
+    private val promptedDemTripIds = mutableSetOf<Long>()
 
     fun dismissDemTripPrompt() {
+        val tripId = _pendingDemTripPrompt.value?.id
+        if (tripId != null) {
+            promptedDemTripIds.add(tripId)
+        }
         _pendingDemTripPrompt.value = null
     }
 
     fun confirmDemTripSupplement(tripId: Long) {
+        promptedDemTripIds.add(tripId)
         _pendingDemTripPrompt.value = null
         correctTripElevation(tripId, OverrideMode.FILL_MISSING)
     }
@@ -361,11 +367,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _selectedTripIds.value = setOf(finishedId)
                         _fitTrackTrigger.value = System.currentTimeMillis()
 
-                        if (_altitudeSourceMode.value == AltitudeSourceMode.DEM) {
+                        if (_altitudeSourceMode.value == AltitudeSourceMode.DEM && !promptedDemTripIds.contains(finishedId)) {
                             val needsDem = kotlinx.coroutines.withContext(Dispatchers.IO) {
                                 dbHelper.tripHasGpsAltitudePoints(finishedId)
                             }
                             if (needsDem) {
+                                promptedDemTripIds.add(finishedId)
                                 _pendingDemTripPrompt.value = trips.firstOrNull { it.id == finishedId }
                             }
                         }
