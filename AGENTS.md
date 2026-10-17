@@ -44,7 +44,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
 - **Notification Content Stability Invariant (Zero-Wakelock-Storm)**:
   - When a trip is NOT actively recording (e.g. `LIVE_ONLY` mode, `TripMode.AUTO` standby), the persistent notification text MUST NOT include dynamic ticking time strings (e.g. `⏱️ 7h 12m elapsed` or minutes/seconds counters).
   - Changing notification strings causes `contentChanged = true` on every minute tick, triggering `NotificationManager.notify()`, acquiring system wake locks (`NotificationManagerService:post`), firing wakeup alarms, and pulling the CPU out of Android Doze.
-  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-detect: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-detect Standby"`).
+  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-record: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-record Standby"`).
 - **Standby Location Stream Decoupling**:
   - In `LiveTrackingService`, when in pure standby without an active trip and without live sharing (`TripMode.AUTO` standby), `stopLocationTracking()` MUST be called to release `masterLocationFlow` subscribers.
   - When Live Sharing is active (`LIVE_ONLY`), `startLocationTracking()` remains active to stream live fixes, while CPU wake locks remain released (`updateWakeLock(false)`).
@@ -62,7 +62,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - When Live Sharing is active without an active trip recording, it streams presence ONLY (current location snapshot, locality, speed) with zero points appended to the trail, eliminating jitter starburst polylines and unneeded wakeups when resting or overnight.
 - **Standby Foreground Service & Android 14+ Location FGS Invariant**:
   - On Android 14+ (`targetSdk >= 34`), starting a ForegroundService with `foregroundServiceType="location"` from the background is forbidden and throws `ForegroundServiceStartNotAllowedException`.
-  - In `TripMode.AUTO`, `LiveTrackingService` MUST be started while the app is in the **FOREGROUND** and kept running as a **Zero-CPU Standby Foreground Service** with a persistent notification ("WhereAmI • Auto-detect Standby").
+  - In `TripMode.AUTO`, `LiveTrackingService` MUST be started while the app is in the **FOREGROUND** and kept running as a **Zero-CPU Standby Foreground Service** with a persistent notification ("WhereAmI • Auto-record Standby").
   - In Standby mode:
     - GPS polling MUST be completely shut down via `LocationManager.stopLocationUpdates()`.
     - Location stream collectors in the service MUST be detached (`stopLocationTracking()`).
@@ -74,7 +74,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - When verified physically stationary for $\ge 3$ minutes without an active trip and without live sharing, `FLAG_KEEP_SCREEN_ON` MUST be cleared to allow Android display sleep and prevent overnight battery drain at home or on desks.
 - **Standby Hibernation & One-Tap Controls**:
   - In `TripMode.AUTO` standby with screen off, after 90 minutes of verified stationary rest (`STANDBY_HIBERNATION_TIMEOUT_MS`), `AppStateManager` transitions the standby foreground service into hibernation, completely disarming `Sensor.TYPE_SIGNIFICANT_MOTION`.
-  - Standby notification MUST include `[🌙 Sleep Now]` (immediate hibernation) and sleep notification MUST provide `[▶ Activate]` (user-interaction wakeup complying with Android 14+ FGS restrictions). Standby sleep also automatically wakes on app resume (`MainActivity.onStart()`).
+  - Standby notification MUST include `[⏸ Pause]` (immediate hibernation) and sleep notification MUST provide `[▶ Resume]` (user-interaction wakeup complying with Android 14+ FGS restrictions). Standby sleep also automatically wakes on app resume (`MainActivity.onStart()`).
   - In `TripMode.MANUAL`, when screen turns off without an active trip or live sharing, the service and notification MUST stop completely (Option A).
 - **Adaptive GPS Sampling**:
   - Recording/Charging: High frequency (~5s–6s sampling).
