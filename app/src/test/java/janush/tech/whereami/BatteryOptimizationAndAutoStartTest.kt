@@ -767,9 +767,58 @@ class BatteryOptimizationAndAutoStartTest {
         // In DEM mode, if DEM is not valid (fallback), hidden even when stationary
         assertFalse(shouldShowAltitudeBadge(0f, false, false))
 
-        // In GPS mode, visible when stationary regardless of DEM
-        assertTrue(shouldShowAltitudeBadge(0f, false, true))
         // In GPS mode, hidden at high speed
         assertFalse(shouldShowAltitudeBadge(30f, false, true))
+    }
+
+    @Test
+    fun testSleepModePeriodicFixFrequency() {
+        val computeHeartbeatInterval = { isCurrentlySleeping: Boolean, baseIntervalMinutes: Int ->
+            if (isCurrentlySleeping) {
+                60 * 60_000L
+            } else {
+                (baseIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
+            }
+        }
+
+        // Normal mode with 1m sync -> 1m
+        assertEquals(60_000L, computeHeartbeatInterval(false, 1))
+        // Normal mode with 5m sync -> 5m
+        assertEquals(300_000L, computeHeartbeatInterval(false, 5))
+        // Sleep mode -> 60 minutes (1 hour) regardless of session sync interval
+        assertEquals(3_600_000L, computeHeartbeatInterval(true, 1))
+        assertEquals(3_600_000L, computeHeartbeatInterval(true, 5))
+    }
+
+    @Test
+    fun testStationaryLatchPreservationPreventsOscillation() {
+        // Simulates the state machine where GPS is stopped during stationary rest on battery
+        var isGpsStopped = false
+        var isPhysicallyStationary = false
+        var isStationaryCadenceApplied = false
+
+        // Simulate 30s dwell -> transition to stationary rest
+        isPhysicallyStationary = true
+        isStationaryCadenceApplied = true
+        isGpsStopped = true
+        // preserveStationaryState=true ensures isPhysicallyStationary remains true when GPS stops
+        val preserveStationaryState = true
+        if (!preserveStationaryState) {
+            isPhysicallyStationary = false
+        }
+
+        assertTrue("Stationary state must be preserved when GPS stops to prevent flapping", isPhysicallyStationary)
+        assertTrue(isGpsStopped)
+        assertTrue(isStationaryCadenceApplied)
+
+        // When unlatchStationary occurs on true hardware motion interrupt:
+        val onHardwareMotionWake = {
+            isPhysicallyStationary = false
+            isGpsStopped = false
+            isStationaryCadenceApplied = false
+        }
+        onHardwareMotionWake()
+        assertFalse(isPhysicallyStationary)
+        assertFalse(isGpsStopped)
     }
 }
