@@ -1180,7 +1180,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isStandbySleeping) "Auto-detect:" else "Auto-detect standby:",
+                            text = "Auto-record:",
                             color = if (isStandbySleeping) Color(0xFF94A3B8) else Color(0xFF38BDF8),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -1198,7 +1198,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = if (isStandbySleeping) {
-                                "Sleeping"
+                                "Paused"
                             } else {
                                 String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed)
                             },
@@ -1227,32 +1227,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // One-tap Sleep / Wake interactive chip
-                    Row(
+                    // One-tap Pause / Resume interactive button
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isStandbySleeping) Color(0xFF047857) else Color(0xFF1E293B))
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(if (isStandbySleeping) Color(0xFF047857) else Color(0xFF334155))
                             .clickable {
                                 viewModel.toggleStandbySleep()
-                            }
-                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (isStandbySleeping) "▶ Wake" else "🌙 Sleep",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.Both
-                                ),
-                                lineHeight = 11.sp
-                            )
+                        Icon(
+                            imageVector = if (isStandbySleeping) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isStandbySleeping) "Resume Auto-record" else "Pause Auto-record",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
