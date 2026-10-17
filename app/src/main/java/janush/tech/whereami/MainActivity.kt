@@ -5367,18 +5367,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = { showActiveTripRouteDialog = false },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF334155),
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Close", color = Color.White)
-                    }
                 }
             }
         }
@@ -7061,12 +7049,15 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     IconButton(
                         onClick = { selectedGuestDetails = null },
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color(0xFF94A3B8),
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -8357,12 +8348,18 @@ private fun HeatMapSettingsDialog(
                             color = Color.White
                         )
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color.LightGray,
-                            modifier = Modifier.size(18.dp)
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
