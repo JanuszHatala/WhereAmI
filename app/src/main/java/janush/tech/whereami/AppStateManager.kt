@@ -441,6 +441,7 @@ class AppStateManager private constructor(private val context: Context) {
     fun handleMotionWake() {
         val tripManager = TripManager.getInstance(context)
         val currentMode = _currentMode.value
+        StationaryDetector.getInstance(context).unlatchStationary()
 
         if (currentMode == AppLifecycleMode.LIVE_ONLY) {
             TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
@@ -661,7 +662,7 @@ class AppStateManager private constructor(private val context: Context) {
                         // instantly wake and restore moving GPS cadence on locomotion.
                         if (!_isCharging.value && !isAppInForeground) {
                             TelemetryLogger.log("POWER", "LIVE_ONLY: Screen off and unplugged: Shutting down GPS updates to allow sustained Doze.")
-                            locManager.stopLocationUpdates()
+                            locManager.stopLocationUpdates(preserveStationaryState = true)
                         } else {
                             val stationaryInterval = if (_isCharging.value) 30_000L else 60_000L
                             val stationaryMinInterval = if (_isCharging.value) 15_000L else 30_000L
@@ -672,6 +673,11 @@ class AppStateManager private constructor(private val context: Context) {
                         AutoSleepManager.getInstance(context).evaluateAutoSleep()
                     }
                 } else {
+                    if (locManager.isGpsStopped && isStationaryCadenceApplied && !_isCharging.value && !isAppInForeground) {
+                        // GPS powered down on battery with screen off; keep resting until MotionWakeManager interrupt
+                        delay(10_000L)
+                        continue
+                    }
                     stationarySinceMs = 0L
                     if (isStationaryCadenceApplied) {
                         // Locomotion resumed! Restore conservative moving interval
@@ -728,17 +734,15 @@ class AppStateManager private constructor(private val context: Context) {
 
         when (mode) {
             AppLifecycleMode.IDLE -> {
-                if (oldMode != AppLifecycleMode.IDLE) {
-                    motionBurstJob?.cancel()
-                    if (motionBurstWakeLock?.isHeld == true) {
-                        try {
-                            motionBurstWakeLock?.release()
-                            TelemetryLogger.log("POWER", "MotionBurstWakeLock released on IDLE entry")
-                        } catch (_: Exception) {}
-                    }
-                    // Completely stop GPS when transitioning to IDLE from another mode
-                    locManager.stopLocationUpdates()
+                motionBurstJob?.cancel()
+                if (motionBurstWakeLock?.isHeld == true) {
+                    try {
+                        motionBurstWakeLock?.release()
+                        TelemetryLogger.log("POWER", "MotionBurstWakeLock released on IDLE entry")
+                    } catch (_: Exception) {}
                 }
+                // Completely stop GPS when entering IDLE mode
+                locManager.stopLocationUpdates(preserveStationaryState = true)
 
                 val tripManager = TripManager.getInstance(context)
                 val hasTrip = tripManager.activeTrip.value != null

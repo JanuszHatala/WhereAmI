@@ -529,8 +529,8 @@ class LiveTrackingService : Service() {
 
         val now = SystemClock.elapsedRealtime()
         val contentChanged = title != lastNotificationTitle || text != lastNotificationText
-        val timeElapsed = (now - lastNotificationPostTime) >= 5_000L
-        val minForceElapsed = (now - lastNotificationPostTime) >= 1_000L
+        val timeElapsed = (now - lastNotificationPostTime) >= 10_000L
+        val minForceElapsed = (now - lastNotificationPostTime) >= 3_000L
 
         if ((force && minForceElapsed) || (contentChanged && timeElapsed)) {
             val notification = buildNotification(title, text)
