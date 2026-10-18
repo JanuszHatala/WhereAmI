@@ -964,13 +964,14 @@ class LocationManager private constructor(private val context: Context) {
                         } catch (_: Exception) { false }
 
                         // Stationary coordinate anchor: freeze coordinates to anchor when device is resting indoors/on a desk
-                        if (isPhysicallyStationary && speed == 0f && prevLoc != null) {
+                        if (isPhysicallyStationary && prevLoc != null) {
                             location.latitude = prevLoc.latitude
                             location.longitude = prevLoc.longitude
                         }
 
                         val displacement = if (prevLoc != null) prevLoc.distanceTo(location) else 0f
                         val candidateBearing: Float? = when {
+                            isPhysicallyStationary -> null
                             location.hasBearing() && speed >= minSpeedForBearing -> location.bearing
                             prevLoc != null && displacement >= 4.0f && speed >= 0.8f -> prevLoc.bearingTo(location)
                             else -> null
@@ -1138,7 +1139,6 @@ class LocationManager private constructor(private val context: Context) {
                 }
             }
             .map {
-                val movingBearing = if (it.speedMs >= 0.8f) it.bearing else null
                 val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
                 val stabilized = positionStabilizer.update(
                     lat = it.lat,
@@ -1148,11 +1148,12 @@ class LocationManager private constructor(private val context: Context) {
                     timestamp = it.timestamp,
                     isPhysicalStationary = isStationary
                 )
+                val movingBearing = if (it.speedMs >= 0.8f && !stabilized.isAnchored && !isStationary) it.bearing else null
                 LocationFix(
                     lat = stabilized.lat,
                     lng = stabilized.lng,
                     bearing = movingBearing,
-                    speedMs = it.speedMs,
+                    speedMs = if (stabilized.isAnchored) 0f else it.speedMs,
                     timestamp = it.timestamp,
                     accuracy = stabilized.accuracy,
                     isAnchored = stabilized.isAnchored,
