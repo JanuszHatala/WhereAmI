@@ -46,11 +46,22 @@ class PositionInterpolator {
     private var smoothedBearingCos: Double = 1.0
     private var isBearingSmootherInitialized: Boolean = false
 
+    private var lastBearingUpdateMs: Long = 0L
+
     internal val blendDurationMs: Long = 250L
     val bufferDelayMs: Long = 1000L
 
-    private fun updateSmoothedBearing(rawDeg: Float, isWalking: Boolean): Float {
-        val alpha = if (isWalking) 0.15 else 0.45
+    private fun updateSmoothedBearing(rawDeg: Float, isWalking: Boolean, nowMs: Long): Float {
+        val dtSec = if (lastBearingUpdateMs > 0L) {
+            ((nowMs - lastBearingUpdateMs).coerceIn(10L, 200L) / 1000.0)
+        } else 0.028
+        lastBearingUpdateMs = nowMs
+
+        // Time-continuous exponential smoothing:
+        // Walking: tau = 0.70s -> smooth responsive turn tracking without cutting corners
+        // Vehicle: tau = 0.30s -> immediate road alignment
+        val tau = if (isWalking) 0.70 else 0.30
+        val alpha = (1.0 - kotlin.math.exp(-dtSec / tau)).coerceIn(0.02, 0.45)
         val rad = Math.toRadians(rawDeg.toDouble())
         if (!isBearingSmootherInitialized) {
             smoothedBearingSin = sin(rad)
@@ -89,7 +100,8 @@ class PositionInterpolator {
         val cutoff = timestamp - 8000L
         sampleBuffer.removeAll { it.timestamp < cutoff }
 
-        if (bearing != null && speedMs >= 0.35f) {
+        // Only initialize lastFrozenBearing on cold start; do NOT overwrite active smoothed heading with noisy raw fix bearings
+        if (bearing != null && lastFrozenBearing == null && speedMs >= 0.35f) {
             lastFrozenBearing = bearing
         }
     }
@@ -291,52 +303,28 @@ class PositionInterpolator {
             val interpSpeed = (sampleA.speedMs + (sampleB.speedMs - sampleA.speedMs) * u.toFloat()).coerceAtLeast(0f)
             val isWalking = interpSpeed < 1.39f // < 5.0 km/h
 
-            // Derive path tangent bearing from motion derivative or spatial baseline
+            // Derive path tangent bearing from motion derivative or segment chord
             val effectiveBearing = if (interpSpeed >= 0.35f) {
-                if (isWalking) {
-                    // For walking speeds (< 5 km/h), single-second segments (< 1.5m) are dominated by GPS jitter.
-                    // Derive course over an accumulated spatial baseline (>= 4.0m) from recent sample buffer.
-                    var sampleHist: FixSample? = null
-                    for (i in sampleAIndex downTo 0) {
-                        val prev = sampleBuffer[i]
-                        val dLatM = (sampleB.lat - prev.lat) * 111320.0
-                        val dLngM = (sampleB.lng - prev.lng) * 111320.0 * cosLatA
-                        if (hypot(dLngM, dLatM) >= 4.0) {
-                            sampleHist = prev
-                            break
-                        }
-                    }
+                val dLngM = dLng * 111320.0 * cosLatA
+                val dLatM = dLat * 111320.0
+                val motionMag = hypot(dLngM, dLatM)
 
-                    if (sampleHist != null) {
-                        val dLngM = (sampleB.lng - sampleHist.lng) * 111320.0 * cosLatA
-                        val dLatM = (sampleB.lat - sampleHist.lat) * 111320.0
-                        val rawDeg = Math.toDegrees(atan2(dLngM, dLatM)).toFloat()
-                        val normalizedDeg = (rawDeg + 360f) % 360f
-                        val smoothed = updateSmoothedBearing(normalizedDeg, isWalking = true)
-                        lastFrozenBearing = smoothed
-                        smoothed
-                    } else if (sampleB.bearing != null) {
-                        val smoothed = updateSmoothedBearing(sampleB.bearing, isWalking = true)
-                        lastFrozenBearing = smoothed
-                        smoothed
-                    } else {
-                        lastFrozenBearing
-                    }
-                } else if (chordDistMeters >= 0.5) {
-                    // Higher speeds (>= 5 km/h): Hermite motion derivative aligns cursor with curved road path
-                    val dLngM = dLng * 111320.0 * cosLatA
-                    val dLatM = dLat * 111320.0
-                    if (hypot(dLngM, dLatM) >= 0.05) {
-                        val rawDeg = Math.toDegrees(atan2(dLngM, dLatM)).toFloat()
-                        val normalizedDeg = (rawDeg + 360f) % 360f
-                        val smoothed = updateSmoothedBearing(normalizedDeg, isWalking = false)
-                        lastFrozenBearing = smoothed
-                        smoothed
-                    } else {
-                        sampleB.bearing ?: lastFrozenBearing
-                    }
+                val candidateDeg = if (motionMag >= 0.05) {
+                    val rawDeg = Math.toDegrees(atan2(dLngM, dLatM)).toFloat()
+                    (rawDeg + 360f) % 360f
+                } else if (chordDistMeters >= 0.15) {
+                    val rawDeg = Math.toDegrees(atan2(deltaLng * 111320.0 * cosLatA, deltaLat * 111320.0)).toFloat()
+                    (rawDeg + 360f) % 360f
                 } else {
                     sampleB.bearing ?: lastFrozenBearing
+                }
+
+                if (candidateDeg != null) {
+                    val smoothed = updateSmoothedBearing(candidateDeg, isWalking = isWalking, nowMs = nowMs)
+                    lastFrozenBearing = smoothed
+                    smoothed
+                } else {
+                    lastFrozenBearing
                 }
             } else {
                 lastFrozenBearing
@@ -400,6 +388,7 @@ class PositionInterpolator {
     fun reset() {
         sampleBuffer.clear()
         lastFrozenBearing = null
+        lastBearingUpdateMs = 0L
         clockOffsetMs = 0L
         isBearingSmootherInitialized = false
         smoothedBearingSin = 0.0

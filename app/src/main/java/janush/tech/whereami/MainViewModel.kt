@@ -230,9 +230,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 3. Uncached and speed < 15 km/h: do NOT show stale value from far away; mark fallback and clear display
-        _isAltitudeFallback.value = true
-        _displayAltitude.value = null
+        // 3. Uncached and speed < 15 km/h: retain current _displayAltitude to prevent visual blinking/flickering
+        // while asynchronously resolving elevation for the new grid cell
+        _isAltitudeFallback.value = (_displayAltitude.value == null)
 
         // 4. Asynchronously query DEM without blocking kinematics or UI
         demLookupJob?.cancel()
