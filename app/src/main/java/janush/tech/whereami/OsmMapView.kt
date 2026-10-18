@@ -699,7 +699,7 @@ fun OsmMapView(
             fix.accuracy,
             fix.isAnchored
         )
-        if (fix.bearing != null) {
+        if (fix.bearing != null && lastFrozenBearing == null) {
             lastFrozenBearing = fix.bearing
         }
     }
@@ -738,11 +738,13 @@ fun OsmMapView(
                 if (pt.lat != 0.0 && pt.lng != 0.0) {
                     val gp = GeoPoint(pt.lat, pt.lng)
                     val rawBearing = currentFix.bearing
-                    if (rawBearing != null) {
+                    if (pt.bearing != null) {
+                        lastFrozenBearing = pt.bearing
+                    } else if (rawBearing != null && lastFrozenBearing == null) {
                         lastFrozenBearing = rawBearing
                     }
-                    val effectiveBearing = pt.bearing ?: (rawBearing ?: lastFrozenBearing)
-                    val minMovingSpeed = if (isRecording) 0.45f else 0.8f
+                    val effectiveBearing = pt.bearing ?: lastFrozenBearing
+                    val minMovingSpeed = if (isRecording) 0.35f else 0.8f
                     val isMoving = currentFix.speedMs >= minMovingSpeed && !currentFix.isAnchored && !posInterpolator.isStationary()
                     val hasHeading = isMoving && (effectiveBearing != null)
 
@@ -807,14 +809,16 @@ fun OsmMapView(
                             val currentRot = map.mapOrientation
                             val delta = shortestAngularDelta(currentRot, targetRot)
                             val isWalkingSpeed = currentFix.speedMs < 1.39f // < 5.0 km/h
-                            val minDeadband = if (isWalkingSpeed) 5.0f else 0.5f
+                            val deadband = if (isWalkingSpeed) 3.5f else 0.5f
                             val tau = if (isWalkingSpeed) 0.50f else 0.20f
-                            if (kotlin.math.abs(delta) > minDeadband) {
+                            val absDelta = kotlin.math.abs(delta)
+                            if (absDelta > deadband) {
                                 val dtSec = if (lastFrameRenderMs > 0L) {
                                     ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
                                 } else 0.028f
+                                val effectiveDelta = kotlin.math.sign(delta) * (absDelta - deadband)
                                 val factor = (1.0f - kotlin.math.exp(-dtSec / tau)).coerceIn(0.02f, 0.40f)
-                                var step = delta * factor
+                                var step = effectiveDelta * factor
                                 if (isWalkingSpeed) {
                                     val maxStep = 35.0f * dtSec
                                     step = step.coerceIn(-maxStep, maxStep)
