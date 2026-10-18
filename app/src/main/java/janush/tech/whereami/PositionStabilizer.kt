@@ -109,7 +109,8 @@ class PositionStabilizer {
             } else {
                 // Candidate outside gate: possible breakout or transient multipath spike
                 consecutiveDisplacements++
-                if (consecutiveDisplacements >= BREAKOUT_DISPLACEMENT_COUNT || speedMs >= BREAKOUT_SPEED_THRESHOLD_MPS) {
+                val speedBreakout = speedMs >= BREAKOUT_SPEED_THRESHOLD_MPS && !isPhysicalStationary
+                if (consecutiveDisplacements >= BREAKOUT_DISPLACEMENT_COUNT || speedBreakout) {
                     // Confirmed locomotion breakout: release anchor
                     releaseAnchor()
                 } else {
@@ -118,8 +119,28 @@ class PositionStabilizer {
                 }
             }
         } else {
-            // Speed clearly above stationary threshold: release anchor
-            releaseAnchor()
+            // Speed clearly above stationary threshold: release anchor unless physical accelerometer indicates stillness
+            if (!isPhysicalStationary) {
+                releaseAnchor()
+            } else {
+                val curAnchorLat = anchorLat
+                val curAnchorLng = anchorLng
+                if (curAnchorLat != null && curAnchorLng != null) {
+                    val distFromAnchorMeters = computeDistanceMeters(curAnchorLat, curAnchorLng, lat, lng)
+                    val anchorGateRadius = maxOf(BASE_ANCHOR_GATE_METERS, safeAcc * 0.70)
+                    if (distFromAnchorMeters <= anchorGateRadius) {
+                        return StabilizedFix(curAnchorLat, curAnchorLng, anchorAccuracy, isAnchored = true)
+                    }
+                    consecutiveDisplacements++
+                    if (consecutiveDisplacements >= BREAKOUT_DISPLACEMENT_COUNT) {
+                        releaseAnchor()
+                    } else {
+                        return StabilizedFix(curAnchorLat, curAnchorLng, anchorAccuracy, isAnchored = true)
+                    }
+                } else {
+                    releaseAnchor()
+                }
+            }
         }
 
         // 3. 2D Kalman Update for Moving State

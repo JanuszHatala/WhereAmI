@@ -115,4 +115,31 @@ class PositionStabilizerTest {
         val res2 = stabilizer.update(targetLat, 19.280000, accuracy = 10f, speedMs = 10f, timestamp = t0 + 2000L, isPhysicalStationary = false)
         assertTrue("res2 should converge further towards target", res2.lat > res1.lat && res2.lat <= targetLat)
     }
+
+    @Test
+    fun `phantom GPS speed spikes during physical stillness do not break anchor`() {
+        val baseLat = 49.850000
+        val baseLng = 19.280000
+        val t0 = 10000L
+
+        // Establish anchor while physically stationary
+        stabilizer.update(baseLat, baseLng, accuracy = 8f, speedMs = 0f, timestamp = t0, isPhysicalStationary = true)
+
+        // GPS multipath delivers phantom speed of 1.2 m/s (4.3 km/h) with coordinates inside anchor gate
+        val candidateLat = baseLat + 0.000030
+        val candidateLng = baseLng + 0.000020
+        val res = stabilizer.update(
+            candidateLat,
+            candidateLng,
+            accuracy = 10f,
+            speedMs = 1.2f, // Above 0.8 m/s threshold!
+            timestamp = t0 + 1000L,
+            isPhysicalStationary = true
+        )
+
+        assertTrue("Anchor must hold despite speed spike when physical stationary is true", res.isAnchored)
+        assertEquals(baseLat, res.lat, 0.000001)
+        assertEquals(baseLng, res.lng, 0.000001)
+    }
 }
+
