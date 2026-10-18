@@ -962,16 +962,17 @@ class LocationManager private constructor(private val context: Context) {
                         val isPhysicallyStationary = try {
                             StationaryDetector.getInstance(context).isPhysicallyStationary.value
                         } catch (_: Exception) { false }
+                        val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
 
-                        // Stationary coordinate anchor: freeze coordinates to anchor when device is resting indoors/on a desk
-                        if (isPhysicallyStationary && prevLoc != null) {
+                        // Stationary coordinate anchor: freeze coordinates to anchor ONLY when resting indoors/on a desk and NOT recording
+                        if (isPhysicallyStationary && prevLoc != null && !isTripRecording) {
                             location.latitude = prevLoc.latitude
                             location.longitude = prevLoc.longitude
                         }
 
                         val displacement = if (prevLoc != null) prevLoc.distanceTo(location) else 0f
                         val candidateBearing: Float? = when {
-                            isPhysicallyStationary -> null
+                            isPhysicallyStationary && !isTripRecording -> null
                             location.hasBearing() && speed >= minSpeedForBearing -> location.bearing
                             prevLoc != null && displacement >= 4.0f && speed >= 0.8f -> prevLoc.bearingTo(location)
                             else -> null
@@ -1139,6 +1140,7 @@ class LocationManager private constructor(private val context: Context) {
                 }
             }
             .map {
+                val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
                 val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
                 val stabilized = positionStabilizer.update(
                     lat = it.lat,
@@ -1146,17 +1148,18 @@ class LocationManager private constructor(private val context: Context) {
                     accuracy = it.accuracy ?: 10f,
                     speedMs = it.speedMs,
                     timestamp = it.timestamp,
-                    isPhysicalStationary = isStationary
+                    isPhysicalStationary = if (isTripRecording) false else isStationary,
+                    isTripRecording = isTripRecording
                 )
-                val movingBearing = if (it.speedMs >= 0.8f && !stabilized.isAnchored && !isStationary) it.bearing else null
+                val movingBearing = if (it.speedMs >= 0.8f && (!stabilized.isAnchored || isTripRecording)) it.bearing else null
                 LocationFix(
                     lat = stabilized.lat,
                     lng = stabilized.lng,
                     bearing = movingBearing,
-                    speedMs = if (stabilized.isAnchored) 0f else it.speedMs,
+                    speedMs = if (stabilized.isAnchored && !isTripRecording) 0f else it.speedMs,
                     timestamp = it.timestamp,
                     accuracy = stabilized.accuracy,
-                    isAnchored = stabilized.isAnchored,
+                    isAnchored = if (isTripRecording) false else stabilized.isAnchored,
                     fixSeqId = it.fixSeqId
                 )
             }

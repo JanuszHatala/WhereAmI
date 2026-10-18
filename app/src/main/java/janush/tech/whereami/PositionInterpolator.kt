@@ -138,12 +138,14 @@ class PositionInterpolator {
         // Case 1: Target time falls between two known samples A and B
         var sampleA: FixSample? = null
         var sampleB: FixSample? = null
+        var sampleAIndex = -1
         for (i in 0 until sampleBuffer.size - 1) {
             val a = sampleBuffer[i]
             val b = sampleBuffer[i + 1]
             if (targetTimeMs in a.timestamp..b.timestamp) {
                 sampleA = a
                 sampleB = b
+                sampleAIndex = i
                 break
             }
         }
@@ -167,28 +169,85 @@ class PositionInterpolator {
                 )
             }
 
-            // Cubic Hermite Spline calculation
+            // Catmull-Rom Cubic Hermite Spline calculation
             val dtSec = dtMs / 1000.0
+            val samplePrev = if (sampleAIndex > 0) sampleBuffer[sampleAIndex - 1] else null
+            val sampleNext = if (sampleAIndex + 2 < sampleBuffer.size) sampleBuffer[sampleAIndex + 2] else null
 
-            val bearingA = sampleA.bearing ?: lastFrozenBearing ?: sampleB.bearing ?: 0f
-            val bearingB = sampleB.bearing ?: lastFrozenBearing ?: sampleA.bearing ?: 0f
-
-            val radA = Math.toRadians(bearingA.toDouble())
-            val radB = Math.toRadians(bearingB.toDouble())
+            val deltaLat = sampleB.lat - sampleA.lat
+            val deltaLng = sampleB.lng - sampleA.lng
 
             val cosLatA = cos(Math.toRadians(sampleA.lat)).coerceAtLeast(0.01)
-            val cosLatB = cos(Math.toRadians(sampleB.lat)).coerceAtLeast(0.01)
+            val dLatMeters = deltaLat * 111320.0
+            val dLngMeters = deltaLng * 111320.0 * cosLatA
+            val chordDistMeters = hypot(dLngMeters, dLatMeters)
 
-            val vAx = (sampleA.speedMs * sin(radA)) / (111320.0 * cosLatA)
-            val vAy = (sampleA.speedMs * cos(radA)) / 111320.0
+            // Catmull-Rom tangents based on neighboring position fixes
+            val (rawMAx, rawMAy) = if (samplePrev != null) {
+                val dtPrevSec = (sampleB.timestamp - samplePrev.timestamp).coerceAtLeast(1L) / 1000.0
+                val vLat = (sampleB.lat - samplePrev.lat) / dtPrevSec
+                val vLng = (sampleB.lng - samplePrev.lng) / dtPrevSec
+                (vLng * dtSec) to (vLat * dtSec)
+            } else if (sampleA.bearing != null && sampleA.speedMs >= 1.39f) {
+                val radA = Math.toRadians(sampleA.bearing.toDouble())
+                val vAx = (sampleA.speedMs * sin(radA)) / (111320.0 * cosLatA)
+                val vAy = (sampleA.speedMs * cos(radA)) / 111320.0
+                (vAx * dtSec) to (vAy * dtSec)
+            } else {
+                deltaLng to deltaLat
+            }
 
-            val vBx = (sampleB.speedMs * sin(radB)) / (111320.0 * cosLatB)
-            val vBy = (sampleB.speedMs * cos(radB)) / 111320.0
+            val (rawMBx, rawMBy) = if (sampleNext != null) {
+                val dtNextSec = (sampleNext.timestamp - sampleA.timestamp).coerceAtLeast(1L) / 1000.0
+                val vLat = (sampleNext.lat - sampleA.lat) / dtNextSec
+                val vLng = (sampleNext.lng - sampleA.lng) / dtNextSec
+                (vLng * dtSec) to (vLat * dtSec)
+            } else if (sampleB.bearing != null && sampleB.speedMs >= 1.39f) {
+                val radB = Math.toRadians(sampleB.bearing.toDouble())
+                val vBx = (sampleB.speedMs * sin(radB)) / (111320.0 * cosLatA)
+                val vBy = (sampleB.speedMs * cos(radB)) / 111320.0
+                (vBx * dtSec) to (vBy * dtSec)
+            } else {
+                deltaLng to deltaLat
+            }
 
-            val mAx = vAx * dtSec
-            val mAy = vAy * dtSec
-            val mBx = vBx * dtSec
-            val mBy = vBy * dtSec
+            // Monotonicity & anti-inflection clamping:
+            // Tangent magnitude must not exceed 1.2x chord length, and must have positive dot product along chord
+            var mAx = rawMAx
+            var mAy = rawMAy
+            var mBx = rawMBx
+            var mBy = rawMBy
+
+            if (chordDistMeters >= 0.05) {
+                val magAMeters = hypot(mAx * 111320.0 * cosLatA, mAy * 111320.0)
+                if (magAMeters > 1.2 * chordDistMeters && magAMeters > 0.0) {
+                    val scaleA = (1.2 * chordDistMeters) / magAMeters
+                    mAx *= scaleA
+                    mAy *= scaleA
+                }
+                val dotA = mAx * deltaLng + mAy * deltaLat
+                if (dotA < 0.0) {
+                    mAx = deltaLng
+                    mAy = deltaLat
+                }
+
+                val magBMeters = hypot(mBx * 111320.0 * cosLatA, mBy * 111320.0)
+                if (magBMeters > 1.2 * chordDistMeters && magBMeters > 0.0) {
+                    val scaleB = (1.2 * chordDistMeters) / magBMeters
+                    mBx *= scaleB
+                    mBy *= scaleB
+                }
+                val dotB = mBx * deltaLng + mBy * deltaLat
+                if (dotB < 0.0) {
+                    mBx = deltaLng
+                    mBy = deltaLat
+                }
+            } else {
+                mAx = 0.0
+                mAy = 0.0
+                mBx = 0.0
+                mBy = 0.0
+            }
 
             // Hermite basis functions
             val u2 = u * u
@@ -212,12 +271,12 @@ class PositionInterpolator {
 
             val interpSpeed = (sampleA.speedMs + (sampleB.speedMs - sampleA.speedMs) * u.toFloat()).coerceAtLeast(0f)
 
-            // Derive path tangent bearing from motion derivative
-            val effectiveBearing = if (interpSpeed >= 0.35f) {
-                val dLngMeters = dLng * 111320.0 * cos(Math.toRadians(interpLat)).coerceAtLeast(0.01)
-                val dLatMeters = dLat * 111320.0
-                if (hypot(dLngMeters, dLatMeters) >= 0.05) {
-                    val rawDeg = Math.toDegrees(atan2(dLngMeters, dLatMeters)).toFloat()
+            // Derive path tangent bearing from motion derivative (guaranteed monotonic)
+            val effectiveBearing = if (interpSpeed >= 0.35f && chordDistMeters >= 0.5) {
+                val dLngM = dLng * 111320.0 * cosLatA
+                val dLatM = dLat * 111320.0
+                if (hypot(dLngM, dLatM) >= 0.05) {
+                    val rawDeg = Math.toDegrees(atan2(dLngM, dLatM)).toFloat()
                     val normalizedDeg = (rawDeg + 360f) % 360f
                     lastFrozenBearing = normalizedDeg
                     normalizedDeg
