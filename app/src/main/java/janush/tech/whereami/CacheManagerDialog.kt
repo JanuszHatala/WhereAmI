@@ -4,8 +4,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -120,12 +122,16 @@ fun CacheManagerDialog(
                     }
                     IconButton(
                         onClick = onDismissRequest,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF334155))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color.White
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -853,28 +859,34 @@ fun CacheManagerDialog(
                 Text(msg, color = Color(0xFFE2E8F0), fontSize = 14.sp)
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            when (target) {
-                                "TILES" -> cacheManager.clearTileCache()
-                                "BOUNDARIES" -> cacheManager.clearBoundaryCache()
-                                "SPATIAL" -> cacheManager.clearSpatialCache()
-                            }
-                            cacheClearConfirmTarget = null
-                            refreshMetrics()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Clear", color = Color.White, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { cacheClearConfirmTarget = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                when (target) {
+                                    "TILES" -> cacheManager.clearTileCache()
+                                    "BOUNDARIES" -> cacheManager.clearBoundaryCache()
+                                    "SPATIAL" -> cacheManager.clearSpatialCache()
+                                }
+                                cacheClearConfirmTarget = null
+                                refreshMetrics()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                    ) {
+                        Text("Clear", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { cacheClearConfirmTarget = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            }
+            dismissButton = null
         )
     }
 }

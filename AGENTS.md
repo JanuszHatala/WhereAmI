@@ -44,7 +44,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
 - **Notification Content Stability Invariant (Zero-Wakelock-Storm)**:
   - When a trip is NOT actively recording (e.g. `LIVE_ONLY` mode, `TripMode.AUTO` standby), the persistent notification text MUST NOT include dynamic ticking time strings (e.g. `⏱️ 7h 12m elapsed` or minutes/seconds counters).
   - Changing notification strings causes `contentChanged = true` on every minute tick, triggering `NotificationManager.notify()`, acquiring system wake locks (`NotificationManagerService:post`), firing wakeup alarms, and pulling the CPU out of Android Doze.
-  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-detect: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-detect Standby"`).
+  - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-record: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-record Standby"`).
 - **Standby Location Stream Decoupling**:
   - In `LiveTrackingService`, when in pure standby without an active trip and without live sharing (`TripMode.AUTO` standby), `stopLocationTracking()` MUST be called to release `masterLocationFlow` subscribers.
   - When Live Sharing is active (`LIVE_ONLY`), `startLocationTracking()` remains active to stream live fixes, while CPU wake locks remain released (`updateWakeLock(false)`).
@@ -62,7 +62,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - When Live Sharing is active without an active trip recording, it streams presence ONLY (current location snapshot, locality, speed) with zero points appended to the trail, eliminating jitter starburst polylines and unneeded wakeups when resting or overnight.
 - **Standby Foreground Service & Android 14+ Location FGS Invariant**:
   - On Android 14+ (`targetSdk >= 34`), starting a ForegroundService with `foregroundServiceType="location"` from the background is forbidden and throws `ForegroundServiceStartNotAllowedException`.
-  - In `TripMode.AUTO`, `LiveTrackingService` MUST be started while the app is in the **FOREGROUND** and kept running as a **Zero-CPU Standby Foreground Service** with a persistent notification ("WhereAmI • Auto-detect Standby").
+  - In `TripMode.AUTO`, `LiveTrackingService` MUST be started while the app is in the **FOREGROUND** and kept running as a **Zero-CPU Standby Foreground Service** with a persistent notification ("WhereAmI • Auto-record Standby").
   - In Standby mode:
     - GPS polling MUST be completely shut down via `LocationManager.stopLocationUpdates()`.
     - Location stream collectors in the service MUST be detached (`stopLocationTracking()`).
@@ -74,7 +74,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - When verified physically stationary for $\ge 3$ minutes without an active trip and without live sharing, `FLAG_KEEP_SCREEN_ON` MUST be cleared to allow Android display sleep and prevent overnight battery drain at home or on desks.
 - **Standby Hibernation & One-Tap Controls**:
   - In `TripMode.AUTO` standby with screen off, after 90 minutes of verified stationary rest (`STANDBY_HIBERNATION_TIMEOUT_MS`), `AppStateManager` transitions the standby foreground service into hibernation, completely disarming `Sensor.TYPE_SIGNIFICANT_MOTION`.
-  - Standby notification MUST include `[🌙 Sleep Now]` (immediate hibernation) and sleep notification MUST provide `[▶ Activate]` (user-interaction wakeup complying with Android 14+ FGS restrictions). Standby sleep also automatically wakes on app resume (`MainActivity.onStart()`).
+  - Standby notification MUST include `[⏸ Pause]` (immediate hibernation) and sleep notification MUST provide `[▶ Resume]` (user-interaction wakeup complying with Android 14+ FGS restrictions). Standby sleep also automatically wakes on app resume (`MainActivity.onStart()`).
   - In `TripMode.MANUAL`, when screen turns off without an active trip or live sharing, the service and notification MUST stop completely (Option A).
 - **Adaptive GPS Sampling**:
   - Recording/Charging: High frequency (~5s–6s sampling).
@@ -130,6 +130,11 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **Landscape Screen Conservation**: In landscape mode, never stack toolbars vertically. Collapse secondary toolbars to icon-only representations or position them side-by-side with the main bottom toolbar.
 - **High-Contrast Interactive Buttons Invariant (`docs/DESIGN_SYSTEM.md` Section 6)**: All interactive button labels (`Button`, `OutlinedButton`, `TextButton`, `Surface(onClick = ...)`, `FilterChip`) MUST use crisp, high-contrast white text (`Color.White` / `#F8FAFC`). Never use gray (`#94A3B8`, `Color.LightGray`, `#CBD5E1`) for button labels. Differentiate secondary/tertiary buttons using container backgrounds (`#334155`, `#1E293B`) or border strokes, never dimmed text.
 - **Compact Status Badges & Layout Stability Invariant (`docs/DESIGN_SYSTEM.md` Section 5.D)**: Rows containing optional or dynamic status pills/badges (e.g. `SLEEPING`, `ACTIVE`, `PAUSED`) beside labels MUST use fixed container heights (e.g. `Modifier.fillMaxWidth().height(24.dp)`) with `Arrangement.SpaceBetween` and `Alignment.CenterVertically` to guarantee zero layout shifts when state toggles. Both label and badge text MUST normalize font metrics with `PlatformTextStyle(includeFontPadding = false)`, `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)`, and explicit `lineHeight = fontSize`. Badge text MUST be centered via `Box(contentAlignment = Alignment.Center)`. Dynamic status descriptions changing across states MUST declare `maxLines = 1` and `softWrap = false` to eliminate multiline line-wrap displacement.
+- **Modal, Dialog & Bottom Sheet UX Invariant (`docs/DESIGN_SYSTEM.md` Section 7)**:
+  - **Canonical Top-Right Close Button**: All Card-based `Dialog` containers (`usePlatformDefaultWidth = false`) and `ModalBottomSheet` headers MUST use the standard 36dp circular slate button: `IconButton(modifier = Modifier.size(36.dp).clip(CircleShape).background(Color(0xFF1E293B)))` with 20dp `Icons.Default.Close` tinted `Color.White`.
+  - **Two-Button Layout**: Binary action modals MUST place `[Cancel]` on the LEFT (`TextButton`, white) and `[Action]` on the RIGHT (`Button`, white text) in a single inline horizontal row (`horizontalArrangement = Arrangement.End`), with `dismissButton = null`. Action buttons must NEVER stack vertically on mobile viewports.
+  - **Dismissal Redundancy**: When a dialog or bottom sheet has a top-right `X` button, NEVER add a redundant bottom `[Close]` button. Reserve bottom space for content.
+  - **Multi-Button Hierarchy**: Most constructive action full-width on top; secondary actions inline 50/50 below. Fullscreen dialogs use top-left `ArrowBack`.
 
 ---
 

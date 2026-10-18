@@ -195,10 +195,54 @@ fun EmojiText(
 - **Mandatory White Text on Buttons**:
   - All interactive button labels (`Button`, `OutlinedButton`, `TextButton`, `Surface(onClick = ...)`, `FilterChip`) MUST use crisp, high-contrast white text (`Color.White` / `#F8FAFC`).
   - **NEVER use gray/slate text** (`#94A3B8`, `Color.LightGray`, `Color.Gray`, `#64748B`, `#CBD5E1`) for button labels or button icons inside clickable controls.
-- **Triple-Layer Contrast Defense**:
-  1. *Foundation Theme Enforcement*: `WhereAmITheme` sets `dynamicColor = false` by default, preventing Android 12+ wallpaper Monet palette from overriding dark/light container content tokens with dimmed or gray shades. All Material3 content tokens (`onPrimary`, `onSecondary`, `onTertiary`, `onSurface`, `onSurfaceVariant`) map strictly to `Color.White`.
-  2. *Call-Site Explicit Invariant*: All button invocations either use `AppButtonDefaults` presets (`primary()`, `secondary()`, `destructive()`, `text()`, `outlined()`) or explicitly pass `colors = ButtonDefaults.buttonColors(..., contentColor = Color.White)`. Nested `Text` composables inside button content lambdas explicitly specify `color = Color.White`.
-  3. *Automated Static Compliance Gate*: Every Gradle test run (`./gradlew testDebugUnitTest`) executes `ButtonContrastComplianceTest.kt`, scanning all UI composables to fail builds if any `Button`, `TextButton`, or `OutlinedButton` content block contains `Color.Gray`, `Color.LightGray`, `0xFF94A3B8`, or `0xFFCBD5E1`.
+
+---
+
+## 7. Modal, Dialog & Bottom Sheet UX Architecture
+
+### A. Canonical Top-Right Close Button Specification
+All custom Card-based `Dialog` containers (`usePlatformDefaultWidth = false`) and `ModalBottomSheet` headers MUST use the standard circular close button:
+```kotlin
+IconButton(
+    onClick = onDismiss,
+    modifier = Modifier
+        .size(36.dp)
+        .clip(CircleShape)
+        .background(Color(0xFF1E293B))
+) {
+    Icon(
+        imageVector = Icons.Default.Close,
+        contentDescription = "Close",
+        tint = Color.White,
+        modifier = Modifier.size(20.dp)
+    )
+}
+```
+- Standard 36dp circular slate container (`#1E293B`) provides a distinct touch target and contrast against dark sheet surfaces (`#0F172A`).
+- Icon size is 20dp, tinted `Color.White`.
+
+### B. Two-Button Confirmation & Prompt Rule (Non-Negotiable)
+When a modal has two action buttons (e.g. Cancel + Confirm, or Reset + Apply):
+- **Ordering**: Secondary / Cancel / Neutral action on the **LEFT**, Primary / Destructive Commit on the **RIGHT**.
+- **Layout**: Always inline in a single horizontal row (`Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End)` or `Arrangement.SpaceBetween`) inside `confirmButton` with `dismissButton = null`.
+- **Zero Vertical Stacking**: Never stack two action buttons vertically on standard mobile viewports.
+- **Contrast**: `[Cancel]` uses `TextButton` with `Color.White`. Primary action uses high-contrast `Button` with white text on themed container.
+
+### C. Dismissal Redundancy Avoidance
+- If a card dialog or bottom sheet already features the top-right `X` close button, it **MUST NOT** include a redundant, full-width `[Close]` button at the bottom.
+- Reserve bottom vertical space for content (e.g. visited places lists, configuration toggles). Dismissal is cleanly afforded by the top-right `X`, Android system back gesture, and tap-outside.
+- Standard binary `AlertDialog` prompts do not use a top-right `X`, relying on the inline `[Cancel]` and `[Action]` buttons.
+
+### D. Multi-Button Action Hierarchy (> 2 Action Buttons)
+When a sheet or dialog presents multiple primary/secondary actions:
+1. **Primary Action**: Place the most frequent, constructive action at the top as a full-width button (44–46dp height, themed container e.g. blue `#0284C7`, white text).
+2. **Secondary Utilities**: Place secondary actions inline side-by-side (50/50 split with `Modifier.weight(1f)` and `Arrangement.spacedBy(8.dp)`), styled with neutral containers (`#334155`) or outlined borders.
+3. **Destructive Actions**: Differentiate destructive actions (e.g. Delete, Stop Session) with warning red containers (`#EF4444` / `#DC2626`) placed distinctly below or isolated in contextual menus.
+
+### E. Fullscreen Dialog Navigation Pattern
+- Fullscreen dialogs (e.g. `TripDetailDialog`) represent dedicated sub-destinations.
+- Use **top-left `ArrowBack`** (`Icons.Default.ArrowBack`, `Color.White`) for dismissal, matching standard Android navigation bars.
+- The top-right header area is reserved for contextual secondary tool icon buttons (GPX export, rename, delete).
 
 
 
