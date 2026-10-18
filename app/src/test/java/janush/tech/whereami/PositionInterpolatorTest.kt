@@ -190,5 +190,50 @@ class PositionInterpolatorTest {
             )
         }
     }
+
+    @Test
+    fun `walking bearing ignores micro-displacement jitter and preserves frozen heading`() {
+        val t0 = 10000L
+        val t1 = 11000L
+        // Initial steady heading North (0°)
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 0f, speedMs = 1.0f, timestamp = t0)
+        
+        // Single 1-meter fix with noise to the side (displacement 1.0m < 4.0m threshold)
+        val dLng1m = 1.0 / (111320.0 * cos(Math.toRadians(49.8500)))
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + dLng1m, bearing = null, speedMs = 1.0f, timestamp = t1)
+
+        val delay = interpolator.bufferDelayMs
+        val p = interpolator.interpolate(t1 + delay)
+
+        // Since displacement is only 1.0m (< 4.0m spatial baseline for walking), bearing must preserve frozen heading (0°)
+        // rather than jumping 90° East
+        assertEquals(0f, p.bearing ?: 0f, 1.0f)
+    }
+
+    @Test
+    fun `walking bearing over 5-meter baseline accurately tracks walking direction`() {
+        var t = 10000L
+        val dLat1m = 1.0 / 111320.0
+        // Feed 6 consecutive 1-meter steps North (~1.0 m/s walking)
+        for (i in 0..6) {
+            interpolator.onNewFix(
+                lat = 49.8500 + (i * dLat1m),
+                lng = 19.2800,
+                bearing = null,
+                speedMs = 1.0f,
+                timestamp = t
+            )
+            t += 1000L
+        }
+
+        val delay = interpolator.bufferDelayMs
+        val p = interpolator.interpolate(t - 1000L + delay)
+
+        assertNotNull(p.bearing)
+        // Accumulated baseline exceeds 4.0m, direction should accurately track North (0° / 360° ± 5°)
+        val diff = (p.bearing!! + 360f) % 360f
+        val isNorth = diff <= 5f || diff >= 355f
+        assertTrue("Bearing should track North (0° ± 5°), got $diff°", isNorth)
+    }
 }
 
