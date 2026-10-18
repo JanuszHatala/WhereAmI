@@ -53,12 +53,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val autoSleepEndTime: StateFlow<String> = autoSleepManager.endTime
     val autoSleepFollowDnd: StateFlow<Boolean> = autoSleepManager.followDnd
     val autoSleepFollowAlarm: StateFlow<Boolean> = autoSleepManager.followAlarm
+    val autoSleepPauseLiveShare: StateFlow<Boolean> = autoSleepManager.pauseLiveShare
 
     fun setAutoSleepEnabled(enabled: Boolean) = autoSleepManager.setAutoSleepEnabled(enabled)
     fun setAutoSleepStartTime(time: String) = autoSleepManager.setStartTime(time)
     fun setAutoSleepEndTime(time: String) = autoSleepManager.setEndTime(time)
     fun setAutoSleepFollowDnd(follow: Boolean) = autoSleepManager.setFollowDnd(follow)
     fun setAutoSleepFollowAlarm(follow: Boolean) = autoSleepManager.setFollowAlarm(follow)
+    fun setAutoSleepPauseLiveShare(pause: Boolean) = autoSleepManager.setPauseLiveShare(pause)
 
     fun enterStandbySleep() {
         appStateManager.enterStandbySleep(isManual = true)
