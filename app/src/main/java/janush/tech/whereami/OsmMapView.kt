@@ -805,11 +805,14 @@ fun OsmMapView(
                             val targetRot = -effectiveBearing
                             val currentRot = map.mapOrientation
                             val delta = shortestAngularDelta(currentRot, targetRot)
-                            if (kotlin.math.abs(delta) > 0.5f) {
+                            val isWalkingSpeed = currentFix.speedMs < 1.39f // < 5.0 km/h
+                            val minDeadband = if (isWalkingSpeed) 2.0f else 0.5f
+                            val tau = if (isWalkingSpeed) 0.40f else 0.20f
+                            if (kotlin.math.abs(delta) > minDeadband) {
                                 val dtSec = if (lastFrameRenderMs > 0L) {
                                     ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
                                 } else 0.028f
-                                val factor = (1.0f - kotlin.math.exp(-dtSec / 0.20f)).coerceIn(0.04f, 0.40f)
+                                val factor = (1.0f - kotlin.math.exp(-dtSec / tau)).coerceIn(0.02f, 0.40f)
                                 map.mapOrientation = normalizeAngle(currentRot + delta * factor)
                             }
                         }
@@ -828,23 +831,15 @@ fun OsmMapView(
                             addOverlayAboveTiles(map, it)
                             polyline = it
                         }
-                        val lastCommitted = if (liveRecordedPoints.size >= 2) liveRecordedPoints[liveRecordedPoints.size - 2] else liveRecordedPoints.lastOrNull()
-                        val distToLast = if (lastCommitted != null) {
-                            val results = FloatArray(1)
-                            android.location.Location.distanceBetween(
-                                lastCommitted.latitude, lastCommitted.longitude,
-                                gp.latitude, gp.longitude, results
-                            )
-                            results[0].toDouble()
-                        } else Double.MAX_VALUE
 
                         if (liveRecordedPoints.isEmpty()) {
-                            liveRecordedPoints.add(gp)
-                            liveRecordedPoints.add(gp)
-                            line.setPoints(liveRecordedPoints)
-                        } else if (distToLast >= 3.0) {
-                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
-                            liveRecordedPoints.add(gp)
+                            if (trackPoints.isNotEmpty()) {
+                                liveRecordedPoints.addAll(trackPoints)
+                                liveRecordedPoints.add(gp)
+                            } else {
+                                liveRecordedPoints.add(gp)
+                                liveRecordedPoints.add(gp)
+                            }
                             line.setPoints(liveRecordedPoints)
                         } else {
                             liveRecordedPoints[liveRecordedPoints.size - 1] = gp
@@ -1018,11 +1013,16 @@ fun OsmMapView(
             line.setPoints(trackPoints)
             map.invalidate()
         } else {
-            if (trackPoints.isEmpty()) {
-                liveRecordedPoints.clear()
-            } else if (liveRecordedPoints.isEmpty()) {
-                liveRecordedPoints.addAll(trackPoints)
+            // When actively recording: synchronize liveRecordedPoints with authoritative trackPoints
+            liveRecordedPoints.clear()
+            liveRecordedPoints.addAll(trackPoints)
+            val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
+                ?: latLng?.let { GeoPoint(it.first, it.second) }
+            if (currentPt != null) {
+                liveRecordedPoints.add(currentPt)
             }
+            polyline?.setPoints(liveRecordedPoints)
+            map.invalidate()
         }
     }
 

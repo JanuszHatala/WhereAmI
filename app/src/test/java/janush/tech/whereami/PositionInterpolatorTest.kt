@@ -159,4 +159,36 @@ class PositionInterpolatorTest {
         val dLngMeters = (afterBoundary.lng - beforeBoundary.lng) * 111320.0 * cos(Math.toRadians(49.8500))
         assertEquals(0.02, dLngMeters, 0.05)
     }
+
+    @Test
+    fun `noisy doppler bearing at walking speed never causes lateral overshoot or heading loop`() {
+        val t0 = 10000L
+        val t1 = 11000L
+        // Moving North along latitude at 1.0 m/s (~3.6 km/h) walking
+        val dLat1m = 1.0 / 111320.0
+        // Fix 0 has wild noisy bearing (90° East) despite moving North
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 90f, speedMs = 1.0f, timestamp = t0)
+        // Fix 1 has noisy bearing (270° West) despite moving North
+        interpolator.onNewFix(lat = 49.8500 + dLat1m, lng = 19.2800, bearing = 270f, speedMs = 1.0f, timestamp = t1)
+
+        val delay = interpolator.bufferDelayMs
+
+        // Sample at 10 steps along playback interval
+        for (i in 0..10) {
+            val t = t0 + (i * 100L) + delay
+            val p = interpolator.interpolate(t)
+            // Longitude should stay tightly bound to 19.2800 without bulging East or West
+            val latDevMeters = (p.lng - 19.2800) * 111320.0 * cos(Math.toRadians(49.8500))
+            assertTrue(
+                "Lateral deviation at step $i was $latDevMeters m, should not exceed 0.2m",
+                kotlin.math.abs(latDevMeters) <= 0.20
+            )
+            // Latitude must advance monotonically North
+            assertTrue(
+                "Latitude should remain in [49.8500, 49.8500 + dLat1m]",
+                p.lat in 49.84999..49.85002
+            )
+        }
+    }
 }
+

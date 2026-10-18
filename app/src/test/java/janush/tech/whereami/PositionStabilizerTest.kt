@@ -141,5 +141,38 @@ class PositionStabilizerTest {
         assertEquals(baseLat, res.lat, 0.000001)
         assertEquals(baseLng, res.lng, 0.000001)
     }
+
+    @Test
+    fun `slow walking during trip recording bypasses stationary desk anchor`() {
+        val baseLat = 49.850000
+        val baseLng = 19.280000
+        val t0 = 10000L
+
+        // Initial fix with isTripRecording = true
+        val f0 = stabilizer.update(
+            baseLat,
+            baseLng,
+            accuracy = 8f,
+            speedMs = 0.5f,
+            timestamp = t0,
+            isPhysicalStationary = true,
+            isTripRecording = true
+        )
+        assertFalse("Must never anchor during active trip recording", f0.isAnchored)
+
+        // Candidate fix moving 2 meters
+        val candidateLat = baseLat + 0.000020
+        val f1 = stabilizer.update(
+            candidateLat,
+            baseLng,
+            accuracy = 8f,
+            speedMs = 0.8f,
+            timestamp = t0 + 1000L,
+            isPhysicalStationary = true,
+            isTripRecording = true
+        )
+        assertFalse("Subsequent walking fixes must remain unanchored", f1.isAnchored)
+    }
 }
+
 
