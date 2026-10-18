@@ -742,7 +742,7 @@ fun OsmMapView(
                         lastFrozenBearing = rawBearing
                     }
                     val effectiveBearing = pt.bearing ?: (rawBearing ?: lastFrozenBearing)
-                    val isMoving = currentFix.speedMs >= 0.8f || !posInterpolator.isStationary()
+                    val isMoving = currentFix.speedMs >= 0.8f && !currentFix.isAnchored && !posInterpolator.isStationary()
                     val hasHeading = isMoving && (effectiveBearing != null)
 
                     if (!map.overlays.contains(accuracyOverlay)) {
@@ -785,13 +785,27 @@ fun OsmMapView(
                         destinationLoading = destinationAltitudeLoading
                     )
 
-                    // Continuous Shortest-Arc Rotation Slerp in COURSE_UP mode
+                    // Continuous Shortest-Arc Rotation Slerp in COURSE_UP mode (Option A: Locomotion Gated)
                     if (orientationMode == MapOrientationMode.COURSE_UP && isFollowing) {
-                        if (hasHeading) {
+                        val isPhysicallyStationary = try {
+                            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                        } catch (_: Exception) { false }
+
+                        val minSpeedForCourseUp = if (isRecording) 0.42f else 2.78f // 1.5 km/h vs 10.0 km/h
+                        val canRotate = canRotateCourseUp(
+                            hasHeading = hasHeading,
+                            isPhysicallyStationary = isPhysicallyStationary,
+                            isAnchored = currentFix.isAnchored,
+                            speedMs = currentFix.speedMs,
+                            isRecording = isRecording,
+                            isInterpolatorStationary = posInterpolator.isStationary()
+                        )
+
+                        if (canRotate && effectiveBearing != null) {
                             val targetRot = -effectiveBearing
                             val currentRot = map.mapOrientation
                             val delta = shortestAngularDelta(currentRot, targetRot)
-                            if (kotlin.math.abs(delta) > 0.2f && isMoving) {
+                            if (kotlin.math.abs(delta) > 0.5f) {
                                 val dtSec = if (lastFrameRenderMs > 0L) {
                                     ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
                                 } else 0.028f
@@ -3079,3 +3093,22 @@ internal fun shortestAngularDelta(fromDeg: Float, toDeg: Float): Float {
     val diff = (normTo - normFrom + 540f) % 360f - 180f
     return if (diff < -180f) diff + 360f else diff
 }
+
+internal fun canRotateCourseUp(
+    hasHeading: Boolean,
+    isPhysicallyStationary: Boolean,
+    isAnchored: Boolean,
+    speedMs: Float,
+    isRecording: Boolean,
+    isInterpolatorStationary: Boolean
+): Boolean {
+    // Locomotion gating: when recording, 1.5 km/h allows responsive trail tracking.
+    // When NOT recording, require verified vehicular locomotion (>= 10.0 km/h) and physical motion
+    // to completely stifle indoor multipath swings and desk/couch jitter.
+    val minSpeedForCourseUp = if (isRecording) 0.42f else 2.78f // 1.5 km/h vs 10.0 km/h
+    return hasHeading &&
+            !isPhysicallyStationary &&
+            !isAnchored &&
+            (speedMs >= minSpeedForCourseUp || (isRecording && !isInterpolatorStationary))
+}
+
