@@ -742,7 +742,8 @@ fun OsmMapView(
                         lastFrozenBearing = rawBearing
                     }
                     val effectiveBearing = pt.bearing ?: (rawBearing ?: lastFrozenBearing)
-                    val isMoving = currentFix.speedMs >= 0.8f && !currentFix.isAnchored && !posInterpolator.isStationary()
+                    val minMovingSpeed = if (isRecording) 0.45f else 0.8f
+                    val isMoving = currentFix.speedMs >= minMovingSpeed && !currentFix.isAnchored && !posInterpolator.isStationary()
                     val hasHeading = isMoving && (effectiveBearing != null)
 
                     if (!map.overlays.contains(accuracyOverlay)) {
@@ -806,14 +807,19 @@ fun OsmMapView(
                             val currentRot = map.mapOrientation
                             val delta = shortestAngularDelta(currentRot, targetRot)
                             val isWalkingSpeed = currentFix.speedMs < 1.39f // < 5.0 km/h
-                            val minDeadband = if (isWalkingSpeed) 2.0f else 0.5f
-                            val tau = if (isWalkingSpeed) 0.40f else 0.20f
+                            val minDeadband = if (isWalkingSpeed) 5.0f else 0.5f
+                            val tau = if (isWalkingSpeed) 0.50f else 0.20f
                             if (kotlin.math.abs(delta) > minDeadband) {
                                 val dtSec = if (lastFrameRenderMs > 0L) {
                                     ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
                                 } else 0.028f
                                 val factor = (1.0f - kotlin.math.exp(-dtSec / tau)).coerceIn(0.02f, 0.40f)
-                                map.mapOrientation = normalizeAngle(currentRot + delta * factor)
+                                var step = delta * factor
+                                if (isWalkingSpeed) {
+                                    val maxStep = 35.0f * dtSec
+                                    step = step.coerceIn(-maxStep, maxStep)
+                                }
+                                map.mapOrientation = normalizeAngle(currentRot + step)
                             }
                         }
                     }
@@ -835,14 +841,31 @@ fun OsmMapView(
                         if (liveRecordedPoints.isEmpty()) {
                             if (trackPoints.isNotEmpty()) {
                                 liveRecordedPoints.addAll(trackPoints)
-                                liveRecordedPoints.add(gp)
-                            } else {
-                                liveRecordedPoints.add(gp)
-                                liveRecordedPoints.add(gp)
                             }
+                            liveRecordedPoints.add(gp)
+                            liveRecordedPoints.add(gp)
                             line.setPoints(liveRecordedPoints)
                         } else {
-                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                            val lastCommitted = if (liveRecordedPoints.size >= 2) {
+                                liveRecordedPoints[liveRecordedPoints.size - 2]
+                            } else {
+                                liveRecordedPoints.first()
+                            }
+                            val distToLastMeters = lastCommitted.distanceToAsDouble(gp)
+                            val stepThreshold = when (activityProfile) {
+                                ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
+                                ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
+                                ActivityProfile.CAR -> 5.0
+                            }
+
+                            if (distToLastMeters >= stepThreshold) {
+                                // Anchor current gp as permanent vertex, and add a new floating tip at gp
+                                liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                                liveRecordedPoints.add(gp)
+                            } else {
+                                // Update floating tip to follow cursor smoothly at 35 FPS
+                                liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                            }
                             line.setPoints(liveRecordedPoints)
                         }
                     }
@@ -1013,16 +1036,20 @@ fun OsmMapView(
             line.setPoints(trackPoints)
             map.invalidate()
         } else {
-            // When actively recording: synchronize liveRecordedPoints with authoritative trackPoints
-            liveRecordedPoints.clear()
-            liveRecordedPoints.addAll(trackPoints)
-            val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
-                ?: latLng?.let { GeoPoint(it.first, it.second) }
-            if (currentPt != null) {
-                liveRecordedPoints.add(currentPt)
+            // When actively recording:
+            // Synchronize from trackPoints ONLY on initial load/restore or if significant points were
+            // recorded while the screen was off / app was backgrounded.
+            if (liveRecordedPoints.isEmpty() || trackPoints.size > liveRecordedPoints.size + 2) {
+                liveRecordedPoints.clear()
+                liveRecordedPoints.addAll(trackPoints)
+                val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
+                    ?: latLng?.let { GeoPoint(it.first, it.second) }
+                if (currentPt != null) {
+                    liveRecordedPoints.add(currentPt)
+                }
+                polyline?.setPoints(liveRecordedPoints)
+                map.invalidate()
             }
-            polyline?.setPoints(liveRecordedPoints)
-            map.invalidate()
         }
     }
 

@@ -952,8 +952,8 @@ class TripManager private constructor(private val context: Context) {
         val isKinematicallyMoving = speedKmh >= 1.5f || isMoving
         val isLocallyMoving = isKinematicallyMoving || distFromLastCommitted >= 15.0
         val commitThreshold = when (currentProfile) {
-            ActivityProfile.WALKING, ActivityProfile.HIKING -> 3.0
-            ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 4.0
+            ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
+            ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
             ActivityProfile.CAR -> 5.0
         }
         if (newPoints.isEmpty() || (distFromLastCommitted >= commitThreshold && isLocallyMoving)) {
