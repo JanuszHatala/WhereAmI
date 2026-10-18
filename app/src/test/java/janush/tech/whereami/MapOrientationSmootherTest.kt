@@ -48,5 +48,99 @@ class MapOrientationSmootherTest {
             }
         }
     }
+
+    @Test
+    fun `canRotateCourseUp when not recording strictly suppresses stationary and sub-locomotion fixes`() {
+        // Physical stationary detector active -> suppressed
+        val stationaryRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = true,
+            isAnchored = false,
+            speedMs = 3.5f,
+            isRecording = false,
+            isInterpolatorStationary = false
+        )
+        org.junit.Assert.assertFalse("Must suppress rotation when physically stationary", stationaryRes)
+
+        // Anchored fix -> suppressed
+        val anchoredRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = false,
+            isAnchored = true,
+            speedMs = 3.5f,
+            isRecording = false,
+            isInterpolatorStationary = false
+        )
+        org.junit.Assert.assertFalse("Must suppress rotation when fix is anchored", anchoredRes)
+
+        // Speed below 2.78 m/s (10 km/h) -> suppressed when not recording
+        val subLocomotionRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = false,
+            isAnchored = false,
+            speedMs = 2.0f, // 7.2 km/h
+            isRecording = false,
+            isInterpolatorStationary = false
+        )
+        org.junit.Assert.assertFalse("Must suppress rotation below 10 km/h when not recording", subLocomotionRes)
+
+        // No heading -> suppressed
+        val noHeadingRes = canRotateCourseUp(
+            hasHeading = false,
+            isPhysicallyStationary = false,
+            isAnchored = false,
+            speedMs = 5.0f,
+            isRecording = false,
+            isInterpolatorStationary = false
+        )
+        org.junit.Assert.assertFalse("Must suppress rotation without valid heading", noHeadingRes)
+
+        // Active vehicular locomotion (>= 10 km/h) and not stationary -> allowed
+        val locomotionRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = false,
+            isAnchored = false,
+            speedMs = 3.0f, // 10.8 km/h
+            isRecording = false,
+            isInterpolatorStationary = false
+        )
+        assertTrue("Must allow rotation when driving/cycling >= 10 km/h", locomotionRes)
+    }
+
+    @Test
+    fun `canRotateCourseUp when recording allows responsive low-speed tracking`() {
+        // Speed 0.5 m/s (1.8 km/h) >= 0.42 m/s while recording -> allowed
+        val walkingRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = false,
+            isAnchored = false,
+            speedMs = 0.5f,
+            isRecording = true,
+            isInterpolatorStationary = false
+        )
+        assertTrue("Must allow walking speed rotation when actively recording", walkingRes)
+
+        // Low speed but interpolator active -> allowed when recording
+        val interpolatorMovingRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = false,
+            isAnchored = false,
+            speedMs = 0.2f,
+            isRecording = true,
+            isInterpolatorStationary = false
+        )
+        assertTrue("Must allow rotation when interpolator is moving during recording", interpolatorMovingRes)
+
+        // But stationary detector still suppresses
+        val stationaryRes = canRotateCourseUp(
+            hasHeading = true,
+            isPhysicallyStationary = true,
+            isAnchored = false,
+            speedMs = 0.5f,
+            isRecording = true,
+            isInterpolatorStationary = false
+        )
+        org.junit.Assert.assertFalse("Stationary detector must still suppress rotation during recording", stationaryRes)
+    }
 }
 
