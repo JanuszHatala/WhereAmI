@@ -63,6 +63,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -781,7 +782,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                             onSetActivityProfile = { viewModel.setActivityProfile(it) },
-                            modifier = Modifier.widthIn(max = 360.dp)
+                            modifier = Modifier.widthIn(max = 410.dp)
                         )
                     }
 
@@ -1179,7 +1180,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isStandbySleeping) "Auto-detect:" else "Auto-detect standby:",
+                            text = "Auto-record:",
                             color = if (isStandbySleeping) Color(0xFF94A3B8) else Color(0xFF38BDF8),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -1197,7 +1198,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = if (isStandbySleeping) {
-                                "Sleeping"
+                                "Paused"
                             } else {
                                 String.format(Locale.getDefault(), "%s (>%.0f km/h)", activityProfile.displayName, autoSpeed)
                             },
@@ -1226,32 +1227,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // One-tap Sleep / Wake interactive chip
-                    Row(
+                    // One-tap Pause / Resume interactive button
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isStandbySleeping) Color(0xFF047857) else Color(0xFF1E293B))
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(if (isStandbySleeping) Color(0xFF047857) else Color(0xFF334155))
                             .clickable {
                                 viewModel.toggleStandbySleep()
-                            }
-                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (isStandbySleeping) "▶ Wake" else "🌙 Sleep",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.Both
-                                ),
-                                lineHeight = 11.sp
-                            )
+                        Icon(
+                            imageVector = if (isStandbySleeping) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isStandbySleeping) "Resume Auto-record" else "Pause Auto-record",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -3007,22 +2998,28 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = saveRenameAction,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF0284C7),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save", color = Color.White)
+                    TextButton(onClick = { tripToRename = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = saveRenameAction,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { tripToRename = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4180,27 +4177,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                if (destinationPoint != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (destinationPoint != null) {
+                        TextButton(
+                            onClick = {
+                                viewModel.setDestinationPoint(null)
+                                showSearchDialog = false
+                            }
+                        ) {
+                            Text("Clear Pin", color = Color(0xFFF87171))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     TextButton(
                         onClick = {
-                            viewModel.setDestinationPoint(null)
                             showSearchDialog = false
+                            viewModel.clearSearch()
                         }
                     ) {
-                        Text("Clear Pin", color = Color(0xFFF87171))
+                        Text("Close", color = Color.White)
                     }
                 }
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showSearchDialog = false
-                        viewModel.clearSearch()
-                    }
-                ) {
-                    Text("Close", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4424,36 +4427,42 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val c = placeToSaveCoords
-                        if (c != null) {
-                            viewModel.savePlace(
-                                name = placeToSaveName.ifBlank { placeToSaveCategory.displayName },
-                                category = placeToSaveCategory,
-                                geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
-                                locality = placeToSaveLocality.trim(),
-                                street = placeToSaveStreet.trim(),
-                                colorHex = placeToSaveColor,
-                                altitude = destinationAltitude ?: locationData.altitude
-                            )
-                        }
-                        showSavePlaceDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save", color = Color.White)
+                    TextButton(onClick = { showSavePlaceDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val c = placeToSaveCoords
+                            if (c != null) {
+                                viewModel.savePlace(
+                                    name = placeToSaveName.ifBlank { placeToSaveCategory.displayName },
+                                    category = placeToSaveCategory,
+                                    geoPoint = org.osmdroid.util.GeoPoint(c.first, c.second),
+                                    locality = placeToSaveLocality.trim(),
+                                    street = placeToSaveStreet.trim(),
+                                    colorHex = placeToSaveColor,
+                                    altitude = destinationAltitude ?: locationData.altitude
+                                )
+                            }
+                            showSavePlaceDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF10B981),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showSavePlaceDialog = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4470,27 +4479,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Text("Are you sure you want to delete '${sp.name}'?", color = Color(0xFFCBD5E1))
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteSavedPlace(sp.id)
-                        placeToDelete = null
-                        selectedSavedPlace = null
-                        viewModel.clearPinnedBorders()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Delete", color = Color.White)
+                    TextButton(onClick = { placeToDelete = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.deleteSavedPlace(sp.id)
+                            placeToDelete = null
+                            selectedSavedPlace = null
+                            viewModel.clearPinnedBorders()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Delete", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { placeToDelete = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4511,25 +4526,31 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Text("Are you sure you want to permanently delete trip '$displayTitle'? This cannot be undone.", color = Color(0xFFCBD5E1))
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteTrip(trip.id)
-                        tripToDelete = null
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Delete", color = Color.White)
+                    TextButton(onClick = { tripToDelete = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.deleteTrip(trip.id)
+                            tripToDelete = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Delete", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { tripToDelete = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4702,29 +4723,35 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val titleToUse = mergeTitleInput.trim().ifBlank { defaultMergedTitle }
-                        viewModel.mergeSelectedTrips(
-                            customTitle = titleToUse,
-                            targetProfile = chosenProfile
-                        )
-                        showMergeConfirmationDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF8B5CF6),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Merge Trips", color = Color.White)
+                    TextButton(onClick = { showMergeConfirmationDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val titleToUse = mergeTitleInput.trim().ifBlank { defaultMergedTitle }
+                            viewModel.mergeSelectedTrips(
+                                customTitle = titleToUse,
+                                targetProfile = chosenProfile
+                            )
+                            showMergeConfirmationDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF8B5CF6),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Merge Trips", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showMergeConfirmationDialog = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -4743,26 +4770,32 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.resetAllSettingsToDefaults()
-                        showResetDefaultsConfirm = false
-                        android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Restore Defaults", color = Color.White)
+                    TextButton(onClick = { showResetDefaultsConfirm = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            viewModel.resetAllSettingsToDefaults()
+                            showResetDefaultsConfirm = false
+                            android.widget.Toast.makeText(context, "Settings restored to defaults", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Restore Defaults", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showResetDefaultsConfirm = false }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -5135,45 +5168,51 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val parsedAlt = editAltitudeText.toDoubleOrNull()
-                        val finalAltitude = if (parsedAlt != null && parsedAlt > 0.0) parsedAlt else null
-                        val finalSource = if (finalAltitude != null) {
-                            editAltitudeSource ?: "CUSTOM"
-                        } else {
-                            null
-                        }
-                        val updated = placeToEdit.copy(
-                            name = editName.ifBlank { editCategory.displayName },
-                            category = editCategory,
-                            street = editStreet.trim(),
-                            locality = editLocality.trim(),
-                            radiusMeters = editRadius,
-                            colorHex = editColor,
-                            altitude = finalAltitude,
-                            altitudeSource = finalSource
-                        )
-                        viewModel.updateSavedPlace(updated)
-                        editingSavedPlace = null
-                        if (selectedSavedPlace?.id == updated.id) {
-                            selectedSavedPlace = updated
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save Changes", color = Color.White)
+                    TextButton(onClick = { editingSavedPlace = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val parsedAlt = editAltitudeText.toDoubleOrNull()
+                            val finalAltitude = if (parsedAlt != null && parsedAlt > 0.0) parsedAlt else null
+                            val finalSource = if (finalAltitude != null) {
+                                editAltitudeSource ?: "CUSTOM"
+                            } else {
+                                null
+                            }
+                            val updated = placeToEdit.copy(
+                                name = editName.ifBlank { editCategory.displayName },
+                                category = editCategory,
+                                street = editStreet.trim(),
+                                locality = editLocality.trim(),
+                                radiusMeters = editRadius,
+                                colorHex = editColor,
+                                altitude = finalAltitude,
+                                altitudeSource = finalSource
+                            )
+                            viewModel.updateSavedPlace(updated)
+                            editingSavedPlace = null
+                            if (selectedSavedPlace?.id == updated.id) {
+                                selectedSavedPlace = updated
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF10B981),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save Changes", color = Color.White)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { editingSavedPlace = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -5317,18 +5356,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 }
                             }
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = { showActiveTripRouteDialog = false },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF334155),
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Close", color = Color.White)
                     }
                 }
             }
@@ -7012,12 +7039,15 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     IconButton(
                         onClick = { selectedGuestDetails = null },
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color(0xFF94A3B8),
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -7872,27 +7902,33 @@ private fun ProfileConfigSheet(
                             }
                         },
                         confirmButton = {
-                            Button(
-                                onClick = {
-                                    val normalized = customSpeedInput.replace(',', '.')
-                                    val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: profile.autoStartSpeedKmh
-                                    autoStartSpeed = speedVal
-                                    viewModel.setAutoStartSpeedForProfile(profile, speedVal)
-                                    showCustomSpeedDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0284C7),
-                                    contentColor = Color.White
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set", color = Color.White)
+                                TextButton(onClick = { showCustomSpeedDialog = false }) {
+                                    Text("Cancel", color = Color.White)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        val normalized = customSpeedInput.replace(',', '.')
+                                        val speedVal = normalized.toFloatOrNull()?.coerceIn(1.0f, 150.0f) ?: profile.autoStartSpeedKmh
+                                        autoStartSpeed = speedVal
+                                        viewModel.setAutoStartSpeedForProfile(profile, speedVal)
+                                        showCustomSpeedDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Text("Set", color = Color.White)
+                                }
                             }
                         },
-                        dismissButton = {
-                            TextButton(onClick = { showCustomSpeedDialog = false }) {
-                                Text("Cancel", color = Color.White)
-                            }
-                        },
+                        dismissButton = null,
                         containerColor = Color(0xFF0F172A)
                     )
                 }
@@ -8013,27 +8049,33 @@ private fun ProfileConfigSheet(
                             }
                         },
                         confirmButton = {
-                            Button(
-                                onClick = {
-                                    val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
-                                    val secVal = minVal * 60
-                                    autoStartSec = secVal
-                                    viewModel.setAutoStartSecondsForProfile(profile, secVal)
-                                    showCustomAutoStartDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0284C7),
-                                    contentColor = Color.White
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set", color = Color.White)
+                                TextButton(onClick = { showCustomAutoStartDialog = false }) {
+                                    Text("Cancel", color = Color.White)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        val minVal = customAutoStartInput.toIntOrNull()?.coerceIn(1, 1440) ?: 1
+                                        val secVal = minVal * 60
+                                        autoStartSec = secVal
+                                        viewModel.setAutoStartSecondsForProfile(profile, secVal)
+                                        showCustomAutoStartDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Text("Set", color = Color.White)
+                                }
                             }
                         },
-                        dismissButton = {
-                            TextButton(onClick = { showCustomAutoStartDialog = false }) {
-                                Text("Cancel", color = Color.White)
-                            }
-                        },
+                        dismissButton = null,
                         containerColor = Color(0xFF0F172A)
                     )
                 }
@@ -8189,26 +8231,32 @@ private fun ProfileConfigSheet(
                         }
                     },
                     confirmButton = {
-                        Button(
-                            onClick = {
-                                val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
-                                autoStopMin = minVal
-                                viewModel.setAutoStopMinutesForProfile(profile, minVal)
-                                showCustomAutoStopDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0284C7),
-                                contentColor = Color.White
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Set", color = Color.White)
+                            TextButton(onClick = { showCustomAutoStopDialog = false }) {
+                                Text("Cancel", color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    val minVal = customAutoStopInput.toIntOrNull()?.coerceIn(1, 1440) ?: 5
+                                    autoStopMin = minVal
+                                    viewModel.setAutoStopMinutesForProfile(profile, minVal)
+                                    showCustomAutoStopDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Text("Set", color = Color.White)
+                            }
                         }
                     },
-                    dismissButton = {
-                        TextButton(onClick = { showCustomAutoStopDialog = false }) {
-                            Text("Cancel", color = Color.White)
-                        }
-                    },
+                    dismissButton = null,
                     containerColor = Color(0xFF0F172A)
                 )
             }
@@ -8290,12 +8338,18 @@ private fun HeatMapSettingsDialog(
                             color = Color.White
                         )
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E293B))
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = Color.LightGray,
-                            modifier = Modifier.size(18.dp)
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -9521,85 +9575,102 @@ private fun LocalityCard(
 
                     // ── Right Utility Icons: Saved Places & Direct Collapse ──
                     Row(
+                        modifier = Modifier.weight(1f, fill = false),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (nearbySavedPlace != null) {
-                            // Responsive Saved Place badge in Row 1:
-                            // Dynamically scale font size to display the full name comfortably without premature truncation.
-                            // If the name is excessively long (> 18 chars), smoothly fall back to a clean icon-only pill.
-                            val isLiveSharingActive = liveSession?.isActive == true
-                            val maxBadgeWidth = if (isLiveSharingActive) 155.dp else 185.dp
-                            val placeName = nearbySavedPlace.name.trim()
+                            BoxWithConstraints(
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                val maxAvailableWidth = maxWidth
+                                val density = LocalDensity.current
+                                val isLiveSharingActive = liveSession?.isActive == true
+                                val maxBadgeWidth = if (isLiveSharingActive) 155.dp else 185.dp
+                                val placeName = nearbySavedPlace.name.trim()
 
-                            // Dynamic font size: scale down font size as name length increases
-                            val badgeFontSize = when {
-                                placeName.length <= 8 -> 11.sp
-                                placeName.length <= 13 -> 10.sp
-                                else -> 9.sp
-                            }
+                                // Dynamic font size: scale down font size as name length increases
+                                val badgeFontSize = when {
+                                    placeName.length <= 8 -> 11.sp
+                                    placeName.length <= 13 -> 10.sp
+                                    else -> 9.sp
+                                }
 
-                            // Show icon-only only if name is excessively long
-                            val showIconOnly = placeName.length > 18
-
-                            if (showIconOnly) {
-                                Surface(
-                                    onClick = onOpenSavedPlaces,
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0x3310B981),
-                                    border = BorderStroke(1.dp, Color(0x5510B981)),
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        EmojiText(
-                                            emoji = nearbySavedPlace.category.iconEmoji,
-                                            fontSize = 16.sp,
-                                            yOffsetDp = 0.dp
-                                        )
+                                val textPaint = remember(badgeFontSize, density) {
+                                    android.text.TextPaint().apply {
+                                        textSize = with(density) { badgeFontSize.toPx() }
+                                        typeface = android.graphics.Typeface.DEFAULT_BOLD
                                     }
                                 }
-                            } else {
-                                Surface(
-                                    onClick = onOpenSavedPlaces,
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0x3310B981),
-                                    border = BorderStroke(1.dp, Color(0x5510B981)),
-                                    modifier = Modifier
-                                        .height(40.dp)
-                                        .widthIn(min = 40.dp, max = maxBadgeWidth)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .padding(horizontal = 7.dp)
+
+                                // Internal badge horizontal padding (7dp * 2 = 14dp), emoji icon (16dp), and spacer (4dp) = 34dp
+                                val availableTextWidthPx = with(density) { (maxAvailableWidth - 34.dp).coerceAtLeast(0.dp).toPx() }
+
+                                val showIconOnly = SavedPlaceBadgeLayoutHelper.shouldShowIconOnly(
+                                    placeName = placeName,
+                                    availableTextWidthPx = availableTextWidthPx,
+                                    textMeasurer = { textPaint.measureText(it) }
+                                )
+
+                                if (showIconOnly) {
+                                    Surface(
+                                        onClick = onOpenSavedPlaces,
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0x3310B981),
+                                        border = BorderStroke(1.dp, Color(0x5510B981)),
+                                        modifier = Modifier.size(40.dp)
                                     ) {
-                                        EmojiText(
-                                            emoji = nearbySavedPlace.category.iconEmoji,
-                                            fontSize = if (placeName.length > 12) 13.sp else 14.sp,
-                                            yOffsetDp = 0.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = placeName,
-                                            fontSize = badgeFontSize,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF10B981),
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeightStyle = LineHeightStyle(
-                                                    alignment = LineHeightStyle.Alignment.Center,
-                                                    trim = LineHeightStyle.Trim.Both
-                                                ),
-                                                lineHeight = badgeFontSize
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            EmojiText(
+                                                emoji = nearbySavedPlace.category.iconEmoji,
+                                                fontSize = 16.sp,
+                                                yOffsetDp = 0.dp
                                             )
-                                        )
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        onClick = onOpenSavedPlaces,
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0x3310B981),
+                                        border = BorderStroke(1.dp, Color(0x5510B981)),
+                                        modifier = Modifier
+                                            .height(40.dp)
+                                            .widthIn(min = 40.dp, max = minOf(maxBadgeWidth, maxAvailableWidth))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .padding(horizontal = 7.dp)
+                                        ) {
+                                            EmojiText(
+                                                emoji = nearbySavedPlace.category.iconEmoji,
+                                                fontSize = if (placeName.length > 12) 13.sp else 14.sp,
+                                                yOffsetDp = 0.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = placeName,
+                                                fontSize = badgeFontSize,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF10B981),
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = badgeFontSize
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -10952,14 +11023,19 @@ fun TripDetailDialog(
     onCorrectElevation: (Long, OverrideMode) -> Unit = { _, _ -> },
     elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress()
 ) {
+    val effectiveEndTime = trip.endTime?.takeIf { it > trip.startTime }
+        ?: if (trip.avgSpeedKmh > 0.5f && trip.distanceMeters > 50.0) {
+            trip.startTime + ((trip.distanceMeters / (trip.avgSpeedKmh * (1000.0 / 3600.0))) * 1000L).toLong()
+        } else null
+
     val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
     val startDateStr = shortDateFmt.format(Date(trip.startTime))
-    val endDateStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
-        shortDateFmt.format(Date(trip.endTime))
+    val endDateStr = if (effectiveEndTime != null) {
+        shortDateFmt.format(Date(effectiveEndTime))
     } else null
 
     val startCal = Calendar.getInstance().apply { timeInMillis = trip.startTime }
-    val endCal = trip.endTime?.let { Calendar.getInstance().apply { timeInMillis = it } }
+    val endCal = effectiveEndTime?.let { Calendar.getInstance().apply { timeInMillis = it } }
     val isSameDay = endCal == null || (
         startCal.get(Calendar.YEAR) == endCal.get(Calendar.YEAR) &&
         startCal.get(Calendar.DAY_OF_YEAR) == endCal.get(Calendar.DAY_OF_YEAR)
@@ -10968,15 +11044,17 @@ fun TripDetailDialog(
     val startTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
     val endTimeStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.endTime))
+    } else if (effectiveEndTime != null) {
+        DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(effectiveEndTime)) + " (est.)"
     } else {
         "In Progress / Live"
     }
 
     val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
 
-    val timelineItems = remember(trip, cumulativeDistances) {
+    val timelineItems = remember(trip, cumulativeDistances, effectiveEndTime) {
         val totalTripDist = (cumulativeDistances.lastOrNull() ?: trip.distanceMeters).coerceAtLeast(0.0)
-        val tripEndTime = trip.endTime ?: (trip.startTime + 60_000L)
+        val tripEndTime = effectiveEndTime ?: (trip.startTime + 60_000L)
         val items = mutableListOf<RouteTimelineItem>()
 
         // 1. Resolve pause distances
@@ -11061,10 +11139,24 @@ fun TripDetailDialog(
                 curDist = pauseDist
             }
         }
+
+        // 3. For round trips (ended back at initial locality) or trips with substantial distance past last place entry,
+        // synthesize destination arrival item if total distance is at least 300m further than the last place entry.
+        val lastPlaceItem = items.filterIsInstance<RouteTimelineItem.Place>().lastOrNull()
+        if (lastPlaceItem != null && totalTripDist > 300.0 && (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters) > 300.0) {
+            val destinationPlace = getActivePlaceAt(tripEndTime).copy(
+                timestamp = tripEndTime,
+                distanceAtEntryMeters = totalTripDist
+            )
+            val finalLegDist = (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters).coerceAtLeast(0.0)
+            val finalLegDur = (tripEndTime - lastPlaceItem.place.timestamp).coerceAtLeast(0L)
+            items.add(RouteTimelineItem.Place(destinationPlace, placeOrder++, finalLegDist, finalLegDur))
+        }
+
         items
     }
 
-    val durationMs = if (trip.endTime != null && trip.endTime > trip.startTime) trip.endTime - trip.startTime else 0L
+    val durationMs = if (effectiveEndTime != null && effectiveEndTime > trip.startTime) effectiveEndTime - trip.startTime else 0L
     val durationSec = durationMs / 1000L
     val durHours = durationSec / 3600L
     val durMinutes = (durationSec % 3600L) / 60L
@@ -11279,12 +11371,16 @@ fun TripDetailDialog(
 
                     // 2. Key Metrics Grid
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Distance Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11302,7 +11398,9 @@ fun TripDetailDialog(
 
                         // Duration Card (Total & Moving Time)
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11327,12 +11425,16 @@ fun TripDetailDialog(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Speed Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11341,16 +11443,20 @@ fun TripDetailDialog(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
-                                    fontSize = 15.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFBBF24)
+                                    color = Color(0xFFFBBF24),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
 
                         // Activity Profile Card
                         Card(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
                         ) {
@@ -11552,17 +11658,17 @@ fun TripDetailDialog(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 ElevationStatChip(
-                                                    label = "↑ ${elevationStats.totalAscentM.toInt()} m",
+                                                    label = "↑ Gain: ${elevationStats.totalAscentM.toInt()} m",
                                                     color = Color(0xFF34D399)
                                                 )
                                                 ElevationStatChip(
-                                                    label = "↓ ${elevationStats.totalDescentM.toInt()} m",
+                                                    label = "↓ Loss: ${elevationStats.totalDescentM.toInt()} m",
                                                     color = Color(0xFFF87171)
                                                 )
                                                 val minA = elevationStats.minAltitudeM?.toInt() ?: 0
                                                 val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
                                                 ElevationStatChip(
-                                                    label = "$minA–$maxA m",
+                                                    label = "⛰️ Alt: $minA–$maxA m",
                                                     color = Color(0xFFFBBF24)
                                                 )
                                                 if (elevationStats.peakVerticalSpeedMpm > 0.1) {
@@ -11583,23 +11689,58 @@ fun TripDetailDialog(
                                     }
 
                                     val isRunningThisTrip = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips == 1
+                                    val pointsWithoutAlt = remember(trip.points) {
+                                        trip.points.count { it.altitude == 0.0 || it.altitude.isNaN() }
+                                    }
+
                                     Button(
                                         onClick = { showCorrectionDialog = true },
                                         enabled = !isRunningThisTrip,
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
-                                        border = BorderStroke(1.dp, Color(0xFF334155))
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF1E293B),
+                                            contentColor = Color.White
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp)
                                     ) {
-                                        Text(
-                                            text = if (isRunningThisTrip) {
-                                                "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
-                                            } else {
-                                                "Correct Altitude (Open-Elevation)"
-                                            },
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudDownload,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column(horizontalAlignment = Alignment.Start) {
+                                                Text(
+                                                    text = if (isRunningThisTrip) {
+                                                        "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
+                                                    } else {
+                                                        "Correct Altitude (Open-Elevation)"
+                                                    },
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                if (!isRunningThisTrip && trip.points.isNotEmpty()) {
+                                                    Text(
+                                                        text = if (pointsWithoutAlt > 0) {
+                                                            "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
+                                                        } else {
+                                                            "✓ All ${trip.points.size} points have altitude"
+                                                        },
+                                                        color = if (pointsWithoutAlt > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -11734,8 +11875,9 @@ fun TripDetailDialog(
                                                         )
                                                     )
                                                     val allPlacesInTimeline = timelineItems.filterIsInstance<RouteTimelineItem.Place>()
+                                                    val isFirstPlace = item == allPlacesInTimeline.firstOrNull()
                                                     val isLastPlace = item == allPlacesInTimeline.lastOrNull() && allPlacesInTimeline.size > 1
-                                                    if (item.orderNumber == 1) {
+                                                    if (isFirstPlace) {
                                                         Text(
                                                             text = "Trip Start",
                                                             fontSize = 10.sp,
@@ -11762,7 +11904,7 @@ fun TripDetailDialog(
                                                         val legKm = item.legDistanceMeters / 1000.0
                                                         val legTimeStr = formatDurationShort(item.legDurationMs)
                                                         Text(
-                                                            text = String.format(Locale.getDefault(), "+%.2f km • %s", legKm, legTimeStr),
+                                                            text = String.format(Locale.getDefault(), "Leg: +%.2f km (%s)", legKm, legTimeStr),
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Medium,
                                                             color = Color(0xFF38BDF8),
@@ -11834,7 +11976,7 @@ fun TripDetailDialog(
                                                         )
                                                         if (item.legDurationMs > 0 || item.legDistanceMeters > 0) {
                                                             Text(
-                                                                text = String.format(Locale.getDefault(), "+%.2f km • %s travel to stop", legKm, legTimeStr),
+                                                                text = String.format(Locale.getDefault(), "Travel to stop: +%.2f km (%s)", legKm, legTimeStr),
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.Medium,
                                                                 color = Color(0xFF38BDF8),
@@ -11972,20 +12114,26 @@ fun TripDetailDialog(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeletePause(trip.id, idx)
-                        pauseToDeleteIndex = null
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Remove", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { pauseToDeleteIndex = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            onDeletePause(trip.id, idx)
+                            pauseToDeleteIndex = null
+                        }
+                    ) {
+                        Text("Remove", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pauseToDeleteIndex = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -12002,20 +12150,26 @@ fun TripDetailDialog(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        onMergePause(trip.id, idx)
-                        pauseToMergeIndex = null
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Merge", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { pauseToMergeIndex = null }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            onMergePause(trip.id, idx)
+                            pauseToMergeIndex = null
+                        }
+                    ) {
+                        Text("Merge", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pauseToMergeIndex = null }) {
-                    Text("Cancel", color = Color.White)
-                }
-            },
+            dismissButton = null,
             containerColor = Color(0xFF1E293B)
         )
     }
@@ -12456,35 +12610,41 @@ fun PostTripDemSupplementDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Supplement DEM",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Keep GPS / Later",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Supplement DEM",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = "Keep GPS / Later",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-        }
+        dismissButton = null
     )
 }

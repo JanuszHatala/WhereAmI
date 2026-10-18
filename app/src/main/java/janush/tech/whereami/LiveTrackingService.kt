@@ -237,16 +237,16 @@ class LiveTrackingService : Service() {
         val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value && !hasTrip
 
         val initialTitle = when {
-            isSleeping && hasLive && isAuto -> "🌙 WhereAmI Sleeping (Live & Auto-detect)"
+            isSleeping && hasLive && isAuto -> "⏸ WhereAmI Paused (Live & Auto-record)"
             isSleeping && hasLive -> "🌙 WhereAmI Live Sharing Sleeping"
-            isSleeping -> "🌙 WhereAmI Standby Sleeping"
+            isSleeping -> "⏸ WhereAmI Auto-record Paused"
             hasTrip || hasLive -> "WhereAmI Active Tracking"
-            else -> "WhereAmI • Auto-detect Standby"
+            else -> "WhereAmI • Auto-record Standby"
         }
         val initialText = when {
-            isSleeping && hasLive && isAuto -> "Auto-detect paused • Live Sharing active (1h sync) • Tap to wake"
-            isSleeping && hasLive -> "Overnight hibernation • Live Sharing active (1h sync) • Tap to wake"
-            isSleeping -> "Auto-detect paused for battery savings • Tap to activate"
+            isSleeping && hasLive && isAuto -> "Auto-record paused • Live Sharing active (1h sync) • Tap to resume"
+            isSleeping && hasLive -> "Overnight hibernation • Live Sharing active (1h sync) • Tap to resume"
+            isSleeping -> "Auto-record paused for battery savings • Tap to resume"
             hasTrip || hasLive -> "Recording trip & background location active"
             else -> "Ready to auto-record (standby • low power)"
         }
@@ -313,7 +313,7 @@ class LiveTrackingService : Service() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
             }
-            builder.addAction(0, formatActionTitle("▶ Activate", "#10B981"), activateIntent)
+            builder.addAction(0, formatActionTitle("▶ Resume", "#10B981"), activateIntent)
 
             if (isLiveActive) {
                 // Action 2: Pause / Resume Live Sharing while staying in Sleep Mode
@@ -382,7 +382,7 @@ class LiveTrackingService : Service() {
                     Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.addAction(0, formatActionTitle("🌙 Sleep Now", "#94A3B8"), sleepIntent)
+                builder.addAction(0, formatActionTitle("⏸ Pause", "#94A3B8"), sleepIntent)
             }
 
             // 4. Stop Action
@@ -401,7 +401,7 @@ class LiveTrackingService : Service() {
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, formatActionTitle("🌙 Sleep Now", "#94A3B8"), sleepIntent)
+            builder.addAction(0, formatActionTitle("⏸ Pause", "#94A3B8"), sleepIntent)
 
             // 2. Disable Auto-start Action
             val stopIntent = android.app.PendingIntent.getService(
@@ -452,14 +452,14 @@ class LiveTrackingService : Service() {
         val isTripPaused = TripManager.getInstance(this).isPaused.value
 
         val title = when {
-            isSleeping && isLiveActive && isAuto -> "🌙 WhereAmI Sleeping (Live & Auto-detect)"
+            isSleeping && isLiveActive && isAuto -> "⏸ WhereAmI Paused (Live & Auto-record)"
             isSleeping && isLiveActive -> "🌙 WhereAmI Live Sharing Sleeping"
-            isSleeping -> "🌙 WhereAmI Standby Sleeping"
+            isSleeping -> "⏸ WhereAmI Auto-record Paused"
             isLiveActive && !liveSession.title.isNullOrBlank() -> "🔴 ${liveSession.title}"
-            isLiveActive && isAuto -> "🔴 WhereAmI • Live & Auto-detect"
+            isLiveActive && isAuto -> "🔴 WhereAmI • Live & Auto-record"
             isLiveActive -> "🔴 WhereAmI Live Sharing"
             activeTrip != null -> "WhereAmI Active Tracking"
-            isAuto -> "WhereAmI • Auto-detect Standby"
+            isAuto -> "WhereAmI • Auto-record Standby"
             else -> "WhereAmI Tracking"
         }
 
@@ -467,13 +467,13 @@ class LiveTrackingService : Service() {
             !overrideText.isNullOrBlank() -> overrideText
             isSleeping && isLiveActive && isAuto -> {
                 val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
-                "Auto-detect paused • $liveStatus • Tap to wake"
+                "Auto-record paused • $liveStatus • Tap to resume"
             }
             isSleeping && isLiveActive -> {
                 val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
                 "Overnight hibernation • $liveStatus • Tap to wake"
             }
-            isSleeping -> "Auto-detect paused for battery savings • Tap to activate"
+            isSleeping -> "Auto-record paused for battery savings • Tap to resume"
             activeTrip != null -> {
                 val distKm = activeTrip.distanceMeters / 1000.0
                 val statusTag = when {
@@ -499,7 +499,7 @@ class LiveTrackingService : Service() {
                 val autoTag = if (isAuto) {
                     val startSpeed = TripManager.getInstance(this).getAutoStartSpeedForProfile(profile)
                     val speedFormatted = if (startSpeed % 1f == 0f) ">${startSpeed.toInt()}" else ">%.1f".format(startSpeed)
-                    " • Auto-detect: ${profile.displayName} ($speedFormatted km/h)"
+                    " • Auto-record: ${profile.displayName} ($speedFormatted km/h)"
                 } else ""
                 "Live Sharing Active$pauseTag$autoTag • $place"
             }

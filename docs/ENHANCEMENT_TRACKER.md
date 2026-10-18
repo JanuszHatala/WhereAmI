@@ -465,7 +465,17 @@ It is updated after every phase to maintain full traceability across agent invoc
 
 ---
 
-## 27. Features Inventory & Future Backlog
+## 27. Round 25: Landscape LocalityCard Width & Saved Place Responsive Ellipsis / Icon-Only
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **FT25-01** | **Landscape LocalityCard Width Expansion**: Increase landscape `LocalityCard` width from 360dp to 410dp to comfortably accommodate utility actions, live share indicators, and saved place badge. | `MainActivity.kt` | **Completed** | Expanded `modifier.widthIn(max = 410.dp)` in landscape floating header. |
+| **FT25-02** | **Saved Place Badge Layout & Overlap Fix**: Prevent saved place badge from sliding under or colliding with the collapse button. Make width flexible (`weight(1f, fill = false)`) within the right utility icons row. | `MainActivity.kt` | **Completed** | Wrapped right utility row in weighted container and bounded `BoxWithConstraints` so the badge strictly respects available width without pushing or overlapping collapse button. |
+| **FT25-03** | **Responsive Ellipsis & 4-Letter Icon-Only Fallback**: If full text doesn't fit, truncate with ellipsis `...`. If fewer than 4 letters can fit before ellipsis, automatically collapse to clean icon-only mode (`[💼]`). | `SavedPlaceBadgeLayoutHelper.kt` (new), `SavedPlaceBadgeLayoutHelperTest.kt` (new), `MainActivity.kt` | **Completed** | Implemented `SavedPlaceBadgeLayoutHelper.shouldShowIconOnly()` with pixel text measurement. Verified by automated unit tests covering all boundary conditions (`SavedPlaceBadgeLayoutHelperTest.kt`). |
+
+---
+
+## 28. Features Inventory & Future Backlog
 
 | Backlog ID | Feature Description | Category | Target Milestone |
 | :--- | :--- | :--- | :---: |
