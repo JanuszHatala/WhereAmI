@@ -192,48 +192,52 @@ class PositionInterpolatorTest {
     }
 
     @Test
-    fun `walking bearing ignores micro-displacement jitter and preserves frozen heading`() {
+    fun `raw fix bearing does not overwrite active smoothed heading during playback`() {
         val t0 = 10000L
         val t1 = 11000L
-        // Initial steady heading North (0°)
+        val dLat1m = 1.0 / 111320.0
+        // Moving North at 1.0 m/s with established heading 0° North
         interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 0f, speedMs = 1.0f, timestamp = t0)
         
-        // Single 1-meter fix with noise to the side (displacement 1.0m < 4.0m threshold)
-        val dLng1m = 1.0 / (111320.0 * cos(Math.toRadians(49.8500)))
-        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + dLng1m, bearing = null, speedMs = 1.0f, timestamp = t1)
+        // Next fix moves North, but raw sensor reports noisy 120° bearing
+        interpolator.onNewFix(lat = 49.8500 + dLat1m, lng = 19.2800, bearing = 120f, speedMs = 1.0f, timestamp = t1)
 
         val delay = interpolator.bufferDelayMs
-        val p = interpolator.interpolate(t1 + delay)
+        val p = interpolator.interpolate(t0 + delay + 500L) // mid-playback
 
-        // Since displacement is only 1.0m (< 4.0m spatial baseline for walking), bearing must preserve frozen heading (0°)
-        // rather than jumping 90° East
-        assertEquals(0f, p.bearing ?: 0f, 1.0f)
+        assertNotNull(p.bearing)
+        // Bearing must align with physical path North (near 0°), NOT raw noisy 120°
+        val diff = (p.bearing!! + 360f) % 360f
+        val isNorth = diff <= 15f || diff >= 345f
+        assertTrue("Bearing should track physical path North, got $diff°", isNorth)
     }
 
     @Test
-    fun `walking bearing over 5-meter baseline accurately tracks walking direction`() {
+    fun `walking continuous heading smoothly rounds 90 degree corner without twitching`() {
         var t = 10000L
         val dLat1m = 1.0 / 111320.0
-        // Feed 6 consecutive 1-meter steps North (~1.0 m/s walking)
-        for (i in 0..6) {
-            interpolator.onNewFix(
-                lat = 49.8500 + (i * dLat1m),
-                lng = 19.2800,
-                bearing = null,
-                speedMs = 1.0f,
-                timestamp = t
-            )
+        val dLng1m = 1.0 / (111320.0 * cos(Math.toRadians(49.8500)))
+
+        // Step 0-3: Moving North
+        for (i in 0..3) {
+            interpolator.onNewFix(lat = 49.8500 + i * dLat1m, lng = 19.2800, bearing = 0f, speedMs = 1.0f, timestamp = t)
+            t += 1000L
+        }
+
+        // Step 4-7: Turning 90° and moving East
+        for (i in 1..4) {
+            interpolator.onNewFix(lat = 49.8500 + 3 * dLat1m, lng = 19.2800 + i * dLng1m, bearing = null, speedMs = 1.0f, timestamp = t)
             t += 1000L
         }
 
         val delay = interpolator.bufferDelayMs
+        // Playback after corner turn
         val p = interpolator.interpolate(t - 1000L + delay)
 
         assertNotNull(p.bearing)
-        // Accumulated baseline exceeds 4.0m, direction should accurately track North (0° / 360° ± 5°)
-        val diff = (p.bearing!! + 360f) % 360f
-        val isNorth = diff <= 5f || diff >= 355f
-        assertTrue("Bearing should track North (0° ± 5°), got $diff°", isNorth)
+        // Heading should smoothly adapt toward East (90° ± 15°)
+        val b = p.bearing!!
+        assertTrue("Bearing should track East after corner (75°..105°), got $b°", b in 75f..105f)
     }
 }
 

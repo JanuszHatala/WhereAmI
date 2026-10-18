@@ -62,6 +62,8 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     @Volatile
     private var destLoading: Boolean = false
 
+    private var lastRenderedIntAlt: Long? = null
+
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xEE0F172A.toInt() // Rich Dark Slate, ~93% opacity
         style = Paint.Style.FILL
@@ -190,7 +192,15 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
             val badgeCenterX = cursorCanvasX + canvasDx
             val badgeCenterY = cursorCanvasY + canvasDy
 
-            val altText = String.format(Locale.getDefault(), "%.0f m", alt)
+            val curInt = lastRenderedIntAlt
+            val roundedAlt = kotlin.math.round(alt).toLong()
+            val stableInt = if (curInt == null || kotlin.math.abs(alt - curInt.toDouble()) >= 0.75) {
+                lastRenderedIntAlt = roundedAlt
+                roundedAlt
+            } else {
+                curInt
+            }
+            val altText = "$stableInt m"
             drawPill(
                 canvas = canvas,
                 badgeCenterX = badgeCenterX,
