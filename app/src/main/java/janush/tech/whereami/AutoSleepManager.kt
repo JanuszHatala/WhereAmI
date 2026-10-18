@@ -34,6 +34,7 @@ class AutoSleepManager private constructor(private val context: Context) {
         const val KEY_AUTO_SLEEP_END_TIME = "pref_auto_sleep_end_time"
         const val KEY_AUTO_SLEEP_FOLLOW_DND = "pref_auto_sleep_follow_dnd"
         const val KEY_AUTO_SLEEP_FOLLOW_ALARM = "pref_auto_sleep_follow_alarm"
+        const val KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE = "pref_auto_sleep_pause_live_share"
 
         const val DEFAULT_START_TIME = "22:30"
         const val DEFAULT_END_TIME = "06:30"
@@ -205,10 +206,14 @@ class AutoSleepManager private constructor(private val context: Context) {
     private val _followAlarm = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SLEEP_FOLLOW_ALARM, true))
     val followAlarm: StateFlow<Boolean> = _followAlarm.asStateFlow()
 
+    private val _pauseLiveShare = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE, false))
+    val pauseLiveShare: StateFlow<Boolean> = _pauseLiveShare.asStateFlow()
+
     private var wasManuallyWokenThisCycle = false
     private var lastEvaluatedCycleDate = -1
     private var isManualSleep = false
     private var wasDndActiveInSession = false
+    private var wasLiveShareAutoPaused = false
 
     init {
         INSTANCE = this
@@ -218,15 +223,49 @@ class AutoSleepManager private constructor(private val context: Context) {
     fun onManualSleepEntered() {
         isManualSleep = true
         wasDndActiveInSession = isDndActive()
+        handleSleepEnteredLiveSharePause()
         TelemetryLogger.log("POWER", "AutoSleepManager: Manual sleep registered (will not auto-wake on bedtime window end)")
+    }
+
+    fun onSleepEntered() {
+        handleSleepEnteredLiveSharePause()
+    }
+
+    private fun handleSleepEnteredLiveSharePause() {
+        if (_pauseLiveShare.value) {
+            val liveMgr = LiveSharingManager.getInstance(context)
+            val session = liveMgr.currentSession.value
+            if (session != null && session.isActive && !session.isPaused) {
+                wasLiveShareAutoPaused = true
+                liveMgr.pauseSession()
+                TelemetryLogger.log("POWER", "AutoSleep: Paused Live Sharing session (${session.id}) during sleep.")
+            }
+        }
     }
 
     fun onSleepWoken() {
         isManualSleep = false
         wasDndActiveInSession = false
+        if (wasLiveShareAutoPaused) {
+            wasLiveShareAutoPaused = false
+            val liveMgr = LiveSharingManager.getInstance(context)
+            val session = liveMgr.currentSession.value
+            if (session != null && session.isActive && session.isPaused) {
+                liveMgr.resumeSession()
+                TelemetryLogger.log("POWER", "AutoSleep: Resumed Live Sharing session (${session.id}) on sleep wake.")
+            }
+        }
     }
 
+    fun isLiveShareAutoPaused(): Boolean = wasLiveShareAutoPaused
+
     fun isManualSleepActive(): Boolean = isManualSleep
+
+    fun setPauseLiveShare(enabled: Boolean) {
+        _pauseLiveShare.value = enabled
+        prefs.edit().putBoolean(KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE, enabled).apply()
+        TelemetryLogger.log("SETTINGS", "AutoSleep pauseLiveShare set to $enabled")
+    }
 
     fun setAutoSleepEnabled(enabled: Boolean) {
         _autoSleepEnabled.value = enabled

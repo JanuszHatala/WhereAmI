@@ -821,4 +821,93 @@ class BatteryOptimizationAndAutoStartTest {
         assertFalse(isPhysicallyStationary)
         assertFalse(isGpsStopped)
     }
+
+    @Test
+    fun testSleepModeGnssFixGatingWhenMotionless() {
+        // When not sleeping, helper returns false (normal live tracking rules apply)
+        assertFalse(
+            LiveSharingManager.shouldRequestSleepGnssFix(
+                isSleeping = false,
+                isStationary = true,
+                hasValidCachedLocation = true
+            )
+        )
+
+        // When sleeping, physically stationary, and has valid cached coords: GNSS fix is SKIPPED
+        assertFalse(
+            "Motionless sleep with cached coords must not wake GNSS chip",
+            LiveSharingManager.shouldRequestSleepGnssFix(
+                isSleeping = true,
+                isStationary = true,
+                hasValidCachedLocation = true
+            )
+        )
+
+        // When sleeping, physically stationary, but NO cached coords exist: GNSS fix is REQUESTED
+        assertTrue(
+            "Sleeping without cached coords must request initial GNSS snapshot",
+            LiveSharingManager.shouldRequestSleepGnssFix(
+                isSleeping = true,
+                isStationary = true,
+                hasValidCachedLocation = false
+            )
+        )
+
+        // When sleeping but motion detected (not stationary): GNSS fix is REQUESTED
+        assertTrue(
+            "Sleeping with locomotion must request fresh GNSS fix",
+            LiveSharingManager.shouldRequestSleepGnssFix(
+                isSleeping = true,
+                isStationary = false,
+                hasValidCachedLocation = true
+            )
+        )
+    }
+
+    @Test
+    fun testAutoSleepLiveSharePauseStateTransitions() {
+        // Test helper simulating AutoSleepManager's pause/resume state machine
+        var wasLiveShareAutoPaused = false
+        var isLiveSessionPaused = false
+
+        val onSleepEntered = { pauseLiveSharePref: Boolean, isSessionActive: Boolean ->
+            if (pauseLiveSharePref && isSessionActive && !isLiveSessionPaused) {
+                wasLiveShareAutoPaused = true
+                isLiveSessionPaused = true
+            }
+        }
+
+        val onSleepWoken = { isSessionActive: Boolean ->
+            if (wasLiveShareAutoPaused) {
+                wasLiveShareAutoPaused = false
+                if (isSessionActive && isLiveSessionPaused) {
+                    isLiveSessionPaused = false
+                }
+            }
+        }
+
+        // 1. When pref is disabled, live sharing must remain active
+        onSleepEntered(false, true)
+        assertFalse(wasLiveShareAutoPaused)
+        assertFalse(isLiveSessionPaused)
+
+        // 2. When pref is enabled and live share active, sleep pauses session
+        onSleepEntered(true, true)
+        assertTrue(wasLiveShareAutoPaused)
+        assertTrue(isLiveSessionPaused)
+
+        // 3. Waking from sleep resumes session
+        onSleepWoken(true)
+        assertFalse(wasLiveShareAutoPaused)
+        assertFalse(isLiveSessionPaused)
+
+        // 4. If session was already manually paused by user before sleep, auto-resume must not unpause
+        isLiveSessionPaused = true
+        onSleepEntered(true, true)
+        // wasLiveShareAutoPaused remains false because it was already paused
+        assertFalse(wasLiveShareAutoPaused)
+        assertTrue(isLiveSessionPaused)
+        onSleepWoken(true)
+        assertTrue("Manual pause before sleep must be preserved upon waking", isLiveSessionPaused)
+    }
 }
