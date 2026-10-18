@@ -204,6 +204,8 @@ class AppStateManager private constructor(private val context: Context) {
         _isStandbySleeping.value = true
         if (isManual) {
             AutoSleepManager.getInstance(context).onManualSleepEntered()
+        } else {
+            AutoSleepManager.getInstance(context).onSleepEntered()
         }
         stopStandbyInactivityWatcher()
         motionRearmJob?.cancel()

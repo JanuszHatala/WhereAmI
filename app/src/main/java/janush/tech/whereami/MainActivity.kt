@@ -317,6 +317,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val autoSleepEndTime by viewModel.autoSleepEndTime.collectAsState()
     val autoSleepFollowDnd by viewModel.autoSleepFollowDnd.collectAsState()
     val autoSleepFollowAlarm by viewModel.autoSleepFollowAlarm.collectAsState()
+    val autoSleepPauseLiveShare by viewModel.autoSleepPauseLiveShare.collectAsState()
 
     val selectedTripsList = remember(savedTrips, selectedTripIds) {
         savedTrips.filter { selectedTripIds.contains(it.id) }
@@ -3660,6 +3661,25 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Sync with Morning Alarm", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                     Text("Wakes automatically when device alarm fires in the morning.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.setAutoSleepPauseLiveShare(!autoSleepPauseLiveShare) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = autoSleepPauseLiveShare,
+                                    onCheckedChange = { viewModel.setAutoSleepPauseLiveShare(it) },
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Pause Live Sharing overnight", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text("Pauses active sharing during sleep to eliminate network pings; resumes upon waking.", fontSize = 10.sp, color = Color(0xFF94A3B8))
                                 }
                             }
                         }

@@ -153,6 +153,20 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
             return "jh-${sb}"
         }
+
+        fun shouldRequestSleepGnssFix(
+            isSleeping: Boolean,
+            isStationary: Boolean,
+            hasValidCachedLocation: Boolean
+        ): Boolean {
+            if (!isSleeping) return false
+            // When physically motionless and valid coordinates are already known,
+            // unpowering GNSS completely saves 100% of overnight satellite drain.
+            if (isStationary && hasValidCachedLocation) {
+                return false
+            }
+            return true
+        }
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -458,20 +472,32 @@ class LiveSharingManager private constructor(private val context: Context) {
                 var effectiveAccuracy = lastRecordedAccuracy
 
                 if (isCurrentlySleeping) {
-                    TelemetryLogger.log("POWER", "Sleep Mode periodic heartbeat: requesting 15s bounded GNSS fix...")
-                    val freshLoc = LocationManager.getInstance(context).getCurrentLocationBounded(15_000L)
-                    if (freshLoc != null && freshLoc.latitude != 0.0 && freshLoc.longitude != 0.0) {
-                        effectiveLat = freshLoc.latitude
-                        effectiveLng = freshLoc.longitude
-                        effectiveAccuracy = if (freshLoc.hasAccuracy()) freshLoc.accuracy else lastRecordedAccuracy
-                        TelemetryLogger.log("POWER", "Sleep Mode: refreshed position via 15s GNSS fix ($effectiveLat, $effectiveLng, acc=$effectiveAccuracy)")
+                    val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                    val hasCached = lastRecordedLat != 0.0 && lastRecordedLng != 0.0
+                    val needGnss = shouldRequestSleepGnssFix(
+                        isSleeping = true,
+                        isStationary = isStationary,
+                        hasValidCachedLocation = hasCached
+                    )
+
+                    if (needGnss) {
+                        TelemetryLogger.log("POWER", "Sleep Mode periodic heartbeat: requesting 15s bounded GNSS fix (motion detected or no cached loc)...")
+                        val freshLoc = LocationManager.getInstance(context).getCurrentLocationBounded(15_000L)
+                        if (freshLoc != null && freshLoc.latitude != 0.0 && freshLoc.longitude != 0.0) {
+                            effectiveLat = freshLoc.latitude
+                            effectiveLng = freshLoc.longitude
+                            effectiveAccuracy = if (freshLoc.hasAccuracy()) freshLoc.accuracy else lastRecordedAccuracy
+                            TelemetryLogger.log("POWER", "Sleep Mode: refreshed position via 15s GNSS fix ($effectiveLat, $effectiveLng, acc=$effectiveAccuracy)")
+                        } else {
+                            effectiveLat = lastRecordedLat
+                            effectiveLng = lastRecordedLng
+                            effectiveAccuracy = lastRecordedAccuracy
+                            TelemetryLogger.log("POWER", "Sleep Mode: one-shot GNSS fix timed out/unavailable; transmitting cached coordinates ($effectiveLat, $effectiveLng)")
+                        }
+                        LocationManager.getInstance(context).stopLocationUpdates(preserveStationaryState = true)
                     } else {
-                        effectiveLat = lastRecordedLat
-                        effectiveLng = lastRecordedLng
-                        effectiveAccuracy = lastRecordedAccuracy
-                        TelemetryLogger.log("POWER", "Sleep Mode: one-shot GNSS fix timed out/unavailable; transmitting cached coordinates ($effectiveLat, $effectiveLng)")
+                        TelemetryLogger.log("POWER", "Sleep Mode periodic heartbeat: physically stationary, transmitting cached position ($effectiveLat, $effectiveLng) with GNSS hardware powered off.")
                     }
-                    LocationManager.getInstance(context).stopLocationUpdates(preserveStationaryState = true)
                 }
 
                 if (effectiveLat != 0.0 && effectiveLng != 0.0) {
