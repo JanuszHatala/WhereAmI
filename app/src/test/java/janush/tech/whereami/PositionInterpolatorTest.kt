@@ -159,4 +159,81 @@ class PositionInterpolatorTest {
         val dLngMeters = (afterBoundary.lng - beforeBoundary.lng) * 111320.0 * cos(Math.toRadians(49.8500))
         assertEquals(0.02, dLngMeters, 0.05)
     }
+
+    @Test
+    fun `noisy doppler bearing at walking speed never causes lateral overshoot or heading loop`() {
+        val t0 = 10000L
+        val t1 = 11000L
+        // Moving North along latitude at 1.0 m/s (~3.6 km/h) walking
+        val dLat1m = 1.0 / 111320.0
+        // Fix 0 has wild noisy bearing (90° East) despite moving North
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 90f, speedMs = 1.0f, timestamp = t0)
+        // Fix 1 has noisy bearing (270° West) despite moving North
+        interpolator.onNewFix(lat = 49.8500 + dLat1m, lng = 19.2800, bearing = 270f, speedMs = 1.0f, timestamp = t1)
+
+        val delay = interpolator.bufferDelayMs
+
+        // Sample at 10 steps along playback interval
+        for (i in 0..10) {
+            val t = t0 + (i * 100L) + delay
+            val p = interpolator.interpolate(t)
+            // Longitude should stay tightly bound to 19.2800 without bulging East or West
+            val latDevMeters = (p.lng - 19.2800) * 111320.0 * cos(Math.toRadians(49.8500))
+            assertTrue(
+                "Lateral deviation at step $i was $latDevMeters m, should not exceed 0.2m",
+                kotlin.math.abs(latDevMeters) <= 0.20
+            )
+            // Latitude must advance monotonically North
+            assertTrue(
+                "Latitude should remain in [49.8500, 49.8500 + dLat1m]",
+                p.lat in 49.84999..49.85002
+            )
+        }
+    }
+
+    @Test
+    fun `walking bearing ignores micro-displacement jitter and preserves frozen heading`() {
+        val t0 = 10000L
+        val t1 = 11000L
+        // Initial steady heading North (0°)
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800, bearing = 0f, speedMs = 1.0f, timestamp = t0)
+        
+        // Single 1-meter fix with noise to the side (displacement 1.0m < 4.0m threshold)
+        val dLng1m = 1.0 / (111320.0 * cos(Math.toRadians(49.8500)))
+        interpolator.onNewFix(lat = 49.8500, lng = 19.2800 + dLng1m, bearing = null, speedMs = 1.0f, timestamp = t1)
+
+        val delay = interpolator.bufferDelayMs
+        val p = interpolator.interpolate(t1 + delay)
+
+        // Since displacement is only 1.0m (< 4.0m spatial baseline for walking), bearing must preserve frozen heading (0°)
+        // rather than jumping 90° East
+        assertEquals(0f, p.bearing ?: 0f, 1.0f)
+    }
+
+    @Test
+    fun `walking bearing over 5-meter baseline accurately tracks walking direction`() {
+        var t = 10000L
+        val dLat1m = 1.0 / 111320.0
+        // Feed 6 consecutive 1-meter steps North (~1.0 m/s walking)
+        for (i in 0..6) {
+            interpolator.onNewFix(
+                lat = 49.8500 + (i * dLat1m),
+                lng = 19.2800,
+                bearing = null,
+                speedMs = 1.0f,
+                timestamp = t
+            )
+            t += 1000L
+        }
+
+        val delay = interpolator.bufferDelayMs
+        val p = interpolator.interpolate(t - 1000L + delay)
+
+        assertNotNull(p.bearing)
+        // Accumulated baseline exceeds 4.0m, direction should accurately track North (0° / 360° ± 5°)
+        val diff = (p.bearing!! + 360f) % 360f
+        val isNorth = diff <= 5f || diff >= 355f
+        assertTrue("Bearing should track North (0° ± 5°), got $diff°", isNorth)
+    }
 }
+

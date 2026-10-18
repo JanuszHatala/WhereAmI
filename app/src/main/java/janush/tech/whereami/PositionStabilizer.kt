@@ -53,7 +53,8 @@ class PositionStabilizer {
         accuracy: Float,
         speedMs: Float,
         timestamp: Long,
-        isPhysicalStationary: Boolean = false
+        isPhysicalStationary: Boolean = false,
+        isTripRecording: Boolean = false
     ): StabilizedFix {
         val safeAcc = accuracy.coerceIn(1.0f, 200.0f)
 
@@ -68,7 +69,7 @@ class PositionStabilizer {
             varianceLng = degAcc * degAcc
             lastKalmanTimeMs = timestamp
 
-            if (speedMs < STATIONARY_SPEED_THRESHOLD_MPS || (isPhysicalStationary && isSubLocomotion)) {
+            if (!isTripRecording && (speedMs < STATIONARY_SPEED_THRESHOLD_MPS || (isPhysicalStationary && isSubLocomotion))) {
                 anchorLat = lat
                 anchorLng = lng
                 anchorAccuracy = safeAcc
@@ -77,9 +78,13 @@ class PositionStabilizer {
             return StabilizedFix(lat, lng, safeAcc, isAnchored = false)
         }
 
-        // 2. Stationary Gate Evaluation
-        // Physical accelerometer stillness must NEVER anchor during active locomotion (speed >= 0.8 m/s or 2.9 km/h)
-        val candidateStationary = (speedMs < STATIONARY_SPEED_THRESHOLD_MPS) || (isPhysicalStationary && isSubLocomotion)
+        // When actively recording a trip outdoors, bypass desk stationary anchoring so natural walking is never trapped
+        if (isTripRecording) {
+            releaseAnchor()
+        } else {
+            // 2. Stationary Gate Evaluation
+            // Physical accelerometer stillness must NEVER anchor during active locomotion (speed >= 0.8 m/s or 2.9 km/h)
+            val candidateStationary = (speedMs < STATIONARY_SPEED_THRESHOLD_MPS) || (isPhysicalStationary && isSubLocomotion)
 
         if (candidateStationary) {
             val curAnchorLat = anchorLat
@@ -142,6 +147,7 @@ class PositionStabilizer {
                 }
             }
         }
+    }
 
         // 3. 2D Kalman Update for Moving State
         val dtSec = ((timestamp - lastKalmanTimeMs).coerceAtLeast(0L) / 1000.0).coerceIn(0.01, 10.0)

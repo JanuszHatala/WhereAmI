@@ -572,15 +572,14 @@ class AppStateManager private constructor(private val context: Context) {
         val policy = _powerPolicy.value
         val charging = _isCharging.value
 
-        // Configure moving and stationary intervals
+        // Configure moving and stationary intervals: 1 Hz (1000ms) when watching screen in foreground
         val (movingInterval, movingMinInterval) = when {
-            isAuto -> 1500L to 1000L
-            policy == BatteryPowerPolicy.BATTERY_SAVER && !charging -> 10000L to 5000L
-            else -> 7000L to 4000L
+            policy == BatteryPowerPolicy.BATTERY_SAVER && !charging -> 3000L to 1500L
+            else -> 1000L to 1000L
         }
         val (stationaryInterval, stationaryMinInterval) = when {
             isAuto -> 3000L to 1500L
-            else -> 25000L to 15000L
+            else -> 10000L to 5000L
         }
 
         locManager.updateSamplingInterval(movingInterval, movingMinInterval)
@@ -795,14 +794,15 @@ class AppStateManager private constructor(private val context: Context) {
                 val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
                     ?: TripManager.getInstance(context).activityProfile.value
                 
-                var interval = profile.gpsIntervalMs
-                var minInterval = profile.minGpsIntervalMs
+                // When actively viewing on screen in foreground, sample at 1 Hz (1000ms) for silky-smooth tracking
+                var interval = if (isAppInForeground) 1000L else profile.gpsIntervalMs
+                var minInterval = if (isAppInForeground) 1000L else profile.minGpsIntervalMs
 
                 if (policy == BatteryPowerPolicy.HIGH_PERFORMANCE || (policy == BatteryPowerPolicy.SMART_AUTO && charging)) {
                     // Relax restrictions when plugged in or performance requested
                     interval = (interval / 2).coerceAtLeast(1000L)
                     minInterval = (minInterval / 2).coerceAtLeast(1000L)
-                } else if (policy == BatteryPowerPolicy.BATTERY_SAVER) {
+                } else if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground) {
                     interval = (interval * 1.5).toLong()
                     minInterval = (minInterval * 1.5).toLong()
                 }
