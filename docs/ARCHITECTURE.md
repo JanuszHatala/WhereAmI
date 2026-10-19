@@ -188,7 +188,8 @@ Battery optimization is the highest engineering priority:
 - **Every algorithmic rule, mathematical filter, data transformation, parser, or state machine MUST have automated unit tests in `app/src/test/java/`**.
 - Tests must execute in the local JVM without requiring an attached Android device or emulator.
 - Existing Test Suites:
-  - `PositionInterpolatorTest.kt`: Validates dead-reckoning extrapolation, stationary dampening, ease-out blending, and timeout caps.
+  - `tracking/TrackingEngineTest.kt`, `RenderPipelineTest.kt`, `SupportingTrackingTest.kt`: Replay-harness tests for the EKF/smoother (stationary drift, heading reversal, outlier gating, recovery) and frame-time render pipeline (ADR-07).
+  - `tracking/GyroHeadingSensorTest.kt`, `RouteMatchingTest.kt`, `TrackPointRowTest.kt`, `GpxExporterTest.kt`, `LocationRequestCadenceTest.kt`: Gyro register/unregister lifecycle, OSRM match chunking/acceptance, `track_points` rebind and legacy conversion, GPX `<ele>`/`<time>`, batching constants.
   - `BatteryOptimizationAndAutoStartTest.kt`: Validates all activity profile auto-start thresholds, candidate evaluation, burst durations, and lifecycle semantics.
   - `BearingSmootherTest.kt`: Validates circular EMA smoothing, $\sin/\cos$ angular difference math, speed-adaptive $\alpha$, and tiered bearing gates.
   - `RoadNameNormalizerTest.kt`: Validates canonical abbreviations (`DK*`, `DW*`, `A*`, `S*`, `E*`) and house number filtering.
@@ -213,13 +214,13 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 
 ## 7. Governance, Operational Rules & Git Lifecycle
 
-- **No Direct Pushes to `master`**: All development occurs on dedicated feature branches (`feat/<name>`) or bugfix branches (`fix/<name>`).
+- **No Direct Pushes or Local Merges to `master` (Pull Request Only)**: All development occurs on dedicated feature branches (`feat/<name>`) or bugfix branches (`fix/<name>`). Every change reaches `master` only through a GitHub Pull Request with a green `Unit Tests & Build Verification` check.
 - **Feature Branch Lifecycle**:
   1. `git checkout master && git pull origin master`
   2. `git checkout -b <type>/<descriptive-name>`
   3. Implement code, write unit tests, run build gates (`testDebugUnitTest assembleDebug`).
   4. Commit with conventional commit messages (`feat: ...`, `fix: ...`, `docs: ...`).
-  5. Merge to `master` with `--no-ff` and push to GitHub **only upon explicit user instruction**.
+  5. Push the branch **only upon explicit user instruction**, open a PR into `master` (`gh pr create`), wait for CI, and merge via the PR (`gh pr merge --merge --delete-branch`). Never `git merge` into `master` locally or push `master` directly.
 - **Deployment Safeguards**:
   - Never push to GitHub without explicit user approval.
   - Never install APKs to the user's phone without explicit user approval.
@@ -232,7 +233,7 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 
 ## 8. Key Architectural Decision Records (ADRs)
 
-### ADR-01: GNSS Doppler Speed Decoupling in `GpsFilterEngine`
+### ADR-01: GNSS Doppler Speed Decoupling in `GpsFilterEngine` (historical; the rule now lives in `TrackingEngine`, which never zeroes Doppler speed)
 - **Context**: In Stage 4 (Stationary Jitter Dampener), low-displacement fixes (< 15m) with moderate accuracy (> 15m) previously zeroed `candidate.speed`. During slow urban driving, turns, and roundabouts, 1-second and 5-second displacement frequently falls below 15m while urban multi-path accuracy is 16–25m. This erased valid GNSS Doppler speed, corrupting downstream Kalman filter state and causing speedometer displays of `0.0 km/h` while driving.
 - **Decision**: GpsFilterEngine must **NEVER mutate or zero `candidate.speed`**. Hardware GNSS Doppler velocity is physically decoupled from spatial multi-path jitter. Stage 4 only dampens coordinates (`candidate.latitude = prev.latitude`) when displacement is micro (< 4.0m) and speed already confirms stationary (< 0.5 m/s). Speed zero-snapping belongs strictly to `LocationManager.hybridSpeedUpdate()`.
 
