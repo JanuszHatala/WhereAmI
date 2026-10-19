@@ -46,6 +46,10 @@ cmd_pr() {
     [ "$branch" != "master" ] || { echo "Refusing to push master." >&2; exit 1; }
     git push -u origin "$branch"
     gh pr create --base master --head "$branch" --title "$title" --body-file "$body"
+    for _ in $(seq 1 30); do
+        gh pr checks "$branch" >/dev/null 2>&1 && break   # checks register a few seconds after the push
+        sleep 5
+    done
     gh pr checks "$branch" --watch --interval 20
 }
 
