@@ -619,6 +619,15 @@ fun OsmMapView(
     // The frame loop is a long-lived coroutine: it must read the *current* fix, not the one captured at launch.
     val latestFix by rememberUpdatedState(currentFix)
     val latestRecording by rememberUpdatedState(isRecording)
+    val latestDestinationAltitude by rememberUpdatedState(destinationAltitude)
+    val latestDestinationAltitudeLoading by rememberUpdatedState(destinationAltitudeLoading)
+    val latestDestinationPoint by rememberUpdatedState(destinationPoint)
+    val latestAltitudeM by rememberUpdatedState(altitudeM)
+    val latestIsAltitudeFallback by rememberUpdatedState(isAltitudeFallback)
+    val latestAltitudeSourceMode by rememberUpdatedState(altitudeSourceMode)
+    val latestSavedPlaces by rememberUpdatedState(savedPlaces)
+    val latestShowAltitudeOnMap by rememberUpdatedState(showAltitudeOnMap)
+    val latestFontScale by rememberUpdatedState(fontScale)
     val tripManagerRef = remember(context) { TripManager.getInstance(context) }
     val pencilTrail = remember { PencilTrail() }
     val motionCourse = remember { MotionCourse() }
@@ -809,18 +818,18 @@ fun OsmMapView(
 
                     bringAltitudeOverlayToFront(map, altitudeOverlay)
                     val frameSpeed = fix.speedMs * 3.6f
-                    altitudeOverlay.isEnabled = showAltitudeOnMap
+                    altitudeOverlay.isEnabled = latestShowAltitudeOnMap
                     altitudeOverlay.updateData(
                         geoPoint = gp,
-                        altitude = altitudeM,
-                        isGpsFallback = isAltitudeFallback,
-                        fontScaleFactor = fontScale.scaleFactor,
+                        altitude = latestAltitudeM,
+                        isGpsFallback = latestIsAltitudeFallback,
+                        fontScaleFactor = latestFontScale.scaleFactor,
                         currentSpeedKmh = frameSpeed,
-                        isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
-                        savedPlaces = savedPlaces,
-                        destinationPoint = destinationPoint,
-                        destinationAltitude = destinationAltitude,
-                        destinationLoading = destinationAltitudeLoading
+                        isGpsMode = (latestAltitudeSourceMode == AltitudeSourceMode.GPS),
+                        savedPlaces = latestSavedPlaces,
+                        destinationPoint = latestDestinationPoint,
+                        destinationAltitude = latestDestinationAltitude,
+                        destinationLoading = latestDestinationAltitudeLoading
                     )
 
                     // Course-up rotation: acceleration- and rate-limited follower (cannot step, cannot
@@ -894,11 +903,11 @@ fun OsmMapView(
                     val dLat = kotlin.math.abs(gp.latitude - lastRenderedLat)
                     val dLng = kotlin.math.abs(gp.longitude - lastRenderedLng)
                     val dAngle = kotlin.math.abs(roadScreenAngle - lastRenderedAngle)
-                    val currentAltVal = altitudeM ?: 0.0
+                    val currentAltVal = latestAltitudeM ?: 0.0
                     val dAlt = kotlin.math.abs(currentAltVal - lastRenderedAltitude)
-                    val altEnabledChanged = lastRenderedAltitudeEnabled != showAltitudeOnMap
-                    val fallbackChanged = lastRenderedIsFallback != isAltitudeFallback
-                    val fontScaleChanged = lastRenderedFontScaleFactor != fontScale.scaleFactor
+                    val altEnabledChanged = lastRenderedAltitudeEnabled != latestShowAltitudeOnMap
+                    val fallbackChanged = lastRenderedIsFallback != latestIsAltitudeFallback
+                    val fontScaleChanged = lastRenderedFontScaleFactor != latestFontScale.scaleFactor
 
                     // Only update marker position and invalidate if visually meaningful displacement occurred or settings changed
                     if (dLat > 0.0000005 || dLng > 0.0000005 || dAngle > 0.2f || dAlt > 0.5 ||
@@ -910,9 +919,9 @@ fun OsmMapView(
                         lastRenderedLng = gp.longitude
                         lastRenderedAngle = roadScreenAngle
                         lastRenderedAltitude = currentAltVal
-                        lastRenderedAltitudeEnabled = showAltitudeOnMap
-                        lastRenderedIsFallback = isAltitudeFallback
-                        lastRenderedFontScaleFactor = fontScale.scaleFactor
+                        lastRenderedAltitudeEnabled = latestShowAltitudeOnMap
+                        lastRenderedIsFallback = latestIsAltitudeFallback
+                        lastRenderedFontScaleFactor = latestFontScale.scaleFactor
 
                         if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
                             val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)

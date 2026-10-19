@@ -10568,7 +10568,12 @@ private fun DestinationPlaceCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
                     if (savedPlace != null) {
                         EmojiText(
                             emoji = savedPlace.category.iconEmoji,
@@ -10592,6 +10597,7 @@ private fun DestinationPlaceCard(
                         fontSize = 15.sp,
                         lineHeight = 18.sp,
                         maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
 

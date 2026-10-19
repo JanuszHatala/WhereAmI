@@ -111,8 +111,81 @@ class AltitudeBadgePlacementTest {
         val bgAlpha = 0x75
         assertTrue("Background alpha should be semi-transparent (< 0x90)", bgAlpha in 0x60..0x90)
 
-        // Border stroke should be solid Slate-500
-        val strokeColor = 0xFF64748B.toInt()
-        assertEquals(0xFF64748B.toInt(), strokeColor)
+        // Border stroke should be solid Black (#000000) for sharp delineation over any map background
+        val strokeColor = 0xFF000000.toInt()
+        assertEquals(0xFF000000.toInt(), strokeColor)
+    }
+
+    @Test
+    fun testHysteresisPreventsQuadrantFlickerUnderMicroFluctuations() {
+        val cursorX = 500f
+        val cursorY = 800f
+        // Threat near Top-Right, causing candidate to shift to Bottom-Right (index 1)
+        val initialThreats = listOf(Pair(cursorX + (18f * density), cursorY - (24f * density)))
+
+        val initialIdx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
+            cursorX = cursorX,
+            cursorY = cursorY,
+            savedPlaceScreenPoints = initialThreats,
+            density = density,
+            currentOffsetIndex = 0,
+            collisionRadiusDp = 50f,
+            hysteresisMarginDp = 12f
+        )
+        assertNotEquals(0, initialIdx)
+
+        // Now simulate a micro-movement/rotation where another candidate has a microscopic 0.5dp advantage.
+        // With hysteresis (hysteresisMarginDp = 12dp), it MUST stay on initialIdx and not flicker.
+        val currentOffset = AltitudeBadgePositionEvaluator.CANDIDATE_OFFSETS[initialIdx]
+        val currentBadgeX = cursorX + (currentOffset.dxDp * density)
+        val currentBadgeY = cursorY + (currentOffset.dyDp * density)
+
+        // Threat moved slightly, keeping current candidate safe (>= 32dp away)
+        val microThreats = listOf(Pair(cursorX + (17f * density), cursorY - (25f * density)))
+        val nextIdx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
+            cursorX = cursorX,
+            cursorY = cursorY,
+            savedPlaceScreenPoints = microThreats,
+            density = density,
+            currentOffsetIndex = initialIdx,
+            collisionRadiusDp = 50f,
+            hysteresisMarginDp = 12f
+        )
+        assertEquals("Should retain current candidate without flickering", initialIdx, nextIdx)
+    }
+
+    @Test
+    fun testHysteresisExitsCollisionZoneOnlyWhenThreatClearsExitRadius() {
+        val cursorX = 500f
+        val cursorY = 800f
+        val currentIdx = 1 // Bottom-Right
+
+        // Threat at 55dp: beyond entry collisionRadius (50dp), but within exit radius (60dp)
+        val threats = listOf(Pair(cursorX + (55f * density), cursorY))
+
+        val idx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
+            cursorX = cursorX,
+            cursorY = cursorY,
+            savedPlaceScreenPoints = threats,
+            density = density,
+            currentOffsetIndex = currentIdx,
+            collisionRadiusDp = 50f,
+            hysteresisMarginDp = 12f
+        )
+        // Should NOT snap back to default 0 immediately, preventing chattering near 50dp threshold
+        assertEquals(currentIdx, idx)
+
+        // Once threat clears 62dp (beyond 60dp exit radius), returns to default 0
+        val farThreats = listOf(Pair(cursorX + (62f * density), cursorY))
+        val returnedIdx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
+            cursorX = cursorX,
+            cursorY = cursorY,
+            savedPlaceScreenPoints = farThreats,
+            density = density,
+            currentOffsetIndex = currentIdx,
+            collisionRadiusDp = 50f,
+            hysteresisMarginDp = 12f
+        )
+        assertEquals(0, returnedIdx)
     }
 }

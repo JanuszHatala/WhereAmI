@@ -63,6 +63,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     private var destLoading: Boolean = false
 
     private var lastRenderedIntAlt: Long? = null
+    private var currentOffsetIndex: Int = 0
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         // Semi-transparent dark slate background (~46% opacity / 0x75), allowing underlying polyline
@@ -72,16 +73,17 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     }
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // Crisp, solid high-contrast border
-        color = 0xFF64748B.toInt() // Slate 500
+        // Solid black high-contrast border outline for sharp contrast over any terrain or polyline
+        color = 0xFF000000.toInt() // Solid Black (#000000)
         style = Paint.Style.STROKE
-        strokeWidth = 1.2f * density
+        strokeWidth = 1.5f * density
     }
 
     private val dashedStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF64748B.toInt() // Slate 500
+        // Solid black dashed border for GPS fallback
+        color = 0xFF000000.toInt() // Solid Black (#000000)
         style = Paint.Style.STROKE
-        strokeWidth = 1.2f * density
+        strokeWidth = 1.5f * density
         pathEffect = DashPathEffect(floatArrayOf(4.5f * density, 3f * density), 0f)
     }
 
@@ -179,13 +181,17 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
                 threatScreenPoints.add(Pair(sDx, sDy))
             }
 
-            val bestOffset = AltitudeBadgePositionEvaluator.selectBestOffset(
+            val bestIdx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
                 cursorX = 0f,
                 cursorY = 0f,
                 savedPlaceScreenPoints = threatScreenPoints,
                 density = density,
-                collisionRadiusDp = 50f
+                currentOffsetIndex = currentOffsetIndex,
+                collisionRadiusDp = 50f,
+                hysteresisMarginDp = 12f
             )
+            currentOffsetIndex = bestIdx
+            val bestOffset = AltitudeBadgePositionEvaluator.CANDIDATE_OFFSETS[bestIdx]
 
             val screenDx = bestOffset.dxDp * density
             val screenDy = bestOffset.dyDp * density
