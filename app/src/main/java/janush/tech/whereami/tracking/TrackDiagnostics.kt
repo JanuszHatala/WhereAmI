@@ -58,8 +58,12 @@ class TrackDiagnosticsRecorder(private val dir: File) : TrackingDiagnosticsSink 
     @Volatile
     var gyroRateForNextFix: Double? = null
 
+    /** Compass heading (true north) at the next fix, when the compass is running (foreground, on foot). */
+    @Volatile
+    var compassForNextFix: Double? = null
+
     override fun onFix(fix: RawFix, decision: FixDecision, state: TrackState?) {
-        writeLine(formatFixLine(fix, decision, state, gyroRateForNextFix))
+        writeLine(formatFixLine(fix, decision, state, gyroRateForNextFix, compassForNextFix))
     }
 
     @Synchronized
@@ -94,7 +98,7 @@ class TrackDiagnosticsRecorder(private val dir: File) : TrackingDiagnosticsSink 
         const val MAX_FILES = 10
         const val MAX_FILE_BYTES = 8L * 1024 * 1024
 
-        fun formatFixLine(fix: RawFix, decision: FixDecision, state: TrackState?, gyro: Double?): String {
+        fun formatFixLine(fix: RawFix, decision: FixDecision, state: TrackState?, gyro: Double?, compass: Double? = null): String {
             val sb = StringBuilder(256)
             sb.append("{\"k\":\"fix\",\"te\":").append(fix.tElapsedMs)
             sb.append(",\"tu\":").append(fix.tUtcMs)
@@ -106,6 +110,7 @@ class TrackDiagnosticsRecorder(private val dir: File) : TrackingDiagnosticsSink 
             fix.bearingAccDeg?.let { sb.append(String.format(Locale.US, ",\"bacc\":%.2f", it)) }
             fix.altitudeM?.let { sb.append(String.format(Locale.US, ",\"alt\":%.1f", it)) }
             gyro?.let { sb.append(String.format(Locale.US, ",\"gy\":%.4f", it)) }
+            compass?.let { sb.append(String.format(Locale.US, ",\"cp\":%.1f", it)) }
             sb.append(",\"d\":\"").append(decision.name).append('"')
             if (state != null) {
                 sb.append(

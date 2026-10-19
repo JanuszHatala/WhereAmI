@@ -77,3 +77,5 @@ every invariant below against the diff, and prove the change with replay numbers
 - Fused provider throttles to 5-20 s fixes when still; do not treat those gaps as signal loss.
 - Bearing accuracy 90-110 deg at walk start is normal: show a dot, do not fake a direction.
 - `osmdroid` marker rotation with `isFlat=false`: screen angle = `bearing + map.mapOrientation`.
+
+9. Compass arrow: on foot, moving only, through `CompassArrow` (trust gate + course fallback), sampled at `pose.renderTimeMs`; `CompassPolicy` gates the sensor. The `cp` JSONL field is the compass heading per fix; `tailKink` in the REPLAY render line measures the hook behind the cursor.

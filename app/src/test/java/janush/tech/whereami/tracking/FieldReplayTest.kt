@@ -94,6 +94,7 @@ class FieldReplayTest {
         if (System.getenv("WAI_REPLAY_COMPARE") != null) {
             val legacy: (RenderPipeline) -> Unit = { it.slowOnSpeedMps = 0.0; it.slowOffSpeedMps = 0.0 }
             println("REPLAY legacy ${LiveRenderSim(profile, legacy, pathArrow = false, deliveryDelayMs = delay).run(fixes)}")
+            println("REPLAY nojoinblend ${LiveRenderSim(profile, deliveryDelayMs = delay, blendJoin = false).run(fixes, LiveRenderSim::curved)}")
             println("REPLAY straight ${LiveRenderSim(profile, deliveryDelayMs = delay).run(fixes)}")
         }
     }

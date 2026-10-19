@@ -40,11 +40,57 @@ class PencilTrail(private val maxPoints: Int = 600) {
         var drop = 0
         while (drop < t.size && t[drop] <= tMs) drop++
         if (drop == 0) return
+        refT = t[drop - 1]; refLat = lat[drop - 1]; refLng = lng[drop - 1]; hasRef = true
         t.subList(0, drop).clear(); lat.subList(0, drop).clear(); lng.subList(0, drop).clear()
     }
 
     fun clear() {
         t.clear(); lat.clear(); lng.clear()
+        hasRef = false
+    }
+
+    // Last point dropped by pruneThrough: with the first kept point it brackets the committed time.
+    private var refT = 0L
+    private var refLat = 0.0
+    private var refLng = 0.0
+    private var hasRef = false
+
+    /**
+     * The pencil re-anchored to the newest committed vertex.
+     *
+     * The committed vertex is a smoothed (later-fix) estimate that sits a fraction of a metre to a few metres
+     * beside where the cursor was rendered at that time. Joining the two directly draws a hook right behind
+     * the cursor. Instead the pencil is shifted by that difference at its start, fading to zero over
+     * [decayM] metres (never past the tip), so the line leaves the committed vertex smoothly and still ends
+     * exactly under the cursor.
+     *
+     * @return blended (lat, lng) arrays for all points, or null when there is nothing to blend
+     */
+    fun blendedFrom(cT: Long, cLat: Double, cLng: Double, tipLat: Double, tipLng: Double, decayM: Double = JOIN_DECAY_M): Pair<DoubleArray, DoubleArray>? {
+        val n = t.size
+        if (n == 0 || !hasRef || cT < refT || cT > t[0]) return null
+        val span = (t[0] - refT).toDouble()
+        val u = if (span <= 0.0) 1.0 else ((cT - refT) / span).coerceIn(0.0, 1.0)
+        val rLat = refLat + (lat[0] - refLat) * u
+        val rLng = refLng + (lng[0] - refLng) * u
+        val dLat = cLat - rLat
+        val dLng = cLng - rLng
+        val k = cos(Math.toRadians(cLat)).coerceAtLeast(0.01)
+        fun m(aLat: Double, aLng: Double, bLat: Double, bLng: Double) =
+            hypot((bLng - aLng) * k, bLat - aLat) * LocalFrame.METERS_PER_DEG_LAT
+        val arc = DoubleArray(n)
+        for (i in 1 until n) arc[i] = arc[i - 1] + m(lat[i - 1], lng[i - 1], lat[i], lng[i])
+        val total = arc[n - 1] + m(lat[n - 1], lng[n - 1], tipLat, tipLng)
+        val len = minOf(decayM, total)
+        val outLat = DoubleArray(n)
+        val outLng = DoubleArray(n)
+        for (i in 0 until n) {
+            val w = if (len <= 1e-6) 0.0 else (1.0 - arc[i] / len).coerceAtLeast(0.0)
+            val f = w * w
+            outLat[i] = lat[i] + dLat * f
+            outLng[i] = lng[i] + dLng * f
+        }
+        return outLat to outLng
     }
 
     inline fun forEach(block: (lat: Double, lng: Double) -> Unit) {
@@ -58,5 +104,8 @@ class PencilTrail(private val maxPoints: Int = 600) {
     companion object {
         /** About 0.1 s of travel, never below half a metre (sub-pixel at street zoom). */
         fun minStepM(speedMps: Double): Double = (0.1 * speedMps).coerceIn(0.5, 4.0)
+
+        /** Distance over which the committed-vertex offset fades out along the pencil. */
+        const val JOIN_DECAY_M = 4.0
     }
 }

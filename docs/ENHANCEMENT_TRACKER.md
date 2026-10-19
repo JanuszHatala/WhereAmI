@@ -1097,3 +1097,13 @@ Evidence: screen recording (105 s, course-up, street zoom) and trip 230 (WALKING
 | **DOC-82** | ADR-07 amendment v1.13.0, LOC-11, `AGENTS.md` render rules, `jh-tracking-change` invariants 7/8 and render replay line. | docs, `.agents/skills/jh-tracking-change` | Done | - |
 | **VER-82** | **Build Gate & Version Increment**: `versionCode` 107, `versionName` "1.13.0"; `./gradlew testDebugUnitTest assembleDebug` passed (381 tests, 0 failures). | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |
 
+## 86. Round 83: Screen-Recording Fixes & Compass Arrow (2026-10-19, v1.14.0)
+
+Evidence: screen recording of build 107 (trip 231, WALKING). Arrow and path much better than build 106; the visible defect was a hook behind the cursor where the committed vertices meet the pencil.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG83-01** | **Hook behind the cursor** (join between committed vertices and pencil). Pencil start is blended onto the newest committed vertex and fades within 4 m, never past the tip. | `PencilTrail.blendedFrom`, `LiveTrackLine.rebuildTail`, `OsmMapView.kt` | Implemented | `tailKink` p90 trip 231/230/229: 156/128/177 -> 86/81/75 deg; arrow metrics unchanged (231: arrowVsLine p50/p90 8.0/27.6); `JoinBlendTest` |
+| **ENG83-02** | **"include the compass-arrow feature"**: on-foot compass arrow with learned course offset, trust gate, course fallback, setting on by default. | `tracking/Compass*.kt`, `OsmMapView.kt`, `MapProfileConfigHelper`, `TrackDiagnostics` (`cp`) | Implemented, unverified on device | `CompassArrowTest` (math, tracker, noisy course, disturbed compass, swing recovery, rest, gap reset, policy, sensor lifecycle, diagnostics); needs a field walk with `cp` data |
+| **DOC-83** | ADR-07 amendment v1.14.0, LOC-11, `AGENTS.md`, `jh-tracking-change` invariant 9. | docs | Done | - |
+| **VER-83** | `versionCode` 108, `versionName` "1.14.0"; `./gradlew testDebugUnitTest assembleDebug` passed. | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |

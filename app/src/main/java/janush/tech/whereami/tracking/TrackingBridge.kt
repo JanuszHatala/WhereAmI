@@ -37,4 +37,5 @@ object TrackingBridge {
 /** Process-wide hub shared by the location pipeline and the (foreground-only) gyro heading sensor. */
 object TrackingRuntime {
     val gyro = GyroYawTracker()
+    val compass = CompassTracker()
 }

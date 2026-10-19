@@ -14,7 +14,8 @@ class LiveRenderSim(
     private val profile: TrackingProfile,
     private val configure: (RenderPipeline) -> Unit = {},
     private val pathArrow: Boolean = true,
-    private val deliveryDelayMs: Long = 300L
+    private val deliveryDelayMs: Long = 300L,
+    private val blendJoin: Boolean = true
 ) {
 
     data class Metrics(
@@ -25,11 +26,13 @@ class LiveRenderSim(
         val reshapeP50: Double,
         val reshapeP90: Double,
         val pencilTurnP90: Double,
-        val displayTurnP90: Double
+        val displayTurnP90: Double,
+        /** Sharpest bend within 8 m behind the cursor (the committed/pencil join), p90 over time. */
+        val tailKinkP90: Double = Double.NaN
     ) {
         override fun toString() =
-            "arrowVsLine p50=%.1f p90=%.1f arrowVsTruth p50=%.1f p90=%.1f reshape p50=%.2fm p90=%.2fm vertexTurn pencil p90=%.0f display p90=%.0f"
-                .format(arrowVsLineP50, arrowVsLineP90, arrowVsTruthP50, arrowVsTruthP90, reshapeP50, reshapeP90, pencilTurnP90, displayTurnP90)
+            "arrowVsLine p50=%.1f p90=%.1f arrowVsTruth p50=%.1f p90=%.1f reshape p50=%.2fm p90=%.2fm vertexTurn pencil p90=%.0f display p90=%.0f tailKink p90=%.0f"
+                .format(arrowVsLineP50, arrowVsLineP90, arrowVsTruthP50, arrowVsTruthP90, reshapeP50, reshapeP90, pencilTurnP90, displayTurnP90, tailKinkP90)
     }
 
     private class P(val t: Long, val e: Double, val n: Double)
@@ -48,6 +51,7 @@ class LiveRenderSim(
         var committedThrough = -1L
         var bearing: Double? = null
         val arrowLine = ArrayList<Double>()
+        val tailKinks = ArrayList<Double>()
         val arrowSamples = ArrayList<Pair<Long, Double>>()
         val pruned = ArrayList<P>()
 
@@ -89,10 +93,19 @@ class LiveRenderSim(
                     lastSample = now
                     val raw = ArrayList<P2>(committed.size + pencil.size + 1)
                     committed.forEach { raw.add(P2(it.e, it.n)) }
-                    pencil.forEach { la, ln -> raw.add(P2(frame.east(ln), frame.north(la))) }
+                    val last = committed.lastOrNull()
+                    val bl = if (blendJoin && last != null) {
+                        pencil.blendedFrom(committedThrough, frame.lat(last.n), frame.lng(last.e), pose.lat, pose.lng)
+                    } else null
+                    if (bl != null) {
+                        for (q in 0 until pencil.size) raw.add(P2(frame.east(bl.second[q]), frame.north(bl.first[q])))
+                    } else {
+                        pencil.forEach { la, ln -> raw.add(P2(frame.east(ln), frame.north(la))) }
+                    }
                     raw.add(tip)
                     val line = display(raw)
                     tangentAtEnd(line, 1.0)?.let { arrowLine.add(abs(shortestDeltaDeg(bearing!!, it))) }
+                    tailKinks.add(tailKink(line, 8.0))
                     arrowSamples.add(pose.renderTimeMs to bearing!!)
                 }
             }
@@ -119,7 +132,7 @@ class LiveRenderSim(
         fun pct(l: List<Double>, q: Double) = l.sorted().let { if (it.isEmpty()) Double.NaN else it[((it.size - 1) * q).toInt()] }
         return Metrics(
             pct(arrowLine, .5), pct(arrowLine, .9), pct(truth, .5), pct(truth, .9),
-            pct(reshape, .5), pct(reshape, .9), pct(pencilTurnsAll, .9), pct(displayTurns, .9)
+            pct(reshape, .5), pct(reshape, .9), pct(pencilTurnsAll, .9), pct(displayTurns, .9), pct(tailKinks, .9)
         )
     }
 
@@ -163,6 +176,18 @@ class LiveRenderSim(
                 if (d < best) best = d
             }
             return best
+        }
+
+        /** Largest direction change at a drawn vertex within [arcM] metres behind the tip. */
+        fun tailKink(line: List<P2>, arcM: Double): Double {
+            var acc = 0.0
+            var from = 0
+            for (j in line.size - 2 downTo 0) {
+                acc += hypot(line[j + 1].x - line[j].x, line[j + 1].y - line[j].y)
+                if (acc >= arcM) { from = j; break }
+            }
+            val turns = vertexTurns(line.subList(from, line.size))
+            return turns.maxOrNull() ?: 0.0
         }
 
         /** Direction change (deg) at each drawn vertex: what makes a line look angular on screen. */

@@ -146,6 +146,8 @@ It tracks the workflow and architectural decisions across all development sessio
   - `RenderPipeline` slow on-foot mode: cursor 1.6 s behind on a Catmull-Rom curve through filtered positions, arrow = direction of that curve (`Pose.pathHeadingDeg`) (v1.13.0).
   - `tracking/CurvedPolyline.kt`, `LiveTrackLine.kt`: trip polyline drawn as a centripetal Catmull-Rom curve, incrementally densified, display only (v1.13.0).
   - Unit tests: `TrackingEngineTest`, `RenderPipelineTest`, `SupportingTrackingTest`, `WalkingRefinementsTest`, `SlowRenderAndCurveTest`, `GyroHeadingSensorTest`, `TrackPointRowTest`, `RouteMatchingTest`, `GpxExporterTest`, `LocationRequestCadenceTest`; `FieldReplayTest` replays a pulled diagnostics JSONL (`WAI_REPLAY_JSONL`).
+  - `tracking/CompassMath.kt`, `CompassTracker.kt`, `CompassArrow.kt`, `CompassHeadingSensor.kt` (`CompassPolicy`): optional compass-based arrow on foot, offset learned against the course, course fallback (v1.14.0; Map Settings "Compass Arrow").
+  - `PencilTrail.blendedFrom`: join blend removing the hook behind the cursor (v1.14.0).
 - **Decision History & Evolution**:
   - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
   - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).
