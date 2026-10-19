@@ -739,6 +739,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         )
 
         // ── Floating Header Panels (Side-by-Side in Landscape, Top/Bottom in Portrait) ──
+        @Composable fun LocationScreenMapHost0() {
         if (isLandscape) {
             Row(
                 modifier = Modifier
@@ -1000,8 +1001,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             }
         }
+        }
+        LocationScreenMapHost0()
 
         // ── Floating Compact Recording HUD Bar (Above Bottom Controls in Portrait only) ────
+        @Composable fun LocationScreenMapHost1() {
         if (!showTripsSheet && !isLandscape && activeTrip != null) {
             val recTrip = activeTrip!!
             var recTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1123,8 +1127,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             }
         }
+        }
+        LocationScreenMapHost1()
 
         // ── Floating Compact Standby HUD Bar (Auto-Start Enabled, Waiting for Motion in Portrait) ────
+        @Composable fun LocationScreenMapHost2() {
         if (!showTripsSheet && !isLandscape && activeTrip == null && tripMode == TripMode.AUTO) {
             val autoSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
             val pulseAlpha = if (!isStandbySleeping && isAppInForeground) {
@@ -1249,8 +1256,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             }
         }
+        }
+        LocationScreenMapHost2()
 
         // ── Floating Bottom Toolbar (Bottom Center) ──────────────────────────
+        @Composable fun LocationScreenMapHost3() {
         if (!showTripsSheet) {
             val recTrip = activeTrip
             var toolbarTickerNow by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1372,9 +1382,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
             )
         }
+        }
+        LocationScreenMapHost3()
     }
 
         // ── 4. Places Passed & Trips History Full-Screen Screen Overlay ────────
+        @Composable fun LocationScreenMapHost4() {
         if (showTripsSheet) {
             LaunchedEffect(Unit) {
                 viewModel.loadSavedTrips()
@@ -2926,8 +2939,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 )
             }
         }
+        }
+        LocationScreenMapHost4()
 
     // Rename Trip Dialog
+    @Composable fun LocationScreenHost0() {
     if (tripToRename != null) {
         val saveRenameAction = {
             tripToRename?.let { trip ->
@@ -3024,8 +3040,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost0()
 
     // ── 5. Quick Settings & Options Dialog ─────────────────────────────────────
+    @Composable fun LocationScreenHost1() {
     if (showSettingsSheet) {
         val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val settingsScrollState = rememberScrollState()
@@ -4081,14 +4100,20 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+    }
+    LocationScreenHost1()
 
+    @Composable fun LocationScreenHost2() {
     if (showCacheManagerDialog) {
         CacheManagerDialog(
             onDismissRequest = { viewModel.dismissCacheManager() }
         )
     }
+    }
+    LocationScreenHost2()
 
     // ── 6. Search Dialog Overlay (City / Street / Place) ────────────────────────
+    @Composable fun LocationScreenHost3() {
     if (showSearchDialog) {
         val searchFocusRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
@@ -4227,8 +4252,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost3()
 
     // ── 7. Save Place Dialog Modal ─────────────────────────────────────────────
+    @Composable fun LocationScreenHost4() {
     if (showSavePlaceDialog && placeToSaveCoords != null) {
         val coords = placeToSaveCoords!!
 
@@ -4486,8 +4514,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost4()
 
     // ── 8. Delete Saved Place Confirmation Dialog ──────────────────────────
+    @Composable fun LocationScreenHost5() {
     if (placeToDelete != null) {
         val sp = placeToDelete!!
         AlertDialog(
@@ -4529,8 +4560,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost5()
 
     // ── 8a. Delete Trip Confirmation Dialog ─────────────────────────────────
+    @Composable fun LocationScreenHost6() {
     if (tripToDelete != null) {
         val trip = tripToDelete!!
         AlertDialog(
@@ -4574,8 +4608,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost6()
 
     // ── 8a-1. Merge Trips Confirmation Dialog ────────────────────────────────
+    @Composable fun LocationScreenHost7() {
     if (showMergeConfirmationDialog && selectedTripsList.size >= 2) {
         val sortedSelectedTrips = remember(selectedTripsList) {
             selectedTripsList.sortedBy { it.startTime }
@@ -4775,8 +4812,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost7()
 
     // ── 8a-2. Restore Defaults Confirmation Dialog ──────────────────────────
+    @Composable fun LocationScreenHost8() {
     if (showResetDefaultsConfirm) {
         AlertDialog(
             onDismissRequest = { showResetDefaultsConfirm = false },
@@ -4819,8 +4859,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost8()
 
     // ── 8b. Edit Saved Place Dialog ─────────────────────────────────────────
+    @Composable fun LocationScreenHost9() {
     if (editingSavedPlace != null) {
         val placeToEdit = editingSavedPlace!!
         var editName by remember(placeToEdit.id) { mutableStateOf(placeToEdit.name) }
@@ -5236,8 +5279,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF1E293B)
         )
     }
+    }
+    LocationScreenHost9()
 
     // ── Active Trip Visited Places Timeline Dialog ──────────────────────────
+    @Composable fun LocationScreenHost10() {
     if (showActiveTripRouteDialog && activeTrip != null) {
         Dialog(onDismissRequest = { showActiveTripRouteDialog = false }) {
             Card(
@@ -5381,8 +5427,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+    }
+    LocationScreenHost10()
 
     // ── Live Location Sharing Management Dialog ─────────────────────────────
+    @Composable fun LocationScreenHost11() {
     if (showLiveShareDialog) {
         val prefs = context.getSharedPreferences("where_am_i_live_share_prefs", android.content.Context.MODE_PRIVATE)
         var inputTitle by remember {
@@ -6619,14 +6668,20 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+    }
+    LocationScreenHost11()
 
+    @Composable fun LocationScreenHost12() {
     if (activeLocationShareTarget != null) {
         LocationShareDialog(
             target = activeLocationShareTarget!!,
             onDismiss = { activeLocationShareTarget = null }
         )
     }
+    }
+    LocationScreenHost12()
 
+    @Composable fun LocationScreenHost13() {
     if (profileToConfigure != null) {
         ProfileConfigSheet(
             profile = profileToConfigure!!,
@@ -6638,7 +6693,10 @@ fun LocationScreen(viewModel: MainViewModel) {
             onDismiss = { profileToConfigure = null }
         )
     }
+    }
+    LocationScreenHost13()
 
+    @Composable fun LocationScreenHost14() {
     if (showHeatMapSettingsDialog) {
         HeatMapSettingsDialog(
             filterState = heatMapFilterState,
@@ -6651,8 +6709,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             onDismiss = { showHeatMapSettingsDialog = false }
         )
     }
+    }
+    LocationScreenHost14()
 
     // ── Live Sharing Quick Share 1-Tap Modal ─────────────────────────────────
+    @Composable fun LocationScreenHost15() {
     if (showLiveQuickShareModal && liveSession != null && liveSession!!.isActive) {
         val session = liveSession!!
         val tripViewerUrl = session.getViewerUrl(useStatic = false)
@@ -6887,8 +6948,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+    }
+    LocationScreenHost15()
 
     // ── Live QR Code Dialog (Offline-Generated via QrCodeHelper) ─────────────
+    @Composable fun LocationScreenHost16() {
     if (showLiveQrCodeModal && qrCodeTargetUrl.isNotBlank()) {
         val qrBitmap = remember(qrCodeTargetUrl) {
             QrCodeHelper.generateQrBitmap(qrCodeTargetUrl, 512)
@@ -6955,8 +7019,11 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF0F172A)
         )
     }
+    }
+    LocationScreenHost16()
 
     // ── Guest Details Modal Bottom Sheet ─────────────────────────────────────
+    @Composable fun LocationScreenHost17() {
     if (selectedGuestDetails != null) {
         val currentGuest = activeGuests.find { it.id == selectedGuestDetails!!.id } ?: selectedGuestDetails!!
         val guestSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -7384,7 +7451,10 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         }
     }
+    }
+    LocationScreenHost17()
 
+    @Composable fun LocationScreenHost18() {
     if (pendingDemTripPrompt != null) {
         val trip = pendingDemTripPrompt!!
         PostTripDemSupplementDialog(
@@ -7397,6 +7467,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
         )
     }
+    }
+    LocationScreenHost18()
 }
 
 @Composable
