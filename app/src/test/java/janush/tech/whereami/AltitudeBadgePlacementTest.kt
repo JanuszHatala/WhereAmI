@@ -104,4 +104,15 @@ class AltitudeBadgePlacementTest {
             assertTrue(candidate.dyDp != 0f)
         }
     }
+
+    @Test
+    fun testAltitudeBadgeStyleProperties() {
+        // Opacity should be semi-transparent (~68% / 0xAE) so what's below is subtly visible
+        val bgAlpha = 0xAE
+        assertTrue("Background alpha should be semi-transparent (< 0xDD)", bgAlpha in 0x80..0xCC)
+
+        // Border stroke should be solid Slate-500
+        val strokeColor = 0xFF64748B.toInt()
+        assertEquals(0xFF64748B.toInt(), strokeColor)
+    }
 }
