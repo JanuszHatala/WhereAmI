@@ -412,33 +412,12 @@ private fun addOverlayAboveTiles(map: MapView, overlay: org.osmdroid.views.overl
 
 /**
  * Ensures the altitude badge overlay is positioned at the very top of all visual map layers
- * (above polylines, accuracy circles, markers, pins, and badges), while preserving gesture/event overlays
- * like RotationGestureOverlay at the interactive front.
+ * (above polylines, accuracy circles, markers, pins, and badges).
  */
 private fun bringAltitudeOverlayToFront(map: MapView, altitudeOverlay: AltitudeCursorBadgeOverlay) {
-    val currentIdx = map.overlays.indexOf(altitudeOverlay)
-    val gestureIdx = map.overlays.indexOfFirst { it is org.osmdroid.views.overlay.gestures.RotationGestureOverlay }
-    val targetIdx = if (gestureIdx >= 0) gestureIdx else map.overlays.size
-
-    if (currentIdx == -1) {
-        if (targetIdx < map.overlays.size) {
-            map.overlays.add(targetIdx, altitudeOverlay)
-        } else {
-            map.overlays.add(altitudeOverlay)
-        }
-    } else if (currentIdx < targetIdx - 1) {
-        map.overlays.removeAt(currentIdx)
-        val adjustedTarget = if (gestureIdx >= 0) {
-            map.overlays.indexOfFirst { it is org.osmdroid.views.overlay.gestures.RotationGestureOverlay }
-        } else {
-            map.overlays.size
-        }
-        if (adjustedTarget >= 0 && adjustedTarget < map.overlays.size) {
-            map.overlays.add(adjustedTarget, altitudeOverlay)
-        } else {
-            map.overlays.add(altitudeOverlay)
-        }
-    }
+    if (map.overlays.lastOrNull() === altitudeOverlay) return
+    map.overlays.remove(altitudeOverlay)
+    map.overlays.add(altitudeOverlay)
 }
 
 /**
