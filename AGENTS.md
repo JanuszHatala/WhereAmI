@@ -92,10 +92,11 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **Engine Rules**:
   1. *Single time base*: `elapsedRealtimeNanos` everywhere; UTC only for persistence. Process EVERY location in `LocationResult.locations`, in order.
   2. *Innovation gate*: chi-square gating plus profile max-speed cap; 3 mutually consistent rejections reset the filter (no recovery deadlock).
-  3. *Stationary handling*: ZUPT, low process noise and stationary anchoring (no multipath creep); never zero the hardware Doppler speed.
+  3. *Stationary handling*: ZUPT, low process noise and stationary anchoring (no multipath creep); never zero the hardware Doppler speed. A still device with sparse fixes (5-20 s apart indoors) continues its anchored state across gaps (`continuesStationary`); never re-seed it from one noisy fix.
   4. *Recorded geometry and distance* come only from the smoother output (`TripManager.onSmoothedPoints`) stored in the `track_points` table.
-- **Heading Hold**:
-  - Display heading is valid only when the EKF is moving and heading-confident; otherwise the last confident heading is held (no spinning at traffic lights or rest stops).
+  5. *Profile is a prior, not a cage*: physical limits (max speed, accuracy gates, course trust) go through `TrackingEngine.activeProfile`, which escalates when measured motion exceeds the selected profile. A wrong profile choice must never cause reject/reset cycles or sparse recording.
+- **Heading Display**:
+  - Arrow direction = fresh filter heading (`Pose.headingFresh`); otherwise, while visibly moving, the cursor's own motion course (`MotionCourse`); stationary = last confident heading held (no spinning at traffic lights or rest stops); no observable heading at all = dot. Never show a stale held heading while moving, and never dead-reckon the cursor along an unobserved heading.
   - Course-up rotation is driven by `RotationSlew` (rate/acceleration limited, profile aware), never by per-fix deadband snapping.
 - **Kinematic / Geocoding Decoupling**:
   - Real-time map tracking (`LocationFix`) MUST be decoupled from asynchronous geocoding enrichment.
@@ -103,6 +104,9 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **60fps Render Pipeline (`tracking/RenderPipeline`)**:
   - The map tracking marker, camera recentering and rotation MUST use `RenderPipeline.frame(SystemClock.elapsedRealtime())` on display VSYNC (`withFrameNanos`): CTRV prediction to frame time with critically damped correction blending and adaptive 0-1.8 s latency only when conditions degrade.
   - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by the pipeline.
+  - **Single position writer**: marker, camera, rotation, accuracy circle, altitude badge and polyline tip are positioned ONLY in the frame loop. Other effects may update content (text, icon, enabled state), never position; two writers cause visible flicker.
+  - **Never display estimates that will be revised** (smoother `provisional()` / RTS tail): they re-shape on every fix.
+  - Per-fix and per-frame paths on the main thread must not touch SQLite or the network (move lookups to IO, hold the last good value, e.g. `DemAltitudeHold`).
   - The live polyline has ONE source: committed smoothed points + pencil trail (the cursor's rendered path since the newest committed vertex, `PencilTrail`) + cursor tip. It must always end under the cursor and never re-shape ahead of it. Never bridge gaps with a chord.
   - Recorded vertex density follows measured speed (`AdaptiveTrackSampler`), not the selected profile; the profile is only a kinematic prior (`TrackingEngine.activeProfile` escalates when motion exceeds it).
 - **Screen-Off Recording Cadence & Gyro**:
@@ -157,6 +161,9 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
   - GPS filtering & anomaly rejection (`tracking/TrackingEngineTest.kt`).
   - Trip continuity, auto-merge, and pause splitting logic (`TripSplitTest.kt`).
   - Reverse geocoding hierarchy formatting and deduplication (`HierarchyResolutionTest.kt`).
+
+### Tracking Change Evidence (`jh-tracking-change`)
+- Any change to `tracking/`, the `OsmMapView` cursor/polyline/badge code, `TripManager.onSmoothedPoints` or location cadence MUST follow `.agents/skills/jh-tracking-change/SKILL.md`: check its invariants against the diff and report before/after replay metrics (`FieldReplayTest` via `scripts/replay.sh` on a `device_backup/diagnostics/*.jsonl` trace): heading confidence while moving, heading error p50/p90/p97, filter resets, stored vertices and spacing.
 
 ### Pre-Completion Build Gate
 Before reporting any implementation or bug fix as complete, the agent MUST run:
@@ -239,6 +246,8 @@ With **every development session, feature branch, bug fix, or round of changes**
 - **Do NOT push to GitHub** without explicit user instruction.
 - **Do NOT install APKs to the user's phone** without explicit user instruction.
 - **Preserve Existing Code**: Do not delete unrelated comments, docstrings, or test cases.
+- **Personal Location Data**: device databases, logcats, diagnostics JSONL traces, screen recordings and extracted frames contain the user's home/work locations. Never commit or attach them to PRs; replay traces live only in the git-ignored `device_backup/diagnostics/`. Check `git diff --stat origin/master` before pushing.
+- **Release Steps**: when the user authorises install / push / PR / merge, use `.agents/skills/jh-release/scripts/release.sh` (`check`, `install`, `pr`, `merge`) and run only the authorised steps.
 - **Direct & Honest Communication**: Follow core communication rules—concise, technically rigorous, actively surfacing trade-offs and risks.
 
 ---
@@ -251,8 +260,8 @@ Whenever the user reports field testing feedback, mentions test results, or uplo
    - **If disconnected**: STOP and prompt the user to connect their device via USB/Wi-Fi, offering the option to reply `continue without telemetry` if they wish to skip telemetry analysis.
    - **If user opts to bypass telemetry**: Omit database/log extraction and proceed directly with code/UI analysis.
    - **If connected**: Automatically run `.agents/skills/jh-field-test-feedback/scripts/pull_device_data.sh` (or ADB commands) to extract `where_am_i_trips.db`, `where_am_i_spatial_cache.db`, `shared_prefs/`, and device logcat before proposing fixes or altering code.
-2. **Deep Diagnostics & Anomaly Hunting**: Inspect trip points, pause retention, kinematic velocity jumps, accuracy distribution, geocoding lags, and boundary transitions in SQLite and logs.
-3. **Confront Every Item & Screenshot**: Cross-reference each screenshot and comment against exact telemetry timestamps and coordinates.
+2. **Deep Diagnostics & Anomaly Hunting**: Inspect trip points, pause retention, kinematic velocity jumps, accuracy distribution, geocoding lags, and boundary transitions in SQLite and logs. For cursor/heading/polyline/recording complaints, analyse `files/diagnostics/*.jsonl` and replay it (`jh-tracking-change`). Read trip-mode and auto-stop prefs before declaring a missing pause a bug.
+3. **Confront Every Item & Screenshot**: Cross-reference each screenshot and comment against exact telemetry timestamps and coordinates. Screen recordings follow `jh-screen-recording-analysis` (frames + montages, video time aligned to telemetry via the epoch in the file name).
 4. **Mandatory Verbatim Feedback Review**: In the final response, the agent MUST:
    - Quote **every single item** from the user's prompt verbatim (`> ...`).
    - State its status: **Implemented & Fixed**, **Design Choice / Left Untouched (with Evidence)**, or **Moved to Backlog**.
@@ -261,7 +270,7 @@ Whenever the user reports field testing feedback, mentions test results, or uplo
    - Update `docs/ENHANCEMENT_TRACKER.md`.
 5. **Telemetry Lifecycle, Data Backup & Workspace Cleanup**:
    - Diagnostic text logs (`logcat_*.txt`, `dumpsys_*.txt`), process traces, and temporary round extraction folders (`device_data_round_*`, `phone_diagnostics*`, `device_dump_*`, `diagnostic_pull_*`, `.device_telemetry`) are strictly ephemeral.
-   - Authoritative database snapshots or reference traces to preserve must be copied to the dedicated `device_backup/` directory (`device_backup/databases/`, `device_backup/shared_prefs/`).
+   - Authoritative database snapshots or reference traces to preserve must be copied to the dedicated `device_backup/` directory (`device_backup/databases/`, `device_backup/shared_prefs/`); diagnostics traces go to the git-ignored `device_backup/diagnostics/`. Extract rounds into a temp dir outside the repo (`/tmp/wai_round_*`).
    - Once fixes are implemented, verified by unit tests, merged, or verified on-device, delete the temporary extraction folders (`rm -rf device_data_round_* phone_diagnostics* device_dump_* diagnostic_pull_* .device_telemetry`) to prevent multi-gigabyte workspace bloat. Never commit raw temporary test dumps into git.
 
 ---
