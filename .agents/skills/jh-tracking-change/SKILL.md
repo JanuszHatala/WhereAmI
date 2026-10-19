@@ -35,9 +35,13 @@ every invariant below against the diff, and prove the change with replay numbers
    (two writers = flicker).
 7. Live polyline = committed points + `PencilTrail` + cursor tip. Never draw estimates that will be
    revised (`provisional()` / RTS tail): they morph on every fix. The line must end under the cursor.
-8. Heading arrow: fresh filter heading (`Pose.headingFresh`), else the visible motion course
-   (`MotionCourse`) while moving, else a dot. Never show a stale held heading while moving; never
-   dead-reckon along an unobserved heading (chord prediction instead).
+   It is drawn through `LiveTrackLine` (display-only Catmull-Rom curve, `CurvedPolyline`); never
+   curve the stored vertices themselves, and keep the segment to the tip straight.
+8. Heading arrow: on foot at slow speed the direction of the drawn curve (`Pose.pathHeadingDeg`),
+   else fresh filter heading (`Pose.headingFresh`), else the visible motion course (`MotionCourse`)
+   while moving, else a dot. Never show a stale held heading while moving; never dead-reckon along an
+   unobserved heading (chord prediction instead). The slow mode (1.6 s latency) must stay off for
+   vehicle profiles.
 9. Course-up rotation only through `RotationSlew`; no per-fix snapping, no overlapping `animateTo`.
 
 **Recording (`TripManager`, `AdaptiveTrackSampler`)**
@@ -59,7 +63,9 @@ every invariant below against the diff, and prove the change with replay numbers
    `TrackingEngineTest`, `RenderPipelineTest` patterns; `TrackSim` for synthetic paths: straight,
    turn, stand, profile mismatch).
 4. **Replay again** and put both `REPLAY` lines in the report and the tracker entry:
-   heading confident while moving, heading error p50/p90/p97, filter resets, stored vertices and spacing.
+   heading confident while moving, heading error p50/p90/p97, filter resets, stored vertices and spacing,
+   and the `REPLAY render` line (`LiveRenderSim`: arrow vs. drawn line, arrow vs. smoothed course,
+   re-shape on commit, drawn-vertex turn). `WAI_REPLAY_COMPARE=1` also prints the pre-v1.13 render.
    A change that worsens any metric needs a stated reason.
 5. **Build gate:** `./gradlew testDebugUnitTest assembleDebug`.
 6. **Docs:** ADR-07 amendment for behavioural changes, `ENHANCEMENT_TRACKER` round, `FEATURES_INVENTORY` LOC-11.

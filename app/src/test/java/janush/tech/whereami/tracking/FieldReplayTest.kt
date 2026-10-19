@@ -89,5 +89,12 @@ class FieldReplayTest {
                 "headingErr p50=${"%.1f".format(pct(0.5))} p90=${"%.1f".format(pct(0.9))} p97=${"%.1f".format(pct(0.97))} " +
                 "smoothed=${smoothed.size} stored=${stored.size} spacing p50=${"%.2f".format(spacing.getOrNull(spacing.size / 2) ?: 0.0)}"
         )
+        val delay = System.getenv("WAI_REPLAY_DELIVERY_MS")?.toLongOrNull() ?: 300L
+        println("REPLAY render ${LiveRenderSim(profile, deliveryDelayMs = delay).run(fixes, LiveRenderSim::curved)}")
+        if (System.getenv("WAI_REPLAY_COMPARE") != null) {
+            val legacy: (RenderPipeline) -> Unit = { it.slowOnSpeedMps = 0.0; it.slowOffSpeedMps = 0.0 }
+            println("REPLAY legacy ${LiveRenderSim(profile, legacy, pathArrow = false, deliveryDelayMs = delay).run(fixes)}")
+            println("REPLAY straight ${LiveRenderSim(profile, deliveryDelayMs = delay).run(fixes)}")
+        }
     }
 }

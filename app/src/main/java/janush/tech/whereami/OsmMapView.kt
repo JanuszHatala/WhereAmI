@@ -519,7 +519,7 @@ fun OsmMapView(
     var marker by remember { mutableStateOf<Marker?>(null) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     var polyline by remember { mutableStateOf<Polyline?>(null) }
-    val liveRecordedPoints = remember { ArrayList<GeoPoint>() }
+    val liveLine = remember { LiveTrackLine() }
     var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
@@ -614,7 +614,6 @@ fun OsmMapView(
     val tripManagerRef = remember(context) { TripManager.getInstance(context) }
     val pencilTrail = remember { PencilTrail() }
     val motionCourse = remember { MotionCourse() }
-    var committedLiveCount by remember { mutableStateOf(0) }
     var committedThroughMs by remember { mutableStateOf(-1L) }
     val effectiveLatLng = remember(currentFix) {
         currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
@@ -757,10 +756,12 @@ fun OsmMapView(
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
                     val gp = GeoPoint(pose.lat, pose.lng)
-                    // Arrow direction: the filter's heading while it observes one; otherwise, when visibly
-                    // moving, the direction of the cursor's own rendered motion (never a stale held value).
+                    // Arrow direction: at slow speed the direction of the curve the cursor is drawing; otherwise
+                    // the filter's heading while it observes one; otherwise, when visibly moving, the direction
+                    // of the cursor's own rendered motion (never a stale held value).
                     val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
                     val liveBearing = when {
+                        pose.isMoving && !fix.isAnchored && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
                         pose.headingFresh -> pose.headingDeg
                         pose.isMoving && !fix.isAnchored -> motionDeg
                         else -> null
@@ -861,15 +862,12 @@ fun OsmMapView(
                             pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
                         val before = pencilTrail.size
                         pencilTrail.pruneThrough(committedThroughMs)
-                        val keep = committedLiveCount.coerceAtMost(liveRecordedPoints.size)
-                        if (added || pencilTrail.size != before || liveRecordedPoints.size != keep + pencilTrail.size + 1) {
-                            while (liveRecordedPoints.size > keep) liveRecordedPoints.removeAt(liveRecordedPoints.size - 1)
-                            pencilTrail.forEach { la, ln -> liveRecordedPoints.add(GeoPoint(la, ln)) }
-                            liveRecordedPoints.add(gp)
-                        } else {
-                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                        if (added || pencilTrail.size != before || !liveLine.hasTail) {
+                            liveLine.rebuildTail(pencilTrail, gp)
+                            line.setPoints(liveLine.points)
+                        } else if (liveLine.moveTip(gp)) {
+                            line.setPoints(liveLine.points)
                         }
-                        line.setPoints(liveRecordedPoints)
                     }
 
                     if (lastAppliedHeadingState != hasHeading) {
@@ -1007,7 +1005,7 @@ fun OsmMapView(
     LaunchedEffect(trackPoints, isRecording) {
         val map = mapView ?: return@LaunchedEffect
         if (!isRecording) {
-            liveRecordedPoints.clear()
+            liveLine.clear()
             pencilTrail.clear()
             committedThroughMs = -1L
             if (trackPoints.isEmpty()) {
@@ -1029,26 +1027,24 @@ fun OsmMapView(
             }
 
             addOverlayAboveTiles(map, line)
-            line.setPoints(trackPoints)
+            line.setPoints(LiveTrackLine.curved(trackPoints))
             map.invalidate()
         } else {
             // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
             // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
             // loop appends the dynamic tail. This is the single source of the live polyline.
-            liveRecordedPoints.clear()
-            liveRecordedPoints.addAll(trackPoints)
-            committedLiveCount = trackPoints.size
+            liveLine.setCommitted(trackPoints)
             committedThroughMs = tripManagerRef.lastCommittedElapsedMs
             if (trackPoints.isEmpty()) pencilTrail.clear()
             pencilTrail.pruneThrough(committedThroughMs)
-            pencilTrail.forEach { la, ln -> liveRecordedPoints.add(GeoPoint(la, ln)) }
             val currentPt = marker?.position
                 ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
                 ?: latLng?.let { GeoPoint(it.first, it.second) }
-            if (currentPt != null) {
-                liveRecordedPoints.add(currentPt)
+            val tip = currentPt ?: trackPoints.lastOrNull()
+            if (tip != null) {
+                liveLine.rebuildTail(pencilTrail, tip)
+                polyline?.setPoints(liveLine.points)
             }
-            polyline?.setPoints(liveRecordedPoints)
             map.invalidate()
         }
     }
