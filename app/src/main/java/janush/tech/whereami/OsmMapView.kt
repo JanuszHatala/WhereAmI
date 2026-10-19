@@ -71,6 +71,8 @@ import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import janush.tech.whereami.tracking.AndroidSensorRegistrar
 import janush.tech.whereami.tracking.GyroHeadingSensor
 import janush.tech.whereami.tracking.GyroPolicy
+import janush.tech.whereami.tracking.MotionCourse
+import janush.tech.whereami.tracking.PencilTrail
 import janush.tech.whereami.tracking.RenderPipeline
 import janush.tech.whereami.tracking.RotationSlew
 import janush.tech.whereami.tracking.TrackState
@@ -571,7 +573,10 @@ fun OsmMapView(
         val currentSpeed = (locationFix?.speedMs ?: 0f) * 3.6f
         altitudeOverlay.isEnabled = showAltitudeOnMap
         altitudeOverlay.updateData(
-            geoPoint = locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
+            // Position is owned by the frame loop (rendered pose); a raw-fix position here would make the
+            // badge jump between the two on every altitude/speed change.
+            geoPoint = marker?.position
+                ?: locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
             altitude = altitudeM,
             isGpsFallback = isAltitudeFallback,
             fontScaleFactor = fontScale.scaleFactor,
@@ -606,9 +611,11 @@ fun OsmMapView(
     // The frame loop is a long-lived coroutine: it must read the *current* fix, not the one captured at launch.
     val latestFix by rememberUpdatedState(currentFix)
     val latestRecording by rememberUpdatedState(isRecording)
-    val liveTailProvider = remember(context) { LocationManager.getInstance(context) }
-    var liveTail by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    val tripManagerRef = remember(context) { TripManager.getInstance(context) }
+    val pencilTrail = remember { PencilTrail() }
+    val motionCourse = remember { MotionCourse() }
     var committedLiveCount by remember { mutableStateOf(0) }
+    var committedThroughMs by remember { mutableStateOf(-1L) }
     val effectiveLatLng = remember(currentFix) {
         currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
     }
@@ -696,10 +703,6 @@ fun OsmMapView(
         if (fix.bearing != null && lastFrozenBearing == null) {
             lastFrozenBearing = fix.bearing
         }
-        if (latestRecording) {
-            // Dynamic tail of the live polyline: smoothed-but-not-yet-committed estimate (RTS window)
-            liveTail = liveTailProvider.provisionalTrack().map { GeoPoint(it.lat, it.lng) }
-        }
     }
 
     val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
@@ -754,8 +757,16 @@ fun OsmMapView(
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
                     val gp = GeoPoint(pose.lat, pose.lng)
-                    if (pose.headingConfident) {
-                        lastFrozenBearing = pose.headingDeg.toFloat()
+                    // Arrow direction: the filter's heading while it observes one; otherwise, when visibly
+                    // moving, the direction of the cursor's own rendered motion (never a stale held value).
+                    val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
+                    val liveBearing = when {
+                        pose.headingFresh -> pose.headingDeg
+                        pose.isMoving && !fix.isAnchored -> motionDeg
+                        else -> null
+                    }
+                    if (liveBearing != null) {
+                        lastFrozenBearing = liveBearing.toFloat()
                     } else if (lastFrozenBearing == null && fix.bearing != null) {
                         lastFrozenBearing = fix.bearing
                     }
@@ -827,13 +838,14 @@ fun OsmMapView(
                             ) {
                                 courseSlew.snap(mapCourse)
                             }
-                            val course = courseSlew.step(pose.headingDeg, dtSec)
+                            val course = courseSlew.step(effectiveBearing.toDouble(), dtSec)
                             map.mapOrientation = normalizeAngle(-course.toFloat())
                         }
                     }
 
-                    // Live polyline = committed smoothed points (TripManager) + RTS tail + cursor tip.
-                    // Only the tail is rewritten per frame; committed points are rebuilt when their list changes.
+                    // Live polyline = committed smoothed points (TripManager) + pencil trail (the cursor's own
+                    // rendered path since the newest committed vertex) + cursor tip. The line therefore always
+                    // ends under the cursor and never re-shapes ahead of it.
                     if (latestRecording) {
                         val line = polyline ?: Polyline(map).also {
                             it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
@@ -845,10 +857,18 @@ fun OsmMapView(
                             addOverlayAboveTiles(map, it)
                             polyline = it
                         }
+                        val added = !pose.isStationary &&
+                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
+                        val before = pencilTrail.size
+                        pencilTrail.pruneThrough(committedThroughMs)
                         val keep = committedLiveCount.coerceAtMost(liveRecordedPoints.size)
-                        while (liveRecordedPoints.size > keep) liveRecordedPoints.removeAt(liveRecordedPoints.size - 1)
-                        liveRecordedPoints.addAll(liveTail)
-                        liveRecordedPoints.add(gp)
+                        if (added || pencilTrail.size != before || liveRecordedPoints.size != keep + pencilTrail.size + 1) {
+                            while (liveRecordedPoints.size > keep) liveRecordedPoints.removeAt(liveRecordedPoints.size - 1)
+                            pencilTrail.forEach { la, ln -> liveRecordedPoints.add(GeoPoint(la, ln)) }
+                            liveRecordedPoints.add(gp)
+                        } else {
+                            liveRecordedPoints[liveRecordedPoints.size - 1] = gp
+                        }
                         line.setPoints(liveRecordedPoints)
                     }
 
@@ -988,6 +1008,8 @@ fun OsmMapView(
         val map = mapView ?: return@LaunchedEffect
         if (!isRecording) {
             liveRecordedPoints.clear()
+            pencilTrail.clear()
+            committedThroughMs = -1L
             if (trackPoints.isEmpty()) {
                 polyline?.let { map.overlays.remove(it) }
                 polyline = null
@@ -1016,7 +1038,12 @@ fun OsmMapView(
             liveRecordedPoints.clear()
             liveRecordedPoints.addAll(trackPoints)
             committedLiveCount = trackPoints.size
-            val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
+            committedThroughMs = tripManagerRef.lastCommittedElapsedMs
+            if (trackPoints.isEmpty()) pencilTrail.clear()
+            pencilTrail.pruneThrough(committedThroughMs)
+            pencilTrail.forEach { la, ln -> liveRecordedPoints.add(GeoPoint(la, ln)) }
+            val currentPt = marker?.position
+                ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
                 ?: latLng?.let { GeoPoint(it.first, it.second) }
             if (currentPt != null) {
                 liveRecordedPoints.add(currentPt)
