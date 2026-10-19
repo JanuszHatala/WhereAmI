@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
  * This completely eliminates "perpendicular cross-street snapping" where point-based
  * geocoding snaps to a side street because it happens to be 2 meters closer to the raw GPS dot.
  */
-object OsmMapMatcher {
+object OsmMapMatcher : janush.tech.whereami.tracking.RouteMatchApi {
     private var lastRequestTime = 0L
     private var rateLimitCooldownUntil = 0L
 
@@ -69,6 +69,52 @@ object OsmMapMatcher {
         } catch (e: Exception) {
             TelemetryLogger.log("OSRM", "Error fetching from OSRM: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Post-trip OSRM `/match` for one chunk. Shares the 1.1 s spacing and the 429 cooldown with [getNearestStreet],
+     * so live street lookups and background matching never exceed the public server limit together.
+     */
+    @Synchronized
+    override fun matchChunk(points: List<janush.tech.whereami.tracking.MatchPoint>): janush.tech.whereami.tracking.ChunkResult {
+        val now = System.currentTimeMillis()
+        if (now < rateLimitCooldownUntil) return janush.tech.whereami.tracking.ChunkResult.Transient
+        val elapsed = now - lastRequestTime
+        if (elapsed < 1100L) {
+            try { Thread.sleep(1100L - elapsed) } catch (_: InterruptedException) {
+                return janush.tech.whereami.tracking.ChunkResult.Transient
+            }
+        }
+        lastRequestTime = System.currentTimeMillis()
+        val url = janush.tech.whereami.tracking.RouteMatching.buildUrl("https://router.project-osrm.org", points)
+        return try {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 15000
+            when (val code = conn.responseCode) {
+                429 -> {
+                    rateLimitCooldownUntil = System.currentTimeMillis() + 60_000L
+                    TelemetryLogger.log("OSRM", "match HTTP 429; 60s cooldown active")
+                    janush.tech.whereami.tracking.ChunkResult.Transient
+                }
+                200 -> {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val geometry = janush.tech.whereami.tracking.RouteMatching.parseMatchResponse(body)
+                    if (geometry != null) janush.tech.whereami.tracking.ChunkResult.Matched(geometry)
+                    else janush.tech.whereami.tracking.ChunkResult.NoMatch
+                }
+                // 4xx other than 429 (e.g. NoMatch/TooBig surfaced as 400): deterministic for this input.
+                in 400..499 -> janush.tech.whereami.tracking.ChunkResult.NoMatch
+                else -> {
+                    TelemetryLogger.log("OSRM", "match HTTP $code")
+                    janush.tech.whereami.tracking.ChunkResult.Transient
+                }
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("OSRM", "match error: ${e.message}")
+            janush.tech.whereami.tracking.ChunkResult.Transient
         }
     }
 }

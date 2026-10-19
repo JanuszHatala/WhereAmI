@@ -68,6 +68,15 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import janush.tech.whereami.tracking.AndroidSensorRegistrar
+import janush.tech.whereami.tracking.GyroHeadingSensor
+import janush.tech.whereami.tracking.GyroPolicy
+import janush.tech.whereami.tracking.RenderPipeline
+import janush.tech.whereami.tracking.RotationSlew
+import janush.tech.whereami.tracking.TrackState
+import janush.tech.whereami.tracking.TrackingBridge
+import janush.tech.whereami.tracking.TrackingRuntime
+import janush.tech.whereami.tracking.shortestDeltaDeg
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -589,29 +598,22 @@ fun OsmMapView(
             LocationFix(it.first, it.second, it.third, 0f, System.currentTimeMillis())
         }
     }
-    val posInterpolator = remember {
-        PositionInterpolator().apply {
-            val initFix = currentFix
-            if (initFix != null && initFix.lat != 0.0 && initFix.lng != 0.0) {
-                onNewFix(
-                    initFix.lat,
-                    initFix.lng,
-                    initFix.bearing,
-                    initFix.speedMs,
-                    initFix.timestamp,
-                    initFix.accuracy,
-                    initFix.isAnchored
-                )
-            }
-        }
-    }
+    // Tracking Engine v2 render side: predicts at frame time from the filtered kinematic state,
+    // blends corrections critically damped and never extrapolates along a lagged raw bearing.
+    val renderPipeline = remember { RenderPipeline(TrackingBridge.profileFor(activityProfile), TrackingRuntime.gyro) }
+    val courseSlew = remember(activityProfile) { RotationSlew.forProfile(TrackingBridge.profileFor(activityProfile)) }
+    LaunchedEffect(activityProfile) { renderPipeline.profile = TrackingBridge.profileFor(activityProfile) }
+    // The frame loop is a long-lived coroutine: it must read the *current* fix, not the one captured at launch.
+    val latestFix by rememberUpdatedState(currentFix)
+    val latestRecording by rememberUpdatedState(isRecording)
+    val liveTailProvider = remember(context) { LocationManager.getInstance(context) }
+    var liveTail by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var committedLiveCount by remember { mutableStateOf(0) }
     val effectiveLatLng = remember(currentFix) {
         currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
     }
     var lastFrozenBearing by remember { mutableStateOf(currentFix?.bearing) }
 
-    val snapHandler = remember { Handler(Looper.getMainLooper()) }
-    val snapRunnable = remember { Runnable { isFollowing = true } }
 
     // Dynamic Base Layer Switch
     LaunchedEffect(baseLayer, mapView) {
@@ -687,27 +689,36 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Feed new GPS fixes into the interpolator
+    // Feed new filtered states into the render pipeline
     LaunchedEffect(currentFix) {
         val fix = currentFix ?: return@LaunchedEffect
-        posInterpolator.onNewFix(
-            fix.lat,
-            fix.lng,
-            fix.bearing,
-            fix.speedMs,
-            fix.timestamp,
-            fix.accuracy,
-            fix.isAnchored
-        )
+        renderPipeline.onState(fix.track ?: syntheticTrackState(fix))
         if (fix.bearing != null && lastFrozenBearing == null) {
             lastFrozenBearing = fix.bearing
+        }
+        if (latestRecording) {
+            // Dynamic tail of the live polyline: smoothed-but-not-yet-committed estimate (RTS window)
+            liveTail = liveTailProvider.provisionalTrack().map { GeoPoint(it.lat, it.lng) }
         }
     }
 
     val isAppInForeground by remember { AppStateManager.getInstance(context).isAppInForegroundFlow }.collectAsState()
 
-    // Continuous Frame Loop: smooth dead-reckoning marker & optical camera tracking throttled to ~35fps
-    // Strictly suspended when screen is off / app is in background to prevent 350ms background CPU wakeups.
+    // Gyro yaw rate: foreground-only, only while moving and following/recording (see GyroPolicy).
+    val gyroSensor = remember { GyroHeadingSensor(AndroidSensorRegistrar(context.applicationContext)) }
+    var movingForGyro by remember { mutableStateOf(false) }
+    LaunchedEffect(currentFix?.speedMs) {
+        movingForGyro = GyroPolicy.isMovingForGyro(currentFix?.speedMs ?: 0f, movingForGyro)
+    }
+    val gyroWanted = GyroPolicy.shouldRun(isAppInForeground, movingForGyro, isFollowing || isRecording)
+    LaunchedEffect(gyroWanted) {
+        if (gyroWanted) gyroSensor.start() else gyroSensor.stop()
+    }
+    DisposableEffect(gyroSensor) { onDispose { gyroSensor.stop() } }
+
+    // Continuous Frame Loop: render pipeline sampled on every display VSYNC while moving, so the marker,
+    // camera, rotation and polyline tip share one clock (SystemClock.elapsedRealtime, same base as fixes).
+    // Strictly suspended when screen is off / app is in background to prevent background CPU wakeups.
     LaunchedEffect(
         isFollowing,
         destinationPoint,
@@ -727,26 +738,32 @@ fun OsmMapView(
         var lastRenderedAltitudeEnabled: Boolean? = null
         var lastRenderedIsFallback: Boolean? = null
         var lastRenderedFontScaleFactor: Float = fontScale.scaleFactor
-        var lastFrameRenderMs = 0L
+        var lastFrameMs = 0L
+        var lastActiveMs = 0L
 
         while (isActive) {
             val map = mapView
-            if (map != null && currentFix != null) {
-                val nowMs = System.currentTimeMillis()
-                val pt = posInterpolator.interpolate(nowMs)
+            val fix = latestFix
+            var settled = true
+            if (map != null && fix != null) {
+                val nowMs = android.os.SystemClock.elapsedRealtime()
+                val dtSec = if (lastFrameMs > 0L) ((nowMs - lastFrameMs).coerceIn(1L, 250L) / 1000.0) else 0.016
+                lastFrameMs = nowMs
+                renderPipeline.movingOnSpeedMps = if (latestRecording) 0.5 else 0.8
+                val pose = renderPipeline.frame(nowMs)
 
-                if (pt.lat != 0.0 && pt.lng != 0.0) {
-                    val gp = GeoPoint(pt.lat, pt.lng)
-                    val rawBearing = currentFix.bearing
-                    if (pt.bearing != null) {
-                        lastFrozenBearing = pt.bearing
-                    } else if (rawBearing != null && lastFrozenBearing == null) {
-                        lastFrozenBearing = rawBearing
+                if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
+                    val gp = GeoPoint(pose.lat, pose.lng)
+                    if (pose.headingConfident) {
+                        lastFrozenBearing = pose.headingDeg.toFloat()
+                    } else if (lastFrozenBearing == null && fix.bearing != null) {
+                        lastFrozenBearing = fix.bearing
                     }
-                    val effectiveBearing = pt.bearing ?: lastFrozenBearing
-                    val minMovingSpeed = if (isRecording) 0.35f else 0.8f
-                    val isMoving = currentFix.speedMs >= minMovingSpeed && !currentFix.isAnchored && !posInterpolator.isStationary()
+                    val effectiveBearing = lastFrozenBearing
+                    val isMoving = pose.isMoving && !fix.isAnchored
                     val hasHeading = isMoving && (effectiveBearing != null)
+                    settled = pose.isStationary && !pose.isMoving
+                    if (!settled) lastActiveMs = nowMs
 
                     if (!map.overlays.contains(accuracyOverlay)) {
                         val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
@@ -756,8 +773,8 @@ fun OsmMapView(
                             map.overlays.add(accuracyOverlay)
                         }
                     }
-                    val effectiveAccuracy = pt.accuracy ?: currentFix.accuracy
-                    accuracyOverlay.updatePosition(pt.lat, pt.lng, effectiveAccuracy)
+                    val effectiveAccuracy = pose.accuracyM ?: fix.accuracy
+                    accuracyOverlay.updatePosition(pose.lat, pose.lng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
                         it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -773,7 +790,7 @@ fun OsmMapView(
                     if (!map.overlays.contains(altitudeOverlay)) {
                         map.overlays.add(altitudeOverlay)
                     }
-                    val frameSpeed = (locationFix?.speedMs ?: currentFix.speedMs) * 3.6f
+                    val frameSpeed = fix.speedMs * 3.6f
                     altitudeOverlay.isEnabled = showAltitudeOnMap
                     altitudeOverlay.updateData(
                         geoPoint = gp,
@@ -788,49 +805,36 @@ fun OsmMapView(
                         destinationLoading = destinationAltitudeLoading
                     )
 
-                    // Continuous Shortest-Arc Rotation Slerp in COURSE_UP mode (Option A: Locomotion Gated)
+                    // Course-up rotation: acceleration- and rate-limited follower (cannot step, cannot
+                    // overshoot-and-correct), commanded by the engine's confident heading only.
                     if (orientationMode == MapOrientationMode.COURSE_UP && isFollowing) {
                         val isPhysicallyStationary = try {
                             StationaryDetector.getInstance(context).isPhysicallyStationary.value
                         } catch (_: Exception) { false }
-
-                        val minSpeedForCourseUp = if (isRecording) 0.42f else 2.78f // 1.5 km/h vs 10.0 km/h
                         val canRotate = canRotateCourseUp(
                             hasHeading = hasHeading,
                             isPhysicallyStationary = isPhysicallyStationary,
-                            isAnchored = currentFix.isAnchored,
-                            speedMs = currentFix.speedMs,
-                            isRecording = isRecording,
-                            isInterpolatorStationary = posInterpolator.isStationary()
+                            isAnchored = fix.isAnchored,
+                            speedMs = fix.speedMs,
+                            isRecording = latestRecording,
+                            isInterpolatorStationary = pose.isStationary
                         )
-
                         if (canRotate && effectiveBearing != null) {
-                            val targetRot = -effectiveBearing
-                            val currentRot = map.mapOrientation
-                            val delta = shortestAngularDelta(currentRot, targetRot)
-                            val isWalkingSpeed = currentFix.speedMs < 1.39f // < 5.0 km/h
-                            val deadband = if (isWalkingSpeed) 3.5f else 0.5f
-                            val tau = if (isWalkingSpeed) 0.50f else 0.20f
-                            val absDelta = kotlin.math.abs(delta)
-                            if (absDelta > deadband) {
-                                val dtSec = if (lastFrameRenderMs > 0L) {
-                                    ((nowMs - lastFrameRenderMs).coerceIn(10L, 100L) / 1000.0f)
-                                } else 0.028f
-                                val effectiveDelta = kotlin.math.sign(delta) * (absDelta - deadband)
-                                val factor = (1.0f - kotlin.math.exp(-dtSec / tau)).coerceIn(0.02f, 0.40f)
-                                var step = effectiveDelta * factor
-                                if (isWalkingSpeed) {
-                                    val maxStep = 35.0f * dtSec
-                                    step = step.coerceIn(-maxStep, maxStep)
-                                }
-                                map.mapOrientation = normalizeAngle(currentRot + step)
+                            // Re-sync if the map was rotated externally (gesture, mode switch)
+                            val mapCourse = (-map.mapOrientation).toDouble()
+                            if (!courseSlew.initialized ||
+                                kotlin.math.abs(shortestDeltaDeg(courseSlew.angleDeg, mapCourse)) > 2.0
+                            ) {
+                                courseSlew.snap(mapCourse)
                             }
+                            val course = courseSlew.step(pose.headingDeg, dtSec)
+                            map.mapOrientation = normalizeAngle(-course.toFloat())
                         }
                     }
 
-                    // Dynamic live polyline attachment during active recording:
-                    // Polyline tip connects directly to cursor gp, guaranteeing zero leading/disconnect
-                    if (isRecording) {
+                    // Live polyline = committed smoothed points (TripManager) + RTS tail + cursor tip.
+                    // Only the tail is rewritten per frame; committed points are rebuilt when their list changes.
+                    if (latestRecording) {
                         val line = polyline ?: Polyline(map).also {
                             it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
                             it.outlinePaint.strokeWidth = 12f
@@ -841,37 +845,11 @@ fun OsmMapView(
                             addOverlayAboveTiles(map, it)
                             polyline = it
                         }
-
-                        if (liveRecordedPoints.isEmpty()) {
-                            if (trackPoints.isNotEmpty()) {
-                                liveRecordedPoints.addAll(trackPoints)
-                            }
-                            liveRecordedPoints.add(gp)
-                            liveRecordedPoints.add(gp)
-                            line.setPoints(liveRecordedPoints)
-                        } else {
-                            val lastCommitted = if (liveRecordedPoints.size >= 2) {
-                                liveRecordedPoints[liveRecordedPoints.size - 2]
-                            } else {
-                                liveRecordedPoints.first()
-                            }
-                            val distToLastMeters = lastCommitted.distanceToAsDouble(gp)
-                            val stepThreshold = when (activityProfile) {
-                                ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
-                                ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
-                                ActivityProfile.CAR -> 5.0
-                            }
-
-                            if (distToLastMeters >= stepThreshold) {
-                                // Anchor current gp as permanent vertex, and add a new floating tip at gp
-                                liveRecordedPoints[liveRecordedPoints.size - 1] = gp
-                                liveRecordedPoints.add(gp)
-                            } else {
-                                // Update floating tip to follow cursor smoothly at 35 FPS
-                                liveRecordedPoints[liveRecordedPoints.size - 1] = gp
-                            }
-                            line.setPoints(liveRecordedPoints)
-                        }
+                        val keep = committedLiveCount.coerceAtMost(liveRecordedPoints.size)
+                        while (liveRecordedPoints.size > keep) liveRecordedPoints.removeAt(liveRecordedPoints.size - 1)
+                        liveRecordedPoints.addAll(liveTail)
+                        liveRecordedPoints.add(gp)
+                        line.setPoints(liveRecordedPoints)
                     }
 
                     if (lastAppliedHeadingState != hasHeading) {
@@ -883,7 +861,7 @@ fun OsmMapView(
                     // Since the canvas itself is pre-rotated by +map.mapOrientation, the net marker angle on SCREEN is -m.rotation.
                     // The vehicle's heading vector on screen (relative to top of screen) is:
                     //   roadScreenAngle = (effectiveBearing + map.mapOrientation + 360f) % 360f.
-                    val roadScreenAngle = if (hasHeading) {
+                    val roadScreenAngle = if (hasHeading && effectiveBearing != null) {
                         (effectiveBearing + map.mapOrientation + 360f) % 360f
                     } else {
                         0f
@@ -921,19 +899,13 @@ fun OsmMapView(
                 }
             }
 
-            // Thermal / Battery optimization:
-            // When stationary, throttle the loop to 350ms.
-            // When moving, synchronize with display VSYNC and cap maximum frame rate to ~35 FPS (~28ms).
-            if (posInterpolator.isStationary()) {
+            // Thermal / Battery optimization: full display rate only while moving (plus a short settling
+            // window so corrections and rotation finish); 350 ms cadence when parked.
+            val activeRecently = android.os.SystemClock.elapsedRealtime() - lastActiveMs < 1_500L
+            if (settled && !activeRecently) {
                 kotlinx.coroutines.delay(350L)
             } else {
-                withFrameNanos { /* next frame */ }
-                val now = android.os.SystemClock.uptimeMillis()
-                val delta = now - lastFrameRenderMs
-                if (delta < 28L) {
-                    kotlinx.coroutines.delay(28L - delta)
-                }
-                lastFrameRenderMs = android.os.SystemClock.uptimeMillis()
+                withFrameNanos { /* next VSYNC */ }
             }
         }
     }
@@ -949,7 +921,6 @@ fun OsmMapView(
         }
 
         isFollowing = false
-        snapHandler.removeCallbacks(snapRunnable)
 
         val dm = destMarker ?: Marker(map).also {
             it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -975,7 +946,6 @@ fun OsmMapView(
         val map = mapView ?: return@LaunchedEffect
         val sp = selectedSavedPlace ?: return@LaunchedEffect
         isFollowing = false
-        snapHandler.removeCallbacks(snapRunnable)
         val centerGp = getOpticalCenter(map, sp.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
         map.controller.animateTo(centerGp)
     }
@@ -1040,20 +1010,19 @@ fun OsmMapView(
             line.setPoints(trackPoints)
             map.invalidate()
         } else {
-            // When actively recording:
-            // Synchronize from trackPoints ONLY on initial load/restore or if significant points were
-            // recorded while the screen was off / app was backgrounded.
-            if (liveRecordedPoints.isEmpty() || trackPoints.size > liveRecordedPoints.size + 2) {
-                liveRecordedPoints.clear()
-                liveRecordedPoints.addAll(trackPoints)
-                val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
-                    ?: latLng?.let { GeoPoint(it.first, it.second) }
-                if (currentPt != null) {
-                    liveRecordedPoints.add(currentPt)
-                }
-                polyline?.setPoints(liveRecordedPoints)
-                map.invalidate()
+            // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
+            // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
+            // loop appends the dynamic tail. This is the single source of the live polyline.
+            liveRecordedPoints.clear()
+            liveRecordedPoints.addAll(trackPoints)
+            committedLiveCount = trackPoints.size
+            val currentPt = locationFix?.let { GeoPoint(it.lat, it.lng) }
+                ?: latLng?.let { GeoPoint(it.first, it.second) }
+            if (currentPt != null) {
+                liveRecordedPoints.add(currentPt)
             }
+            polyline?.setPoints(liveRecordedPoints)
+            map.invalidate()
         }
     }
 
@@ -1322,7 +1291,6 @@ fun OsmMapView(
         if (fitTrackTrigger > 0L && allShownPoints.isNotEmpty()) {
             val map = mapView ?: return@LaunchedEffect
             isFollowing = false
-            snapHandler.removeCallbacks(snapRunnable)
             fitPointsToUnobstructedViewport(
                 map = map,
                 points = allShownPoints,
@@ -1343,7 +1311,6 @@ fun OsmMapView(
         if (fitPlacesTrigger > 0L && savedPlaces.isNotEmpty()) {
             val map = mapView ?: return@LaunchedEffect
             isFollowing = false
-            snapHandler.removeCallbacks(snapRunnable)
             fitPointsToUnobstructedViewport(
                 map = map,
                 points = savedPlaces.map { it.geoPoint },
@@ -1364,7 +1331,6 @@ fun OsmMapView(
         if (fitHeatMapTrigger > 0L) {
             val map = mapView ?: return@LaunchedEffect
             isFollowing = false
-            snapHandler.removeCallbacks(snapRunnable)
             val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
             if (pts.isNotEmpty()) {
                 try {
@@ -1479,7 +1445,6 @@ fun OsmMapView(
                             android.view.MotionEvent.ACTION_MOVE -> {
                                 isUserDragging = true
                                 isFollowing = false
-                                snapHandler.removeCallbacks(snapRunnable)
                             }
                             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                                 isUserDragging = false
@@ -1492,7 +1457,6 @@ fun OsmMapView(
                         override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
                             if (isUserDragging) {
                                 isFollowing = false
-                                snapHandler.removeCallbacks(snapRunnable)
                             }
                             return false
                         }
@@ -1568,7 +1532,6 @@ fun OsmMapView(
                     .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
                     .clickable {
                         isFollowing = true
-                        snapHandler.removeCallbacks(snapRunnable)
                         onClearDestination?.invoke()
                         mapView?.tileProvider?.clearTileCache()
                         hikingProviderRef?.clearTileCache()
@@ -1631,7 +1594,6 @@ fun OsmMapView(
                         .clickable {
                             val map = mapView ?: return@clickable
                             isFollowing = false
-                            snapHandler.removeCallbacks(snapRunnable)
                             fitPointsToUnobstructedViewport(
                                 map = map,
                                 points = allShownPoints,
@@ -1833,7 +1795,6 @@ fun OsmMapView(
                         onClick = {
                             val map = mapView ?: return@Surface
                             isFollowing = false
-                            snapHandler.removeCallbacks(snapRunnable)
                             val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
                             if (pts.isNotEmpty()) {
                                 try {
@@ -2015,7 +1976,6 @@ fun OsmMapView(
         onDispose {
             hikingProviderRef?.clearTileCache()
             mapView?.onDetach()
-            snapHandler.removeCallbacks(snapRunnable)
         }
     }
 }
@@ -3112,6 +3072,25 @@ fun HeatMapLegend(
         }
     }
 }
+
+/** Cached startup position (no filter state yet): the pipeline must snap to it, not blend. */
+internal fun syntheticTrackState(fix: LocationFix): TrackState = TrackState(
+    tElapsedMs = android.os.SystemClock.elapsedRealtime(),
+    tUtcMs = fix.timestamp,
+    lat = fix.lat,
+    lng = fix.lng,
+    altitudeM = null,
+    speedMps = fix.speedMs.toDouble(),
+    headingDeg = (fix.bearing ?: 0f).toDouble(),
+    yawRateDegPerS = 0.0,
+    posStdM = (fix.accuracy ?: 10f).toDouble(),
+    headingStdDeg = 20.0,
+    headingConfident = fix.bearing != null,
+    isStationary = fix.isAnchored,
+    rejectStreak = 0,
+    isReset = true,
+    accuracyM = fix.accuracy
+)
 
 internal fun normalizeAngle(deg: Float): Float {
     val mod = deg % 360f

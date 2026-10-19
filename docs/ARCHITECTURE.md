@@ -23,8 +23,8 @@ flowchart TD
     subgraph Android_App["Android Mobile Client (janush.tech.whereami)"]
         Sensors["Hardware Sensors (GPS, Accelerometer, Significant Motion)"]
         LM["LocationManager (Master Location SSOT)"]
-        GFE["GpsFilterEngine (4-Stage Kinematic Filter)"]
-        PI["PositionInterpolator (60fps Dead-Reckoning)"]
+        GFE["TrackingEngine (CTRV EKF + RTS smoother, ADR-07)"]
+        PI["RenderPipeline (frame-time prediction + RotationSlew, ADR-07)"]
         TM["TripManager (Activity Profiles & Auto-Recording)"]
         ASM["AppStateManager (Power & Lifecycle Controller)"]
         MWM["MotionWakeManager (Hardware Trigger Sensor)"]
@@ -89,7 +89,7 @@ All raw location fixes enter through `LocationManager.kt` via `masterLocationFlo
   - `getLocationUpdates(language)`: Supplies enriched place names and administrative hierarchies for the Locality Card.
   - `getLocationRaw()`: Emits lightweight `LocationFix` instances with `.distinctUntilChanged` on `(lat, lng, timestamp)` strictly for real-time map tracking.
 
-### B. 5-Stage GPS Kinematic Filter Engine (`GpsFilterEngine`)
+### B. 5-Stage GPS Kinematic Filter Engine (`GpsFilterEngine`) - SUPERSEDED by `TrackingEngine` (ADR-07, v1.11.0)
 Raw mobile GPS fixes undergo rigorous validation before being passed to UI, recording, or live streams:
 1. **Horizontal Accuracy Gate**: Rejects fixes exceeding profile-specific thresholds (Driving $\le 55\text{m}$, Cycling $\le 55\text{m}$, Hiking $\le 40\text{m}$). Degraded fallback fixes accepted only after 45s of signal starvation.
 2. **Kinematic Velocity Gate**: Rejects displacement exceeding profile physical maximums (Driving $> 220\text{ km/h}$, Cycling $> 90\text{ km/h}$, Hiking $> 22\text{ km/h}$) when displacement $> 10\text{m}$ or $\Delta t < 0.8\text{s}$.
@@ -97,7 +97,7 @@ Raw mobile GPS fixes undergo rigorous validation before being passed to UI, reco
 4. **Consecutive Anomaly Recovery**: Allows instant trajectory change/recovery after 3 consecutive agreeing anomalous fixes (handles emerging from long tunnels, flight landings, or true U-turns).
 5. **Stationary Jitter Dampener**: Dampens micro-oscillations when stopped ($< 4\text{m}, < 0.5\text{ m/s}$) without wiping Doppler hardware speed. Profile-aware bearing gate retains frozen heading when moving below reliable heading speed ($0.9\text{ m/s}$ in outdoor modes).
 
-### C. 60fps Dead-Reckoning Position Interpolation (`PositionInterpolator`)
+### C. 60fps Dead-Reckoning Position Interpolation (`PositionInterpolator`) - SUPERSEDED by `RenderPipeline` (ADR-07, v1.11.0)
 - Runs on the display frame clock (`withFrameNanos`) inside `OsmMapView.kt`.
 - Projects position forward along the heading vector using flat-earth trigonometric projection ($v \times \Delta t$), capped at $1.2\text{s}$ with smooth deceleration decay to prevent runaway extrapolation or rubber-banding.
 - Uses a $250\text{ms}$ ease-out blending window on new GPS fix arrivals to ensure zero visual jumping or snapping.
@@ -167,6 +167,19 @@ Battery optimization is the highest engineering priority:
 - **Decision**: Refined spatial cache resolution to 4 decimal places (~11m x ~7m cell resolution) in SQLite. Enforced strict 30-minute expiry (`maxAgeMs = 30 * 60 * 1000L`) during online operation, reserving indefinite fallback strictly for offline scenarios.
 - **Consequences**: Instant turn recognition with offline resilience and protection against permanent stale data corruption.
 
+### ADR-07: Tracking Engine v2 (EKF + Fixed-Lag Smoother + Frame-Time Render Pipeline)
+- **Context**: Field recordings (2026-10-19) showed stepped map rotation that corrected back, a cursor lagging the real position, a straight chord from the pre-screen-off point and an angular polyline. Root causes: (1) `PositionInterpolator` buffered 1 s (shorter than fix interval plus delivery latency) and alternated between spline tangent and lagged raw bearing; (2) rotation `dt` mixed `currentTimeMillis` and `uptimeMillis` (always clamped), and the frame loop captured a stale fix; (3) `PositionStabilizer` was a position-only random-walk Kalman (cuts corners, lags); (4) only the last location of each `LocationResult` batch was processed; (5) the live polyline and the persisted geometry were two different data paths; (6) per-fix `points_json` rewrite and a 23392-code-unit `LocationScreen` (above the ART compile limit, so it ran interpreted).
+- **Decision**: One estimator feeds recording, display and live sharing, on one monotonic clock (`elapsedRealtimeNanos`).
+  - `tracking/TrackingEngine` + `KinematicEkf`: CTRV state `[E, N, v, heading, yawRate]` in a local ENU frame with innovation gating (chi-square), implied-speed cap, consistent-rejection reset, ZUPT/Doppler/course/gyro measurements, stationary mode and stationary anchoring (no multipath creep).
+  - `FixedLagSmoother` (RTS, 3 s lag): its emitted points are the recorded geometry and distance; `provisional()` gives the live tail. Latency exists only while the filter needs more data.
+  - `RenderPipeline`: predicts to frame time along the CTRV arc, blends corrections critically damped, adaptive 0-1800 ms latency, heading held when not confident, counter-rotation correction absorbed slowly. `RotationSlew` drives course-up rotation (acceleration/rate limited, profile aware).
+  - Storage: `track_points` table (WITHOUT ROWID, PK `(trip_id, seq)`) with per-point time, speed, accuracy, bearing, flags; idempotent per-trip backfill from legacy `points_json` (left untouched). Batched writes on a single writer thread; blocking final write at stop.
+  - Live polyline = committed smoothed points + provisional tail + cursor tip (single source, rebuilt on resume).
+  - GNSS: all `LocationResult.locations` processed in order; `GRANULARITY_FINE`; screen-off recording batches fixes (`setMaxUpdateDelayMillis` 20 s, 30 s in battery saver) while car/cycling keep 1 Hz so turns are not chorded; identical `LocationRequest` re-issues are deduplicated. Gyro yaw rate (`GyroHeadingSensor`) is registered only when the app is in the foreground, moving and following/recording (`GyroPolicy`).
+  - Post-trip OSRM `/match` (CAR, online, not while recording) stores an alternate geometry in `trip_matches`; the recorded track stays authoritative. A chunk is accepted only if confidence >= 0.5 and >= 90% of raw points lie within 45 m of the snapped line.
+  - `LocationScreen` blocks are lifted into local composables (23392 -> 8178 code units).
+- **Consequences**: Smooth, corner-faithful geometry with bounded latency; fewer CPU wakeups when the screen is off; richer stored data (GPX now carries `<ele>`/`<time>`). Trade-offs: screen-off 1 Hz for car/cycling raises GNSS duty versus the old 5-6 s cadence (offset by batching, user can pick battery saver); `track_points` doubles trip storage per point; OSRM matching depends on a public demo server (rate-limited, shared mutex). `AGENTS.md` invariants (no wake locks in LIVE_ONLY/standby, GPS off in IDLE, 60/30 s LIVE_ONLY stationary cadence) are unchanged.
+
 ---
 
 ## 6. Code Quality, Testing Gates & Coverage Requirements
@@ -175,7 +188,8 @@ Battery optimization is the highest engineering priority:
 - **Every algorithmic rule, mathematical filter, data transformation, parser, or state machine MUST have automated unit tests in `app/src/test/java/`**.
 - Tests must execute in the local JVM without requiring an attached Android device or emulator.
 - Existing Test Suites:
-  - `PositionInterpolatorTest.kt`: Validates dead-reckoning extrapolation, stationary dampening, ease-out blending, and timeout caps.
+  - `tracking/TrackingEngineTest.kt`, `RenderPipelineTest.kt`, `SupportingTrackingTest.kt`: Replay-harness tests for the EKF/smoother (stationary drift, heading reversal, outlier gating, recovery) and frame-time render pipeline (ADR-07).
+  - `tracking/GyroHeadingSensorTest.kt`, `RouteMatchingTest.kt`, `TrackPointRowTest.kt`, `GpxExporterTest.kt`, `LocationRequestCadenceTest.kt`: Gyro register/unregister lifecycle, OSRM match chunking/acceptance, `track_points` rebind and legacy conversion, GPX `<ele>`/`<time>`, batching constants.
   - `BatteryOptimizationAndAutoStartTest.kt`: Validates all activity profile auto-start thresholds, candidate evaluation, burst durations, and lifecycle semantics.
   - `BearingSmootherTest.kt`: Validates circular EMA smoothing, $\sin/\cos$ angular difference math, speed-adaptive $\alpha$, and tiered bearing gates.
   - `RoadNameNormalizerTest.kt`: Validates canonical abbreviations (`DK*`, `DW*`, `A*`, `S*`, `E*`) and house number filtering.
@@ -200,13 +214,13 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 
 ## 7. Governance, Operational Rules & Git Lifecycle
 
-- **No Direct Pushes to `master`**: All development occurs on dedicated feature branches (`feat/<name>`) or bugfix branches (`fix/<name>`).
+- **No Direct Pushes or Local Merges to `master` (Pull Request Only)**: All development occurs on dedicated feature branches (`feat/<name>`) or bugfix branches (`fix/<name>`). Every change reaches `master` only through a GitHub Pull Request with a green `Unit Tests & Build Verification` check.
 - **Feature Branch Lifecycle**:
   1. `git checkout master && git pull origin master`
   2. `git checkout -b <type>/<descriptive-name>`
   3. Implement code, write unit tests, run build gates (`testDebugUnitTest assembleDebug`).
   4. Commit with conventional commit messages (`feat: ...`, `fix: ...`, `docs: ...`).
-  5. Merge to `master` with `--no-ff` and push to GitHub **only upon explicit user instruction**.
+  5. Push the branch **only upon explicit user instruction**, open a PR into `master` (`gh pr create`), wait for CI, and merge via the PR (`gh pr merge --merge --delete-branch`). Never `git merge` into `master` locally or push `master` directly.
 - **Deployment Safeguards**:
   - Never push to GitHub without explicit user approval.
   - Never install APKs to the user's phone without explicit user approval.
@@ -219,7 +233,7 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 
 ## 8. Key Architectural Decision Records (ADRs)
 
-### ADR-01: GNSS Doppler Speed Decoupling in `GpsFilterEngine`
+### ADR-01: GNSS Doppler Speed Decoupling in `GpsFilterEngine` (historical; the rule now lives in `TrackingEngine`, which never zeroes Doppler speed)
 - **Context**: In Stage 4 (Stationary Jitter Dampener), low-displacement fixes (< 15m) with moderate accuracy (> 15m) previously zeroed `candidate.speed`. During slow urban driving, turns, and roundabouts, 1-second and 5-second displacement frequently falls below 15m while urban multi-path accuracy is 16–25m. This erased valid GNSS Doppler speed, corrupting downstream Kalman filter state and causing speedometer displays of `0.0 km/h` while driving.
 - **Decision**: GpsFilterEngine must **NEVER mutate or zero `candidate.speed`**. Hardware GNSS Doppler velocity is physically decoupled from spatial multi-path jitter. Stage 4 only dampens coordinates (`candidate.latitude = prev.latitude`) when displacement is micro (< 4.0m) and speed already confirms stationary (< 0.5 m/s). Speed zero-snapping belongs strictly to `LocationManager.hybridSpeedUpdate()`.
 

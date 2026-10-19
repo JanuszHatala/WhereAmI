@@ -10,7 +10,7 @@ It tracks the workflow and architectural decisions across all development sessio
 
 | Category | Total Features | Implemented & Verified | In Progress | Planned / Future | Abandoned / Retired |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **1. Core Location, Spatial Awareness & Kinematics** | 10 | 10 | 0 | 0 | 0 |
+| **1. Core Location, Spatial Awareness & Kinematics** | 11 | 11 | 0 | 0 | 0 |
 | **2. Map Engine, Layers & Viewport Navigation** | 8 | 8 | 0 | 0 | 2 |
 | **3. Trip Recording, History & Analytics** | 8 | 8 | 0 | 0 | 0 |
 | **4. Live Location Sharing (Self-Hosted Platform)** | 8 | 8 | 0 | 3 | 2 |
@@ -18,7 +18,7 @@ It tracks the workflow and architectural decisions across all development sessio
 | **6. User Interface, Responsive Layout & UX Polish** | 8 | 8 | 0 | 0 | 1 |
 | **7. Android System Integration & Power Architecture** | 7 | 6 | 0 | 0 | 1 |
 | **8. Diagnostics, Telemetry & CI/CD Pipeline** | 5 | 5 | 0 | 0 | 0 |
-| **Total** | **59** | **53** | **0** | **3** | **6** |
+| **Total** | **60** | **54** | **0** | **3** | **6** |
 
 ---
 
@@ -70,7 +70,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: During brief reverse-geocoding drops, the street line would disappear, causing layout jumping.
   - *Resolution*: Enforces a 15-second decay grace period. If reverse geocoding returns an empty street, the app retains the last confirmed road name for 15s before clearing.
 
-### LOC-05: Kinematic GPS Filter Engine (`GpsFilterEngine`)
+### LOC-05: Kinematic GPS Filter Engine (`GpsFilterEngine`) - superseded by LOC-11 in v1.11.0
 - **Core Value**: Filters multipath noise, satellite loss jumps, and cell-tower fallbacks ($1.5\text{km}-5\text{km}$ errors) before dispatching to UI, trip recording, or live telemetry.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
@@ -115,7 +115,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - Car/Cycling/MTB: Speed-first display (km/h), high kinematic thresholds.
   - Hiking/Run/Walk: Pace-first display (min/km), elevation contour prominence, Waymarked Trails overlay.
 
-### LOC-10: 60fps Dead-Reckoning Position Interpolation & Kinematic Decoupling
+### LOC-10: 60fps Dead-Reckoning Position Interpolation & Kinematic Decoupling - superseded by LOC-11 in v1.11.0
 - **Core Value**: Completely eliminates map marker teleportation, backward snapping, and camera animation jerks, delivering fluid 60fps tracking.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
@@ -127,6 +127,21 @@ It tracks the workflow and architectural decisions across all development sessio
   - *User Feedback (Field Test 2026-09-25)*: Heading icon was jumping back and forth and map repositioning was jerky.
   - *Diagnostic Root Cause*: `enrichedSnapshot` was re-emitting past coordinates from asynchronous network closures (1-3s old) back into `masterLocationFlow`, which `getLocationRaw()` routed to map updates, while `animateTo(centerGp, 400L)` calls aborted each other mid-flight.
   - *Resolution*: Decoupled geocoding enrichments from raw kinematic fixes and built `PositionInterpolator`.
+
+### LOC-11: Tracking Engine v2 (EKF, Fixed-Lag Smoother, Render Pipeline, Post-Trip Road Match)
+- **Core Value**: Position and heading that are smooth, corner-faithful and battery-aware at Google Maps / Strava quality, with one estimator behind recording, display and live sharing.
+- **Status**: **Implemented & Verified (unit tests); on-device verification pending**
+- **Architecture & Implementation**:
+  - `tracking/TrackingEngine.kt`, `KinematicEkf.kt`, `FixedLagSmoother.kt`, `GyroYawTracker.kt`: CTRV EKF with gating, ZUPT, stationary anchoring, 3 s RTS smoother.
+  - `tracking/RenderPipeline.kt`, `RotationSlew.kt`: frame-time prediction, critically damped correction blending, rate-limited course-up rotation.
+  - `tracking/GyroHeadingSensor.kt` (`GyroPolicy`): foreground-only, moving-only gyro yaw rate.
+  - `track_points` table + backfill (`TripDatabaseHelper.kt`), batched writer (`TripManager.kt`), GPX with `<ele>`/`<time>` (`GpxExporter.kt`).
+  - `tracking/RouteMatching.kt`, `PostTripMatcher.kt`, `OsmMapMatcher.matchChunk`: post-trip OSRM `/match` alternate geometry (`trip_matches`).
+  - `tracking/TrackDiagnostics.kt` (`TrackDiagnosticsRecorder`) + replay harness (`TrackSim.kt`): JSONL raw fixes and engine state for field-test analysis (`pull_device_data.sh` pulls `files/diagnostics`).
+  - Unit tests: `TrackingEngineTest`, `RenderPipelineTest`, `SupportingTrackingTest`, `GyroHeadingSensorTest`, `TrackPointRowTest`, `RouteMatchingTest`, `GpxExporterTest`, `LocationRequestCadenceTest`.
+- **Decision History & Evolution**:
+  - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
+  - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).
 
 ---
 
@@ -264,7 +279,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: End-to-end altitude recording, visualization, and correction for recorded trips and live tracking.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `TripDatabaseHelper.kt` (DB v6): Persists altitude in `points_json` as optional `"alt"` attribute with backward compatibility.
+  - `TripDatabaseHelper.kt` (DB v6): Persists altitude in `points_json` as optional `"alt"` attribute with backward compatibility. Since DB v10 (v1.11.0) altitude and its source (`GPS`/`DEM`) live in the `track_points` table; legacy `points_json` is kept read-only and backfilled idempotently.
   - `TripModels.kt`: `ElevationStats` computation with moving-average noise reduction for cumulative ascent/descent, elevation range, and peak vertical speed (`m/min`).
   - `MainActivity.kt`: Live altitude badge (`▲ XXX m`) in LocalityCard compact Row 3; collapsible Elevation Profile section in `TripDetailDialog` with `ElevationProfileChart` Canvas composable and `ElevationOverrideModeDialog` mode selector.
   - `ElevationRepository.kt` & `ElevationCorrectionHelper.kt`: Open-Elevation DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing; single-trip correction and bulk "Correct All Trips" tool in Settings.
