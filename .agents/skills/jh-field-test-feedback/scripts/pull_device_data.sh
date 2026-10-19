@@ -46,7 +46,7 @@ for PREF in $PREFS_FILES; do
     fi
 done
 
-# 2b. Pull tracking diagnostics (raw fixes, gate decisions, filter state; replayable by TrackReplay)
+# 2b. Pull tracking diagnostics (raw fixes, gate decisions, filter state; replayable by FieldReplayTest)
 echo "🛰️ Pulling tracking diagnostics..."
 mkdir -p "$TARGET_DIR/diagnostics"
 DIAG_FILES=$(adb -s "$DEVICE_ID" shell "run-as $PACKAGE_NAME ls files/diagnostics/" 2>/dev/null | tr -d '\r')
