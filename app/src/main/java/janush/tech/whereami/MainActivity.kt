@@ -122,7 +122,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleNotificationIntent(intent)
+        if (NotificationIntentEvaluator.shouldHandleOnCreate(savedInstanceState, intent)) {
+            handleNotificationIntent(intent)
+        }
         checkPermissionsAndStart()
         setContent {
             WhereIAmTheme {
@@ -143,18 +145,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNotificationIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS_ELEVATION, false) == true ||
-            intent?.action == ACTION_SHOW_ELEVATION_SETTINGS
-        ) {
-            viewModel.openElevationSettings()
-        } else if (intent?.getBooleanExtra(CacheManager.EXTRA_OPEN_CACHE_MANAGER, false) == true ||
-            intent?.action == CacheManager.ACTION_OPEN_CACHE_MANAGER
-        ) {
-            viewModel.openCacheManager()
-        } else if (intent?.getBooleanExtra(LiveTrackingService.EXTRA_OPEN_LIVE_SHARING, false) == true ||
-            intent?.action == LiveTrackingService.ACTION_OPEN_LIVE_SHARING
-        ) {
-            viewModel.openLiveSharing()
+        val parsed = NotificationIntentEvaluator.parseAndConsume(intent)
+        when {
+            parsed.isElevation -> viewModel.openElevationSettings()
+            parsed.isCache -> viewModel.openCacheManager()
+            parsed.isLiveSharing -> viewModel.openLiveSharing()
         }
     }
 
