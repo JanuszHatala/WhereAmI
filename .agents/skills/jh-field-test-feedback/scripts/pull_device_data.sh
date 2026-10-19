@@ -46,6 +46,16 @@ for PREF in $PREFS_FILES; do
     fi
 done
 
+# 2b. Pull tracking diagnostics (raw fixes, gate decisions, filter state; replayable by TrackReplay)
+echo "🛰️ Pulling tracking diagnostics..."
+mkdir -p "$TARGET_DIR/diagnostics"
+DIAG_FILES=$(adb -s "$DEVICE_ID" shell "run-as $PACKAGE_NAME ls files/diagnostics/" 2>/dev/null | tr -d '\r')
+for DIAG in $DIAG_FILES; do
+    case "$DIAG" in
+        *.jsonl) adb -s "$DEVICE_ID" exec-out run-as "$PACKAGE_NAME" cat "files/diagnostics/$DIAG" > "$TARGET_DIR/diagnostics/$DIAG" 2>/dev/null || true ;;
+    esac
+done
+
 # 3. Pull System & App Logcat
 echo "📋 Pulling logcat logs..."
 adb -s "$DEVICE_ID" logcat -d > "$TARGET_DIR/logcat_full.txt" 2>/dev/null || echo "⚠️ Could not dump full logcat"

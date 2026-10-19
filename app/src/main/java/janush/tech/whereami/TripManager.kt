@@ -7,8 +7,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import org.osmdroid.util.GeoPoint
+import janush.tech.whereami.tracking.SmoothedPoint
+import janush.tech.whereami.tracking.TrackPointRow
+import java.util.concurrent.atomic.AtomicBoolean
 
 class TripManager private constructor(private val context: Context) {
 
@@ -38,6 +42,11 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_PAUSE_POINT_INDEX = "pref_trip_pause_point_index"
         private const val KEY_PAUSE_DIST = "pref_trip_pause_dist"
         private const val PAUSE_WARNING_TIMEOUT_MS = 60 * 60 * 1000L // 1 hour
+        private const val ROW_FLUSH_COUNT = 10
+        private const val ROW_FLUSH_INTERVAL_MS = 5_000L
+        /** Smoothed points are 3 s old when emitted; accept those that predate the trip start by this much. */
+        private const val TRACK_LEAD_IN_MS = 5_000L
+        private const val MIN_STEP_DISTANCE_M = 0.5f
         const val KEY_MANUAL_PAUSE_STICKY = "pref_trip_manual_pause_sticky"
 
         val POLISH_CITY_CENTROIDS = mapOf(
@@ -99,7 +108,18 @@ class TripManager private constructor(private val context: Context) {
     private var autoResumeStartTime: Long = 0L
     private var pauseAutoResumeFirstLocation: Location? = null
     private var pauseAutoResumeFirstTime: Long = 0L
-    private val activeTripPointSources = java.util.Collections.synchronizedList(mutableListOf<String>())
+    // ── Track point persistence (track_points table) ────────────────────────────
+    // All geometry writes go through one single-thread dispatcher so appends, metadata writes and the
+    // final stop write stay strictly ordered without ever touching the main thread.
+    private val dbWriter = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "wai-trip-writer").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+    private val rowLock = Any()
+    private val pendingRows = ArrayList<TrackPointRow>()
+    private var persistedPointCount = 0
+    private var lastRowFlushMs = 0L
+    private val gpsFallbackSeen = AtomicBoolean(false)
+    private var lastSmoothedForDistance: SmoothedPoint? = null
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -314,7 +334,7 @@ class TripManager private constructor(private val context: Context) {
                 // MAP-R05: If trip was abandoned during process death and exceeded timeout, close it instead of resuming (unless paused!)
                 if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs) && !wasPaused) {
                     val closed = unclosed.copy(endTime = lastPointTime)
-                    dbHelper.updateTrip(closed)
+                    dbHelper.updateTripMeta(closed)
                     isManualPauseSticky = false
                     prefs.edit()
                         .remove(KEY_IS_PAUSED)
@@ -329,8 +349,12 @@ class TripManager private constructor(private val context: Context) {
                 } else {
                     _activeTrip.value = unclosed
                     val (_, restoredSources) = dbHelper.getTripPointsWithSources(unclosed.id)
-                    activeTripPointSources.clear()
-                    activeTripPointSources.addAll(restoredSources)
+                    synchronized(rowLock) {
+                        pendingRows.clear()
+                        persistedPointCount = unclosed.points.size
+                    }
+                    gpsFallbackSeen.set(restoredSources.any { it != "DEM" })
+                    lastSmoothedForDistance = null
                     lastMovingTimestamp = System.currentTimeMillis() // Reset watchdog timer on restore
                     lastLocation = unclosed.points.lastOrNull()?.let {
                         Location("").apply {
@@ -483,7 +507,12 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = now
         movingSinceTimestamp = null
         pendingCandidate = null
-        activeTripPointSources.clear()
+        synchronized(rowLock) {
+            pendingRows.clear()
+            persistedPointCount = 0
+        }
+        gpsFallbackSeen.set(false)
+        lastSmoothedForDistance = null
 
         val profile = _activityProfile.value
 
@@ -534,6 +563,11 @@ class TripManager private constructor(private val context: Context) {
     }
 
     private fun stopTrip(isManualStop: Boolean = false) {
+        if (_activeTrip.value == null) return
+        // Drain the fixed-lag smoother so the last ~3 s of the trip are part of the recording.
+        try {
+            onSmoothedPoints(LocationManager.getInstance(context).flushTracking())
+        } catch (_: Exception) {}
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
 
@@ -562,22 +596,21 @@ class TripManager private constructor(private val context: Context) {
 
         if (isTrivialTrip) {
             // Discard "empty" accidental / instant start-stop trip (e.g. 0m in 1s or stationary jitter)
-            dbHelper.deleteTrip(current.id)
+            synchronized(rowLock) { pendingRows.clear() }
+            scope.launch(dbWriter) { dbHelper.deleteTrip(current.id) }
             TelemetryLogger.logTrip("DISCARDED_TRIVIAL", current.id, "Trip discarded: dist=${current.distanceMeters.toInt()}m < ${profile.minValidDistanceMeters}m and duration=${durationMs / 1000}s < ${profile.minValidDurationMs / 1000}s")
         } else {
             val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
-            val sourcesSnapshot = activeTripPointSources.toList()
-            dbHelper.updateTrip(finishedTrip, sourcesSnapshot)
-            val hadGpsFallback = sourcesSnapshot.any { it != "DEM" }
-            activeTripPointSources.clear()
+            persistTripBlocking(finishedTrip)
             TelemetryLogger.logTrip("STOPPED", current.id, "dist=${current.distanceMeters.toInt()}m, places=${current.placesVisited.size}, pauses=${sanitizedPauses.size}")
             try {
                 CacheManager.getInstance(context).onTripFinished()
             } catch (_: Exception) {}
 
-            if (finishedTrip.points.isNotEmpty() && hadGpsFallback && MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM) {
+            if (finishedTrip.points.isNotEmpty() && MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM) {
                 scope.launch {
                     try {
+                        if (!gpsFallbackSeen.get()) return@launch
                         ElevationCorrectionHelper.correctTrip(
                             trip = finishedTrip,
                             mode = OverrideMode.FILL_MISSING,
@@ -588,6 +621,10 @@ class TripManager private constructor(private val context: Context) {
             }
         }
         _activeTrip.value = null
+        if (!isTrivialTrip) {
+            // Road-snapped alternate geometry (CAR, online, not while recording); retried later when offline.
+            janush.tech.whereami.tracking.PostTripMatcher.schedule(context, force = true)
+        }
         _isPaused.value = false
         pauseWarningNotified = false
         stopWatchdog()
@@ -897,76 +934,22 @@ class TripManager private constructor(private val context: Context) {
             }
         }
 
-        var deltaDist = 0.0
-        if (lastLocation != null) {
-            val d = lastLocation!!.distanceTo(newLoc).toDouble()
-            // Filter GPS jitter if stationary (< 2.5 meters and not moving)
-            if (d >= 2.5 || isMoving) {
-                deltaDist = d
-            }
-        }
         lastLocation = newLoc
 
-        // Speed stats
+        // Speed stats (live Doppler/kalman speed; geometry and distance come from smoothed points)
         if (speedKmh > 1.0f) {
             totalSpeedSamples++
             sumSpeedKmh += speedKmh
         }
         val newMaxSpeed = maxOf(current.maxSpeedKmh, speedKmh)
         val newAvgSpeed = if (totalSpeedSamples > 0) (sumSpeedKmh / totalSpeedSamples).toFloat() else current.avgSpeedKmh
-        val newDistance = current.distanceMeters + deltaDist
-
-        // New points list: measure displacement from LAST COMMITTED POINT (not just 1-sec fix)
-        // to prevent dropping continuous movement at slow speeds (< 18 km/h).
-        val newPoints = current.points.toMutableList()
-        val mode = MapProfileConfigHelper.getAltitudeSourceMode(context)
-        val cachedDem = if (mode == AltitudeSourceMode.DEM) {
-            dbHelper.getCachedElevation(lat, lng)
-        } else null
-
-        val effectiveAlt = cachedDem ?: altitude
-        val altSource = if (cachedDem != null) "DEM" else if (altitude != null && altitude > 0.0) "GPS" else null
-        val newGeoPoint = if (effectiveAlt != null && !effectiveAlt.isNaN() && effectiveAlt != 0.0) {
-            GeoPoint(lat, lng, effectiveAlt)
-        } else {
-            GeoPoint(lat, lng)
-        }
-        val lastCommittedPoint = newPoints.lastOrNull()
-        val distFromLastCommitted = if (lastCommittedPoint != null) {
-            val results = FloatArray(1)
-            Location.distanceBetween(lastCommittedPoint.latitude, lastCommittedPoint.longitude, lat, lng, results)
-            results[0].toDouble()
-        } else {
-            Double.MAX_VALUE
-        }
-
-        // Prevent duplicate points or micro-oscillations
-        if (lastCommittedPoint != null && 
-            lastCommittedPoint.latitude == lat && 
-            lastCommittedPoint.longitude == lng) {
-            return
-        }
-
-        // Suppress stationary polyline jitter: do not commit micro jitter points when vehicle/hiker is completely stopped.
-        // True physical locomotion (speed >= 1.5 km/h) or displacement >= 15m commits points at high fidelity
-        val isKinematicallyMoving = speedKmh >= 1.5f || isMoving
-        val isLocallyMoving = isKinematicallyMoving || distFromLastCommitted >= 15.0
-        val commitThreshold = when (currentProfile) {
-            ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
-            ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
-            ActivityProfile.CAR -> 5.0
-        }
-        if (newPoints.isEmpty() || (distFromLastCommitted >= commitThreshold && isLocallyMoving)) {
-            newPoints.add(newGeoPoint)
-            activeTripPointSources.add(altSource ?: "GPS")
-        }
 
         // Check for newly entered locality (with intentional visit filter: penetrate > 150m OR stay > 45s)
         val newPlaces = current.placesVisited.toMutableList()
         updateVisitedPlaces(
             lat = lat,
             lng = lng,
-            currentDistance = newDistance,
+            currentDistance = current.distanceMeters,
             currentPlace = currentPlace,
             placesList = newPlaces,
             tripId = current.id,
@@ -974,21 +957,132 @@ class TripManager private constructor(private val context: Context) {
         )
 
         val updated = current.copy(
-            distanceMeters = newDistance,
             maxSpeedKmh = newMaxSpeed,
             avgSpeedKmh = newAvgSpeed,
-            points = newPoints,
             placesVisited = newPlaces,
             pauses = updatedPauses
         )
         _activeTrip.value = updated
         checkPermanentContinuation(updated, speedKmh, now)
 
-        // Persist progress periodically (every 10 points, pause recorded, or place change)
-        if (newPoints.size % 10 == 0 || newPlaces.size != current.placesVisited.size || updatedPauses.size != current.pauses.size) {
-            val sourcesSnapshot = activeTripPointSources.toList()
-            scope.launch {
-                dbHelper.updateTrip(updated, sourcesSnapshot)
+        // Persist metadata when something structural changed (place entered, pause recorded)
+        if (newPlaces.size != current.placesVisited.size || updatedPauses.size != current.pauses.size) {
+            persistTripAsync(updated, force = false)
+        }
+    }
+
+    /**
+     * Fixed-lag RTS smoothed track points (3 s behind the live fix). This is the single source of the
+     * recorded geometry and of the trip distance: zig-zags from multipath are already removed, so
+     * polylines are smooth and distance is not inflated by GPS jitter.
+     *
+     * Must be called from the same thread as [onLocationUpdate] (the location callback).
+     */
+    fun onSmoothedPoints(points: List<SmoothedPoint>) {
+        if (points.isEmpty()) return
+        val current = _activeTrip.value ?: return
+        if (_isPaused.value) {
+            lastSmoothedForDistance = null
+            return
+        }
+        val currentProfile = _activityProfile.value
+        val commitThreshold = when (currentProfile) {
+            ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
+            ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
+            ActivityProfile.CAR -> 5.0
+        }
+        val newPoints = ArrayList<GeoPoint>(current.points.size + points.size)
+        newPoints.addAll(current.points)
+        var distance = current.distanceMeters
+        var committed = 0
+        val res = FloatArray(1)
+
+        for (p in points) {
+            if (p.tUtcMs < current.startTime - TRACK_LEAD_IN_MS) continue
+
+            // Distance: exact smoothed path length while moving (stationary micro-motion is not distance)
+            val prev = lastSmoothedForDistance
+            if (prev != null && !p.isStationary) {
+                Location.distanceBetween(prev.lat, prev.lng, p.lat, p.lng, res)
+                if (res[0] >= MIN_STEP_DISTANCE_M) distance += res[0]
+            }
+            lastSmoothedForDistance = p
+
+            // Polyline commit: spacing by profile, suppress stationary jitter
+            val last = newPoints.lastOrNull()
+            val distFromLast = if (last != null) {
+                Location.distanceBetween(last.latitude, last.longitude, p.lat, p.lng, res)
+                res[0].toDouble()
+            } else Double.MAX_VALUE
+            if (last != null && last.latitude == p.lat && last.longitude == p.lng) continue
+            val speedKmh = (p.speedMps * 3.6).toFloat()
+            val isLocallyMoving = !p.isStationary && (speedKmh >= 1.5f || distFromLast >= 15.0)
+            if (newPoints.isEmpty() || (distFromLast >= commitThreshold && isLocallyMoving)) {
+                val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
+                newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
+                val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
+                synchronized(rowLock) { pendingRows.add(row) }
+                committed++
+            }
+        }
+
+        if (committed == 0 && distance == current.distanceMeters) return
+        val updated = current.copy(points = newPoints, distanceMeters = distance)
+        _activeTrip.value = updated
+        if (committed > 0) persistTripAsync(updated, force = false, alwaysMeta = false)
+    }
+
+    private fun takePendingBatch(force: Boolean): Pair<Int, List<TrackPointRow>>? {
+        synchronized(rowLock) {
+            if (pendingRows.isEmpty()) return null
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (!force && pendingRows.size < ROW_FLUSH_COUNT && now - lastRowFlushMs < ROW_FLUSH_INTERVAL_MS) return null
+            val batch = ArrayList(pendingRows)
+            pendingRows.clear()
+            val start = persistedPointCount
+            persistedPointCount += batch.size
+            lastRowFlushMs = now
+            return start to batch
+        }
+    }
+
+    /** Runs on [dbWriter]: DEM substitution happens here, never on the location (main) thread. */
+    private fun writeBatch(tripId: Long, startSeq: Int, batch: List<TrackPointRow>) {
+        val demMode = MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM
+        val rows = batch.map { r ->
+            val dem = if (demMode) dbHelper.getCachedElevation(r.lat, r.lng) else null
+            if (dem != null) {
+                r.copy(altitudeM = dem, altSource = "DEM")
+            } else {
+                gpsFallbackSeen.set(true)
+                r
+            }
+        }
+        dbHelper.appendTrackPoints(tripId, startSeq, rows)
+    }
+
+    private fun persistTripAsync(trip: TripRecord, force: Boolean, alwaysMeta: Boolean = true): kotlinx.coroutines.Job? {
+        val batch = takePendingBatch(force)
+        if (batch == null && !alwaysMeta) return null
+        return scope.launch(dbWriter) {
+            try {
+                if (batch != null) writeBatch(trip.id, batch.first, batch.second)
+                dbHelper.updateTripMeta(trip)
+            } catch (e: Exception) {
+                TelemetryLogger.log("ERROR", "Trip persist failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Final write at trip stop. Ordered behind all queued appends; callers rely on it being durable. */
+    private fun persistTripBlocking(trip: TripRecord) {
+        val batch = takePendingBatch(force = true)
+        kotlinx.coroutines.runBlocking(dbWriter) {
+            try {
+                if (batch != null) writeBatch(trip.id, batch.first, batch.second)
+                dbHelper.updateTripMeta(trip)
+            } catch (e: Exception) {
+                TelemetryLogger.log("ERROR", "Final trip persist failed: ${e.message}")
             }
         }
     }
@@ -1027,9 +1121,7 @@ class TripManager private constructor(private val context: Context) {
         if (changed) {
             val updated = current.copy(placesVisited = placesList)
             _activeTrip.value = updated
-            scope.launch {
-                dbHelper.updateTrip(updated)
-            }
+            persistTripAsync(updated, force = false)
         }
     }
 

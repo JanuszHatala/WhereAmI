@@ -86,23 +86,28 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - Spatial SQLite LRU grid caching for reverse geocoding (~11m cell resolution, 30-minute expiry).
   - Avoid redundant HTTP calls at all costs.
 
-### B. Kinematic Sanity, Smooth Heading & Position Interpolation
+### B. Kinematic Sanity, Smooth Heading & Position Estimation (Tracking Engine v2, ADR-07)
 Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tower fallbacks ($1.5\text{km}-5\text{km}$ accuracy).
-- **Mandatory Filter Pass**: All raw location fixes MUST pass through `GpsFilterEngine` before dispatching to UI, trip recording, or live telemetry.
-- **4-Stage Pipeline**:
-  1. *Horizontal Accuracy Gate*: Reject fixes exceeding profile thresholds (Hiking $\le 40\text{m}$, Cycling $\le 55\text{m}$, Driving $\le 55\text{m}$).
-  2. *Kinematic Speed Gate*: Reject displacement exceeding profile max velocity (Hiking $> 22\text{ km/h}$, Cycling $> 90\text{ km/h}$, Driving $> 220\text{ km/h}$) when displacement $> 30\text{m}$.
-  3. *Consecutive Anomaly Recovery*: Recover after 3 consecutive agreeing fixes (e.g. exiting long tunnels).
-  4. *Stationary Jitter Dampener*: Dampen micro-oscillations when stopped.
-- **Stationary Bearing Freeze**:
-  - When speed $< 1.2\text{ m/s}$ ($4.3\text{ km/h}$), lock and preserve the `lastValidBearing`.
-  - Do NOT allow the map orientation or cursor arrow to spin erratically at traffic lights or rest stops.
+- **Mandatory Estimator Pass**: All raw location fixes MUST pass through `tracking/TrackingEngine` (CTRV EKF + 3 s fixed-lag RTS smoother) before dispatching to UI, trip recording, or live telemetry. `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` were retired in v1.11.0; do not reintroduce parallel filters.
+- **Engine Rules**:
+  1. *Single time base*: `elapsedRealtimeNanos` everywhere; UTC only for persistence. Process EVERY location in `LocationResult.locations`, in order.
+  2. *Innovation gate*: chi-square gating plus profile max-speed cap; 3 mutually consistent rejections reset the filter (no recovery deadlock).
+  3. *Stationary handling*: ZUPT, low process noise and stationary anchoring (no multipath creep); never zero the hardware Doppler speed.
+  4. *Recorded geometry and distance* come only from the smoother output (`TripManager.onSmoothedPoints`) stored in the `track_points` table.
+- **Heading Hold**:
+  - Display heading is valid only when the EKF is moving and heading-confident; otherwise the last confident heading is held (no spinning at traffic lights or rest stops).
+  - Course-up rotation is driven by `RotationSlew` (rate/acceleration limited, profile aware), never by per-fix deadband snapping.
 - **Kinematic / Geocoding Decoupling**:
   - Real-time map tracking (`LocationFix`) MUST be decoupled from asynchronous geocoding enrichment.
   - Geocoding completions must never re-emit past coordinates or past velocities back into the map kinematic pipeline.
-- **60fps Dead-Reckoning Position Interpolator (`PositionInterpolator`)**:
-  - The map tracking marker and camera recentering MUST use `PositionInterpolator` on display VSYNC (`withFrameNanos`).
-  - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by interpolation with a 250ms ease-out blend.
+- **60fps Render Pipeline (`tracking/RenderPipeline`)**:
+  - The map tracking marker, camera recentering and rotation MUST use `RenderPipeline.frame(SystemClock.elapsedRealtime())` on display VSYNC (`withFrameNanos`): CTRV prediction to frame time with critically damped correction blending and adaptive 0-1.8 s latency only when conditions degrade.
+  - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by the pipeline.
+  - The live polyline has ONE source: committed smoothed points + provisional smoother tail + cursor tip. Never bridge gaps with a chord.
+- **Screen-Off Recording Cadence & Gyro**:
+  - While recording with the screen off, car/cycling/MTB sample at 1 Hz with fixes batched (`setMaxUpdateDelayMillis` 20 s; 30 s in battery saver); slow profiles keep the profile cadence. No CPU wake lock is added for batching.
+  - The gyroscope (`GyroHeadingSensor`) MUST be registered only when `GyroPolicy.shouldRun` holds (foreground, moving, following or recording) and unregistered otherwise.
+  - Identical `LocationRequest` re-issues are deduplicated in `LocationManager.updateSamplingInterval`.
 
 ### C. Geocoding Stability, Road Precedence, International Roads & Boundary Integrity
 - **Road Precedence**: `OSRM Snapped Road` $\to$ `OSM Nominatim Vector Road` $\to$ `Android Platform Geocoder`. Always prioritize OpenStreetMap vector road designations over platform geocoders in Poland.
@@ -143,11 +148,12 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 ### Unit Test Requirements
 - **Every feature, algorithmic rule, parser, kinematic filter, or data transformation MUST be covered by automated unit tests** in `app/src/test/java/`.
 - Automated regression test suites must be maintained for:
-  - Position interpolation & dead-reckoning (`PositionInterpolatorTest.kt`).
+  - Tracking engine, render pipeline, gyro lifecycle and route matching (`tracking/TrackingEngineTest.kt`, `RenderPipelineTest.kt`, `SupportingTrackingTest.kt`, `GyroHeadingSensorTest.kt`, `RouteMatchingTest.kt`, `TrackPointRowTest.kt`).
+  - GPX export (`GpxExporterTest.kt`) and location request cadence (`LocationRequestCadenceTest.kt`).
   - Battery optimization & activity auto-start (`BatteryOptimizationAndAutoStartTest.kt`).
   - Bearing smoothing & circular EMA (`BearingSmootherTest.kt`).
   - Road & street normalization (`RoadNameNormalizerTest.kt`).
-  - GPS filtering & anomaly rejection (`GpsFilterEngine`).
+  - GPS filtering & anomaly rejection (`tracking/TrackingEngineTest.kt`).
   - Trip continuity, auto-merge, and pause splitting logic (`TripSplitTest.kt`).
   - Reverse geocoding hierarchy formatting and deduplication (`HierarchyResolutionTest.kt`).
 
@@ -171,8 +177,10 @@ Both commands must finish with `BUILD SUCCESSFUL` (0 test failures, 0 compilatio
 
 To maintain production stability on `master`, the following Git workflow is **strictly enforced**:
 
-### 1. No Direct Pushes to `master`
+### 1. No Direct Pushes or Local Merges to `master` (Pull Request Only)
 - Never commit or push directly to `master`.
+- Never merge a branch into `master` locally (`git checkout master && git merge ...` followed by `git push origin master` is FORBIDDEN).
+- **Every change reaches `master` ONLY through a GitHub Pull Request** whose required check (`Unit Tests & Build Verification`) is green. The PR is the single audit trail for review, CI and the merge commit.
 
 ### 2. Feature & Fix Branch Lifecycle
 1. **Branch Creation**: Always start work by creating a dedicated branch from up-to-date `master`:
@@ -192,17 +200,23 @@ To maintain production stability on `master`, the following Git workflow is **st
    ```bash
    git push -u origin <branch-name>
    ```
-5. **Merge to Master**: After validation and user instruction, merge the branch into `master`:
+5. **Open a Pull Request**: After the branch is pushed on explicit user instruction, open a PR into `master` with a summary, test evidence and doc updates:
    ```bash
-   git checkout master
-   git merge --no-ff <branch-name>
-   git push origin master
+   gh pr create --base master --head <branch-name> --title "<conventional title>" --body "<summary, tests, risks>"
+   gh pr checks <pr-number> --watch   # wait for 'Unit Tests & Build Verification'
    ```
-6. **Post-Merge Branch Pruning & Remote Cleanup**: Immediately after merging to `master` and pushing:
-   - Delete the merged local branch: `git branch -d <branch-name>`
-   - Delete the merged remote branch pointer on GitHub: `git push origin --delete <branch-name>`
-   - Prune stale remote tracking refs: `git remote prune origin`
-   - Never leave dead merged branches dangling; the full history and commit tree are permanently retained in `master`'s non-fast-forward merge commit.
+6. **Merge via PR only**: After CI is green and on explicit user instruction, merge the PR (merge commit, non-fast-forward, so branch history is retained):
+   ```bash
+   gh pr merge <pr-number> --merge --delete-branch
+   ```
+   Do NOT run `git merge` into `master` or `git push origin master`.
+7. **Post-Merge Cleanup**: After the PR is merged:
+   ```bash
+   git checkout master && git pull origin master
+   git branch -d <branch-name>        # local branch (if not removed already)
+   git remote prune origin            # stale remote tracking refs
+   ```
+   Never leave dead merged branches dangling; the full history stays in `master`'s merge commit.
 
 ### 3. Persistent Tracking Registers
 - Update `docs/ENHANCEMENT_TRACKER.md` after completing each sprint item or milestone.
