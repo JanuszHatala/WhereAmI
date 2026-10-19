@@ -122,6 +122,16 @@ object MapProfileConfigHelper {
         editor.apply()
     }
 
+    fun getCompassArrow(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean("pref_compass_arrow", true)
+    }
+
+    fun setCompassArrow(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("pref_compass_arrow", enabled).apply()
+    }
+
     fun getShowAltitudeOnMap(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getBoolean("pref_show_altitude_on_map", true)

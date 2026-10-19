@@ -1,5 +1,6 @@
 package janush.tech.whereami.tracking
 
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -48,7 +49,24 @@ class MotionCourse(
         lat0 = Double.NaN
     }
 
-    private companion object {
-        const val MIN_STEP_M = 0.25
+    companion object {
+        private const val MIN_STEP_M = 0.25
+
+        /** A vehicle cannot turn further than this while crawling with an unobservable course. */
+        const val VEHICLE_MAX_UNOBSERVED_TURN_DEG = 90.0
+
+        /** After this long without a fresh heading, visible motion is real motion again. */
+        const val VEHICLE_HOLD_MS = 8_000L
+
+        /**
+         * Arrow course for a vehicle without a fresh heading. Shortly after the heading was last observed,
+         * the cursor sliding back onto a fix that the estimate overshot (braking, stops) or reversing into a
+         * space is not a change of direction: keep the held heading (the vehicle's body) instead of flipping
+         * the arrow.
+         */
+        fun forVehicle(motionDeg: Double?, heldDeg: Double?, sinceFreshMs: Long): Double? {
+            if (motionDeg == null || heldDeg == null || sinceFreshMs > VEHICLE_HOLD_MS) return motionDeg
+            return if (abs(shortestDeltaDeg(heldDeg, motionDeg)) > VEHICLE_MAX_UNOBSERVED_TURN_DEG) heldDeg else motionDeg
+        }
     }
 }

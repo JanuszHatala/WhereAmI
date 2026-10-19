@@ -78,7 +78,7 @@ class SlowRenderAndCurveTest {
         val frames = render(sim, TrackingProfile.CAR)
         assertTrue(frames.all { it.pose.pathHeadingDeg == null })
         val late = frames.filter { it.tMs >= frames.first().tMs + 45_000 }
-        assertTrue(late.maxOf { it.pose.latencyMs } < 200.0)
+        assertTrue(late.maxOf { it.pose.latencyMs } < RenderPipeline.VEHICLE_LATENCY_MS + 200.0)
     }
 
     // ---- CurvedPolyline / LiveTrackLine ----

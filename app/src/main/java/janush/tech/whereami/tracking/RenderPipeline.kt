@@ -89,6 +89,13 @@ class RenderPipeline(
     var slowLatencyMs = 1_600.0
     private var slow = false
 
+    /**
+     * Lower bound of the render latency (ms) for vehicles. Extrapolating a car to "now" overshoots every
+     * corner and stop and the correction drew zig-zags that the smoother later re-shaped (trip 233: re-shape
+     * p90 2.8 m). One fix interval behind, the cursor moves between known filter states instead.
+     */
+    var minLatencyMs = VEHICLE_LATENCY_MS
+
     private var lastOutHeading: Double? = null
     private var outHeadingRateDegS = 0.0
 
@@ -162,6 +169,7 @@ class RenderPipeline(
         val onFoot = profile.maxSpeedMps <= ON_FOOT_MAX_SPEED_MPS
         slow = onFoot && if (slow) latest.speedMps < slowOffSpeedMps else latest.speedMps < slowOnSpeedMps
         if (slow) target = max(target, slowLatencyMs)
+        if (!onFoot) target = max(target, minLatencyMs)
         if (now - latest.tElapsedMs > 2500.0) target = 0.0
         // At foot pace a faster ramp is invisible (the cursor briefly runs at 75-125 % of the real pace).
         val maxStep = (if (onFoot) 250.0 else 100.0) * dtSec
@@ -415,6 +423,7 @@ class RenderPipeline(
     companion object {
         const val HISTORY_MS = 8_000L
         const val MAX_LATENCY_MS = 1_800.0
+        const val VEHICLE_LATENCY_MS = 1_000.0
         /** Profiles whose top speed is at most this are on foot (walking, hiking, running). */
         const val ON_FOOT_MAX_SPEED_MPS = 10.0
         const val MAX_BLEND_DISTANCE_M = 60.0

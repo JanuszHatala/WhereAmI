@@ -107,8 +107,7 @@ class TripManager private constructor(private val context: Context) {
     private var isManualPauseSticky: Boolean = prefs.getBoolean(KEY_MANUAL_PAUSE_STICKY, false)
     private var autoResumeStartDistance: Double = 0.0
     private var autoResumeStartTime: Long = 0L
-    private var pauseAutoResumeFirstLocation: Location? = null
-    private var pauseAutoResumeFirstTime: Long = 0L
+    private val resumeMotionGate = ResumeMotionGate()
     // ── Track point persistence (track_points table) ────────────────────────────
     // All geometry writes go through one single-thread dispatcher so appends, metadata writes and the
     // final stop write stay strictly ordered without ever touching the main thread.
@@ -220,8 +219,7 @@ class TripManager private constructor(private val context: Context) {
             distanceMeters = current.distanceMeters
         )
         pauseWarningNotified = false
-        pauseAutoResumeFirstLocation = null
-        pauseAutoResumeFirstTime = 0L
+        resumeMotionGate.reset()
         prefs.edit()
             .putBoolean(KEY_IS_PAUSED, true)
             .putLong(KEY_PAUSE_START_TIME, now)
@@ -259,8 +257,7 @@ class TripManager private constructor(private val context: Context) {
             activePause = null
         }
         pauseWarningNotified = false
-        pauseAutoResumeFirstLocation = null
-        pauseAutoResumeFirstTime = 0L
+        resumeMotionGate.reset()
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)
@@ -800,23 +797,13 @@ class TripManager private constructor(private val context: Context) {
                     // Suppress auto-stop completely while paused!
                     // Check auto-resume on motion if enabled with sustained locomotion confirmation
                     val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
-                    if (_autoResumeOnMotion.value && speedKmh >= targetSpeed) {
-                        if (pauseAutoResumeFirstLocation == null) {
-                            pauseAutoResumeFirstLocation = Location(newLoc)
-                            pauseAutoResumeFirstTime = now
-                        } else {
-                            val elapsed = now - pauseAutoResumeFirstTime
-                            val distMoved = newLoc.distanceTo(pauseAutoResumeFirstLocation!!)
-                            val requiredDurationMs = currentProfile.autoStartDurationMs.coerceAtMost(30_000L)
-                            val requiredDisplacement = if (currentProfile == ActivityProfile.CAR) 30.0 else 15.0
-                            if (elapsed >= requiredDurationMs && distMoved >= requiredDisplacement) {
-                                resumeTrip(isManual = false)
-                                TelemetryLogger.logTrip("AUTO_RESUME", active.id, "Confirmed motion while paused (${elapsed/1000}s, ${distMoved.toInt()}m): auto-resumed trip")
-                            }
+                    if (_autoResumeOnMotion.value) {
+                        val requiredDurationMs = currentProfile.autoStartDurationMs.coerceAtMost(30_000L)
+                        val requiredDisplacement = if (currentProfile == ActivityProfile.CAR) 30.0 else 15.0
+                        if (resumeMotionGate.offer(now, lat, lng, speedKmh, accuracy, targetSpeed, requiredDurationMs, requiredDisplacement)) {
+                            resumeTrip(isManual = false)
+                            TelemetryLogger.logTrip("AUTO_RESUME", active.id, "Confirmed accurate motion at >= ${targetSpeed.toInt()} km/h while paused: auto-resumed trip")
                         }
-                    } else if (speedKmh < 1.0f && pauseAutoResumeFirstLocation != null && (now - pauseAutoResumeFirstTime) > 15_000L) {
-                        pauseAutoResumeFirstLocation = null
-                        pauseAutoResumeFirstTime = 0L
                     }
                 } else {
                     // Check if permanent continuation threshold reached to clear isManualPauseSticky
