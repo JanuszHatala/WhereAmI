@@ -18,13 +18,10 @@ import kotlin.math.sin
 
 /**
  * Lightweight, high-contrast altitude badge overlay rendered on the OSM map canvas
- * for:
- * 1. The user's position cursor (with dynamic collision avoidance relative to pins).
- *    Supports solid border for DEM and dashed border for GPS fallback.
- * 2. Pinned destination locations (with loading state and DEM elevation).
- * 3. Saved place pins (displaying distinct colored callout badges matching pin color).
+ * for the user's position cursor (with dynamic collision avoidance relative to pins).
+ * Supports solid border for DEM and dashed border for GPS fallback.
  *
- * All badges are screen-stabilized (counter-rotated by -mapOrientation around their centers)
+ * The badge is screen-stabilized (counter-rotated by -mapOrientation around its center)
  * so text and glyphs remain strictly horizontal and upright on screen.
  * Dimensions scale dynamically with the Map Labels Size setting (fontScaleFactor).
  */
@@ -55,12 +52,6 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
 
     @Volatile
     private var destGeoPoint: GeoPoint? = null
-
-    @Volatile
-    private var destAltitudeM: Double? = null
-
-    @Volatile
-    private var destLoading: Boolean = false
 
     private var lastRenderedIntAlt: Long? = null
     private var currentOffsetIndex: Int = 0
@@ -114,9 +105,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         currentSpeedKmh: Float = 0f,
         isGpsMode: Boolean = false,
         savedPlaces: List<SavedPlace> = emptyList(),
-        destinationPoint: GeoPoint? = null,
-        destinationAltitude: Double? = null,
-        destinationLoading: Boolean = false
+        destinationPoint: GeoPoint? = null
     ) {
         centerGeoPoint = geoPoint
         altitudeM = altitude
@@ -126,8 +115,6 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         this.fontScaleFactor = fontScaleFactor.coerceIn(0.75f, 2.0f)
         savedPlacesList = savedPlaces
         destGeoPoint = destinationPoint
-        destAltitudeM = destinationAltitude
-        destLoading = destinationLoading
     }
 
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
@@ -140,9 +127,6 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
 
         // 1. Draw User Cursor Altitude Badge (with collision avoidance)
         drawCursorBadge(canvas, mapView, orientationDeg, cosRot, sinRot)
-
-        // 2. Draw Destination Pin Altitude Badge (above pinned location)
-        drawDestinationBadge(canvas, mapView, orientationDeg, cosRot, sinRot)
     }
 
     private fun drawCursorBadge(
@@ -221,64 +205,6 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
                 textColor = 0xFF34D399.toInt(),
                 isDashed = isGpsFallback
             )
-        } catch (_: Exception) {}
-    }
-
-    private fun drawDestinationBadge(
-        canvas: Canvas,
-        mapView: MapView,
-        orientationDeg: Float,
-        cosRot: Float,
-        sinRot: Float
-    ) {
-        val destPt = destGeoPoint ?: return
-        val isLoading = destLoading
-        val alt = destAltitudeM
-
-        if (!isLoading && (alt == null || alt == 0.0 || alt.isNaN())) {
-            return
-        }
-
-        try {
-            mapView.projection.toPixels(destPt, screenPoint)
-            val pinX = screenPoint.x.toFloat()
-            val pinY = screenPoint.y.toFloat()
-
-            // Destination pin anchor is bottom-center, height is 36dp.
-            // Badge placed ~46dp above anchor point in screen coordinates.
-            val screenDx = 0f
-            val screenDy = -46f * density
-
-            val canvasDx = screenDx * cosRot + screenDy * sinRot
-            val canvasDy = -screenDx * sinRot + screenDy * cosRot
-
-            val badgeCenterX = pinX + canvasDx
-            val badgeCenterY = pinY + canvasDy
-
-            if (isLoading) {
-                drawPill(
-                    canvas = canvas,
-                    badgeCenterX = badgeCenterX,
-                    badgeCenterY = badgeCenterY,
-                    orientationDeg = orientationDeg,
-                    glyph = "⛰️",
-                    text = "...",
-                    textColor = 0xFF38BDF8.toInt(),
-                    isDashed = false
-                )
-            } else if (alt != null) {
-                val altText = String.format(Locale.getDefault(), "%.0f m", alt)
-                drawPill(
-                    canvas = canvas,
-                    badgeCenterX = badgeCenterX,
-                    badgeCenterY = badgeCenterY,
-                    orientationDeg = orientationDeg,
-                    glyph = "▲",
-                    text = altText,
-                    textColor = 0xFF34D399.toInt(),
-                    isDashed = false
-                )
-            }
         } catch (_: Exception) {}
     }
 
