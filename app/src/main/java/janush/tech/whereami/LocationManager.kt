@@ -323,9 +323,6 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    /** Current smoothed estimate of the not yet finalised window (live polyline tail). */
-    fun provisionalTrack(): List<SmoothedPoint> = synchronized(trackingLock) { trackingEngine.provisionalTrack() }
-
     private fun syncDiagnosticsSession(tripId: Long?) {
         if (!diagnosticsEnabled || tripId == diagnosticsTripId) return
         if (diagnosticsRecorder.isActive) diagnosticsRecorder.close()

@@ -26,3 +26,5 @@ device_data_*/
 .device_telemetry/
 analysis/
 diagnostic_pull_*/
+# Raw GNSS traces (personal location data): local replay only
+device_backup/diagnostics/
