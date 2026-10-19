@@ -8,12 +8,16 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Extended Kalman filter with a Constant Turn-Rate and Velocity (CTRV) motion model in a local
+ * Extended Kalman filter with a Constant Turn-Rate and Acceleration (CTRA) motion model in a local
  * east/north metric frame.
  *
- * State vector: `[east, north, speed, heading, yawRate]`
+ * State vector: `[east, north, speed, heading, yawRate, accel]`
  *  - heading is radians clockwise from north (so `d east/dt = v sin(h)`, `d north/dt = v cos(h)`)
  *  - yawRate is rad/s, clockwise positive (the sign convention of a compass heading)
+ *  - accel is the longitudinal acceleration, a first-order Gauss-Markov (Singer) process with the
+ *    profile's [TrackingProfile.accelTauS]. Without it a constant-speed prediction runs ahead of the
+ *    vehicle while braking and behind it while pulling away (field trip 233: +3.0 / -2.1 m median), and
+ *    the stop is then corrected backwards.
  *
  * The model is exact for circular arcs, so it keeps curving through turns instead of
  * extrapolating along a straight tangent, which is the root of "rotate then snap back" artefacts
@@ -22,18 +26,22 @@ import kotlin.math.sqrt
 class KinematicEkf(var profile: TrackingProfile) {
 
     companion object {
-        const val N = 5
+        const val N = 6
         const val EAST = 0
         const val NORTH = 1
         const val SPEED = 2
         const val HEADING = 3
         const val YAW = 4
+        const val ACCEL = 5
 
         /** Process noise std-dev of heading [rad / sqrt(s)] (model imperfection, very small). */
         private const val SIGMA_HEADING = 0.02
 
         /** Process noise of position [m / sqrt(s)] (accounts for lever arm / unmodelled drift). */
         private const val SIGMA_POSITION = 0.15
+
+        /** Residual speed process noise [m/s / sqrt(s)]: speed changes are carried by the accel state. */
+        private const val SIGMA_SPEED = 0.3
     }
 
     val x = DoubleArray(N)
@@ -76,6 +84,7 @@ class KinematicEkf(var profile: TrackingProfile) {
         p[SPEED][SPEED] = speedSigma * speedSigma
         p[HEADING][HEADING] = if (headingRad != null) Math.toRadians(12.0).let { it * it } else Math.PI * Math.PI
         p[YAW][YAW] = 0.15 * 0.15
+        p[ACCEL][ACCEL] = profile.sigmaAccel * profile.sigmaAccel
         tMs = tElapsedMs
         initialized = true
     }
@@ -107,13 +116,27 @@ class KinematicEkf(var profile: TrackingProfile) {
         val v = s[SPEED]
         val h = s[HEADING]
         val w = s[YAW]
+        val a = s[ACCEL]
+        val tau = profile.accelTauS
+        val decay = exp(-dt / tau)
+        // Singer acceleration: a(t) = a e^(-t/tau); speed and distance are its integrals. A vehicle that
+        // brakes to a halt within the step stops there (no reversing, distance never shrinks).
+        var vEnd = v + a * tau * (1.0 - decay)
+        var dist = v * dt + a * tau * (dt - tau * (1.0 - decay))
+        if (vEnd < 0.0) {
+            vEnd = 0.0
+            val tStop = if (a < 0.0) (v / -a).coerceAtMost(dt) else dt
+            dist = 0.5 * v * tStop
+        }
+        dist = max(dist, 0.0)
         val half = w * dt / 2.0
         val sinc = if (abs(half) < 1e-4) 1.0 - half * half / 6.0 else sin(half) / half
-        out[EAST] = s[EAST] + v * dt * sinc * sin(h + half)
-        out[NORTH] = s[NORTH] + v * dt * sinc * cos(h + half)
-        out[SPEED] = v
+        out[EAST] = s[EAST] + dist * sinc * sin(h + half)
+        out[NORTH] = s[NORTH] + dist * sinc * cos(h + half)
+        out[SPEED] = vEnd
         out[HEADING] = h + w * dt
         out[YAW] = w * exp(-dt / profile.yawRateTauS)
+        out[ACCEL] = a * decay
     }
 
     /**
@@ -155,11 +178,18 @@ class KinematicEkf(var profile: TrackingProfile) {
         // While zero-velocity is asserted the target is physically at rest: no random walk, so the
         // filter converges to the mean of the measurements (a spatial anchor, derived not hard-coded).
         val sp = if (stationaryMode) 0.01 else SIGMA_POSITION
-        val sa = if (stationaryMode) 0.05 else profile.sigmaAccel
+        val sv = if (stationaryMode) 0.05 else SIGMA_SPEED
         val sy = if (stationaryMode) 0.05 else profile.sigmaYawAccel
         p[EAST][EAST] += sp * sp * dt
         p[NORTH][NORTH] += sp * sp * dt
-        p[SPEED][SPEED] += sa * sa * dt
+        p[SPEED][SPEED] += sv * sv * dt
+        // Singer process: driving noise keeps the stationary accel variance at sigmaAccel^2.
+        val sa = if (stationaryMode) 0.05 else profile.sigmaAccel
+        p[ACCEL][ACCEL] += sa * sa * (1.0 - exp(-2.0 * dt / profile.accelTauS))
+        val qa = 2.0 * sa * sa / profile.accelTauS
+        p[SPEED][SPEED] += qa * dt * dt * dt / 3.0
+        p[SPEED][ACCEL] += qa * dt * dt / 2.0
+        p[ACCEL][SPEED] += qa * dt * dt / 2.0
         p[HEADING][HEADING] += SIGMA_HEADING * SIGMA_HEADING * dt
         p[YAW][YAW] += sy * sy * dt
         // Continuous white-noise-acceleration cross terms: a yaw-rate change integrates into heading.
@@ -240,6 +270,14 @@ class KinematicEkf(var profile: TrackingProfile) {
     fun applyZupt() {
         updateScalar(SPEED, 0.0, 0.05 * 0.05, angular = false)
         updateScalar(YAW, 0.0, 0.01 * 0.01, angular = false)
+        // At rest the acceleration is known to be zero. Pin it and drop its correlations rather than
+        // applying a near-exact measurement, which would collapse the correlated position variance.
+        x[ACCEL] = 0.0
+        for (j in 0 until N) {
+            p[ACCEL][j] = 0.0
+            p[j][ACCEL] = 0.0
+        }
+        p[ACCEL][ACCEL] = 0.05 * 0.05
     }
 
     val posStdM: Double get() = sqrt(max(0.0, (p[EAST][EAST] + p[NORTH][NORTH]) / 2.0))

@@ -47,15 +47,22 @@ class LiveTrackLine {
     }
 
     /** The pencil changed (point added or pruned): rebuild the curved tail and end at [tip]. */
-    fun rebuildTail(pencil: PencilTrail, tip: GeoPoint) {
+    fun rebuildTail(pencil: PencilTrail, tip: GeoPoint, committedThroughMs: Long = -1L) {
         points.clear()
         points.addAll(prefix)
         val c = committed
         val s = (c.size - 3).coerceAtLeast(0)
         val nc = c.size - s
         val n = nc + pencil.size
-        val lat: (Int) -> Double = { i -> if (i < nc) c[s + i].latitude else pencil.latAt(i - nc) }
-        val lng: (Int) -> Double = { i -> if (i < nc) c[s + i].longitude else pencil.lngAt(i - nc) }
+        val blended = if (c.isNotEmpty() && committedThroughMs >= 0L) {
+            pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude)
+        } else null
+        val lat: (Int) -> Double = { i ->
+            if (i < nc) c[s + i].latitude else blended?.first?.get(i - nc) ?: pencil.latAt(i - nc)
+        }
+        val lng: (Int) -> Double = { i ->
+            if (i < nc) c[s + i].longitude else blended?.second?.get(i - nc) ?: pencil.lngAt(i - nc)
+        }
         if (n > 0) {
             val fromSeg = if (prefixEnd < 0) {
                 points.add(GeoPoint(lat(0), lng(0)))

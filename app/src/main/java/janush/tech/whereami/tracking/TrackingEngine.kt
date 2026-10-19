@@ -37,6 +37,8 @@ class TrackingEngine(
 
         const val ANCHOR_AFTER_MS = 10_000L
         const val ANCHOR_AFTER_FIXES = 4
+        /** Share of the fix variance re-opened when the target comes to rest. */
+        const val STOP_ENTRY_VARIANCE_FRACTION = 0.5
         const val STATIONARY_SPEED_MPS = 0.35
         const val REJECTS_FOR_RESET = 3
         const val REBASE_DISTANCE_M = 6_000.0
@@ -57,6 +59,9 @@ class TrackingEngine(
          * already grows at low speed, so this only guards the last few tenths of a m/s.
          */
         const val COURSE_LOW_SPEED_INFLATION = 0.5
+
+        /** A bearing biased by d deg (vs. the fix displacement) is weighted as if its error were this x d. */
+        const val BIAS_SIGMA_FACTOR = 2.0
     }
 
     /** The selected activity's tuning: the prior, not a cage (see [activeProfile]). */
@@ -94,6 +99,7 @@ class TrackingEngine(
     private var courseRejectCount = 0
     private var headingObserved = false
     private var stationary = false
+    private val courseConsistency = CourseConsistency()
 
     var lastState: TrackState? = null
         private set
@@ -123,6 +129,7 @@ class TrackingEngine(
         courseRejectCount = 0
         headingObserved = false
         stationary = false
+        courseConsistency.clear()
         lastState = null
         activeProfile = profile
         fastFixCount = 0
@@ -225,7 +232,16 @@ class TrackingEngine(
         val wasStat = stationary
         stationary = lowSpeedCount >= 2 || (lowSpeedCount >= 1 && externalStationary)
         ekf.stationaryMode = stationary
-        if (stationary && !wasStat) stationarySinceMs = fix.tElapsedMs
+        if (stationary && !wasStat) {
+            stationarySinceMs = fix.tElapsedMs
+            // The braking estimate is overconfident about where the vehicle came to rest. Re-open the
+            // position variance once so the stop converges to the mean of its fixes within seconds, instead
+            // of creeping for the whole convergence window and jumping when driving off.
+            val extra = STOP_ENTRY_VARIANCE_FRACTION * sigma * sigma
+            ekf.inflatePositionVariance(extra)
+            pPred[KinematicEkf.EAST][KinematicEkf.EAST] += extra
+            pPred[KinematicEkf.NORTH][KinematicEkf.NORTH] += extra
+        }
         if (!stationary) stationarySinceMs = -1L
 
         // Parked: after a short convergence period the position is anchored. Further fixes only carry
@@ -236,7 +252,9 @@ class TrackingEngine(
 
         if (stationary) {
             ekf.applyZupt()
+            courseConsistency.clear()
         } else {
+            courseConsistency.add(fix.tElapsedMs, fix.lat, fix.lng, fix.bearingDeg?.toDouble(), fix.speedMps?.toDouble(), sigma)
             if (dopplerSpeed != null) {
                 val sAcc = fix.speedAccMps?.toDouble()?.takeIf { it > 0.0 }
                 val sigV = if (sAcc != null) max(sAcc, 0.2) else 0.6
@@ -339,7 +357,9 @@ class TrackingEngine(
         val bearing = fix.bearingDeg ?: return
         val v = dopplerSpeed ?: ekf.x[KinematicEkf.SPEED]
         if (v < activeProfile.minHeadingSpeedMps) return
-        val baseDeg = (fix.bearingAccDeg?.toDouble()?.takeIf { it > 0.0 } ?: 8.0).coerceAtLeast(3.0)
+        val reportedDeg = (fix.bearingAccDeg?.toDouble()?.takeIf { it > 0.0 } ?: 8.0).coerceAtLeast(3.0)
+        // A bearing that disagrees with the fixes' own displacement is less accurate than reported.
+        val baseDeg = max(reportedDeg, BIAS_SIGMA_FACTOR * (courseConsistency.disagreementDeg ?: 0.0))
         val sigRad = Math.toRadians(baseDeg) * (1.0 + COURSE_LOW_SPEED_INFLATION * activeProfile.minHeadingSpeedMps / v)
         val z = Math.toRadians(bearing.toDouble())
         val (nu, s) = ekf.scalarInnovation(KinematicEkf.HEADING, z, sigRad * sigRad, angular = true)

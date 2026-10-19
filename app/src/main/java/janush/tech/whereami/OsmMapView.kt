@@ -69,6 +69,9 @@ import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import janush.tech.whereami.tracking.AndroidSensorRegistrar
+import janush.tech.whereami.tracking.CompassArrow
+import janush.tech.whereami.tracking.CompassHeadingSensor
+import janush.tech.whereami.tracking.CompassPolicy
 import janush.tech.whereami.tracking.GyroHeadingSensor
 import janush.tech.whereami.tracking.GyroPolicy
 import janush.tech.whereami.tracking.MotionCourse
@@ -735,6 +738,36 @@ fun OsmMapView(
     }
     DisposableEffect(gyroSensor) { onDispose { gyroSensor.stop() } }
 
+    // Compass arrow: foreground, on foot, moving and following/recording only (see CompassPolicy); the setting
+    // is on by default. It drives the arrow only, never position, line or recording.
+    var compassArrowEnabled by remember { mutableStateOf(MapProfileConfigHelper.getCompassArrow(context)) }
+    val compassSensor = remember { CompassHeadingSensor(AndroidSensorRegistrar(context.applicationContext)) }
+    val compassArrow = remember { CompassArrow() }
+    val onFootProfile = TrackingBridge.profileFor(activityProfile).maxSpeedMps <= RenderPipeline.ON_FOOT_MAX_SPEED_MPS
+    val onFootNow = rememberUpdatedState(onFootProfile)
+    var movingForCompass by remember { mutableStateOf(false) }
+    LaunchedEffect(currentFix?.speedMs) {
+        movingForCompass = CompassPolicy.isMovingForCompass(currentFix?.speedMs ?: 0f, movingForCompass)
+    }
+    val compassWanted = CompassPolicy.shouldRun(
+        compassArrowEnabled, onFootProfile, isAppInForeground, movingForCompass, isFollowing || isRecording
+    )
+    LaunchedEffect(compassWanted) {
+        if (compassWanted) compassSensor.start() else {
+            compassSensor.stop()
+            compassArrow.reset()
+        }
+    }
+    // Magnetic declination (true north): changes by degrees per hundreds of km, so a coarse key suffices.
+    val declinationKey = currentFix?.let { (it.lat * 5).toInt() to (it.lng * 5).toInt() }
+    LaunchedEffect(declinationKey) {
+        val f = currentFix ?: return@LaunchedEffect
+        compassSensor.declinationDeg = android.hardware.GeomagneticField(
+            f.lat.toFloat(), f.lng.toFloat(), 0f, System.currentTimeMillis()
+        ).declination.toDouble()
+    }
+    DisposableEffect(compassSensor) { onDispose { compassSensor.stop() } }
+
     // Continuous Frame Loop: render pipeline sampled on every display VSYNC while moving, so the marker,
     // camera, rotation and polyline tip share one clock (SystemClock.elapsedRealtime, same base as fixes).
     // Strictly suspended when screen is off / app is in background to prevent background CPU wakeups.
@@ -751,6 +784,7 @@ fun OsmMapView(
     ) {
         if (!isAppInForeground) return@LaunchedEffect
         var lastRenderedLat = 0.0
+        var lastFreshHeadingMs = Long.MIN_VALUE / 2
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
         var lastRenderedAltitude = -999.0
@@ -776,13 +810,27 @@ fun OsmMapView(
                     // Arrow direction: at slow speed the direction of the curve the cursor is drawing; otherwise
                     // the filter's heading while it observes one; otherwise, when visibly moving, the direction
                     // of the cursor's own rendered motion (never a stale held value).
+                    if (pose.headingFresh) lastFreshHeadingMs = nowMs
                     val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
-                    val liveBearing = when {
+                    val courseBearing = when {
                         pose.isMoving && !fix.isAnchored && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
                         pose.headingFresh -> pose.headingDeg
-                        pose.isMoving && !fix.isAnchored -> motionDeg
+                        pose.isMoving && !fix.isAnchored ->
+                            if (onFootNow.value) motionDeg
+                            else MotionCourse.forVehicle(motionDeg, pose.headingDeg.takeIf { pose.headingConfident }, nowMs - lastFreshHeadingMs)
                         else -> null
                     }
+                    // Compass (when trusted): smooth and immediate, sampled at the render time so it matches the
+                    // drawn line; it is calibrated against the course while moving and never used at rest.
+                    val compassBearing = if (compassSensor.isRunning) {
+                        compassArrow.update(
+                            nowMs,
+                            TrackingRuntime.compass.headingAt(pose.renderTimeMs),
+                            courseBearing,
+                            pose.isMoving && !fix.isAnchored
+                        )
+                    } else null
+                    val liveBearing = compassBearing ?: courseBearing
                     if (liveBearing != null) {
                         lastFrozenBearing = liveBearing.toFloat()
                     } else if (lastFrozenBearing == null && fix.bearing != null) {
@@ -878,7 +926,7 @@ fun OsmMapView(
                         val before = pencilTrail.size
                         pencilTrail.pruneThrough(committedThroughMs)
                         if (added || pencilTrail.size != before || !liveLine.hasTail) {
-                            liveLine.rebuildTail(pencilTrail, gp)
+                            liveLine.rebuildTail(pencilTrail, gp, committedThroughMs)
                             line.setPoints(liveLine.points)
                         } else if (liveLine.moveTip(gp)) {
                             line.setPoints(liveLine.points)
@@ -1057,7 +1105,7 @@ fun OsmMapView(
                 ?: latLng?.let { GeoPoint(it.first, it.second) }
             val tip = currentPt ?: trackPoints.lastOrNull()
             if (tip != null) {
-                liveLine.rebuildTail(pencilTrail, tip)
+                liveLine.rebuildTail(pencilTrail, tip, committedThroughMs)
                 polyline?.setPoints(liveLine.points)
             }
             map.invalidate()
@@ -1946,6 +1994,11 @@ fun OsmMapView(
             onBaseLayerChange = { baseLayer = it },
             hikingOverlayEnabled = showHikingOverlay,
             onHikingOverlayToggle = { showHikingOverlay = it },
+            compassArrowEnabled = compassArrowEnabled,
+            onCompassArrowToggle = {
+                compassArrowEnabled = it
+                MapProfileConfigHelper.setCompassArrow(context, it)
+            },
             showAltitudeEnabled = showAltitudeOnMap,
             onShowAltitudeToggle = {
                 showAltitudeOnMap = it
@@ -2026,6 +2079,8 @@ private fun MapSettingsDialog(
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     hikingOverlayEnabled: Boolean,
     onHikingOverlayToggle: (Boolean) -> Unit,
+    compassArrowEnabled: Boolean = true,
+    onCompassArrowToggle: (Boolean) -> Unit = {},
     showAltitudeEnabled: Boolean = true,
     onShowAltitudeToggle: (Boolean) -> Unit = {},
     currentAltitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
@@ -2232,6 +2287,43 @@ private fun MapSettingsDialog(
                 Switch(
                     checked = hikingOverlayEnabled,
                     onCheckedChange = { onHikingOverlayToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Compass arrow (on foot)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onCompassArrowToggle(!compassArrowEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Compass Arrow",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White
+                    )
+                    Text(
+                        text = "Walking, hiking, running: arrow from the phone compass, checked against your track",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                }
+                Switch(
+                    checked = compassArrowEnabled,
+                    onCheckedChange = { onCompassArrowToggle(it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = ComposeColor.White,
                         checkedTrackColor = ComposeColor(0xFF10B981),

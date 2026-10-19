@@ -971,6 +971,7 @@ class LocationManager private constructor(private val context: Context) {
                         TrackingRuntime.gyro.meanRate(lastIngestedElapsedMs, rawFix.tElapsedMs)
                     } else null
                     diagnosticsRecorder.gyroRateForNextFix = gyroRate
+                    diagnosticsRecorder.compassForNextFix = TrackingRuntime.compass.headingAt(rawFix.tElapsedMs, 1_000L)
                     lastIngestedElapsedMs = rawFix.tElapsedMs
                     trackingEngine.ingest(rawFix, gyroRate, isPhysicallyStationary)
                 }

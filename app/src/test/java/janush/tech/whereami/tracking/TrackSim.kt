@@ -18,7 +18,9 @@ class TrackSim(
     /** 1-sigma slowly varying (multipath-like) noise [m]. */
     private val corrNoiseM: Double = 2.0,
     private val speedNoise: Double = 0.12,
-    private val bearingNoiseDeg: Double = 3.0
+    private val bearingNoiseDeg: Double = 3.0,
+    /** Constant error of the reported bearing (fused provider bias), reported accuracy unchanged. */
+    private val bearingBiasDeg: Double = 0.0
 ) {
     private val rnd = Random(seed)
     private val frame = LocalFrame(lat0, lng0)
@@ -117,7 +119,7 @@ class TrackSim(
                         if (tr.speed < 0.05) (kotlin.math.abs(speedNoise * gauss()) * 0.5).toFloat() else it
                     },
                     speedAccMps = 0.3f,
-                    bearingDeg = if (moving) ((tr.headingDeg + bearingNoiseDeg * gauss() + 360.0) % 360.0).toFloat() else null,
+                    bearingDeg = if (moving) ((tr.headingDeg + bearingBiasDeg + bearingNoiseDeg * gauss() + 360.0) % 360.0).toFloat() else null,
                     bearingAccDeg = if (moving) 6f else null,
                     altitudeM = 300.0
                 )
