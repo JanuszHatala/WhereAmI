@@ -28,3 +28,5 @@ analysis/
 diagnostic_pull_*/
 # Raw GNSS traces (personal location data): local replay only
 device_backup/diagnostics/
+# Device SharedPreferences snapshots (last location, live-share session IDs): local only
+device_backup/shared_prefs/
