@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
+import janush.tech.whereami.tracking.TrackPointRow
 
 class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     context.also { StorageMigrationHelper.migrateDatabaseIfNeeded(it) },
@@ -17,7 +18,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
-        private const val DATABASE_VERSION = 8
+        private const val DATABASE_VERSION = 10
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -32,6 +33,29 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_POINTS_JSON = "points_json"
         private const val COL_PLACES_JSON = "places_json"
         private const val COL_PAUSES_JSON = "pauses_json"
+        /** 0 = geometry still lives in points_json (not yet backfilled), 1 = geometry lives in track_points. */
+        private const val COL_POINTS_STORE = "points_store"
+
+        // Track points table (v9): one row per recorded sample
+        private const val TABLE_TRACK_POINTS = "track_points"
+        private const val TABLE_TRIP_MATCHES = "trip_matches"
+
+        /** trip_matches.state values */
+        const val MATCH_PENDING = 0
+        const val MATCH_DONE = 1
+        const val MATCH_REJECTED = 2
+        const val MATCH_MAX_ATTEMPTS = 5
+        private const val COL_TP_TRIP = "trip_id"
+        private const val COL_TP_SEQ = "seq"
+        private const val COL_TP_T = "t_utc"
+        private const val COL_TP_LAT = "lat"
+        private const val COL_TP_LNG = "lng"
+        private const val COL_TP_ALT = "alt"
+        private const val COL_TP_ALT_SRC = "alt_src"
+        private const val COL_TP_SPEED = "speed"
+        private const val COL_TP_HACC = "h_acc"
+        private const val COL_TP_BEARING = "bearing"
+        private const val COL_TP_FLAGS = "flags"
 
         // Saved Places Table
         private const val TABLE_SAVED_PLACES = "saved_places"
@@ -184,6 +208,32 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             return list
         }
 
+        /** Legacy points_json -> rows (backfill). Legacy points carry no time/speed/accuracy. */
+        internal fun jsonToRows(jsonStr: String): List<TrackPointRow> {
+            val rows = ArrayList<TrackPointRow>()
+            try {
+                val array = JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val alt = if (obj.has("alt") && !obj.isNull("alt")) obj.getDouble("alt") else 0.0
+                    val hasAlt = alt != 0.0 && !alt.isNaN()
+                    rows.add(
+                        TrackPointRow(
+                            tUtcMs = null,
+                            lat = obj.getDouble("lat"),
+                            lng = obj.getDouble("lng"),
+                            altitudeM = if (hasAlt) alt else null,
+                            altSource = if (hasAlt) obj.optString("src", "GPS") else null,
+                            speedMps = null,
+                            hAccM = null,
+                            bearingDeg = null
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+            return rows
+        }
+
         internal fun jsonToPointsWithSources(jsonStr: String): Pair<List<GeoPoint>, List<String>> {
             val pts = mutableListOf<GeoPoint>()
             val srcs = mutableListOf<String>()
@@ -217,13 +267,207 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COL_ACTIVITY_PROFILE TEXT DEFAULT 'CAR',
                 $COL_POINTS_JSON TEXT,
                 $COL_PLACES_JSON TEXT,
-                $COL_PAUSES_JSON TEXT DEFAULT '[]'
+                $COL_PAUSES_JSON TEXT DEFAULT '[]',
+                $COL_POINTS_STORE INTEGER NOT NULL DEFAULT 1
             )
         """.trimIndent()
         db.execSQL(createTripsTable)
+        createTrackPointsTable(db)
 
         createSavedPlacesTable(db)
         createElevationCacheTable(db)
+    }
+
+    /** Alternate (road-snapped) geometry; the recorded track in track_points stays authoritative. */
+    private fun createTripMatchesTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_TRIP_MATCHES (
+                trip_id INTEGER PRIMARY KEY,
+                state INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_attempt_ms INTEGER NOT NULL DEFAULT 0,
+                geometry TEXT
+            )
+            """.trimIndent()
+        )
+    }
+
+    private fun createTrackPointsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_TRACK_POINTS (
+                $COL_TP_TRIP INTEGER NOT NULL,
+                $COL_TP_SEQ INTEGER NOT NULL,
+                $COL_TP_T INTEGER,
+                $COL_TP_LAT REAL NOT NULL,
+                $COL_TP_LNG REAL NOT NULL,
+                $COL_TP_ALT REAL,
+                $COL_TP_ALT_SRC TEXT,
+                $COL_TP_SPEED REAL,
+                $COL_TP_HACC REAL,
+                $COL_TP_BEARING REAL,
+                $COL_TP_FLAGS INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY ($COL_TP_TRIP, $COL_TP_SEQ)
+            ) WITHOUT ROWID
+            """.trimIndent()
+        )
+    }
+
+    /** Idempotent: safe to call on every open (also repairs an interrupted v9 upgrade). */
+    private fun ensureTrackPointsSchema(db: SQLiteDatabase) {
+        createTrackPointsTable(db)
+        createTripMatchesTable(db)
+        val hasCol = db.rawQuery("PRAGMA table_info($TABLE_TRIPS)", null).use { c ->
+            val nameIdx = c.getColumnIndexOrThrow("name")
+            var found = false
+            while (c.moveToNext()) if (c.getString(nameIdx) == COL_POINTS_STORE) found = true
+            found
+        }
+        if (!hasCol) {
+            db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_POINTS_STORE INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
+    /**
+     * Copy legacy points_json into track_points for trips not yet migrated. points_json is left
+     * untouched (read-only) so the original data always survives. One transaction per trip: a crash
+     * leaves each trip either fully migrated or untouched.
+     */
+    private fun backfillTrackPoints(db: SQLiteDatabase) {
+        try {
+            val pending = ArrayList<Long>()
+            db.rawQuery("SELECT $COL_ID FROM $TABLE_TRIPS WHERE $COL_POINTS_STORE = 0", null).use { c ->
+                while (c.moveToNext()) pending.add(c.getLong(0))
+            }
+            for (id in pending) {
+                val json = db.rawQuery("SELECT $COL_POINTS_JSON FROM $TABLE_TRIPS WHERE $COL_ID = ?", arrayOf(id.toString())).use { c ->
+                    if (c.moveToFirst()) c.getString(0) ?: "[]" else "[]"
+                }
+                val rows = jsonToRows(json)
+                db.beginTransaction()
+                try {
+                    db.delete(TABLE_TRACK_POINTS, "$COL_TP_TRIP = ?", arrayOf(id.toString()))
+                    insertRows(db, id, 0, rows)
+                    db.execSQL("UPDATE $TABLE_TRIPS SET $COL_POINTS_STORE = 1 WHERE $COL_ID = ?", arrayOf<Any>(id))
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            if (pending.isNotEmpty()) {
+                TelemetryLogger.log("DB_MIGRATION", "Backfilled track_points for ${pending.size} legacy trips")
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("DB_MIGRATION", "track_points backfill failed (will retry on next open): ${e.message}")
+        }
+    }
+
+    private fun insertRows(db: SQLiteDatabase, tripId: Long, startSeq: Int, rows: List<TrackPointRow>) {
+        if (rows.isEmpty()) return
+        val stmt = db.compileStatement(
+            "INSERT OR REPLACE INTO $TABLE_TRACK_POINTS " +
+                "($COL_TP_TRIP,$COL_TP_SEQ,$COL_TP_T,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC," +
+                "$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        )
+        try {
+            var seq = startSeq
+            for (r in rows) {
+                stmt.clearBindings()
+                stmt.bindLong(1, tripId)
+                stmt.bindLong(2, seq.toLong())
+                if (r.tUtcMs != null) stmt.bindLong(3, r.tUtcMs)
+                stmt.bindDouble(4, r.lat)
+                stmt.bindDouble(5, r.lng)
+                if (r.altitudeM != null) stmt.bindDouble(6, r.altitudeM)
+                if (r.altSource != null) stmt.bindString(7, r.altSource)
+                if (r.speedMps != null) stmt.bindDouble(8, r.speedMps.toDouble())
+                if (r.hAccM != null) stmt.bindDouble(9, r.hAccM.toDouble())
+                if (r.bearingDeg != null) stmt.bindDouble(10, r.bearingDeg.toDouble())
+                stmt.bindLong(11, r.flags.toLong())
+                stmt.executeInsert()
+                seq++
+            }
+        } finally {
+            stmt.close()
+        }
+    }
+
+    /** Append rows for an active trip. [startSeq] is the index of the first row (= points already stored). */
+    fun appendTrackPoints(tripId: Long, startSeq: Int, rows: List<TrackPointRow>) {
+        if (rows.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            insertRows(db, tripId, startSeq, rows)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun replaceTrackPoints(tripId: Long, rows: List<TrackPointRow>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete(TABLE_TRACK_POINTS, "$COL_TP_TRIP = ?", arrayOf(tripId.toString()))
+            insertRows(db, tripId, 0, rows)
+            db.execSQL("UPDATE $TABLE_TRIPS SET $COL_POINTS_STORE = 1 WHERE $COL_ID = ?", arrayOf<Any>(tripId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun getTrackPointRows(tripId: Long): List<TrackPointRow> {
+        val db = readableDatabase
+        val store = db.rawQuery("SELECT $COL_POINTS_STORE FROM $TABLE_TRIPS WHERE $COL_ID = ?", arrayOf(tripId.toString())).use {
+            if (it.moveToFirst()) it.getInt(0) else 1
+        }
+        if (store == 0) {
+            val json = db.rawQuery("SELECT $COL_POINTS_JSON FROM $TABLE_TRIPS WHERE $COL_ID = ?", arrayOf(tripId.toString())).use {
+                if (it.moveToFirst()) it.getString(0) ?: "[]" else "[]"
+            }
+            return jsonToRows(json)
+        }
+        val rows = ArrayList<TrackPointRow>()
+        db.rawQuery(
+            "SELECT $COL_TP_T,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC,$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS " +
+                "FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ? ORDER BY $COL_TP_SEQ",
+            arrayOf(tripId.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                rows.add(
+                    TrackPointRow(
+                        tUtcMs = if (c.isNull(0)) null else c.getLong(0),
+                        lat = c.getDouble(1),
+                        lng = c.getDouble(2),
+                        altitudeM = if (c.isNull(3)) null else c.getDouble(3),
+                        altSource = if (c.isNull(4)) null else c.getString(4),
+                        speedMps = if (c.isNull(5)) null else c.getFloat(5),
+                        hAccM = if (c.isNull(6)) null else c.getFloat(6),
+                        bearingDeg = if (c.isNull(7)) null else c.getFloat(7),
+                        flags = c.getInt(8)
+                    )
+                )
+            }
+        }
+        return rows
+    }
+
+    private fun rowsToGeoPoints(rows: List<TrackPointRow>): List<GeoPoint> = rows.map {
+        val alt = it.altitudeM
+        if (alt != null && !alt.isNaN() && alt != 0.0) GeoPoint(it.lat, it.lng, alt) else GeoPoint(it.lat, it.lng)
+    }
+
+    private fun countTrackPoints(db: SQLiteDatabase, tripId: Long, legacyJson: String): Int {
+        val store = db.rawQuery("SELECT $COL_POINTS_STORE FROM $TABLE_TRIPS WHERE $COL_ID = ?", arrayOf(tripId.toString())).use {
+            if (it.moveToFirst()) it.getInt(0) else 1
+        }
+        if (store == 0) return countPointsFromJson(legacyJson)
+        return db.rawQuery("SELECT COUNT(*) FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ?", arrayOf(tripId.toString())).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
     }
 
     private fun createSavedPlacesTable(db: SQLiteDatabase) {
@@ -295,10 +539,24 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 createElevationCacheTable(db)
             } catch (_: Exception) {}
         }
+        if (oldVersion < 9) {
+            // v9: dedicated track_points table. Schema only here; the data copy runs idempotently in onOpen.
+            try {
+                ensureTrackPointsSchema(db)
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 10) {
+            // v10: trip_matches (post-trip OSRM alternate geometry).
+            try {
+                createTripMatchesTable(db)
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
+        ensureTrackPointsSchema(db)
+        backfillTrackPoints(db)
         cleanUpTrailingDestinationPauses(db)
         ensureSavedPlacesColumns(db)
         sanitizeStoredPlaces(db)
@@ -376,7 +634,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     if (pauses.isEmpty()) continue
 
                     val last = pauses.last()
-                    val totalPoints = countPointsFromJson(pointsJson)
+                    val totalPoints = countTrackPoints(db, tripId, pointsJson)
                     val isAtEnd = last.pointIndex >= (totalPoints - 2).coerceAtLeast(0)
                     val endsNearTripEnd = endTime != null && ((endTime - (last.endTime ?: last.startTime)) <= 45_000L || (last.endTime ?: 0L) >= endTime)
 
@@ -404,52 +662,68 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun insertTrip(trip: TripRecord, pointSources: List<String>? = null): Long {
-        val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_TITLE, trip.title)
-            put(COL_START_TIME, trip.startTime)
-            put(COL_END_TIME, trip.endTime)
-            put(COL_DISTANCE, trip.distanceMeters)
-            put(COL_MAX_SPEED, trip.maxSpeedKmh)
-            put(COL_AVG_SPEED, trip.avgSpeedKmh)
-            put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
-            put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
-            put(COL_POINTS_JSON, pointsToJson(trip.points, pointSources))
-            put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
-            put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
-        }
-        return db.insert(TABLE_TRIPS, null, values)
+    private fun tripValues(trip: TripRecord): ContentValues = ContentValues().apply {
+        put(COL_TITLE, trip.title)
+        put(COL_START_TIME, trip.startTime)
+        put(COL_END_TIME, trip.endTime)
+        put(COL_DISTANCE, trip.distanceMeters)
+        put(COL_MAX_SPEED, trip.maxSpeedKmh)
+        put(COL_AVG_SPEED, trip.avgSpeedKmh)
+        put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
+        put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
+        put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
+        put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
     }
 
-    fun updateTrip(trip: TripRecord, pointSources: List<String>? = null) {
+    /**
+     * Insert a trip. Geometry goes to track_points ([rows] when given, otherwise derived from
+     * [TripRecord.points] / [pointSources]); points_json stays empty for new trips.
+     */
+    fun insertTrip(trip: TripRecord, pointSources: List<String>? = null, rows: List<TrackPointRow>? = null): Long {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_TITLE, trip.title)
-            put(COL_START_TIME, trip.startTime)
-            put(COL_END_TIME, trip.endTime)
-            put(COL_DISTANCE, trip.distanceMeters)
-            put(COL_MAX_SPEED, trip.maxSpeedKmh)
-            put(COL_AVG_SPEED, trip.avgSpeedKmh)
-            put(COL_IS_AUTO, if (trip.isAutoDetected) 1 else 0)
-            put(COL_ACTIVITY_PROFILE, trip.activityProfile.name)
-            put(COL_POINTS_JSON, pointsToJson(trip.points, pointSources))
-            put(COL_PLACES_JSON, placesToJson(trip.placesVisited))
-            put(COL_PAUSES_JSON, pausesToJson(trip.pauses))
+        val values = tripValues(trip).apply {
+            put(COL_POINTS_JSON, "[]")
+            put(COL_POINTS_STORE, 1)
         }
-        db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(trip.id.toString()))
+        val id = db.insert(TABLE_TRIPS, null, values)
+        if (id > 0L) {
+            val toWrite = rows ?: pointsToRows(emptyList(), trip.points, pointSources)
+            if (toWrite.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    insertRows(db, id, 0, toWrite)
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        }
+        return id
+    }
+
+    private fun pointsToRows(existing: List<TrackPointRow>, points: List<GeoPoint>, sources: List<String>?): List<TrackPointRow> {
+        val lats = DoubleArray(points.size) { points[it].latitude }
+        val lngs = DoubleArray(points.size) { points[it].longitude }
+        val alts = points.map { it.altitude }
+        return TrackPointRow.rebind(existing, lats, lngs, alts, sources)
+    }
+
+    /** Metadata only (stats, places, pauses, title). Geometry is untouched. */
+    fun updateTripMeta(trip: TripRecord) {
+        val db = writableDatabase
+        db.update(TABLE_TRIPS, tripValues(trip), "$COL_ID = ?", arrayOf(trip.id.toString()))
+    }
+
+    /** Metadata plus a full geometry rewrite (split, elevation correction). Preserves per-point metadata where aligned. */
+    fun updateTrip(trip: TripRecord, pointSources: List<String>? = null) {
+        updateTripMeta(trip)
+        val existing = getTrackPointRows(trip.id)
+        replaceTrackPoints(trip.id, pointsToRows(existing, trip.points, pointSources))
     }
 
     fun getTripPointsWithSources(id: Long): Pair<List<GeoPoint>, List<String>> {
-        val db = readableDatabase
-        val cursor = db.query(TABLE_TRIPS, arrayOf(COL_POINTS_JSON), "$COL_ID = ?", arrayOf(id.toString()), null, null, null)
-        cursor.use {
-            if (it.moveToFirst()) {
-                val json = it.getString(0) ?: "[]"
-                return jsonToPointsWithSources(json)
-            }
-        }
-        return Pair(emptyList(), emptyList())
+        val rows = getTrackPointRows(id)
+        return Pair(rowsToGeoPoints(rows), rows.map { it.altSource ?: "GPS" })
     }
 
     fun updateTripActivityProfile(id: Long, profile: ActivityProfile) {
@@ -485,6 +759,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             ActivityProfile.CAR
         }
         val pointsJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
+        val storeIdx = cursor.getColumnIndex(COL_POINTS_STORE)
+        val pointsFromTable = storeIdx >= 0 && !cursor.isNull(storeIdx) && cursor.getInt(storeIdx) == 1
         val placesJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
         val pausesColIdx = cursor.getColumnIndex(COL_PAUSES_JSON)
         val pausesJson = if (pausesColIdx >= 0 && !cursor.isNull(pausesColIdx)) cursor.getString(pausesColIdx) ?: "[]" else "[]"
@@ -499,7 +775,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             avgSpeedKmh = avgSpeed,
             isAutoDetected = isAuto,
             activityProfile = profile,
-            points = jsonToPoints(pointsJson),
+            points = if (pointsFromTable) rowsToGeoPoints(getTrackPointRows(id)) else jsonToPoints(pointsJson),
             placesVisited = jsonToPlaces(placesJson),
             pauses = jsonToPauses(pausesJson)
         )
@@ -600,7 +876,15 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     fun deleteTrip(id: Long) {
         val db = writableDatabase
-        db.delete(TABLE_TRIPS, "$COL_ID = ?", arrayOf(id.toString()))
+        db.beginTransaction()
+        try {
+            db.delete(TABLE_TRACK_POINTS, "$COL_TP_TRIP = ?", arrayOf(id.toString()))
+            db.delete(TABLE_TRIP_MATCHES, "trip_id = ?", arrayOf(id.toString()))
+            db.delete(TABLE_TRIPS, "$COL_ID = ?", arrayOf(id.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     fun getTripsByIds(ids: List<Long>): List<TripRecord> {
@@ -738,14 +1022,65 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             pauses = allPauses.sortedBy { it.startTime }
         )
 
-        val newId = insertTrip(mergedTrip)
+        val mergedRows = sorted.flatMap { getTrackPointRows(it.id) }
+        val newId = insertTrip(mergedTrip, rows = mergedRows)
 
         // Remove original fragmented trips
         val db = writableDatabase
         val placeholders = tripIds.joinToString(",") { "?" }
-        db.delete(TABLE_TRIPS, "$COL_ID IN ($placeholders)", tripIds.map { it.toString() }.toTypedArray())
+        val idArgs = tripIds.map { it.toString() }.toTypedArray()
+        db.delete(TABLE_TRACK_POINTS, "$COL_TP_TRIP IN ($placeholders)", idArgs)
+        db.delete(TABLE_TRIP_MATCHES, "trip_id IN ($placeholders)", idArgs)
+        db.delete(TABLE_TRIPS, "$COL_ID IN ($placeholders)", idArgs)
 
         return newId
+    }
+
+    // ── Post-trip road matching (alternate geometry) ───────────────────────────
+
+    /** CAR trips that finished, have no match yet (or a retryable pending one). */
+    fun pendingMatchTripIds(limit: Int, nowMs: Long, retryAfterMs: Long): List<Long> {
+        val ids = ArrayList<Long>()
+        readableDatabase.rawQuery(
+            """
+            SELECT t.$COL_ID FROM $TABLE_TRIPS t LEFT JOIN $TABLE_TRIP_MATCHES m ON m.trip_id = t.$COL_ID
+            WHERE t.$COL_END_TIME IS NOT NULL AND t.$COL_ACTIVITY_PROFILE = 'CAR'
+              AND (m.trip_id IS NULL OR (m.state = $MATCH_PENDING AND m.attempts < $MATCH_MAX_ATTEMPTS AND m.last_attempt_ms < ?))
+            ORDER BY t.$COL_START_TIME DESC LIMIT ?
+            """.trimIndent(),
+            arrayOf((nowMs - retryAfterMs).toString(), limit.toString())
+        ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
+        return ids
+    }
+
+    /**
+     * @param countAttempt false for transient failures (offline, rate limit) so they never exhaust the retry budget.
+     */
+    fun saveMatchResult(tripId: Long, state: Int, geometryJson: String?, countAttempt: Boolean, nowMs: Long) {
+        val db = writableDatabase
+        val prev = db.rawQuery("SELECT attempts FROM $TABLE_TRIP_MATCHES WHERE trip_id = ?", arrayOf(tripId.toString())).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
+        val v = android.content.ContentValues().apply {
+            put("trip_id", tripId)
+            put("state", state)
+            put("attempts", if (countAttempt) prev + 1 else prev)
+            put("last_attempt_ms", nowMs)
+            if (geometryJson != null) put("geometry", geometryJson) else putNull("geometry")
+        }
+        db.insertWithOnConflict(TABLE_TRIP_MATCHES, null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun invalidateMatch(tripId: Long) {
+        writableDatabase.delete(TABLE_TRIP_MATCHES, "trip_id = ?", arrayOf(tripId.toString()))
+    }
+
+    /** Road-snapped alternate geometry, or null when absent / rejected / pending. */
+    fun getMatchedGeometry(tripId: Long): List<GeoPoint>? {
+        val json = readableDatabase.rawQuery(
+            "SELECT geometry FROM $TABLE_TRIP_MATCHES WHERE trip_id = ? AND state = $MATCH_DONE", arrayOf(tripId.toString())
+        ).use { if (it.moveToFirst()) it.getString(0) else null } ?: return null
+        return janush.tech.whereami.tracking.RouteMatching.geometryFromJson(json)
     }
 
     // ── Saved Places CRUD ──────────────────────────────────────────────────────
@@ -912,6 +1247,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val pause = trip.pauses[pauseIndex]
         val splitIdx = pause.pointIndex.coerceIn(1, (trip.points.size - 1).coerceAtLeast(1))
 
+        val allRows = getTrackPointRows(tripId)
         val pointsPart1 = trip.points.take(splitIdx)
         val pointsPart2 = trip.points.drop(splitIdx)
 
@@ -965,7 +1301,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             placesVisited = placesPart1,
             pauses = pausesPart1
         )
-        updateTrip(trip1)
+        updateTripMeta(trip1)
+        replaceTrackPoints(trip.id, allRows.take(splitIdx))
+        invalidateMatch(trip.id)
 
         val trip2 = TripRecord(
             title = "$cleanedTitle - Part 2",
@@ -980,25 +1318,15 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             placesVisited = placesPart2,
             pauses = pausesPart2
         )
-        val trip2Id = insertTrip(trip2)
+        val trip2Id = insertTrip(trip2, rows = allRows.drop(splitIdx))
 
         return Pair(trip.id, trip2Id)
     }
 
     fun getTrip(tripId: Long): TripRecord? = getTripsByIds(listOf(tripId)).firstOrNull()
 
-    fun tripHasGpsAltitudePoints(tripId: Long): Boolean {
-        val db = readableDatabase
-        val cursor = db.query(TABLE_TRIPS, arrayOf(COL_POINTS_JSON), "$COL_ID = ?", arrayOf(tripId.toString()), null, null, null)
-        cursor.use {
-            if (it.moveToFirst()) {
-                val jsonStr = it.getString(0) ?: ""
-                val (_, sources) = jsonToPointsWithSources(jsonStr)
-                return sources.any { s -> s == "GPS" }
-            }
-        }
-        return false
-    }
+    fun tripHasGpsAltitudePoints(tripId: Long): Boolean =
+        getTrackPointRows(tripId).any { (it.altSource ?: "GPS") == "GPS" }
 
     fun deleteTripPause(tripId: Long, pauseIndex: Int): Boolean {
         val trip = getTrip(tripId) ?: return false
@@ -1043,7 +1371,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             avgSpeedKmh = newAvgSpeed,
             pauses = updatedPauses
         )
-        updateTrip(updatedTrip)
+        updateTripMeta(updatedTrip)
         return true
     }
 
@@ -1082,7 +1410,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             avgSpeedKmh = newAvgSpeed,
             pauses = updatedPauses
         )
-        updateTrip(updatedTrip)
+        updateTripMeta(updatedTrip)
         return true
     }
 

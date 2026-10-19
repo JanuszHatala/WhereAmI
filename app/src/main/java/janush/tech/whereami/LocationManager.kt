@@ -25,6 +25,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import janush.tech.whereami.tracking.SmoothedPoint
+import janush.tech.whereami.tracking.TrackDiagnosticsRecorder
+import janush.tech.whereami.tracking.TrackState
+import janush.tech.whereami.tracking.TrackingBridge
+import janush.tech.whereami.tracking.TrackingEngine
+import janush.tech.whereami.tracking.TrackingProfile
+import janush.tech.whereami.tracking.TrackingRuntime
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -78,7 +86,9 @@ data class MultiLocationSnapshot(
     val timestamp: Long,
     val error: String? = null,
     val isLoading: Boolean = false,
-    val fixSeqId: Long = 0L
+    val fixSeqId: Long = 0L,
+    /** Filtered kinematic state (position, velocity, turn rate, uncertainty) from the tracking engine. */
+    val track: TrackState? = null
 ) {
     fun toLocationData(displayLanguage: DisplayLanguage): LocationData {
         val place = when (displayLanguage) {
@@ -111,7 +121,9 @@ data class LocationFix(
     val timestamp: Long,
     val accuracy: Float? = null,
     val isAnchored: Boolean = false,
-    val fixSeqId: Long = 0L
+    val fixSeqId: Long = 0L,
+    /** Filtered kinematic state driving the render pipeline; null only for the cached startup position. */
+    val track: TrackState? = null
 )
 
 /** Small data class for OSM Nominatim reverse-geocode results. */
@@ -147,7 +159,12 @@ class LocationManager private constructor(private val context: Context) {
         @Volatile
         private var currentMinIntervalMs: Long = 1000L
         @Volatile
+        private var currentMaxUpdateDelayMs: Long = 0L
+        @Volatile
         var isGpsStopped: Boolean = false
+
+        private const val PREFS_WRITE_INTERVAL_MS = 30_000L
+        private const val PREFS_WRITE_DISTANCE_M = 200f
 
         private val activeCallbacks = Collections.synchronizedSet(mutableSetOf<LocationCallback>())
 
@@ -283,23 +300,91 @@ class LocationManager private constructor(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
     private val ioScope = CoroutineScope(Dispatchers.IO)
-    private val positionStabilizer = PositionStabilizer()
 
-    fun resetPositionStabilizer() {
-        positionStabilizer.reset()
+    // ── Tracking Engine v2 (CTRV EKF + fixed-lag smoother) ─────────────────────
+    private val trackingLock = Any()
+    private val diagnosticsRecorder = TrackDiagnosticsRecorder(File(context.filesDir, "diagnostics"))
+    private val trackingEngine = TrackingEngine(TrackingProfile.CAR, diagnostics = diagnosticsRecorder)
+    private var lastIngestedElapsedMs = 0L
+    private var diagnosticsTripId: Long? = null
+    private val diagnosticsEnabled: Boolean by lazy {
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 ||
+            context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE).getBoolean("pref_track_diagnostics", false)
     }
 
+    /** Emit smoothed points still inside the lag window (trip stop). The engine keeps running. */
+    fun flushTracking(): List<SmoothedPoint> = synchronized(trackingLock) { trackingEngine.flush() }
+
+    /** Forget filter state (e.g. after a long GNSS shutdown) so stale anchors cannot reject new fixes. */
+    fun resetTracking() {
+        synchronized(trackingLock) {
+            trackingEngine.reset()
+            lastIngestedElapsedMs = 0L
+        }
+    }
+
+    /** Current smoothed estimate of the not yet finalised window (live polyline tail). */
+    fun provisionalTrack(): List<SmoothedPoint> = synchronized(trackingLock) { trackingEngine.provisionalTrack() }
+
+    private fun syncDiagnosticsSession(tripId: Long?) {
+        if (!diagnosticsEnabled || tripId == diagnosticsTripId) return
+        if (diagnosticsRecorder.isActive) diagnosticsRecorder.close()
+        if (tripId != null) diagnosticsRecorder.startSession("trip$tripId")
+        diagnosticsTripId = tripId
+    }
+
+    // Last-fix persistence is throttled: the old code wrote SharedPreferences on every fix.
+    private var lastPrefsWriteMs = 0L
+    private var lastPrefsLat = 0.0
+    private var lastPrefsLng = 0.0
+
+    private fun persistLastFix(force: Boolean) {
+        val snap = lastLocationSnapshot ?: return
+        if (snap.lat == 0.0 && snap.lng == 0.0) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val moved = FloatArray(1)
+        AndroidLocation.distanceBetween(lastPrefsLat, lastPrefsLng, snap.lat, snap.lng, moved)
+        if (!force && now - lastPrefsWriteMs < PREFS_WRITE_INTERVAL_MS && moved[0] < PREFS_WRITE_DISTANCE_M) return
+        lastPrefsWriteMs = now
+        lastPrefsLat = snap.lat
+        lastPrefsLng = snap.lng
+        context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE).edit()
+            .putFloat("lat", snap.lat.toFloat())
+            .putFloat("lng", snap.lng.toFloat())
+            .putFloat("speed", snap.speedMs)
+            .putFloat("accuracy", snap.accuracy ?: 0f)
+            .apply()
+    }
+
+    private fun buildRequest(intervalMs: Long, minIntervalMs: Long, maxUpdateDelayMs: Long): LocationRequest {
+        val b = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+            .setMinUpdateIntervalMillis(minIntervalMs)
+            .setGranularity(Granularity.GRANULARITY_FINE)
+            .setWaitForAccurateLocation(false)
+        // Batched delivery (screen off): the system wakes the CPU once per batch instead of per fix.
+        // Every fix in the batch is processed in order, so no geometry is lost.
+        if (maxUpdateDelayMs >= intervalMs) b.setMaxUpdateDelayMillis(maxUpdateDelayMs)
+        return b.build()
+    }
+
+    /**
+     * @param maxUpdateDelayMs 0 = deliver immediately; otherwise fixes may be batched for up to this long
+     *        (only used while the screen is off and a trip is recording).
+     */
     @SuppressLint("MissingPermission")
-    fun updateSamplingInterval(intervalMs: Long, minIntervalMs: Long) {
+    fun updateSamplingInterval(intervalMs: Long, minIntervalMs: Long, maxUpdateDelayMs: Long = 0L) {
+        // Dedupe identical re-issues: re-requesting restarts GNSS bookkeeping and wakes the CPU for nothing.
+        if (!isGpsStopped && intervalMs == currentIntervalMs && minIntervalMs == currentMinIntervalMs &&
+            maxUpdateDelayMs == currentMaxUpdateDelayMs && synchronized(activeCallbacks) { activeCallbacks.isNotEmpty() }
+        ) return
         currentIntervalMs = intervalMs
         currentMinIntervalMs = minIntervalMs
+        currentMaxUpdateDelayMs = maxUpdateDelayMs
         isGpsStopped = false
         try {
             StationaryDetector.getInstance(context).startListening()
         } catch (_: Exception) {}
-        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis(minIntervalMs)
-            .build()
+        val req = buildRequest(intervalMs, minIntervalMs, maxUpdateDelayMs)
         synchronized(activeCallbacks) {
             for (cb in activeCallbacks) {
                 try {
@@ -311,6 +396,7 @@ class LocationManager private constructor(private val context: Context) {
 
     fun stopLocationUpdates(preserveStationaryState: Boolean = false) {
         isGpsStopped = true
+        persistLastFix(force = true)
         try {
             StationaryDetector.getInstance(context).stopListening(preserveStationaryState)
         } catch (_: Exception) {}
@@ -378,43 +464,6 @@ class LocationManager private constructor(private val context: Context) {
     // MAP-R03: Stationary Bearing Freeze (retains driving heading when stopped)
     @Volatile
     private var lastValidBearing: Float? = null
-    private var lastProcessedLocation: AndroidLocation? = null
-
-    /**
-     * Bearing Exponential Moving Average (EMA) — circular-domain low-pass filter.
-     *
-     * Raw GPS bearing at < 15 km/h has ±60–120° noise. Without smoothing, the map
-     * spins 360° during slow urban driving. The alpha is speed-adaptive:
-     *   - Very slow (< 5 km/h):  α = 0.15  →  heavy damping, barely updates
-     *   - Slow (< 15 km/h):     α = 0.30  →  moderate damping
-     *   - Medium (< 50 km/h):   α = 0.55  →  light damping, responsive to turns
-     *   - Fast (>= 50 km/h):    α = 0.80  →  minimal damping (bearing is reliable)
-     *
-     * Uses sin/cos decomposition to handle 0°/360° wraparound correctly.
-     */
-    private var emaBearingSin: Double = 0.0
-    private var emaBearingCos: Double = 1.0
-    private var emaBearingInitialized: Boolean = false
-
-    private fun smoothBearing(rawBearing: Float, speedKmh: Float): Float {
-        val alpha = when {
-            speedKmh < 5f  -> 0.15
-            speedKmh < 15f -> 0.30
-            speedKmh < 50f -> 0.55
-            else           -> 0.80
-        }
-        val rad = Math.toRadians(rawBearing.toDouble())
-        if (!emaBearingInitialized) {
-            emaBearingSin = Math.sin(rad)
-            emaBearingCos = Math.cos(rad)
-            emaBearingInitialized = true
-        } else {
-            emaBearingSin = alpha * Math.sin(rad) + (1.0 - alpha) * emaBearingSin
-            emaBearingCos = alpha * Math.cos(rad) + (1.0 - alpha) * emaBearingCos
-        }
-        val smoothed = Math.toDegrees(Math.atan2(emaBearingSin, emaBearingCos)).toFloat()
-        return (smoothed + 360f) % 360f
-    }
 
     private fun hybridSpeedUpdate(
         rawSpeed: Float?,
@@ -903,180 +952,163 @@ class LocationManager private constructor(private val context: Context) {
                 trySend(emptySnap)
             }
 
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, currentIntervalMs)
-                .setMinUpdateIntervalMillis(currentMinIntervalMs)
-                .build()
+            val locationRequest = buildRequest(currentIntervalMs, currentMinIntervalMs, currentMaxUpdateDelayMs)
+
+            fun handleLocation(location: AndroidLocation) {
+                val tripManager = TripManager.getInstance(context)
+                val activeTrip = tripManager.activeTrip.value
+                val currentProfile = activeTrip?.activityProfile ?: tripManager.activityProfile.value
+
+                val rawFix = TrackingBridge.toRawFix(location)
+                val isPhysicallyStationary = try {
+                    StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                } catch (_: Exception) { false }
+
+                // Tracking Engine v2: gate + CTRV EKF + ZUPT + fixed-lag smoother replace the former
+                // GpsFilterEngine -> bearing EMA -> PositionStabilizer chain.
+                val result = synchronized(trackingLock) {
+                    syncDiagnosticsSession(activeTrip?.id)
+                    val wanted = TrackingBridge.profileFor(currentProfile)
+                    if (trackingEngine.profile.name != wanted.name) trackingEngine.profile = wanted
+                    val gyroRate = if (lastIngestedElapsedMs > 0L) {
+                        TrackingRuntime.gyro.meanRate(lastIngestedElapsedMs, rawFix.tElapsedMs)
+                    } else null
+                    diagnosticsRecorder.gyroRateForNextFix = gyroRate
+                    lastIngestedElapsedMs = rawFix.tElapsedMs
+                    trackingEngine.ingest(rawFix, gyroRate, isPhysicallyStationary)
+                }
+                val state = result.state
+                if (!result.accepted || state == null) return
+
+                val lat = state.lat
+                val lng = state.lng
+                val fixTimestamp = rawFix.tUtcMs
+
+                val rawSpeed = if (location.hasSpeed()) location.speed else null
+                val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
+                    location.speedAccuracyMetersPerSecond else null
+                val speed = hybridSpeedUpdate(
+                    rawSpeed = rawSpeed,
+                    gpsAccuracyMps = accuracy,
+                    lat = lat,
+                    lng = lng,
+                    timestamp = fixTimestamp
+                )
+                val speedKmh = speed * 3.6f
+                val alt = if (location.hasAltitude()) location.altitude else null
+                val fixAccuracy = if (location.hasAccuracy()) location.accuracy else null
+
+                // Heading comes from the engine: course/gyro fused, held while stopped or unobserved.
+                val currentBearing: Float? = if (state.headingConfident) {
+                    state.headingDeg.toFloat().also { lastValidBearing = it }
+                } else {
+                    lastValidBearing
+                }
+
+                // 1. Immediate TripManager kinematic notification (live state machine) and recorded geometry
+                //    (fixed-lag smoothed points).
+                tripManager.onLocationUpdate(
+                    lat,
+                    lng,
+                    speed,
+                    committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
+                    fixAccuracy,
+                    alt
+                )
+                tripManager.onSmoothedPoints(result.finalized)
+
+                // 2. Immediate LiveSharing telemetry notification
+                val immediatePlaceName = committedPlace?.let {
+                    val p = it.pl.takeIf { pl -> pl.isValid() } ?: it.en
+                    if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
+                }
+                LiveSharingManager.getInstance(context).onLocationUpdate(
+                    lat = lat,
+                    lng = lng,
+                    speedKmh = speedKmh,
+                    altitude = alt,
+                    bearing = currentBearing,
+                    placeName = immediatePlaceName,
+                    trekkingBadge = null,
+                    accuracy = fixAccuracy
+                )
+
+                // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
+                val seqId = ++fixSeqCounter
+                val fastSnapshot = MultiLocationSnapshot(
+                    multiPlace = committedPlace,
+                    speedMs = speed,
+                    speedKmh = speedKmh,
+                    lat = lat,
+                    lng = lng,
+                    altitude = alt,
+                    bearing = currentBearing,
+                    accuracy = fixAccuracy,
+                    timestamp = fixTimestamp,
+                    fixSeqId = seqId,
+                    track = state
+                )
+                lastLocationSnapshot = fastSnapshot
+                trySend(fastSnapshot)
+                persistLastFix(force = false)
+
+                // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
+                val capturedBearing = currentBearing
+                ioScope.launch {
+                    val rawMultiData = resolveMultiLanguageData(
+                        lat = lat,
+                        lng = lng,
+                        bearing = capturedBearing,
+                        speedKmh = speedKmh,
+                        accuracyMeters = fixAccuracy
+                    )
+                    synchronized(geocodeLock) {
+                        // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
+                        if (fixTimestamp < latestEnrichedTimestamp) {
+                            TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
+                            return@launch
+                        }
+                        latestEnrichedTimestamp = fixTimestamp
+
+                        val borderStabilized = applyBorderHysteresis(lat, lng, rawMultiData)
+                        val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, capturedBearing)
+
+                        // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
+                        committedPlace = stabilizedMultiData
+
+                        // Update TripManager with verified locality hierarchy without injecting duplicate points
+                        TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
+
+                        // Enriched snapshot MUST carry the CURRENT (latest) kinematic coordinates to prevent backward teleports!
+                        val currentSnap = lastLocationSnapshot
+                        val enrichedSnapshot = MultiLocationSnapshot(
+                            multiPlace = stabilizedMultiData,
+                            speedMs = currentSnap?.speedMs ?: speed,
+                            speedKmh = currentSnap?.speedKmh ?: speedKmh,
+                            lat = currentSnap?.lat ?: lat,
+                            lng = currentSnap?.lng ?: lng,
+                            altitude = currentSnap?.altitude ?: alt,
+                            bearing = currentSnap?.bearing ?: capturedBearing,
+                            accuracy = currentSnap?.accuracy ?: fixAccuracy,
+                            timestamp = currentSnap?.timestamp ?: fixTimestamp,
+                            fixSeqId = currentSnap?.fixSeqId ?: seqId,
+                            track = currentSnap?.track ?: state
+                        )
+                        lastLocationSnapshot = enrichedSnapshot
+                        trySend(enrichedSnapshot)
+                    }
+                }
+            }
 
             val locationCallback = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
-                    result.lastLocation?.let { location ->
-                        val currentProfile = TripManager.getInstance(context).activeTrip.value?.activityProfile
-                            ?: TripManager.getInstance(context).activityProfile.value
-
-                        // Stage 1-4 Filter: drop coarse cellular fallbacks, GPS spikes, and kinematic teleport jumps
-                        if (!GpsFilterEngine.getInstance().filterLocation(location, currentProfile)) {
-                            return
-                        }
-
-                        val rawSpeed = if (location.hasSpeed()) location.speed else null
-                        val accuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy())
-                            location.speedAccuracyMetersPerSecond else null
-                        val speed = hybridSpeedUpdate(
-                            rawSpeed = rawSpeed,
-                            gpsAccuracyMps = accuracy,
-                            lat = location.latitude,
-                            lng = location.longitude,
-                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
-                        )
-
-                        prefs.edit()
-                            .putFloat("lat", location.latitude.toFloat())
-                            .putFloat("lng", location.longitude.toFloat())
-                            .putFloat("speed", speed)
-                            .putFloat("accuracy", if (location.hasAccuracy()) location.accuracy else 0f)
-                            .apply()
-
-                        val speedKmh = speed * 3.6f
-                        val alt = if (location.hasAltitude()) location.altitude else null
-
-                        // Bearing Stability: profile-aware speed gate & displacement bearing fallback
-                        val activeProfile = TripManager.getInstance(context).activityProfile.value
-                        val isOutdoorProfile = activeProfile != ActivityProfile.CAR
-                        val rawAcc = if (location.hasAccuracy()) location.accuracy else 0f
-
-                        val minSpeedForBearing = if (isOutdoorProfile) {
-                            when {
-                                rawAcc > 20f -> 2.5f    // poor accuracy in outdoor profile
-                                rawAcc > 15f -> 1.5f    // medium accuracy
-                                else         -> 0.9f    // good accuracy (~3.2 km/h) enables MTB/hiking uphill heading
-                            }
-                        } else {
-                            when {
-                                rawAcc > 20f -> 6.0f    // CAR poor accuracy
-                                rawAcc > 15f -> 3.5f    // CAR medium accuracy
-                                else         -> 1.2f    // CAR good accuracy (~4.3 km/h) allows turning / roundabout heading
-                            }
-                        }
-
-                        val prevLoc = lastProcessedLocation
-                        val isPhysicallyStationary = try {
-                            StationaryDetector.getInstance(context).isPhysicallyStationary.value
-                        } catch (_: Exception) { false }
-                        val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
-
-                        // Stationary coordinate anchor: freeze coordinates to anchor ONLY when resting indoors/on a desk and NOT recording
-                        if (isPhysicallyStationary && prevLoc != null && !isTripRecording) {
-                            location.latitude = prevLoc.latitude
-                            location.longitude = prevLoc.longitude
-                        }
-
-                        val displacement = if (prevLoc != null) prevLoc.distanceTo(location) else 0f
-                        val candidateBearing: Float? = when {
-                            isPhysicallyStationary && !isTripRecording -> null
-                            location.hasBearing() && speed >= minSpeedForBearing -> location.bearing
-                            prevLoc != null && displacement >= 4.0f && speed >= 0.8f -> prevLoc.bearingTo(location)
-                            else -> null
-                        }
-
-                        val currentBearing = if (candidateBearing != null) {
-                            val smoothed = smoothBearing(candidateBearing, speedKmh)
-                            lastValidBearing = smoothed
-                            smoothed
-                        } else {
-                            lastValidBearing  // hold frozen heading when slow/stopped
-                        }
-                        lastProcessedLocation = AndroidLocation(location)
-
-                        // 1. Immediate TripManager kinematic notification
-                        TripManager.getInstance(context).onLocationUpdate(
-                            location.latitude,
-                            location.longitude,
-                            speed,
-                            committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
-                            if (location.hasAccuracy()) location.accuracy else null,
-                            alt
-                        )
-
-                        // 2. Immediate LiveSharing telemetry notification
-                        val immediatePlaceName = committedPlace?.let {
-                            val p = it.pl.takeIf { pl -> pl.isValid() } ?: it.en
-                            if (!p.street.isNullOrBlank()) "${p.city}, ${p.street}" else p.city
-                        }
-                        LiveSharingManager.getInstance(context).onLocationUpdate(
-                            lat = location.latitude,
-                            lng = location.longitude,
-                            speedKmh = speedKmh,
-                            altitude = alt,
-                            bearing = currentBearing,
-                            placeName = immediatePlaceName,
-                            trekkingBadge = null,
-                            accuracy = if (location.hasAccuracy()) location.accuracy else null
-                        )
-
-                        // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
-                        val seqId = ++fixSeqCounter
-                        val fastSnapshot = MultiLocationSnapshot(
-                            multiPlace = committedPlace,
-                            speedMs = speed,
-                            speedKmh = speedKmh,
-                            lat = location.latitude,
-                            lng = location.longitude,
-                            altitude = alt,
-                            bearing = currentBearing,
-                            accuracy = if (location.hasAccuracy()) location.accuracy else null,
-                            timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis(),
-                            fixSeqId = seqId
-                        )
-                        lastLocationSnapshot = fastSnapshot
-                        trySend(fastSnapshot)
-
-                        // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
-                        val capturedBearing = currentBearing
-                        val fixTimestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
-                        val fixAccuracy = if (location.hasAccuracy()) location.accuracy else null
-                        ioScope.launch {
-                            val rawMultiData = resolveMultiLanguageData(
-                                lat = location.latitude,
-                                lng = location.longitude,
-                                bearing = capturedBearing,
-                                speedKmh = speedKmh,
-                                accuracyMeters = fixAccuracy
-                            )
-                            synchronized(geocodeLock) {
-                                // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
-                                if (fixTimestamp < latestEnrichedTimestamp) {
-                                    TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
-                                    return@launch
-                                }
-                                latestEnrichedTimestamp = fixTimestamp
-
-                                val borderStabilized = applyBorderHysteresis(location.latitude, location.longitude, rawMultiData)
-                                val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, capturedBearing)
-
-                                // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
-                                committedPlace = stabilizedMultiData
-
-                                // Update TripManager with verified locality hierarchy without injecting duplicate points
-                                TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
-
-                                // Enriched snapshot MUST carry the CURRENT (latest) kinematic coordinates to prevent backward teleports!
-                                val currentSnap = lastLocationSnapshot
-                                val enrichedSnapshot = MultiLocationSnapshot(
-                                    multiPlace = stabilizedMultiData,
-                                    speedMs = currentSnap?.speedMs ?: speed,
-                                    speedKmh = currentSnap?.speedKmh ?: speedKmh,
-                                    lat = currentSnap?.lat ?: location.latitude,
-                                    lng = currentSnap?.lng ?: location.longitude,
-                                    altitude = currentSnap?.altitude ?: alt,
-                                    bearing = currentSnap?.bearing ?: capturedBearing,
-                                    accuracy = currentSnap?.accuracy ?: (if (location.hasAccuracy()) location.accuracy else null),
-                                    timestamp = currentSnap?.timestamp ?: fixTimestamp,
-                                    fixSeqId = currentSnap?.fixSeqId ?: seqId
-                                )
-                                lastLocationSnapshot = enrichedSnapshot
-                                trySend(enrichedSnapshot)
-                            }
-                        }
+                    // Process every delivered fix in time order: when the screen is off, Fused batches
+                    // fixes and delivers several at once; the old code kept only lastLocation.
+                    val fixes = result.locations
+                    if (fixes.size > 1) {
+                        fixes.sortedBy { it.elapsedRealtimeNanos }.forEach { handleLocation(it) }
+                    } else {
+                        fixes.firstOrNull()?.let { handleLocation(it) }
                     }
                 }
             }
@@ -1140,27 +1172,17 @@ class LocationManager private constructor(private val context: Context) {
                 }
             }
             .map {
-                val isTripRecording = TripManager.getInstance(context).activeTrip.value != null
-                val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
-                val stabilized = positionStabilizer.update(
+                // Stateless projection: stabilisation, anchoring and heading now live in TrackingEngine.
+                LocationFix(
                     lat = it.lat,
                     lng = it.lng,
-                    accuracy = it.accuracy ?: 10f,
+                    bearing = it.bearing,
                     speedMs = it.speedMs,
                     timestamp = it.timestamp,
-                    isPhysicalStationary = if (isTripRecording) false else isStationary,
-                    isTripRecording = isTripRecording
-                )
-                val movingBearing = if (it.speedMs >= 0.8f && (!stabilized.isAnchored || isTripRecording)) it.bearing else null
-                LocationFix(
-                    lat = stabilized.lat,
-                    lng = stabilized.lng,
-                    bearing = movingBearing,
-                    speedMs = if (stabilized.isAnchored && !isTripRecording) 0f else it.speedMs,
-                    timestamp = it.timestamp,
-                    accuracy = stabilized.accuracy,
-                    isAnchored = if (isTripRecording) false else stabilized.isAnchored,
-                    fixSeqId = it.fixSeqId
+                    accuracy = it.accuracy,
+                    isAnchored = it.track?.isStationary == true,
+                    fixSeqId = it.fixSeqId,
+                    track = it.track
                 )
             }
     }

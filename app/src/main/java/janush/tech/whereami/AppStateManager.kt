@@ -35,6 +35,10 @@ class AppStateManager private constructor(private val context: Context) {
     private var lastSleepStateTransitionMs = 0L
 
     companion object {
+        /** Screen-off trip recording: Fused batches fixes so the CPU wakes once per batch. */
+        private const val SCREEN_OFF_BATCH_DELAY_MS = 20_000L
+        private const val SCREEN_OFF_BATCH_DELAY_SAVER_MS = 30_000L
+
         @Volatile
         private var INSTANCE: AppStateManager? = null
 
@@ -319,6 +323,7 @@ class AppStateManager private constructor(private val context: Context) {
         isAppInForeground = inForeground
         _isAppInForegroundFlow.value = inForeground
         if (inForeground) {
+            janush.tech.whereami.tracking.PostTripMatcher.schedule(context)
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
             // Do NOT automatically cancel sleep mode when user simply opens or views the app!
@@ -463,7 +468,7 @@ class AppStateManager private constructor(private val context: Context) {
         TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
 
         // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
-        GpsFilterEngine.getInstance().reset()
+        LocationManager.getInstance(context).resetTracking()
 
         // Acquire scoped wake lock for confirmation burst so CPU doesn't suspend while screen is off
         try {
@@ -794,19 +799,20 @@ class AppStateManager private constructor(private val context: Context) {
                 val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
                     ?: TripManager.getInstance(context).activityProfile.value
                 
-                // When actively viewing on screen in foreground, sample at 1 Hz (1000ms) for silky-smooth tracking
-                var interval = if (isAppInForeground) 1000L else profile.gpsIntervalMs
-                var minInterval = if (isAppInForeground) 1000L else profile.minGpsIntervalMs
+                // Foreground: 1 Hz for silky-smooth tracking. Screen off: fast movers (car/bike) still sample at
+                // 1 Hz so turns are not cut into chords, but fixes are BATCHED (one CPU wake per ~20 s) and every
+                // fix is processed by the tracking engine. Slow profiles keep their profile cadence.
+                val isFastMover = profile == ActivityProfile.CAR || profile == ActivityProfile.CYCLING || profile == ActivityProfile.MTB
+                var interval = if (isAppInForeground || isFastMover) 1000L else profile.gpsIntervalMs
+                var minInterval = if (isAppInForeground || isFastMover) 1000L else profile.minGpsIntervalMs
+                var maxDelay = if (isAppInForeground) 0L else SCREEN_OFF_BATCH_DELAY_MS
 
-                if (policy == BatteryPowerPolicy.HIGH_PERFORMANCE || (policy == BatteryPowerPolicy.SMART_AUTO && charging)) {
-                    // Relax restrictions when plugged in or performance requested
-                    interval = (interval / 2).coerceAtLeast(1000L)
-                    minInterval = (minInterval / 2).coerceAtLeast(1000L)
-                } else if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground) {
-                    interval = (interval * 1.5).toLong()
-                    minInterval = (minInterval * 1.5).toLong()
+                if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground) {
+                    interval = (interval * 2).coerceAtLeast(2000L)
+                    minInterval = (minInterval * 2).coerceAtLeast(1500L)
+                    maxDelay = SCREEN_OFF_BATCH_DELAY_SAVER_MS
                 }
-                locManager.updateSamplingInterval(interval, minInterval)
+                locManager.updateSamplingInterval(interval, minInterval, maxDelay)
             }
             AppLifecycleMode.LIVE_ONLY -> {
                 motionBurstJob?.cancel()

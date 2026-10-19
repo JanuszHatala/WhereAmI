@@ -12,6 +12,23 @@ import java.util.TimeZone
 object GpxExporter {
 
     fun exportTripToGpx(context: Context, trip: TripRecord): File {
+        val rows = try {
+            TripDatabaseHelper(context).getTrackPointRows(trip.id)
+        } catch (_: Exception) { emptyList() }
+        val gpx = buildGpx(trip, rows.takeIf { it.size == trip.points.size })
+        val gpxDir = File(context.cacheDir, "gpx_exports").apply { mkdirs() }
+        val safeFileName = "trip_" + trip.startTime + ".gpx"
+        val file = File(gpxDir, safeFileName)
+        file.writeText(gpx)
+        return file
+    }
+
+    /**
+     * Pure GPX builder. [rows] (from `track_points`) adds `<ele>` and `<time>` per point; without rows (or when
+     * the row count does not match the trip geometry) falls back to bare coordinates from [TripRecord.points].
+     * Legacy-migrated points have no time, so `<time>` is omitted rather than invented.
+     */
+    internal fun buildGpx(trip: TripRecord, rows: List<janush.tech.whereami.tracking.TrackPointRow>?): String {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
@@ -44,18 +61,24 @@ object GpxExporter {
         gpxBuilder.append("""  <trk>""").append("\n")
         gpxBuilder.append("    <name>").append(titleSafe).append("</name>\n")
         gpxBuilder.append("""    <trkseg>""").append("\n")
-        for (pt in trip.points) {
-            gpxBuilder.append("      <trkpt lat=\"").append(pt.latitude).append("\" lon=\"").append(pt.longitude).append("\"/>\n")
+        if (rows != null) {
+            for (r in rows) {
+                gpxBuilder.append("      <trkpt lat=\"").append(r.lat).append("\" lon=\"").append(r.lng).append("\">\n")
+                val alt = r.altitudeM
+                if (alt != null && !alt.isNaN()) gpxBuilder.append("        <ele>").append(String.format(Locale.US, "%.1f", alt)).append("</ele>\n")
+                val t = r.tUtcMs
+                if (t != null && t > 0L) gpxBuilder.append("        <time>").append(sdf.format(Date(t))).append("</time>\n")
+                gpxBuilder.append("      </trkpt>\n")
+            }
+        } else {
+            for (pt in trip.points) {
+                gpxBuilder.append("      <trkpt lat=\"").append(pt.latitude).append("\" lon=\"").append(pt.longitude).append("\"/>\n")
+            }
         }
         gpxBuilder.append("""    </trkseg>""").append("\n")
         gpxBuilder.append("""  </trk>""").append("\n")
         gpxBuilder.append("""</gpx>""").append("\n")
-
-        val gpxDir = File(context.cacheDir, "gpx_exports").apply { mkdirs() }
-        val safeFileName = "trip_" + trip.startTime + ".gpx"
-        val file = File(gpxDir, safeFileName)
-        file.writeText(gpxBuilder.toString())
-        return file
+        return gpxBuilder.toString()
     }
 
     fun shareGpx(context: Context, trip: TripRecord) {

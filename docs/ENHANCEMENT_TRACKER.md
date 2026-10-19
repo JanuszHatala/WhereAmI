@@ -1051,19 +1051,21 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **WLK79-05** | **Course-Up Stride Damping (`OsmMapView`)**: At walking speeds ($< 5\text{ km/h} = 1.39\text{ m/s}$), increased Course-Up rotation deadband to 2.0° with heavier damping ($\tau = 0.40\text{s}$), filtering out human body walking yaw oscillations while retaining snappy 0.5° rotation for driving/cycling. | `OsmMapView.kt` | **Completed** | Verified in `OsmMapView.kt` render loop. |
 | **VER-52** | **Build Gate & Version Increment**: Increment `versionCode` to 102 and `versionName` to "1.10.7". Pre-completion build gate `./gradlew testDebugUnitTest assembleDebug` passed with `BUILD SUCCESSFUL` (all test suites passed, 0 failures). | `app/build.gradle.kts` | **Completed** | `./gradlew testDebugUnitTest assembleDebug` verified. |
 
+---
 
+## 83. Round 80: Tracking Engine v2 - EKF + Fixed-Lag Smoother, Frame-Time Render Pipeline, `track_points` Storage, Screen-Off Batching & Post-Trip Road Match (2026-10-19, v1.11.0)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG80-01** | **Map rotates in steps and corrects back on turns (video 1)**: heading target alternated between spline tangent and lagged raw bearing; rotation `dt` mixed two clocks (always clamped); stale fix in the frame loop. | `tracking/RenderPipeline.kt`, `RotationSlew.kt`, `OsmMapView.kt` | Implemented | `RenderPipelineTest` (reversal windows < 5 deg without gyro, < 2.5 deg with gyro), single `elapsedRealtime` clock |
+| **ENG80-02** | **Cursor catches up slowly; position is not the real position (video 2)**: 1 s buffer shorter than fix interval plus latency, position-only Kalman with ~0.15 gain at walking speed. | `tracking/TrackingEngine.kt`, `KinematicEkf.kt`, `RenderPipeline.kt` | Implemented | `TrackingEngineTest` lag/cornering metrics, adaptive 0-1800 ms latency only under degraded conditions |
+| **ENG80-03** | **Polyline drawn as one straight line from the pre-screen-off point; angular polyline**: only the last location of a batch was processed, two polyline data paths, 5-6 s screen-off cadence. | `LocationManager.kt`, `TripManager.kt`, `OsmMapView.kt`, `AppStateManager.kt` | Implemented | All `LocationResult.locations` processed in order; 1 Hz batched screen-off for car/cycling; live polyline = committed + provisional tail |
+| **ENG80-04** | **Replace the position/heading engine; Google Maps / Strava quality, battery optimal**: removed `GpsFilterEngine`, `PositionStabilizer`, `PositionInterpolator`; ADR-07. | `tracking/*`, `docs/ARCHITECTURE.md` | Implemented | 358 unit tests, 0 failures; device verification pending install |
+| **ENG80-05** | **Storage and I/O**: per-fix `points_json` rewrite replaced by `track_points` with backfill, batched writer thread, DEM lookup off the main thread, throttled last-fix prefs writes. | `TripDatabaseHelper.kt` (DB v10), `TripManager.kt`, `LocationManager.kt` | Implemented | `TrackPointRowTest`; legacy JSON untouched |
+| **ENG80-06** | **GPX export with time and elevation** | `GpxExporter.kt` | Implemented | `GpxExporterTest` |
+| **ENG80-07** | **GNSS request hygiene and foreground-only gyro** | `LocationManager.kt`, `tracking/GyroHeadingSensor.kt` | Implemented | `GyroHeadingSensorTest`, `LocationRequestCadenceTest` |
+| **ENG80-08** | **`LocationScreen` exceeded the ART compile limit (23392 code units, interpreted)**: blocks lifted into local composables | `MainActivity.kt` | Implemented | dexdump: 23392 -> 8178 code units; largest app methods now < 17k |
+| **ENG80-09** | **Post-trip OSRM `/match` alternate geometry (CAR, online, retry later)** | `tracking/RouteMatching.kt`, `PostTripMatcher.kt`, `OsmMapMatcher.kt` | Implemented (data layer) | `RouteMatchingTest`; UI toggle to display the snapped line is a follow-up (BKL) |
+| **ENG80-10** | **Diagnostics recorder and replay harness** | `tracking/TrackDiagnostics.kt`, `TrackSim.kt`, `pull_device_data.sh` | Implemented | Replay tests |
+| **VER-80** | **Build Gate & Version Increment**: `versionCode` 105, `versionName` "1.11.0"; `./gradlew testDebugUnitTest assembleDebug` passed. | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |
 
