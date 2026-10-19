@@ -138,10 +138,17 @@ It tracks the workflow and architectural decisions across all development sessio
   - `track_points` table + backfill (`TripDatabaseHelper.kt`), batched writer (`TripManager.kt`), GPX with `<ele>`/`<time>` (`GpxExporter.kt`).
   - `tracking/RouteMatching.kt`, `PostTripMatcher.kt`, `OsmMapMatcher.matchChunk`: post-trip OSRM `/match` alternate geometry (`trip_matches`).
   - `tracking/TrackDiagnostics.kt` (`TrackDiagnosticsRecorder`) + replay harness (`TrackSim.kt`): JSONL raw fixes and engine state for field-test analysis (`pull_device_data.sh` pulls `files/diagnostics`).
-  - Unit tests: `TrackingEngineTest`, `RenderPipelineTest`, `SupportingTrackingTest`, `GyroHeadingSensorTest`, `TrackPointRowTest`, `RouteMatchingTest`, `GpxExporterTest`, `LocationRequestCadenceTest`.
+  - `tracking/PencilTrail.kt`: live polyline end drawn from the cursor's rendered path (v1.12.0).
+  - `tracking/AdaptiveTrackSampler.kt`: speed-adaptive recorded vertex density (v1.12.0).
+  - `tracking/MotionCourse.kt`: heading arrow from visible motion when the filter heading is not observed (v1.12.0).
+  - `TrackingEngine.activeProfile`: kinematic envelope escalation for a mislabelled activity (v1.12.0).
+  - `DemAltitudeHold.kt`: altitude badge DEM hold (v1.12.0).
+  - Unit tests: `TrackingEngineTest`, `RenderPipelineTest`, `SupportingTrackingTest`, `WalkingRefinementsTest`, `GyroHeadingSensorTest`, `TrackPointRowTest`, `RouteMatchingTest`, `GpxExporterTest`, `LocationRequestCadenceTest`; `FieldReplayTest` replays a pulled diagnostics JSONL (`WAI_REPLAY_JSONL`).
 - **Decision History & Evolution**:
   - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
   - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).
+  - *User Feedback (Walking Field Test 2026-10-19)*: flickering altitude badge, polyline re-drawn in different directions and not attached to the cursor, density should depend on real speed (and survive a wrong profile), arrow not following the real movement.
+  - *Resolution (v1.12.0)*: pencil trail, adaptive sampler, envelope escalation, motion-course arrow, DEM hold with a single badge writer (ADR-07 amendment).
 
 ---
 

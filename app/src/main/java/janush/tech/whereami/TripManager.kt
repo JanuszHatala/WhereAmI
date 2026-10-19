@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import org.osmdroid.util.GeoPoint
+import janush.tech.whereami.tracking.AdaptiveTrackSampler
 import janush.tech.whereami.tracking.SmoothedPoint
 import janush.tech.whereami.tracking.TrackPointRow
 import java.util.concurrent.atomic.AtomicBoolean
@@ -120,6 +121,12 @@ class TripManager private constructor(private val context: Context) {
     private var lastRowFlushMs = 0L
     private val gpsFallbackSeen = AtomicBoolean(false)
     private var lastSmoothedForDistance: SmoothedPoint? = null
+    private val trackSampler = AdaptiveTrackSampler()
+
+    /** Elapsed-realtime timestamp of the newest committed track vertex (the live map draws past it). */
+    @Volatile
+    var lastCommittedElapsedMs: Long = -1L
+        private set
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -355,6 +362,8 @@ class TripManager private constructor(private val context: Context) {
                     }
                     gpsFallbackSeen.set(restoredSources.any { it != "DEM" })
                     lastSmoothedForDistance = null
+                    trackSampler.reset()
+                    lastCommittedElapsedMs = -1L
                     lastMovingTimestamp = System.currentTimeMillis() // Reset watchdog timer on restore
                     lastLocation = unclosed.points.lastOrNull()?.let {
                         Location("").apply {
@@ -513,6 +522,8 @@ class TripManager private constructor(private val context: Context) {
         }
         gpsFallbackSeen.set(false)
         lastSmoothedForDistance = null
+        trackSampler.reset()
+        lastCommittedElapsedMs = -1L
 
         val profile = _activityProfile.value
 
@@ -566,7 +577,7 @@ class TripManager private constructor(private val context: Context) {
         if (_activeTrip.value == null) return
         // Drain the fixed-lag smoother so the last ~3 s of the trip are part of the recording.
         try {
-            onSmoothedPoints(LocationManager.getInstance(context).flushTracking())
+            onSmoothedPoints(LocationManager.getInstance(context).flushTracking(), drainSampler = true)
         } catch (_: Exception) {}
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
@@ -978,24 +989,29 @@ class TripManager private constructor(private val context: Context) {
      *
      * Must be called from the same thread as [onLocationUpdate] (the location callback).
      */
-    fun onSmoothedPoints(points: List<SmoothedPoint>) {
-        if (points.isEmpty()) return
+    fun onSmoothedPoints(points: List<SmoothedPoint>, drainSampler: Boolean = false) {
+        if (points.isEmpty() && !drainSampler) return
         val current = _activeTrip.value ?: return
         if (_isPaused.value) {
             lastSmoothedForDistance = null
             return
         }
-        val currentProfile = _activityProfile.value
-        val commitThreshold = when (currentProfile) {
-            ActivityProfile.WALKING, ActivityProfile.HIKING -> 2.0
-            ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 3.5
-            ActivityProfile.CAR -> 5.0
-        }
-        val newPoints = ArrayList<GeoPoint>(current.points.size + points.size)
+        val newPoints = ArrayList<GeoPoint>(current.points.size + points.size + 1)
         newPoints.addAll(current.points)
         var distance = current.distanceMeters
         var committed = 0
         val res = FloatArray(1)
+
+        fun commit(p: SmoothedPoint) {
+            val last = newPoints.lastOrNull()
+            if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
+            val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
+            newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
+            val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
+            synchronized(rowLock) { pendingRows.add(row) }
+            lastCommittedElapsedMs = p.tElapsedMs
+            committed++
+        }
 
         for (p in points) {
             if (p.tUtcMs < current.startTime - TRACK_LEAD_IN_MS) continue
@@ -1008,23 +1024,10 @@ class TripManager private constructor(private val context: Context) {
             }
             lastSmoothedForDistance = p
 
-            // Polyline commit: spacing by profile, suppress stationary jitter
-            val last = newPoints.lastOrNull()
-            val distFromLast = if (last != null) {
-                Location.distanceBetween(last.latitude, last.longitude, p.lat, p.lng, res)
-                res[0].toDouble()
-            } else Double.MAX_VALUE
-            if (last != null && last.latitude == p.lat && last.longitude == p.lng) continue
-            val speedKmh = (p.speedMps * 3.6).toFloat()
-            val isLocallyMoving = !p.isStationary && (speedKmh >= 1.5f || distFromLast >= 15.0)
-            if (newPoints.isEmpty() || (distFromLast >= commitThreshold && isLocallyMoving)) {
-                val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
-                newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
-                val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
-                synchronized(rowLock) { pendingRows.add(row) }
-                committed++
-            }
+            // Polyline commit: speed-adaptive line simplification (see AdaptiveTrackSampler)
+            trackSampler.offer(p).forEach(::commit)
         }
+        if (drainSampler) trackSampler.drain().forEach(::commit)
 
         if (committed == 0 && distance == current.distanceMeters) return
         val updated = current.copy(points = newPoints, distanceMeters = distance)

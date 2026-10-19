@@ -103,7 +103,8 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **60fps Render Pipeline (`tracking/RenderPipeline`)**:
   - The map tracking marker, camera recentering and rotation MUST use `RenderPipeline.frame(SystemClock.elapsedRealtime())` on display VSYNC (`withFrameNanos`): CTRV prediction to frame time with critically damped correction blending and adaptive 0-1.8 s latency only when conditions degrade.
   - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by the pipeline.
-  - The live polyline has ONE source: committed smoothed points + provisional smoother tail + cursor tip. Never bridge gaps with a chord.
+  - The live polyline has ONE source: committed smoothed points + pencil trail (the cursor's rendered path since the newest committed vertex, `PencilTrail`) + cursor tip. It must always end under the cursor and never re-shape ahead of it. Never bridge gaps with a chord.
+  - Recorded vertex density follows measured speed (`AdaptiveTrackSampler`), not the selected profile; the profile is only a kinematic prior (`TrackingEngine.activeProfile` escalates when motion exceeds it).
 - **Screen-Off Recording Cadence & Gyro**:
   - While recording with the screen off, car/cycling/MTB sample at 1 Hz with fixes batched (`setMaxUpdateDelayMillis` 20 s; 30 s in battery saver); slow profiles keep the profile cadence. No CPU wake lock is added for batching.
   - The gyroscope (`GyroHeadingSensor`) MUST be registered only when `GyroPolicy.shouldRun` holds (foreground, moving, following or recording) and unregistered otherwise.

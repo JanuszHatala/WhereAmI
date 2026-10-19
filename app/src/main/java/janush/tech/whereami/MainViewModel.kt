@@ -165,6 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val displayAltitude: StateFlow<Double?> = _displayAltitude.asStateFlow()
 
     private var demLookupJob: Job? = null
+    private val demHold = DemAltitudeHold()
     private var lastDemLookupLat: Double = 0.0
     private var lastDemLookupLng: Double = 0.0
 
@@ -213,43 +214,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 1. Check local SQLite cache first (< 1ms synchronous)
-        val cachedDem = dbHelper.getCachedElevation(lat, lng)
-        if (cachedDem != null && cachedDem > 0.0) {
-            _currentDemAltitude.value = cachedDem
+        // 1. Hold the last valid DEM value near where it was resolved: a pending or failed lookup for the
+        //    next grid cell must never blank the badge (visible flicker while walking).
+        val held = demHold.held(lat, lng)
+        if (held != null) {
             _isAltitudeFallback.value = false
-            _displayAltitude.value = cachedDem
-            return
+            _displayAltitude.value = held
+        } else {
+            _isAltitudeFallback.value = (_displayAltitude.value == null)
         }
 
-        // 2. If displacement from last DEM lookup is < 15m and we already have a valid DEM altitude, keep it
-        val dist = FloatArray(1)
-        android.location.Location.distanceBetween(lastDemLookupLat, lastDemLookupLng, lat, lng, dist)
-        if (dist[0] < 15f && _currentDemAltitude.value != null && !_isAltitudeFallback.value) {
-            _displayAltitude.value = _currentDemAltitude.value
-            return
-        }
+        // 2. Close to the last lookup (pending or resolved): nothing new to ask for
+        val nearLastLookup = DemAltitudeHold.distanceM(lastDemLookupLat, lastDemLookupLng, lat, lng) < 15.0
+        if (nearLastLookup && (held != null || demLookupJob?.isActive == true)) return
 
-        // 3. Uncached and speed < 15 km/h: retain current _displayAltitude to prevent visual blinking/flickering
-        // while asynchronously resolving elevation for the new grid cell
-        _isAltitudeFallback.value = (_displayAltitude.value == null)
-
-        // 4. Asynchronously query DEM without blocking kinematics or UI
+        // 3. Resolve off the main thread: SQLite cache first, then the network (debounced)
+        lastDemLookupLat = lat
+        lastDemLookupLng = lng
         demLookupJob?.cancel()
         demLookupJob = viewModelScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(250L) // Debounce rapid GPS bursts
-            lastDemLookupLat = lat
-            lastDemLookupLng = lng
-            val dem = ElevationRepository.getElevation(lat, lng, dbHelper)
+            val cached = dbHelper.getCachedElevation(lat, lng)?.takeIf { it > 0.0 }
+            val dem = cached ?: run {
+                kotlinx.coroutines.delay(250L) // Debounce rapid GPS bursts
+                ElevationRepository.getElevation(lat, lng, dbHelper)
+            }
             withContext(Dispatchers.Main) {
-                if (dem != null && dem > 0.0) {
-                    _currentDemAltitude.value = dem
-                    _isAltitudeFallback.value = false
-                    _displayAltitude.value = dem
-                } else {
-                    _isAltitudeFallback.value = true
-                    _displayAltitude.value = null
-                }
+                if (_altitudeSourceMode.value != AltitudeSourceMode.DEM) return@withContext
+                val shown = demHold.accept(lat, lng, dem)
+                if (dem != null && dem > 0.0) _currentDemAltitude.value = dem
+                _isAltitudeFallback.value = shown == null
+                _displayAltitude.value = shown
             }
         }
     }
