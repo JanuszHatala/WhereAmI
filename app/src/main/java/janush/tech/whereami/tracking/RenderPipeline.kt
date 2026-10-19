@@ -31,13 +31,17 @@ class RenderPipeline(
         val lng: Double,
         val headingDeg: Double,
         val headingConfident: Boolean,
+        /** The latest filter state observes heading (false while [headingDeg] is a held last-good value). */
+        val headingFresh: Boolean,
         val speedMps: Double,
         val isMoving: Boolean,
         val isStationary: Boolean,
         val latencyMs: Double,
         val accuracyM: Float?,
         /** True when the pose was produced by extrapolation beyond the last fix. */
-        val isPredicted: Boolean
+        val isPredicted: Boolean,
+        /** Time the pose represents (`now - latencyMs`, elapsedRealtime ms). */
+        val renderTimeMs: Long
     )
 
     private class Raw(
@@ -178,12 +182,14 @@ class RenderPipeline(
             lng = raw.lng + oE / mLng,
             headingDeg = heading,
             headingConfident = latest.headingConfident || lastConfidentHeading != null,
+            headingFresh = latest.headingConfident,
             speedMps = raw.speedMps,
             isMoving = moving,
             isStationary = raw.stationary,
             latencyMs = latencyMs,
             accuracyM = latest.accuracyM,
-            isPredicted = raw.predicted
+            isPredicted = raw.predicted,
+            renderTimeMs = renderT.toLong()
         )
     }
 
@@ -234,6 +240,8 @@ class RenderPipeline(
         val tSec = span / 1000.0
         // Hermite tangents from filtered velocities, clamped to avoid loops on bad velocities.
         fun tangent(s: TrackState): Pair<Double, Double> {
+            // An unobserved heading is a random walk: follow the chord instead of curving along it.
+            if (!s.headingConfident) return dE to dN
             val h = Math.toRadians(s.headingDeg)
             var tx = s.speedMps * sin(h) * tSec
             var ty = s.speedMps * cos(h) * tSec
@@ -264,6 +272,7 @@ class RenderPipeline(
         }
         // Distance saturates: dead reckoning is trustworthy for ~2 s, then fades.
         val tauEff = if (dt <= FULL_TRUST_S) dt else FULL_TRUST_S + FADE_S * (1.0 - exp(-(dt - FULL_TRUST_S) / FADE_S))
+        if (!s.headingConfident) return predictAlongChord(s, tauEff, dt)
 
         // Heading change: live gyro if it covers the interval, else decayed filter turn rate.
         val gyroDelta = gyro?.integrate(s.tElapsedMs, t.toLong())
@@ -287,6 +296,26 @@ class RenderPipeline(
         val lng = s.lng + dist * sin(h0 + half) / mLng
         val speed = s.speedMps * (if (dt <= FULL_TRUST_S) 1.0 else exp(-(dt - FULL_TRUST_S) / FADE_S))
         return Raw(lat, lng, wrapDeg360(s.headingDeg + dTheta), speed, false, true)
+    }
+
+    /**
+     * An unobserved heading is a random walk, so do not dead-reckon along it: continue the displacement of
+     * the last two states instead (what the user has actually been doing), never faster than the filter speed.
+     */
+    private fun predictAlongChord(s: TrackState, tauEff: Double, dt: Double): Raw {
+        val speedOut = s.speedMps * (if (dt <= FULL_TRUST_S) 1.0 else exp(-(dt - FULL_TRUST_S) / FADE_S))
+        val prev = history.getOrNull(history.size - 2)
+        val span = prev?.let { (s.tElapsedMs - it.tElapsedMs) / 1000.0 } ?: 0.0
+        if (prev == null || span < 0.3 || span > 5.0) {
+            return Raw(s.lat, s.lng, s.headingDeg, speedOut, false, true)
+        }
+        val mLat = LocalFrame.METERS_PER_DEG_LAT
+        val mLng = mLat * cos(Math.toRadians(s.lat)).coerceAtLeast(0.01)
+        var ve = (s.lng - prev.lng) * mLng / span
+        var vn = (s.lat - prev.lat) * mLat / span
+        val v = hypot(ve, vn)
+        if (v > s.speedMps && v > 1e-9) { val k = s.speedMps / v; ve *= k; vn *= k }
+        return Raw(s.lat + vn * tauEff / mLat, s.lng + ve * tauEff / mLng, s.headingDeg, speedOut, false, true)
     }
 
     companion object {
