@@ -88,7 +88,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
 
 ### B. Kinematic Sanity, Smooth Heading & Position Estimation (Tracking Engine v2, ADR-07)
 Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tower fallbacks ($1.5\text{km}-5\text{km}$ accuracy).
-- **Mandatory Estimator Pass**: All raw location fixes MUST pass through `tracking/TrackingEngine` (CTRV EKF + 3 s fixed-lag RTS smoother) before dispatching to UI, trip recording, or live telemetry. `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` were retired in v1.11.0; do not reintroduce parallel filters.
+- **Mandatory Estimator Pass**: All raw location fixes MUST pass through `tracking/TrackingEngine` (CTRA EKF + 3 s fixed-lag RTS smoother) before dispatching to UI, trip recording, or live telemetry. `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` were retired in v1.11.0; do not reintroduce parallel filters.
 - **Engine Rules**:
   1. *Single time base*: `elapsedRealtimeNanos` everywhere; UTC only for persistence. Process EVERY location in `LocationResult.locations`, in order.
   2. *Innovation gate*: chi-square gating plus profile max-speed cap; 3 mutually consistent rejections reset the filter (no recovery deadlock).
@@ -96,13 +96,13 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
   4. *Recorded geometry and distance* come only from the smoother output (`TripManager.onSmoothedPoints`) stored in the `track_points` table.
   5. *Profile is a prior, not a cage*: physical limits (max speed, accuracy gates, course trust) go through `TrackingEngine.activeProfile`, which escalates when measured motion exceeds the selected profile. A wrong profile choice must never cause reject/reset cycles or sparse recording.
 - **Heading Display**:
-  - Arrow direction = fresh filter heading (`Pose.headingFresh`); otherwise, while visibly moving, the cursor's own motion course (`MotionCourse`); stationary = last confident heading held (no spinning at traffic lights or rest stops); no observable heading at all = dot. Never show a stale held heading while moving, and never dead-reckon the cursor along an unobserved heading.
+  - Arrow direction = fresh filter heading (`Pose.headingFresh`); otherwise, while visibly moving, the cursor's own motion course (`MotionCourse`; vehicles never flip it more than 90 deg from the heading fresh within the last 8 s, `MotionCourse.forVehicle`); stationary = last confident heading held (no spinning at traffic lights or rest stops); no observable heading at all = dot. Never show a stale held heading while moving, and never dead-reckon the cursor along an unobserved heading.
   - Course-up rotation is driven by `RotationSlew` (rate/acceleration limited, profile aware), never by per-fix deadband snapping.
 - **Kinematic / Geocoding Decoupling**:
   - Real-time map tracking (`LocationFix`) MUST be decoupled from asynchronous geocoding enrichment.
   - Geocoding completions must never re-emit past coordinates or past velocities back into the map kinematic pipeline.
 - **60fps Render Pipeline (`tracking/RenderPipeline`)**:
-  - The map tracking marker, camera recentering and rotation MUST use `RenderPipeline.frame(SystemClock.elapsedRealtime())` on display VSYNC (`withFrameNanos`): CTRV prediction to frame time with critically damped correction blending and adaptive 0-1.8 s latency only when conditions degrade.
+  - The map tracking marker, camera recentering and rotation MUST use `RenderPipeline.frame(SystemClock.elapsedRealtime())` on display VSYNC (`withFrameNanos`): CTRA prediction to frame time with critically damped correction blending and adaptive 0-1.8 s latency when conditions degrade. Vehicles render at least 1.0 s behind (`RenderPipeline.VEHICLE_LATENCY_MS`), between filter states, so the live line does not draw extrapolation zig-zags that the smoother later re-shapes.
   - Never call overlapping `animateTo()` calls on every GPS fix; use direct `setCenter(centerGp)` driven by the pipeline.
   - **Single position writer**: marker, camera, rotation, accuracy circle, altitude badge and polyline tip are positioned ONLY in the frame loop. Other effects may update content (text, icon, enabled state), never position; two writers cause visible flicker.
   - **Never display estimates that will be revised** (smoother `provisional()` / RTS tail): they re-shape on every fix.
@@ -123,6 +123,7 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **Viaduct / Overpass Inertia**: At driving speeds ($> 35\text{ km/h}$) on major corridors (`DK*`, `DW*`, `A*`, `S*`), enforce inertia: require at least 5 consecutive candidate readings AND $\ge 7.0\text{s}$ of sustained fixes before switching road names.
 - **15-Second Decay Grace Period**: If reverse geocoding temporarily returns no street during brief signal cutouts or tunnels, maintain the last confirmed street name for 15 seconds. Never flicker or blank out the display.
 - **Intentional Visit Filter**: Qualify a town/place as visited during a trip ONLY if the user penetrates $\ge 150\text{m}$ into the locality OR remains within it for $\ge 45\text{s}$. Boundary skimming along border highways must never trigger accidental visits.
+- **Pause Auto-Resume**: while paused, a trip resumes on motion only through `ResumeMotionGate`: every sample accurate (<= 25 m) and >= 70 % of the profile's auto-start speed for the confirmation window, displacement >= travel at half that speed. Indoor fixes must never resume a paused trip.
 - **Rest Stop / Pause Gating**: Enforce $\ge 150\text{s}$ ($2.5\text{ min}$) stationary dwell anchored within a $\le 12\text{m}$ spatial cluster gate before creating a `TripPause`. Enforce $45\text{s}$ resume debounce before finalizing pauses, and coalesce adjacent pauses within $30\text{m}$ and $60\text{s}$.
 - **Active Trip Visual Isolation**: An active trip recording (`isRecording || trackPoints.isNotEmpty()`) MUST NEVER display historical trip tracks or historical pauses. In `OsmMapView`, historical polylines must be completely suppressed from rendering during recording. When starting a new trip, clear selected historical trip selections in `MainViewModel` and clear live share breadcrumb buffers (`resetSessionTrail()`).
 - **Rate-Limit Mutex**: Respect Nominatim & Overpass limits (minimum 1.5s mutex between boundary requests, exponential backoff on HTTP 429).

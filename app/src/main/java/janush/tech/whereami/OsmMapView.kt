@@ -727,6 +727,7 @@ fun OsmMapView(
     val compassSensor = remember { CompassHeadingSensor(AndroidSensorRegistrar(context.applicationContext)) }
     val compassArrow = remember { CompassArrow() }
     val onFootProfile = TrackingBridge.profileFor(activityProfile).maxSpeedMps <= RenderPipeline.ON_FOOT_MAX_SPEED_MPS
+    val onFootNow = rememberUpdatedState(onFootProfile)
     var movingForCompass by remember { mutableStateOf(false) }
     LaunchedEffect(currentFix?.speedMs) {
         movingForCompass = CompassPolicy.isMovingForCompass(currentFix?.speedMs ?: 0f, movingForCompass)
@@ -766,6 +767,7 @@ fun OsmMapView(
     ) {
         if (!isAppInForeground) return@LaunchedEffect
         var lastRenderedLat = 0.0
+        var lastFreshHeadingMs = Long.MIN_VALUE / 2
         var lastRenderedLng = 0.0
         var lastRenderedAngle = -999f
         var lastRenderedAltitude = -999.0
@@ -791,11 +793,14 @@ fun OsmMapView(
                     // Arrow direction: at slow speed the direction of the curve the cursor is drawing; otherwise
                     // the filter's heading while it observes one; otherwise, when visibly moving, the direction
                     // of the cursor's own rendered motion (never a stale held value).
+                    if (pose.headingFresh) lastFreshHeadingMs = nowMs
                     val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
                     val courseBearing = when {
                         pose.isMoving && !fix.isAnchored && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
                         pose.headingFresh -> pose.headingDeg
-                        pose.isMoving && !fix.isAnchored -> motionDeg
+                        pose.isMoving && !fix.isAnchored ->
+                            if (onFootNow.value) motionDeg
+                            else MotionCourse.forVehicle(motionDeg, pose.headingDeg.takeIf { pose.headingConfident }, nowMs - lastFreshHeadingMs)
                         else -> null
                     }
                     // Compass (when trusted): smooth and immediate, sampled at the render time so it matches the

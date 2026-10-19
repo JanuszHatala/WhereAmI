@@ -35,7 +35,7 @@ data class TrackingProfile(
     val maxAccuracyM: Float,
     /** Physically plausible top speed (hard gate on implied speed). */
     val maxSpeedMps: Double,
-    /** Std-dev of unmodelled longitudinal acceleration [m/s^2]. */
+    /** Typical (steady-state std-dev of) longitudinal acceleration [m/s^2]. */
     val sigmaAccel: Double,
     /** Std-dev of unmodelled yaw acceleration [rad/s^2]. */
     val sigmaYawAccel: Double,
@@ -44,15 +44,17 @@ data class TrackingProfile(
     /** Minimum speed for heading to be considered observable. */
     val minHeadingSpeedMps: Double,
     /** Speed above which the user is considered moving. */
-    val movingSpeedMps: Double
+    val movingSpeedMps: Double,
+    /** Correlation time of longitudinal acceleration (braking / pulling away lasts this long) [s]. */
+    val accelTauS: Double = 2.0
 ) {
     companion object {
-        val CAR = TrackingProfile("CAR", 55f, 61.0, 2.2, 0.35, 4.0, 1.4, 1.5)
-        val CYCLING = TrackingProfile("CYCLING", 50f, 25.0, 1.4, 0.8, 3.0, 1.0, 1.0)
-        val MTB = TrackingProfile("MTB", 50f, 18.0, 1.6, 1.0, 2.5, 0.9, 0.8)
-        val RUNNING = TrackingProfile("RUNNING", 45f, 9.7, 1.2, 1.2, 2.2, 0.8, 0.7)
-        val HIKING = TrackingProfile("HIKING", 40f, 7.0, 0.8, 1.5, 2.0, 0.6, 0.5)
-        val WALKING = TrackingProfile("WALKING", 40f, 4.2, 0.8, 1.6, 1.8, 0.5, 0.45)
+        val CAR = TrackingProfile("CAR", 55f, 61.0, 2.2, 0.35, 4.0, 1.4, 1.5, 2.5)
+        val CYCLING = TrackingProfile("CYCLING", 50f, 25.0, 1.4, 0.8, 3.0, 1.0, 1.0, 2.0)
+        val MTB = TrackingProfile("MTB", 50f, 18.0, 1.6, 1.0, 2.5, 0.9, 0.8, 1.5)
+        val RUNNING = TrackingProfile("RUNNING", 45f, 9.7, 1.2, 1.2, 2.2, 0.8, 0.7, 2.5)
+        val HIKING = TrackingProfile("HIKING", 40f, 7.0, 0.8, 1.5, 2.0, 0.6, 0.5, 2.5)
+        val WALKING = TrackingProfile("WALKING", 40f, 4.2, 0.8, 1.6, 1.8, 0.5, 0.45, 2.5)
     }
 }
 

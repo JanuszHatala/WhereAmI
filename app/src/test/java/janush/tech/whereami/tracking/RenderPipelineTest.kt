@@ -62,7 +62,9 @@ class RenderPipelineTest {
         sim.metersBetween(a.pose.lat, a.pose.lng, b.pose.lat, b.pose.lng)
 
     @Test
-    fun `rendered heading barely reverses during a monotonic turn without gyro`() = headingReversal(false, 5.0)
+    // Vehicles render one fix interval behind, so the arrow shows the filter heading itself; its settle after
+    // the turn is bounded per fix by the engine test (5 deg).
+    fun `rendered heading barely reverses during a monotonic turn without gyro`() = headingReversal(false, 6.0)
 
     @Test
     fun `rendered heading never reverses during a monotonic turn with gyro`() = headingReversal(true, 2.5)
@@ -143,7 +145,8 @@ class RenderPipelineTest {
         val r = replay(sim)
         val t0 = r.frames.first().tMs
         val errs = r.frames.filter { it.tMs - t0 > 10_000 && it.tMs - t0 < 55_000 }.map {
-            sim.distToTruthM(it.tMs - sim.baseElapsedMs, it.pose.lat, it.pose.lng)
+            // Vehicles render one fix interval behind: compare with the truth at the rendered time.
+            sim.distToTruthM(it.pose.renderTimeMs - sim.baseElapsedMs, it.pose.lat, it.pose.lng)
         }
         val rms = sqrt(errs.sumOf { it * it } / errs.size)
         assertTrue("rms=$rms", rms < 4.0)

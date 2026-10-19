@@ -132,7 +132,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Position and heading that are smooth, corner-faithful and battery-aware at Google Maps / Strava quality, with one estimator behind recording, display and live sharing.
 - **Status**: **Implemented & Verified (unit tests); on-device verification pending**
 - **Architecture & Implementation**:
-  - `tracking/TrackingEngine.kt`, `KinematicEkf.kt`, `FixedLagSmoother.kt`, `GyroYawTracker.kt`: CTRV EKF with gating, ZUPT, stationary anchoring, 3 s RTS smoother.
+  - `tracking/TrackingEngine.kt`, `KinematicEkf.kt`, `FixedLagSmoother.kt`, `GyroYawTracker.kt`: CTRA EKF (v1.15.0; CTRV before) with gating, ZUPT, stationary anchoring, 3 s RTS smoother.
   - `tracking/RenderPipeline.kt`, `RotationSlew.kt`: frame-time prediction, critically damped correction blending, rate-limited course-up rotation.
   - `tracking/GyroHeadingSensor.kt` (`GyroPolicy`): foreground-only, moving-only gyro yaw rate.
   - `track_points` table + backfill (`TripDatabaseHelper.kt`), batched writer (`TripManager.kt`), GPX with `<ele>`/`<time>` (`GpxExporter.kt`).
@@ -148,6 +148,8 @@ It tracks the workflow and architectural decisions across all development sessio
   - Unit tests: `TrackingEngineTest`, `RenderPipelineTest`, `SupportingTrackingTest`, `WalkingRefinementsTest`, `SlowRenderAndCurveTest`, `GyroHeadingSensorTest`, `TrackPointRowTest`, `RouteMatchingTest`, `GpxExporterTest`, `LocationRequestCadenceTest`; `FieldReplayTest` replays a pulled diagnostics JSONL (`WAI_REPLAY_JSONL`).
   - `tracking/CompassMath.kt`, `CompassTracker.kt`, `CompassArrow.kt`, `CompassHeadingSensor.kt` (`CompassPolicy`): optional compass-based arrow on foot, offset learned against the course, course fallback (v1.14.0; Map Settings "Compass Arrow").
   - `PencilTrail.blendedFrom`: join blend removing the hook behind the cursor (v1.14.0).
+  - CTRA motion model, stop-entry variance re-open, `tracking/CourseConsistency.kt` (biased bearing), vehicle render latency 1.0 s, `MotionCourse.forVehicle` arrow guard (v1.15.0).
+  - `ResumeMotionGate.kt`: pause auto-resume only on accurate sustained motion (v1.15.0).
 - **Decision History & Evolution**:
   - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
   - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).
@@ -155,6 +157,8 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Resolution (v1.12.0)*: pencil trail, adaptive sampler, envelope escalation, motion-course arrow, DEM hold with a single badge writer (ADR-07 amendment).
   - *User Feedback (Weak-GPS walking recording 2026-10-19)*: arrow sideways or perpendicular to the drawn line, polyline shape changes after a few seconds, angular triangles and squares at street zoom.
   - *Resolution (v1.13.0)*: slow on-foot render mode with path-tangent arrow, curved display polyline (ADR-07 amendment v1.13.0).
+  - *User Feedback (Driving recordings 2026-10-19)*: zig-zag line later smoothed, position sliding back at stops, arrow pointing back, line over buildings, pause auto-resumed while indoors.
+  - *Resolution (v1.15.0)*: CTRA, course consistency, 1.0 s vehicle latency, vehicle arrow guard, resume gate (ADR-07 amendment v1.15.0).
 
 ---
 

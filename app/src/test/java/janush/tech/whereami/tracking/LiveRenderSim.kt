@@ -28,11 +28,13 @@ class LiveRenderSim(
         val pencilTurnP90: Double,
         val displayTurnP90: Double,
         /** Sharpest bend within 8 m behind the cursor (the committed/pencil join), p90 over time. */
-        val tailKinkP90: Double = Double.NaN
+        val tailKinkP90: Double = Double.NaN,
+        /** Share of moving arrow samples pointing more than 120 deg away from the smoothed course. */
+        val arrowReversePct: Double = Double.NaN
     ) {
         override fun toString() =
-            "arrowVsLine p50=%.1f p90=%.1f arrowVsTruth p50=%.1f p90=%.1f reshape p50=%.2fm p90=%.2fm vertexTurn pencil p90=%.0f display p90=%.0f tailKink p90=%.0f"
-                .format(arrowVsLineP50, arrowVsLineP90, arrowVsTruthP50, arrowVsTruthP90, reshapeP50, reshapeP90, pencilTurnP90, displayTurnP90, tailKinkP90)
+            "arrowVsLine p50=%.1f p90=%.1f arrowVsTruth p50=%.1f p90=%.1f reshape p50=%.2fm p90=%.2fm vertexTurn pencil p90=%.0f display p90=%.0f tailKink p90=%.0f arrowReverse=%.2f%%"
+                .format(arrowVsLineP50, arrowVsLineP90, arrowVsTruthP50, arrowVsTruthP90, reshapeP50, reshapeP90, pencilTurnP90, displayTurnP90, tailKinkP90, arrowReversePct)
     }
 
     private class P(val t: Long, val e: Double, val n: Double)
@@ -64,6 +66,7 @@ class LiveRenderSim(
         var now = fixes.first().tElapsedMs
         val end = fixes.last().tElapsedMs + 1_000
         var lastSample = 0L
+        var lastFresh = Long.MIN_VALUE / 2
         while (now <= end) {
             while (i < fixes.size && fixes[i].tElapsedMs + deliveryDelayMs <= now) {
                 val r = engine.ingest(fixes[i])
@@ -73,11 +76,14 @@ class LiveRenderSim(
             }
             val pose = rp.frame(now)
             if (pose != null) {
+                if (pose.headingFresh) lastFresh = now
                 val motionDeg = motion.update(now, pose.lat, pose.lng)
                 val live = when {
                     pathArrow && pose.isMoving && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
                     pose.headingFresh -> pose.headingDeg
-                    pose.isMoving -> motionDeg
+                    pose.isMoving ->
+                        if (profile.maxSpeedMps <= RenderPipeline.ON_FOOT_MAX_SPEED_MPS) motionDeg
+                        else MotionCourse.forVehicle(motionDeg, pose.headingDeg.takeIf { pose.headingConfident }, now - lastFresh)
                     else -> null
                 }
                 if (live != null) bearing = live
@@ -132,7 +138,8 @@ class LiveRenderSim(
         fun pct(l: List<Double>, q: Double) = l.sorted().let { if (it.isEmpty()) Double.NaN else it[((it.size - 1) * q).toInt()] }
         return Metrics(
             pct(arrowLine, .5), pct(arrowLine, .9), pct(truth, .5), pct(truth, .9),
-            pct(reshape, .5), pct(reshape, .9), pct(pencilTurnsAll, .9), pct(displayTurns, .9), pct(tailKinks, .9)
+            pct(reshape, .5), pct(reshape, .9), pct(pencilTurnsAll, .9), pct(displayTurns, .9), pct(tailKinks, .9),
+            if (truth.isEmpty()) Double.NaN else 100.0 * truth.count { it > 120.0 } / truth.size
         )
     }
 

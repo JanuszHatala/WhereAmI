@@ -27,7 +27,11 @@ every invariant below against the diff, and prove the change with replay numbers
 4. A still device is not lost tracking: sparse fixes while stationary continue the anchored state
    (`continuesStationary`). Re-seeding jumps the anchor and breaks rest-stop clustering.
 5. Never zero the hardware Doppler speed. Course weighting uses the provider's bearing accuracy; any
-   low-speed inflation is relative to the profile's `minHeadingSpeedMps`.
+   low-speed inflation is relative to the profile's `minHeadingSpeedMps`. The course sigma is also at
+   least 2x the persistent disagreement between bearings and fix displacement (`CourseConsistency`):
+   a provider bearing can be biased while claiming ~5 deg.
+5a. CTRA: acceleration is a filter state (`accelTauS`); ZUPT pins and decorrelates it. Entering
+   stationary re-opens the position variance once (EKF and stored `pPred` together, RTS consistency).
 
 **Display (`RenderPipeline`, `OsmMapView` frame loop)**
 6. Marker, camera, rotation, accuracy circle, altitude badge and polyline tip are positioned only in
@@ -39,9 +43,11 @@ every invariant below against the diff, and prove the change with replay numbers
    curve the stored vertices themselves, and keep the segment to the tip straight.
 8. Heading arrow: on foot at slow speed the direction of the drawn curve (`Pose.pathHeadingDeg`),
    else fresh filter heading (`Pose.headingFresh`), else the visible motion course (`MotionCourse`)
-   while moving, else a dot. Never show a stale held heading while moving; never dead-reckon along an
-   unobserved heading (chord prediction instead). The slow mode (1.6 s latency) must stay off for
-   vehicle profiles.
+   while moving (vehicles through `MotionCourse.forVehicle`: no flip > 90 deg within 8 s of the last
+   fresh heading), else a dot. Never show a stale held heading while moving; never dead-reckon along an
+   unobserved heading (chord prediction instead). The slow mode (1.6 s latency, Catmull-Rom) must stay
+   off for vehicle profiles; vehicles have their own 1.0 s latency floor (`VEHICLE_LATENCY_MS`) between
+   filter states, so the pencil does not record extrapolation zig-zags.
 9. Course-up rotation only through `RotationSlew`; no per-fix snapping, no overlapping `animateTo`.
 
 **Recording (`TripManager`, `AdaptiveTrackSampler`)**
@@ -65,7 +71,10 @@ every invariant below against the diff, and prove the change with replay numbers
 4. **Replay again** and put both `REPLAY` lines in the report and the tracker entry:
    heading confident while moving, heading error p50/p90/p97, filter resets, stored vertices and spacing,
    and the `REPLAY render` line (`LiveRenderSim`: arrow vs. drawn line, arrow vs. smoothed course,
-   re-shape on commit, drawn-vertex turn). `WAI_REPLAY_COMPARE=1` also prints the pre-v1.13 render.
+   re-shape on commit, drawn-vertex turn, arrowReverse) and the `REPLAY position` line (filter vs. own
+   fixes p50/p90/p99, episodes > 10 m, braking/accelerating along-track offset, stop drift, anchor
+   error). `WAI_REPLAY_COMPARE=1` also prints the pre-v1.13 render and vehicle latency variants;
+   `WAI_REPLAY_EPISODES=1` lists the > 10 m episodes (UTC ms, for video alignment).
    A change that worsens any metric needs a stated reason.
 5. **Build gate:** `./gradlew testDebugUnitTest assembleDebug`.
 6. **Docs:** ADR-07 amendment for behavioural changes, `ENHANCEMENT_TRACKER` round, `FEATURES_INVENTORY` LOC-11.
