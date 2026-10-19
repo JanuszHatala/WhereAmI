@@ -594,9 +594,7 @@ fun OsmMapView(
             currentSpeedKmh = currentSpeed,
             isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
             savedPlaces = savedPlaces,
-            destinationPoint = destinationPoint,
-            destinationAltitude = destinationAltitude,
-            destinationLoading = destinationAltitudeLoading
+            destinationPoint = destinationPoint
         )
         map.invalidate()
     }
@@ -875,9 +873,7 @@ fun OsmMapView(
                         currentSpeedKmh = frameSpeed,
                         isGpsMode = (latestAltitudeSourceMode == AltitudeSourceMode.GPS),
                         savedPlaces = latestSavedPlaces,
-                        destinationPoint = latestDestinationPoint,
-                        destinationAltitude = latestDestinationAltitude,
-                        destinationLoading = latestDestinationAltitudeLoading
+                        destinationPoint = latestDestinationPoint
                     )
 
                     // Course-up rotation: acceleration- and rate-limited follower (cannot step, cannot
