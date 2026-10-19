@@ -63,23 +63,27 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     private var destLoading: Boolean = false
 
     private var lastRenderedIntAlt: Long? = null
+    private var currentOffsetIndex: Int = 0
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xEE0F172A.toInt() // Rich Dark Slate, ~93% opacity
+        // Semi-transparent dark slate background (~46% opacity / 0x75), allowing underlying polyline
+        // and map details to show through clearly while maintaining high contrast for the altitude value
+        color = 0x750F172A.toInt()
         style = Paint.Style.FILL
-        setShadowLayer(3f * density, 0f, 1f * density, 0x80000000.toInt())
     }
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF475569.toInt() // Slate 600
+        // Solid black high-contrast border outline for sharp contrast over any terrain or polyline
+        color = 0xFF000000.toInt() // Solid Black (#000000)
         style = Paint.Style.STROKE
-        strokeWidth = 1f * density
+        strokeWidth = 1.5f * density
     }
 
     private val dashedStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF64748B.toInt() // Slate 500
+        // Solid black dashed border for GPS fallback
+        color = 0xFF000000.toInt() // Solid Black (#000000)
         style = Paint.Style.STROKE
-        strokeWidth = 1.2f * density
+        strokeWidth = 1.5f * density
         pathEffect = DashPathEffect(floatArrayOf(4.5f * density, 3f * density), 0f)
     }
 
@@ -87,6 +91,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         color = 0xFF94A3B8.toInt() // Slate 400
         textSize = 10f * density
         textAlign = Paint.Align.LEFT
+        setShadowLayer(1.5f * density, 0f, 1f * density, 0xCC000000.toInt())
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -94,6 +99,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         textSize = 12f * density
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.LEFT
+        setShadowLayer(2f * density, 0f, 1f * density, 0xCC000000.toInt())
     }
 
     private val screenPoint = Point()
@@ -175,13 +181,17 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
                 threatScreenPoints.add(Pair(sDx, sDy))
             }
 
-            val bestOffset = AltitudeBadgePositionEvaluator.selectBestOffset(
+            val bestIdx = AltitudeBadgePositionEvaluator.selectBestOffsetWithHysteresis(
                 cursorX = 0f,
                 cursorY = 0f,
                 savedPlaceScreenPoints = threatScreenPoints,
                 density = density,
-                collisionRadiusDp = 50f
+                currentOffsetIndex = currentOffsetIndex,
+                collisionRadiusDp = 50f,
+                hysteresisMarginDp = 12f
             )
+            currentOffsetIndex = bestIdx
+            val bestOffset = AltitudeBadgePositionEvaluator.CANDIDATE_OFFSETS[bestIdx]
 
             val screenDx = bestOffset.dxDp * density
             val screenDy = bestOffset.dyDp * density
