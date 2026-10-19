@@ -65,11 +65,10 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     private var lastRenderedIntAlt: Long? = null
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // Semi-transparent dark slate background (~68% opacity / 0xAE), allowing underlying polyline
-        // and map details to show through subtly while maintaining high contrast for the altitude value
-        color = 0xAE0F172A.toInt()
+        // Semi-transparent dark slate background (~46% opacity / 0x75), allowing underlying polyline
+        // and map details to show through clearly while maintaining high contrast for the altitude value
+        color = 0x750F172A.toInt()
         style = Paint.Style.FILL
-        setShadowLayer(3f * density, 0f, 1f * density, 0x99000000.toInt())
     }
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
