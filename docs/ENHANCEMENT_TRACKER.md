@@ -1163,3 +1163,17 @@ Evidence: two walking recordings of build 115 (trip 235, WALKING) `screen-202610
 | **PWR87-04** | **Hibernate after 90 min stationary any time of day** (was bedtime-gated). | `AppStateManager.startStandbyInactivityWatcher` | Implemented | `StickyManualPauseAndAutoResumeTest` |
 | **DOC-87** | Tracker + version. | docs | Done | - |
 | **VER-87** | `versionCode` 117, `versionName` "1.17.0". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 91. Round 88: Driving Path Shift, Resume Spikes, Street Ref Display (2026-10-20, v1.17.1)
+
+Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of roundabout shift, resume spike, Krakowska • 52.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG88-01** | **Path shifted vs roads/roundabouts (highest priority).** Soft display-only pull toward OSRM `/nearest` (`DisplayRoadSnap`, max 18 m EMA). Recorded geometry unchanged. Residual GNSS bias without network/offline remains. | `OsmMapMatcher.getNearest`, `DisplayRoadSnap`, `OsmMapView`, `LocationManager` | Implemented, needs device check | `DisplayRoadSnapTest`; competitors use full map-match |
+| **ENG88-02** | **Hieroglyph spikes when returning from background.** Catch-up clears pencil from committed vertex and refills `pathBetween` (no chord). | `OsmMapView` frame loop | Implemented | visual + prior `ScreenResumeRenderTest` |
+| **ENG88-03** | **Zigzag / line re-shapes on curves.** Vehicle pencil min step 2 m; display snap; RTS reshape residual (design). | `PencilTrail.minStepM(vehicle)` | Partially mitigated | replay reshape unchanged 0.39/1.34 m |
+| **ENG88-04** | **Sideways cursor while moving.** Vehicles prefer motion course when filter heading disagrees by > 35°. | `OsmMapView` arrow | Implemented | r1 t~26s heading vs motion |
+| **GEO88-01** | **Krakowska • 52 instead of DK52 / brackets.** UI joined street + raw ref with bullet; `formatStreetDisplay` uses normalize. | `RoadNameNormalizer`, `MainActivity`, `AutoMediaService` | Implemented | `RoadDisplayFormatTest` |
+| **DOC-88** | ADR-07 amendment v1.17.1. | docs | Done | - |
+| **VER-88** | `versionCode` 118, `versionName` "1.17.1". | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |

@@ -181,10 +181,11 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         // Line 1: [City] • [Street / RoadRef]
         val title = if (primaryPlace != null && primaryPlace.city != "Unknown City") {
             val shortenedStreet = StreetAbbreviator.abbreviate(primaryPlace.street, primaryPlace.countryCode)
-            val streetOrRef = listOfNotNull(
-                shortenedStreet?.takeIf { it.isNotBlank() },
-                primaryPlace.roadRef?.takeIf { it.isNotBlank() }
-            ).joinToString(" / ")
+            val streetOrRef = RoadNameNormalizer.formatStreetDisplay(
+                shortenedStreet,
+                primaryPlace.roadRef,
+                primaryPlace.countryCode
+            ).orEmpty()
 
             if (streetOrRef.isNotEmpty()) {
                 "${primaryPlace.city} • $streetOrRef"

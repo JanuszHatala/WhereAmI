@@ -1441,10 +1441,20 @@ class LocationManager private constructor(private val context: Context) {
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
         val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
         
-        // Kinematic Engine: Query OSRM using compass heading (or last valid heading when stopped)
-        // to snap to the true driven corridor centerline.
+        // OSRM /nearest: street name for the locality card AND snapped coordinates for display-only road pull.
         val effectiveBearing = bearing ?: lastValidBearing
-        val rawOsrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
+        val nearest = OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
+        if (nearest != null) {
+            janush.tech.whereami.tracking.TrackingRuntime.displaySnap.observeNearest(
+                rawLat = lat,
+                rawLng = lng,
+                snapLat = nearest.lat,
+                snapLng = nearest.lng,
+                distanceM = nearest.distanceM,
+                dtSec = 1.1
+            )
+        }
+        val rawOsrmStreet = nearest?.name
         val committedStreet = committedPlace?.pl?.street
         val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreet, committedPlace?.pl?.roadRef)
         val osrmStreet = if (RoadNameNormalizer.shouldShieldMajorCorridor(speedKmh, isCommittedMajor, rawOsrmStreet, sharedOsm?.roadRef)) {

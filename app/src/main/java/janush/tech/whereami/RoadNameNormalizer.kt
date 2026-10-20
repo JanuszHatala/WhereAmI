@@ -75,6 +75,24 @@ object RoadNameNormalizer {
             !isMajorRoad(osrmStreet, osmRoadRef)
 
     /**
+     * Single line for the locality card / Auto. Never joins a local name with a bare ref via " • "
+     * (that produced "Krakowska • 52" instead of "Krakowska (DK52)" or "DK52").
+     */
+    fun formatStreetDisplay(street: String?, roadRef: String?, countryCode: String? = "PL"): String? {
+        val s = street?.trim()?.takeIf { it.isNotEmpty() }
+        val r = roadRef?.trim()?.takeIf { it.isNotEmpty() }
+        if (s != null && PAREN_HIGHWAY_REF.containsMatchIn(s)) return s
+        if (s != null && isHighwayCodeOnly(s)) {
+            return normalize(null, r ?: s, null, includeHouseNumber = false, countryCode = countryCode) ?: s
+        }
+        return normalize(s, r, null, includeHouseNumber = false, countryCode = countryCode)
+            ?: s
+            ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
+    }
+
+    private val PAREN_HIGHWAY_REF = Regex("""\((DK|DW|A|S|E)\s*\d+""", RegexOption.IGNORE_CASE)
+
+    /**
      * Determines whether a given string is strictly a highway code (e.g. DK52, S1, DW946)
      * rather than a named local street running along the corridor (e.g. Aleje świętego Jana Pawła II).
      */
