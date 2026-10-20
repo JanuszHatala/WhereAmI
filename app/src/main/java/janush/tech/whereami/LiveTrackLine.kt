@@ -46,29 +46,38 @@ class LiveTrackLine {
         tailValid = false
     }
 
-    /** The pencil changed (point added or pruned): rebuild the curved tail and end at [tip]. */
+    /**
+     * The pencil changed (point added or pruned): rebuild the curved committed tail, then append the
+     * pencil as straight segments and end at [tip].
+     *
+     * Catmull-Rom through the pencil turns walking multipath into visible coils that later disappear when
+     * the smoother commits; the pencil stays piecewise-linear so only real committed geometry is curved.
+     */
     fun rebuildTail(pencil: PencilTrail, tip: GeoPoint, committedThroughMs: Long = -1L) {
         points.clear()
         points.addAll(prefix)
         val c = committed
         val s = (c.size - 3).coerceAtLeast(0)
         val nc = c.size - s
-        val n = nc + pencil.size
+        if (nc > 0) {
+            val fromSeg = if (prefixEnd < 0) {
+                points.add(GeoPoint(c[s].latitude, c[s].longitude))
+                0
+            } else prefixEnd - s
+            if (nc - 1 > fromSeg) {
+                CurvedPolyline.densify(
+                    nc, fromSeg, nc - 1,
+                    { c[s + it].latitude }, { c[s + it].longitude }
+                ) { la, ln -> points.add(GeoPoint(la, ln)) }
+            }
+        }
         val blended = if (c.isNotEmpty() && committedThroughMs >= 0L) {
             pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude)
         } else null
-        val lat: (Int) -> Double = { i ->
-            if (i < nc) c[s + i].latitude else blended?.first?.get(i - nc) ?: pencil.latAt(i - nc)
-        }
-        val lng: (Int) -> Double = { i ->
-            if (i < nc) c[s + i].longitude else blended?.second?.get(i - nc) ?: pencil.lngAt(i - nc)
-        }
-        if (n > 0) {
-            val fromSeg = if (prefixEnd < 0) {
-                points.add(GeoPoint(lat(0), lng(0)))
-                0
-            } else prefixEnd - s
-            CurvedPolyline.densify(n, fromSeg, n - 1, lat, lng) { la, ln -> points.add(GeoPoint(la, ln)) }
+        for (i in 0 until pencil.size) {
+            val la = blended?.first?.get(i) ?: pencil.latAt(i)
+            val ln = blended?.second?.get(i) ?: pencil.lngAt(i)
+            points.add(GeoPoint(la, ln))
         }
         points.add(tip)
         tailValid = true

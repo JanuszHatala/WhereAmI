@@ -110,8 +110,11 @@ class PencilTrail(private val maxPoints: Int = 600) {
     fun timeAt(i: Int): Long = t[i]
 
     companion object {
-        /** About 0.1 s of travel, never below half a metre (sub-pixel at street zoom). */
-        fun minStepM(speedMps: Double): Double = (0.1 * speedMps).coerceIn(0.5, 4.0)
+        /**
+         * About 0.15 s of travel. Floor is 1.0 m so walking multipath (accuracy often 5-12 m) does not
+         * scribble a coiled pencil every half metre that the smoother later straightens.
+         */
+        fun minStepM(speedMps: Double): Double = (0.15 * speedMps).coerceIn(1.0, 4.0)
 
         /** Distance over which the committed-vertex offset fades out along the pencil. */
         const val JOIN_DECAY_M = 4.0

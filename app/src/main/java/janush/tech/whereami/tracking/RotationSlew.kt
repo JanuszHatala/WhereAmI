@@ -67,7 +67,9 @@ class RotationSlew(
         fun forProfile(p: TrackingProfile): RotationSlew = when (p.name) {
             "CAR" -> RotationSlew(naturalFreqRadS = 6.0, maxRateDegS = 160.0, maxAccelDegS2 = 700.0)
             "CYCLING", "MTB" -> RotationSlew(naturalFreqRadS = 5.0, maxRateDegS = 140.0, maxAccelDegS2 = 600.0)
-            else -> RotationSlew(naturalFreqRadS = 4.0, maxRateDegS = 100.0, maxAccelDegS2 = 400.0, hysteresisDeg = 0.8)
+            // On foot: filter heading still wanders a few degrees on a straight sidewalk; 3 deg hysteresis
+            // and a lower rate keep course-up from waving to and fro (compass must never command the map).
+            else -> RotationSlew(naturalFreqRadS = 3.0, maxRateDegS = 70.0, maxAccelDegS2 = 250.0, hysteresisDeg = 3.0)
         }
     }
 }

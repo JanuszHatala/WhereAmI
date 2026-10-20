@@ -1139,3 +1139,15 @@ Evidence: five screen recordings and nine screenshots of build 114 (trip 234, CA
 | **TRK85-01** | **Garage lines (r5).** Fixes every 6-7 s at a standstill indoors with multipath; no road reference. | - | Design choice | stationary cadence; indoor GNSS |
 | **DOC-85** | ADR-07 amendment v1.16.0, `AGENTS.md`. | docs | Done | - |
 | **VER-85** | `versionCode` 115, `versionName` "1.16.0" (master at 114 / 1.15.3 after PR #19). | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 89. Round 86: Walking Field Test - Course-Up Wave, Cursor/Line Shift, Pencil Coils (2026-10-20, v1.16.1)
+
+Evidence: two walking recordings of build 115 (trip 235, WALKING) `screen-20261020-103546-…` / `screen-20261020-104601-…` aligned with `track_1792485118716_trip235.jsonl`. Replay master 115 -> branch 116 (WALKING).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG86-01** | **Going straight the map rotates to and fro (waving).** Course-up used the same bearing as the arrow, including the trusted compass. On the straight Dworkowa segment (video 48-70 s) compass target peak-to-peak was ~19 deg vs filter ~7 deg; compass step p90 11 deg vs filter 7 deg. Course-up now uses `CourseUpHeading` (confident filter heading, else motion course). Walking `RotationSlew` hysteresis 3 deg / max 70 deg/s. | `CourseUpHeading.kt`, `OsmMapView.kt`, `RotationSlew.kt` | Implemented, needs device check | `CourseUpHeadingTest`; straight-segment swing analysis |
+| **ENG86-02** | **Cursor and line behind look constantly shifted / divergent despite the latency buffer.** Tip still ends under the cursor (invariant). Lateral offset is the RTS-smoothed committed track sitting metres beside the live filter/pencil path (join blend only fades the first 4 m). Not a missing buffer: the 1.6 s latency places the cursor on the live path; history is a later estimate. Reduced visual mismatch by not Catmull-Rom-densifying the pencil (which pulled the line off the tip path). | `LiveTrackLine.kt`, `PencilTrail.kt` | Partially mitigated (architecture) | reshape p50/p90 unchanged 0.19/0.64 m; join blend tests |
+| **ENG86-03** | **Lines advance/return, coiled at the cursor, later straightened.** Start of walk: pathLen/net 1.72 with accuracy p50 11 m; pencil recorded every 0.5 m of multipath, then Catmull-Rom coiled it; RTS commit replaced the scribble. Pencil min step floor 1.0 m; densify committed only. Residual GNSS multipath remains. | `PencilTrail.minStepM`, `LiveTrackLine.rebuildTail` | Implemented, needs device check | `WalkingRefinementsTest`, `JoinBlendTest`; pencil vertexTurn p90 8->17 (raw angles, expected) |
+| **DOC-86** | ADR-07 amendment v1.16.1, `AGENTS.md`, LOC-11. | docs | Done | - |
+| **VER-86** | `versionCode` 116, `versionName` "1.16.1". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
