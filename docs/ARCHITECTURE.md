@@ -208,6 +208,9 @@ Battery optimization is the highest engineering priority:
   - *Every state reaches the renderer*: `LocationManager` appends each accepted `TrackState` to `TrackingRuntime.states` (`TrackStateLog`); the map frame loop feeds all states newer than the last one consumed. The conflated Compose fix delivered only the last state of a batch.
   - *Pencil refill*: after missed frames (screen off) or a batch of >= 3 states, pencil points after the previously known state are dropped and the pencil is refilled from `RenderPipeline.pathBetween` (interpolated history, never extrapolated), so the live line never chords to the cursor.
   - *Gaps*: vehicles keep the 1.0 s latency when fixes stop (on foot still drops to 0). Prediction integrates braking from the filter's Singer acceleration (`TrackState.accelMps2`) and stops at zero; acceleration is not extrapolated.
+- **Amendment (v1.16.1, walking screen recordings of build 115, 2026-10-20)**:
+  - *Course-up vs arrow*: map rotation uses `CourseUpHeading` (confident filter heading, else motion course). The compass and slow-mode path tangent may still drive the arrow only. Walking `RotationSlew` hysteresis is 3 deg (was 0.8) with a lower rate so sidewalk heading noise does not wave the map.
+  - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
 

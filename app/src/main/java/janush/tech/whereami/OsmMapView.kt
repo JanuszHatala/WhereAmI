@@ -77,6 +77,7 @@ import janush.tech.whereami.tracking.GyroPolicy
 import janush.tech.whereami.tracking.MotionCourse
 import janush.tech.whereami.tracking.PencilTrail
 import janush.tech.whereami.tracking.RenderPipeline
+import janush.tech.whereami.tracking.CourseUpHeading
 import janush.tech.whereami.tracking.RotationSlew
 import janush.tech.whereami.tracking.TrackState
 import janush.tech.whereami.tracking.TrackingBridge
@@ -822,32 +823,41 @@ fun OsmMapView(
                     // of the cursor's own rendered motion (never a stale held value).
                     if (pose.headingFresh) lastFreshHeadingMs = nowMs
                     val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
+                    val cursorMoving = pose.isMoving && !pose.isStationary
+                    // Arrow: path tangent at slow foot pace, else filter / motion; compass may override when trusted.
                     val courseBearing = when {
-                        pose.isMoving && !fix.isAnchored && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
+                        cursorMoving && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
                         pose.headingFresh -> pose.headingDeg
-                        pose.isMoving && !fix.isAnchored ->
+                        cursorMoving ->
                             if (onFootNow.value) motionDeg
                             else MotionCourse.forVehicle(motionDeg, pose.headingDeg.takeIf { pose.headingConfident }, nowMs - lastFreshHeadingMs)
                         else -> null
                     }
-                    // Compass (when trusted): smooth and immediate, sampled at the render time so it matches the
-                    // drawn line; it is calibrated against the course while moving and never used at rest.
+                    // Compass drives the arrow only (never course-up): walking compass steps ~3x the filter and
+                    // made the map wave on straight sidewalks.
                     val compassBearing = if (compassSensor.isRunning) {
                         compassArrow.update(
                             nowMs,
                             TrackingRuntime.compass.headingAt(pose.renderTimeMs),
                             courseBearing,
-                            pose.isMoving && !fix.isAnchored
+                            cursorMoving
                         )
                     } else null
-                    val liveBearing = compassBearing ?: courseBearing
-                    if (liveBearing != null) {
-                        lastFrozenBearing = liveBearing.toFloat()
+                    val arrowBearing = compassBearing ?: courseBearing
+                    val mapBearing = CourseUpHeading.resolve(
+                        isMoving = cursorMoving,
+                        isAnchored = pose.isStationary,
+                        headingConfident = pose.headingConfident,
+                        headingDeg = pose.headingDeg,
+                        motionCourseDeg = motionDeg
+                    )
+                    if (arrowBearing != null) {
+                        lastFrozenBearing = arrowBearing.toFloat()
                     } else if (lastFrozenBearing == null && fix.bearing != null) {
                         lastFrozenBearing = fix.bearing
                     }
                     val effectiveBearing = lastFrozenBearing
-                    val isMoving = pose.isMoving && !fix.isAnchored
+                    val isMoving = cursorMoving
                     val hasHeading = isMoving && (effectiveBearing != null)
                     settled = pose.isStationary && !pose.isMoving
                     if (!settled) lastActiveMs = nowMs
@@ -888,21 +898,20 @@ fun OsmMapView(
                         destinationPoint = latestDestinationPoint
                     )
 
-                    // Course-up rotation: acceleration- and rate-limited follower (cannot step, cannot
-                    // overshoot-and-correct), commanded by the engine's confident heading only.
+                    // Course-up: filter / motion course only (see CourseUpHeading). Never compass or path tangent.
                     if (orientationMode == MapOrientationMode.COURSE_UP && isFollowing) {
                         val isPhysicallyStationary = try {
                             StationaryDetector.getInstance(context).isPhysicallyStationary.value
                         } catch (_: Exception) { false }
                         val canRotate = canRotateCourseUp(
-                            hasHeading = hasHeading,
+                            hasHeading = mapBearing != null,
                             isPhysicallyStationary = isPhysicallyStationary,
                             isAnchored = fix.isAnchored,
                             speedMs = fix.speedMs,
                             isRecording = latestRecording,
                             isInterpolatorStationary = pose.isStationary
                         )
-                        if (canRotate && effectiveBearing != null) {
+                        if (canRotate && mapBearing != null) {
                             // Re-sync if the map was rotated externally (gesture, mode switch)
                             val mapCourse = (-map.mapOrientation).toDouble()
                             if (!courseSlew.initialized ||
@@ -910,7 +919,7 @@ fun OsmMapView(
                             ) {
                                 courseSlew.snap(mapCourse)
                             }
-                            val course = courseSlew.step(effectiveBearing.toDouble(), dtSec)
+                            val course = courseSlew.step(mapBearing, dtSec)
                             map.mapOrientation = normalizeAngle(-course.toFloat())
                         }
                     }

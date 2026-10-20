@@ -97,7 +97,7 @@ class WalkingRefinementsTest {
     fun `pencil trail follows the cursor and is consumed by the committed track`() {
         val p = PencilTrail()
         for (i in 0..100) p.add(1_000L + i * 16, frame.lat(i * 0.03), frame.lng(0.0), 1.8)
-        assertTrue(p.size in 5..7) // 3 m drawn in >= 0.5 m steps
+        assertTrue(p.size in 3..4) // 3 m drawn in >= 1.0 m steps (walking multipath floor)
         p.pruneThrough(1_000L + 50 * 16)
         assertTrue(p.timeAt(0) > 1_000L + 50 * 16)
         p.pruneThrough(Long.MAX_VALUE)
