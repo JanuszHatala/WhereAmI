@@ -1151,3 +1151,15 @@ Evidence: two walking recordings of build 115 (trip 235, WALKING) `screen-202610
 | **ENG86-03** | **Lines advance/return, coiled at the cursor, later straightened.** Start of walk: pathLen/net 1.72 with accuracy p50 11 m; pencil recorded every 0.5 m of multipath, then Catmull-Rom coiled it; RTS commit replaced the scribble. Pencil min step floor 1.0 m; densify committed only. Residual GNSS multipath remains. | `PencilTrail.minStepM`, `LiveTrackLine.rebuildTail` | Implemented, needs device check | `WalkingRefinementsTest`, `JoinBlendTest`; pencil vertexTurn p90 8->17 (raw angles, expected) |
 | **DOC-86** | ADR-07 amendment v1.16.1, `AGENTS.md`, LOC-11. | docs | Done | - |
 | **VER-86** | `versionCode` 116, `versionName` "1.16.1". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 90. Round 87: Trip Crash Recovery + Battery Hardening (2026-10-20, v1.17.0)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **TRP87-01** | **Survive hard reset / process death: keep recording session and auto-resume (Option A).** Tighter flush (5 pts / 3 s) on IO writer; force flush on background, FGS destroy/task removed, SHUTDOWN/BATTERY_LOW. Zombie clock = last `track_points.t_utc`. Restore restarts FGS + recalculates lifecycle. | `TripRecovery.kt`, `TripManager`, `TripDatabaseHelper.getLastTrackPointUtcMs`, `TripSurvivalReceiver`, `AppStateManager` / `LiveTrackingService` flush hooks | Implemented | `TripRecoveryTest` |
+| **PWR87-01** | **Trip wake lock 3h hard timeout.** Refreshable 1h slices while trip active (`WakeLockPolicy`). | `LiveTrackingService`, `WakeLockPolicy.kt` | Implemented | `WakeLockPolicyTest`, `BatteryOptimizationAndAutoStartTest` |
+| **PWR87-02** | **Standby sleep wakes on app resume.** | `AppStateManager.setAppForegroundState` | Implemented | matches AGENTS.md |
+| **PWR87-03** | **AutoMedia wake lock only while trip recording.** | `AutoMediaService` | Implemented | `WakeLockPolicy` |
+| **PWR87-04** | **Hibernate after 90 min stationary any time of day** (was bedtime-gated). | `AppStateManager.startStandbyInactivityWatcher` | Implemented | `StickyManualPauseAndAutoResumeTest` |
+| **DOC-87** | Tracker + version. | docs | Done | - |
+| **VER-87** | `versionCode` 117, `versionName` "1.17.0". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |

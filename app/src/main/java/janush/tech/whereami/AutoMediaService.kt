@@ -35,8 +35,10 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:AutoMediaWakeLock")?.apply {
-            acquire(2 * 60 * 60 * 1000L) // 2h safe timeout
+            setReferenceCounted(false)
         }
+        // Wake lock only while a trip is recording (never for Auto session alone).
+        updateAutoWakeLock(TripManager.getInstance(this).activeTrip.value != null)
 
         mediaSession = MediaSessionCompat(this, "AutoMediaService").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -110,6 +112,29 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         }
     }
 
+    private var autoWakeLockAcquiredElapsedMs = 0L
+
+    private fun updateAutoWakeLock(hasActiveTrip: Boolean) {
+        try {
+            val lock = wakeLock ?: return
+            if (WakeLockPolicy.shouldHoldTripWakeLock(hasActiveTrip)) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val heldFor = if (lock.isHeld) now - autoWakeLockAcquiredElapsedMs else Long.MAX_VALUE
+                if (WakeLockPolicy.shouldRefreshHeldLock(lock.isHeld, heldFor)) {
+                    lock.acquire(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS)
+                    autoWakeLockAcquiredElapsedMs = now
+                    TelemetryLogger.log("POWER", "AutoMediaWakeLock acquired/refreshed (active trip)")
+                }
+            } else if (lock.isHeld) {
+                lock.release()
+                autoWakeLockAcquiredElapsedMs = 0L
+                TelemetryLogger.log("POWER", "AutoMediaWakeLock released (no active trip)")
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "AutoMediaWakeLock update failed: ${e.message}")
+        }
+    }
+
     private fun startTracking() {
         val prefs = getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
@@ -117,6 +142,19 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         serviceScope.launch {
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
                 updateMediaMetadata(locationData)
+            }
+        }
+        serviceScope.launch {
+            TripManager.getInstance(this@AutoMediaService).activeTrip.collectLatest { trip ->
+                updateAutoWakeLock(trip != null)
+            }
+        }
+        serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 3)
+                if (TripManager.getInstance(this@AutoMediaService).activeTrip.value != null) {
+                    updateAutoWakeLock(true)
+                }
             }
         }
     }

@@ -41,8 +41,9 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_PAUSE_POINT_INDEX = "pref_trip_pause_point_index"
         private const val KEY_PAUSE_DIST = "pref_trip_pause_dist"
         private const val PAUSE_WARNING_TIMEOUT_MS = 60 * 60 * 1000L // 1 hour
-        private const val ROW_FLUSH_COUNT = 10
-        private const val ROW_FLUSH_INTERVAL_MS = 5_000L
+        /** Durability vs battery: small batches on the IO writer only (never per-fix, never with a wake lock). */
+        private const val ROW_FLUSH_COUNT = 5
+        private const val ROW_FLUSH_INTERVAL_MS = 3_000L
         /** Smoothed points are 3 s old when emitted; accept those that predate the trip start by this much. */
         private const val TRACK_LEAD_IN_MS = 5_000L
         private const val MIN_STEP_DISTANCE_M = 0.5f
@@ -327,14 +328,25 @@ class TripManager private constructor(private val context: Context) {
         scope.launch {
             val unclosed = dbHelper.getActiveOrUnclosedTrip()
             if (unclosed != null && _activeTrip.value == null) {
-                val lastPointTime = unclosed.placesVisited.lastOrNull()?.timestamp ?: unclosed.startTime
+                val lastTrackUtc = dbHelper.getLastTrackPointUtcMs(unclosed.id)
+                val lastActivityUtc = TripRecovery.lastActivityUtcMs(
+                    lastTrackPointUtcMs = lastTrackUtc,
+                    lastPlaceVisitUtcMs = unclosed.placesVisited.lastOrNull()?.timestamp,
+                    startTimeUtcMs = unclosed.startTime
+                )
                 val now = System.currentTimeMillis()
-                val timeoutMs = _autoStopMinutes.value * 60 * 1000L
                 val wasPaused = prefs.getBoolean(KEY_IS_PAUSED, false)
-                
-                // MAP-R05: If trip was abandoned during process death and exceeded timeout, close it instead of resuming (unless paused!)
-                if (_tripMode.value == TripMode.AUTO && (now - lastPointTime > timeoutMs) && !wasPaused) {
-                    val closed = unclosed.copy(endTime = lastPointTime)
+
+                // Abandoned AUTO trip past auto-stop idle window (clock = last track point, not start/place).
+                if (TripRecovery.shouldCloseAsZombie(
+                        tripModeAuto = _tripMode.value == TripMode.AUTO,
+                        wasPaused = wasPaused,
+                        nowUtcMs = now,
+                        lastActivityUtcMs = lastActivityUtc,
+                        autoStopMinutes = _autoStopMinutes.value
+                    )
+                ) {
+                    val closed = unclosed.copy(endTime = lastActivityUtc)
                     dbHelper.updateTripMeta(closed)
                     isManualPauseSticky = false
                     prefs.edit()
@@ -346,7 +358,7 @@ class TripManager private constructor(private val context: Context) {
                         .remove(KEY_PAUSE_DIST)
                         .remove(KEY_MANUAL_PAUSE_STICKY)
                         .apply()
-                    TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
+                    TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastActivityUtc)/60000}m ago")
                 } else {
                     _activeTrip.value = unclosed
                     synchronized(rowLock) {
@@ -356,7 +368,8 @@ class TripManager private constructor(private val context: Context) {
                     lastSmoothedForDistance = null
                     trackSampler.reset()
                     lastCommittedElapsedMs = -1L
-                    lastMovingTimestamp = System.currentTimeMillis() // Reset watchdog timer on restore
+                    // Resume watchdog from last recorded activity so a long gap before death can still auto-stop.
+                    lastMovingTimestamp = lastActivityUtc
                     lastLocation = unclosed.points.lastOrNull()?.let {
                         Location("").apply {
                             latitude = it.latitude
@@ -380,10 +393,28 @@ class TripManager private constructor(private val context: Context) {
                         }
                     }
                     startWatchdog()
-                    TelemetryLogger.logTrip("RESTORED_ACTIVE", unclosed.id, "Restored active trip from SQLite with ${unclosed.points.size} points (isPaused=${_isPaused.value})")
+                    // Option A: recording is active again; re-arm FGS when the platform allows (foreground / sticky).
+                    startLiveTrackingService()
+                    try {
+                        AppStateManager.getInstance(context).recalculateState()
+                    } catch (_: Exception) {}
+                    TelemetryLogger.logTrip(
+                        "RESTORED_ACTIVE",
+                        unclosed.id,
+                        "Restored active trip from SQLite with ${unclosed.points.size} points (isPaused=${_isPaused.value}, lastActivityAgeMin=${(now - lastActivityUtc)/60000})"
+                    )
                 }
             }
         }
+    }
+
+    /**
+     * Best-effort durability flush (process kill, screen off, shutdown). Uses the existing IO writer;
+     * never acquires a wake lock.
+     */
+    fun flushPendingForSurvival() {
+        val trip = _activeTrip.value ?: return
+        persistTripAsync(trip, force = true, alwaysMeta = true)
     }
 
     private fun stopWatchdog() {
