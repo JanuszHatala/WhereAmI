@@ -12573,29 +12573,7 @@ private fun ElevationStatChip(label: String, color: Color) {
 @Composable
 fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Modifier = Modifier) {
     val altPairs = remember(points) {
-        val distances = calculateCumulativeDistances(points)
-        val rawPairs = points.mapIndexed { i, p ->
-            val dist = distances.getOrElse(i) { 0.0 }
-            dist to p.altitude
-        }.filter { (_, a) -> a != 0.0 && !a.isNaN() }
-
-        if (rawPairs.size < 2) return@remember emptyList()
-
-        // Moving average window smoothing (window size 5, preserving edge points)
-        // Eliminates 1m integer DEM quantization staircases while preserving overall terrain structure
-        val windowSize = 5.coerceAtMost(rawPairs.size)
-        val halfWin = windowSize / 2
-        rawPairs.indices.map { i ->
-            val startIdx = (i - halfWin).coerceAtLeast(0)
-            val endIdx = (i + halfWin).coerceAtMost(rawPairs.size - 1)
-            var sumAlt = 0.0
-            var count = 0
-            for (k in startIdx..endIdx) {
-                sumAlt += rawPairs[k].second
-                count++
-            }
-            rawPairs[i].first to (sumAlt / count)
-        }
+        smoothElevationProfile(points)
     }
 
     if (altPairs.size < 2) return
@@ -12616,8 +12594,12 @@ fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Mo
         val w = size.width
         val h = size.height
 
+        val yPadding = h * 0.08f
         fun toX(dist: Double): Float = ((dist / maxDist) * w).toFloat().coerceIn(0f, w)
-        fun toY(alt: Double): Float = (h * (1.0 - (alt - minAlt) / altRange)).toFloat().coerceIn(0f, h)
+        fun toY(alt: Double): Float {
+            val norm = (alt - minAlt) / altRange
+            return (h - yPadding - norm * (h - 2f * yPadding)).toFloat().coerceIn(0f, h)
+        }
 
         val fillPath = androidx.compose.ui.graphics.Path()
         val linePath = androidx.compose.ui.graphics.Path()
@@ -12627,16 +12609,33 @@ fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Mo
         fillPath.moveTo(startX, startY)
         linePath.moveTo(startX, startY)
 
-        for (i in 0 until altPairs.size - 1) {
-            val p0 = altPairs[i]
-            val p1 = altPairs[i + 1]
+        val n = altPairs.size
+        for (i in 0 until n - 1) {
+            val p0 = if (i > 0) altPairs[i - 1] else {
+                (2.0 * altPairs[0].first - altPairs[1].first) to (2.0 * altPairs[0].second - altPairs[1].second)
+            }
+            val p1 = altPairs[i]
+            val p2 = altPairs[i + 1]
+            val p3 = if (i + 2 < n) altPairs[i + 2] else {
+                (2.0 * altPairs[n - 1].first - altPairs[n - 2].first) to (2.0 * altPairs[n - 1].second - altPairs[n - 2].second)
+            }
+
             val x0 = toX(p0.first)
             val y0 = toY(p0.second)
             val x1 = toX(p1.first)
             val y1 = toY(p1.second)
-            val midX = (x0 + x1) / 2f
-            linePath.cubicTo(midX, y0, midX, y1, x1, y1)
-            fillPath.cubicTo(midX, y0, midX, y1, x1, y1)
+            val x2 = toX(p2.first)
+            val y2 = toY(p2.second)
+            val x3 = toX(p3.first)
+            val y3 = toY(p3.second)
+
+            val c1x = x1 + (x2 - x0) / 6f
+            val c1y = y1 + (y2 - y0) / 6f
+            val c2x = x2 - (x3 - x1) / 6f
+            val c2y = y2 - (y3 - y1) / 6f
+
+            linePath.cubicTo(c1x, c1y, c2x, c2y, x2, y2)
+            fillPath.cubicTo(c1x, c1y, c2x, c2y, x2, y2)
         }
 
         fillPath.lineTo(toX(altPairs.last().first), h)

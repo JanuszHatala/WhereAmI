@@ -136,4 +136,47 @@ class TripTimeRepairTest {
         assertEquals(rawPairs.first().first, smoothed.first().first, 0.001)
         assertEquals(rawPairs.last().first, smoothed.last().first, 0.001)
     }
+
+    @Test
+    fun testSmoothElevationProfileGaussianResampling() {
+        // Empty or 1-point list should return empty
+        assertTrue(smoothElevationProfile(emptyList()).isEmpty())
+        assertTrue(smoothElevationProfile(listOf(org.osmdroid.util.GeoPoint(50.0, 20.0, 300.0))).isEmpty())
+
+        // Create a realistic track with a 328m -> 337m cliff step
+        val points = mutableListOf<org.osmdroid.util.GeoPoint>()
+        for (i in 0..100) {
+            // ~5m per point along latitude
+            val lat = 50.0 + (i * 0.000045)
+            val alt = if (i < 50) 320.0 else 337.0
+            points.add(org.osmdroid.util.GeoPoint(lat, 20.0, alt))
+        }
+
+        val smoothed = smoothElevationProfile(points, numSamples = 60)
+        assertTrue("Should have resampled output points", smoothed.size >= 20)
+
+        // Verify distance strictly increases
+        for (i in 0 until smoothed.size - 1) {
+            assertTrue("Distance must strictly increase", smoothed[i + 1].first > smoothed[i].first)
+        }
+
+        // Verify bounds start at 0 and reach max distance
+        assertEquals(0.0, smoothed.first().first, 0.001)
+        val distances = calculateCumulativeDistances(points)
+        assertEquals(distances.last(), smoothed.last().first, 0.001)
+
+        // Verify that the cliff from 320m to 337m at mid-distance is smooth:
+        // Raw slope is 17m / 5m = 3.40 (340%). Gaussian smoothed slope should be under 0.35 (down by 10x).
+        for (i in 0 until smoothed.size - 1) {
+            val dDist = smoothed[i + 1].first - smoothed[i].first
+            val dAlt = kotlin.math.abs(smoothed[i + 1].second - smoothed[i].second)
+            val slope = dAlt / dDist
+            assertTrue("Smoothed slope should be gradual (< 0.35, down from raw 3.40), was $slope", slope < 0.35)
+        }
+
+        // Midpoint altitude should be nicely centered between 320 and 337
+        val midSample = smoothed[smoothed.size / 2]
+        assertTrue("Midpoint altitude should be smoothly interpolated, was ${midSample.second}",
+            midSample.second > 323.0 && midSample.second < 334.0)
+    }
 }
