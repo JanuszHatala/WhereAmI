@@ -44,6 +44,14 @@ class PencilTrail(private val maxPoints: Int = 600) {
         t.subList(0, drop).clear(); lat.subList(0, drop).clear(); lng.subList(0, drop).clear()
     }
 
+    /** Drops points rendered after [tMs] (they were extrapolated past data that has since arrived). */
+    fun dropAfter(tMs: Long) {
+        var keep = t.size
+        while (keep > 0 && t[keep - 1] > tMs) keep--
+        if (keep == t.size) return
+        t.subList(keep, t.size).clear(); lat.subList(keep, lat.size).clear(); lng.subList(keep, lng.size).clear()
+    }
+
     fun clear() {
         t.clear(); lat.clear(); lng.clear()
         hasRef = false
@@ -107,5 +115,7 @@ class PencilTrail(private val maxPoints: Int = 600) {
 
         /** Distance over which the committed-vertex offset fades out along the pencil. */
         const val JOIN_DECAY_M = 4.0
+        /** States arriving in one frame that mark a delivered batch (normal delivery is one per fix). */
+        const val BATCH_STATES = 3
     }
 }

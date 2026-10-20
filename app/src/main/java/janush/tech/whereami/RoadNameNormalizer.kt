@@ -55,6 +55,26 @@ object RoadNameNormalizer {
     }
 
     /**
+     * At speed on a major corridor, a non-major OSRM snap is usually a parallel or crossing street and is
+     * ignored. Not when the OSM way at the fix carries a road number ([osmRoadRef]): then the snap is the
+     * corridor's own local name (DK52 through Bujaków is "Bielska"), and rejecting it showed the bare
+     * number in every village the corridor passes.
+     */
+    /**
+     * Road number of the reverse-geocoded way. Nominatim's `address` has no `ref`; `namedetails` has the
+     * result object's own name and ref, which belong to [road] only when that object is the road itself.
+     */
+    fun wayRef(road: String?, nameDetails: Pair<String?, String?>?): String? {
+        val (name, ref) = nameDetails ?: return null
+        if (road.isNullOrBlank() || ref.isNullOrBlank() || name == null) return null
+        return ref.trim().takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
+    }
+
+    fun shouldShieldMajorCorridor(speedKmh: Float?, isCommittedMajor: Boolean, osrmStreet: String?, osmRoadRef: String?): Boolean =
+        speedKmh != null && speedKmh > 35f && isCommittedMajor && osrmStreet != null &&
+            !isMajorRoad(osrmStreet, osmRoadRef)
+
+    /**
      * Determines whether a given string is strictly a highway code (e.g. DK52, S1, DW946)
      * rather than a named local street running along the corridor (e.g. Aleje świętego Jana Pawła II).
      */

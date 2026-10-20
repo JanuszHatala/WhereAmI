@@ -15,7 +15,9 @@ class LiveRenderSim(
     private val configure: (RenderPipeline) -> Unit = {},
     private val pathArrow: Boolean = true,
     private val deliveryDelayMs: Long = 300L,
-    private val blendJoin: Boolean = true
+    private val blendJoin: Boolean = true,
+    /** Receives the rendered cursor (render time, lat, lng) every 100 ms while moving: the path the pencil draws. */
+    private val dumpPose: ((Long, Double, Double) -> Unit)? = null
 ) {
 
     data class Metrics(
@@ -67,6 +69,7 @@ class LiveRenderSim(
         val end = fixes.last().tElapsedMs + 1_000
         var lastSample = 0L
         var lastFresh = Long.MIN_VALUE / 2
+        var lastDump = 0L
         while (now <= end) {
             while (i < fixes.size && fixes[i].tElapsedMs + deliveryDelayMs <= now) {
                 val r = engine.ingest(fixes[i])
@@ -88,6 +91,10 @@ class LiveRenderSim(
                 }
                 if (live != null) bearing = live
                 if (!pose.isStationary) pencil.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
+                if (dumpPose != null && pose.isMoving && now - lastDump >= 100) {
+                    lastDump = now
+                    dumpPose.invoke(pose.renderTimeMs, pose.lat, pose.lng)
+                }
                 var drop = 0
                 while (drop < pencil.size && pencil.timeAt(drop) <= committedThrough) {
                     pruned.add(P(pencil.timeAt(drop), frame.east(pencil.lngAt(drop)), frame.north(pencil.latAt(drop))))

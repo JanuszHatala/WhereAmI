@@ -15,7 +15,8 @@ class RouteMatchingTest {
         val rows = (0 until 200).map { row(50.0 + it * 1.0 / 111_320.0, 19.0) } + // 1 m steps, 199 m
             listOf(row(50.01, 19.0, TrackPointRow.FLAG_STATIONARY))
         val pts = RouteMatching.selectPoints(rows)
-        assertTrue(pts.size in 14..20)
+        val expected = (199 / RouteMatching.MIN_POINT_SPACING_M).toInt() + 1
+        assertTrue("size=${pts.size}", pts.size in expected..expected + 2)
         assertEquals(rows[0].lat, pts.first().lat, 0.0)
         assertEquals(rows[199].lat, pts.last().lat, 0.0)
         assertTrue("stationary row excluded", pts.none { it.lat == 50.01 })
@@ -35,6 +36,13 @@ class RouteMatchingTest {
         assertEquals(178..199, c[2])
         assertTrue(RouteMatching.chunks(1).isEmpty())
         assertEquals(listOf(0..1), RouteMatching.chunks(2))
+    }
+
+    @Test
+    fun chunks_defaultStaysWithinPublicServerLimit() {
+        // router.project-osrm.org rejects 11+ trace coordinates with "TooBig".
+        assertTrue(RouteMatching.MAX_COORDS_PER_REQUEST <= 10)
+        assertTrue(RouteMatching.chunks(95).all { it.last - it.first + 1 <= 10 })
     }
 
     @Test
@@ -87,10 +95,10 @@ class RouteMatchingTest {
         var call = 0
         val mostlyOk = RouteMatchApi { raw ->
             call++
-            if (call == 2) ChunkResult.NoMatch else ChunkResult.Matched(raw)
+            if (call % 3 == 2) ChunkResult.NoMatch else ChunkResult.Matched(raw)
         }
         val partial = RouteMatching.matchTrack(pts, mostlyOk)
-        // 2 of 3 chunks matched = 0.67 < 0.8 -> rejected; raw stays the only geometry
+        // ~2 of 3 chunks matched = 0.67 < 0.8 -> rejected; raw stays the only geometry
         assertEquals(TripMatchOutcome.Rejected, partial)
     }
 

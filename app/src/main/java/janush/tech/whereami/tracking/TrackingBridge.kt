@@ -38,4 +38,5 @@ object TrackingBridge {
 object TrackingRuntime {
     val gyro = GyroYawTracker()
     val compass = CompassTracker()
+    val states = TrackStateLog()
 }

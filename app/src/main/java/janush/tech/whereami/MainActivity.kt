@@ -2930,7 +2930,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onCorrectElevation = { tripId, mode ->
                         viewModel.correctTripElevation(tripId, mode)
                     },
-                    elevationCorrectionProgress = elevationCorrectionProgress
+                    elevationCorrectionProgress = elevationCorrectionProgress,
+                    countNonDemAltitudePoints = viewModel::countNonDemAltitudePoints
                 )
             }
         }
@@ -11114,7 +11115,8 @@ fun TripDetailDialog(
     onDeletePause: (Long, Int) -> Unit = { _, _ -> },
     onMergePause: (Long, Int) -> Unit = { _, _ -> },
     onCorrectElevation: (Long, OverrideMode) -> Unit = { _, _ -> },
-    elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress()
+    elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress(),
+    countNonDemAltitudePoints: suspend (Long) -> Int = { 0 }
 ) {
     val effectiveEndTime = trip.endTime?.takeIf { it > trip.startTime }
         ?: if (trip.avgSpeedKmh > 0.5f && trip.distanceMeters > 50.0) {
@@ -11785,6 +11787,11 @@ fun TripDetailDialog(
                                     val pointsWithoutAlt = remember(trip.points) {
                                         trip.points.count { it.altitude == 0.0 || it.altitude.isNaN() }
                                     }
+                                    // Points whose altitude is GPS (or missing) rather than DEM: "has altitude" alone
+                                    // hid GPS profiles.
+                                    val nonDemPoints by produceState(0, trip.id, trip.points, isRunningThisTrip) {
+                                        value = countNonDemAltitudePoints(trip.id)
+                                    }
 
                                     Button(
                                         onClick = { showCorrectionDialog = true },
@@ -11822,12 +11829,12 @@ fun TripDetailDialog(
                                                 )
                                                 if (!isRunningThisTrip && trip.points.isNotEmpty()) {
                                                     Text(
-                                                        text = if (pointsWithoutAlt > 0) {
-                                                            "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
-                                                        } else {
-                                                            "✓ All ${trip.points.size} points have altitude"
+                                                        text = when {
+                                                            pointsWithoutAlt > 0 -> "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
+                                                            nonDemPoints > 0 -> "$nonDemPoints of ${trip.points.size} points use GPS altitude"
+                                                            else -> "✓ All ${trip.points.size} points have DEM altitude"
                                                         },
-                                                        color = if (pointsWithoutAlt > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
+                                                        color = if (pointsWithoutAlt > 0 || nonDemPoints > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Normal
                                                     )

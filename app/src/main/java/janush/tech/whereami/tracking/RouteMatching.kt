@@ -37,9 +37,11 @@ sealed class TripMatchOutcome {
  * service is confident AND the snapped line stays within [MAX_SNAP_DEVIATION_M] of nearly all raw points.
  */
 object RouteMatching {
-    const val MAX_COORDS_PER_REQUEST = 90        // public demo server accepts up to 100
-    const val MIN_POINT_SPACING_M = 12.0         // dense 1 Hz rows add no information for snapping
-    const val MAX_TOTAL_POINTS = 3000
+    // The public demo server answers 11+ coordinates with HTTP 400 "TooBig" (Oct 2026); with 90 every chunk
+    // failed and every trip was rejected. 25 m spacing keeps a 10-point request at ~225 m of road.
+    const val MAX_COORDS_PER_REQUEST = 10
+    const val MIN_POINT_SPACING_M = 25.0         // dense 1 Hz rows add no information for snapping
+    const val MAX_TOTAL_POINTS = 1000            // ~111 requests at the 1.1 s rate limit (~2 min)
     const val SNAP_RADIUS_M = 25
     const val MAX_SNAP_DEVIATION_M = 45.0
     const val MIN_CONFIDENCE = 0.5

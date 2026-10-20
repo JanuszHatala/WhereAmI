@@ -497,7 +497,8 @@ class TrackingEngine(
             isStationary = stationary,
             rejectStreak = rejectStreak,
             isReset = isReset,
-            accuracyM = fix.accuracyM
+            accuracyM = fix.accuracyM,
+            accelMps2 = if (stationary) 0.0 else ekf.x[KinematicEkf.ACCEL]
         )
     }
 }

@@ -364,19 +364,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _selectedTripIds.value = setOf(finishedId)
                         _fitTrackTrigger.value = System.currentTimeMillis()
 
-                        if (_altitudeSourceMode.value == AltitudeSourceMode.DEM && !promptedDemTripIds.contains(finishedId)) {
-                            val needsDem = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                                dbHelper.tripHasGpsAltitudePoints(finishedId)
-                            }
-                            if (needsDem) {
-                                promptedDemTripIds.add(finishedId)
-                                _pendingDemTripPrompt.value = trips.firstOrNull { it.id == finishedId }
-                            }
-                        }
+                        val autoCorrecting = ElevationCorrectionManager.progress.value.let { it.isRunning && it.singleTripId == finishedId }
+                        if (!autoCorrecting) promptDemIfNeeded(finishedId)
                     }
                 }
             }
         }
+
+        // Saved trip's automatic DEM pass (TripManager.stopTrip): show the corrected profile, and offer the
+        // correction only if GPS altitudes remain (offline, provider failure).
+        viewModelScope.launch {
+            var wasRunningFor: Long? = null
+            ElevationCorrectionManager.progress.collect { p ->
+                if (p.isRunning) {
+                    wasRunningFor = p.singleTripId
+                } else if (wasRunningFor != null && p.singleTripId == wasRunningFor) {
+                    val tripId = wasRunningFor!!
+                    wasRunningFor = null
+                    _savedTrips.value = kotlinx.coroutines.withContext(Dispatchers.IO) { tripManager.getAllTrips() }
+                    promptDemIfNeeded(tripId)
+                } else {
+                    wasRunningFor = null
+                }
+            }
+        }
+    }
+
+    private suspend fun promptDemIfNeeded(tripId: Long) {
+        if (_altitudeSourceMode.value != AltitudeSourceMode.DEM || promptedDemTripIds.contains(tripId)) return
+        val needsDem = kotlinx.coroutines.withContext(Dispatchers.IO) { dbHelper.tripHasGpsAltitudePoints(tripId) }
+        if (needsDem) {
+            promptedDemTripIds.add(tripId)
+            _pendingDemTripPrompt.value = _savedTrips.value.firstOrNull { it.id == tripId }
+        }
+    }
+
+    /** Points of a saved trip whose altitude is not from the DEM (GPS or missing). */
+    suspend fun countNonDemAltitudePoints(tripId: Long): Int = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        dbHelper.getTrackPointRows(tripId).count { it.altitudeM == null || (it.altSource ?: "GPS") != "DEM" }
     }
 
     fun setActivityProfile(profile: ActivityProfile) {
