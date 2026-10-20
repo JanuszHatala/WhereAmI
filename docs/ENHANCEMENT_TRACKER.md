@@ -1177,3 +1177,29 @@ Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of r
 | **GEO88-01** | **Krakowska • 52 instead of DK52 / brackets.** UI joined street + raw ref with bullet; `formatStreetDisplay` uses normalize. | `RoadNameNormalizer`, `MainActivity`, `AutoMediaService` | Implemented | `RoadDisplayFormatTest` |
 | **DOC-88** | ADR-07 amendment v1.17.1. | docs | Done | - |
 | **VER-88** | `versionCode` 118, `versionName` "1.17.1". | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |
+
+## 92. Round 89: Trip Details UI/UX Polish & Elevation Actions (2026-10-20, v1.17.2)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI89-01** | **Stat tiles below map equal height and no speed text wrap.** Standardized stat card heights and guarded single-line metrics with `maxLines = 1, softWrap = false`. | `MainActivity.kt` | Implemented | Compose preview & unit test |
+| **UI89-02** | **Elevation badges clarity & Correct Altitude button contrast.** Styled altitude action button with crisp border and clear status; reorganized elevation badges with distinct icons. | `MainActivity.kt` | Implemented | Compose UI inspection |
+| **UI89-03** | **Visited localities start/end distance ambiguity & pause time labels.** Trip start/end shows relative leg distance and clean timestamps; pause cards clarify dwell duration. | `MainActivity.kt`, `TripModels.kt` | Implemented | Unit tests |
+| **VER-89** | `versionCode` 119, `versionName` "1.17.2". | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |
+
+## 93. Round 90: Diacritic Search Normalization, Selection Filter & Time Repair (2026-10-20, v1.17.3)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **SRCH90-01** | **Search trips by name/locality case-insensitive and diacritic-insensitive.** Normalized text search translating Polish/accented characters (`ą` -> `a`, `ć` -> `c`). | `MainActivity.kt`, `StringUtils.kt` | Implemented | Unit tests |
+| **UI90-01** | **Trips selection filter toggle.** Added toggle icon next to "Fit Map" filtering list by selected/unselected/all when any trip is selected. | `MainActivity.kt` | Implemented | UI inspection |
+| **TRP90-01** | **Investigate and repair 1s trips without time.** Auto-reconstruct point timestamps from start time and average speed when missing or truncated. | `TripTimeRepairWorker.kt` | Implemented | `TripTimeRepairTest` |
+| **VER-90** | `versionCode` 120, `versionName` "1.17.3". | `app/build.gradle.kts` | Done | BUILD SUCCESSFUL |
+
+## 94. Round 91: Distance-Based Gaussian Smoothing & Catmull-Rom Elevation Chart (2026-10-20, v1.17.4)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ELV91-01** | **Elevation profile square steps and artificial mesa cliffs.** Replaced discrete 5-point moving window with continuous spatial Gaussian kernel ($\sigma \in [20, 80]\text{m}$) over uniform distance resampling (100 points). Eliminates 30m SRTM pixel steps and 1m integer quantization while preserving terrain extremes. | `TripModels.kt`, `MainActivity.kt` | Implemented | `TripTimeRepairTest.testSmoothElevationProfileGaussianResampling` |
+| **ELV91-02** | **Elevation profile flat terrace rendering.** Replaced horizontal tangent cubic Bezier with $C^1$-continuous Catmull-Rom spline and 8% vertical padding, preventing curve clipping at top/bottom edges. | `MainActivity.kt` | Implemented | Visual & unit test verification |
+| **VER-91** | `versionCode` 121, `versionName` "1.17.4". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
