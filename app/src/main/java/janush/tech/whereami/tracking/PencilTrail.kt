@@ -20,13 +20,13 @@ class PencilTrail(private val maxPoints: Int = 600) {
     val size: Int get() = t.size
 
     /** Appends a rendered cursor position at render time [tMs] if it moved far enough from the last one. */
-    fun add(tMs: Long, latDeg: Double, lngDeg: Double, speedMps: Double): Boolean {
+    fun add(tMs: Long, latDeg: Double, lngDeg: Double, speedMps: Double, vehicle: Boolean = false): Boolean {
         val n = t.size
         if (n > 0) {
             if (tMs < t[n - 1]) return false
             val k = cos(Math.toRadians(latDeg)).coerceAtLeast(0.01)
             val d = hypot((lngDeg - lng[n - 1]) * k, latDeg - lat[n - 1]) * LocalFrame.METERS_PER_DEG_LAT
-            if (d < minStepM(speedMps)) return false
+            if (d < minStepM(speedMps, vehicle)) return false
         }
         t.add(tMs); lat.add(latDeg); lng.add(lngDeg)
         if (t.size > maxPoints) {
@@ -113,8 +113,12 @@ class PencilTrail(private val maxPoints: Int = 600) {
         /**
          * About 0.15 s of travel. Floor is 1.0 m so walking multipath (accuracy often 5-12 m) does not
          * scribble a coiled pencil every half metre that the smoother later straightens.
+         * Vehicles use a 2 m floor to cut zig-zag pencil noise on curves before the smoother commits.
          */
-        fun minStepM(speedMps: Double): Double = (0.15 * speedMps).coerceIn(1.0, 4.0)
+        fun minStepM(speedMps: Double, vehicle: Boolean = false): Double {
+            val floor = if (vehicle) 2.0 else 1.0
+            return (0.15 * speedMps).coerceIn(floor, 4.0)
+        }
 
         /** Distance over which the committed-vertex offset fades out along the pencil. */
         const val JOIN_DECAY_M = 4.0

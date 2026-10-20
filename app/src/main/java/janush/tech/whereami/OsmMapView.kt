@@ -817,20 +817,33 @@ fun OsmMapView(
                 val pose = renderPipeline.frame(nowMs)
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
-                    val gp = GeoPoint(pose.lat, pose.lng)
+                    // Display-only road pull (OSRM nearest via LocationManager); recorded track stays unsapped.
+                    val (dispLat, dispLng) = TrackingRuntime.displaySnap.apply(pose.lat, pose.lng)
+                    val gp = GeoPoint(dispLat, dispLng)
                     // Arrow direction: at slow speed the direction of the curve the cursor is drawing; otherwise
                     // the filter's heading while it observes one; otherwise, when visibly moving, the direction
                     // of the cursor's own rendered motion (never a stale held value).
                     if (pose.headingFresh) lastFreshHeadingMs = nowMs
                     val motionDeg = motionCourse.update(nowMs, pose.lat, pose.lng)
                     val cursorMoving = pose.isMoving && !pose.isStationary
-                    // Arrow: path tangent at slow foot pace, else filter / motion; compass may override when trusted.
+                    // Arrow: path tangent at slow foot pace; vehicles prefer motion course when the filter
+                    // heading is freshly wrong (sideways arrow while driving through a bend).
                     val courseBearing = when {
-                        cursorMoving && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
+                        cursorMoving && onFootNow.value && pose.pathHeadingDeg != null -> pose.pathHeadingDeg
+                        cursorMoving && !onFootNow.value -> {
+                            val motion = MotionCourse.forVehicle(
+                                motionDeg,
+                                pose.headingDeg.takeIf { pose.headingConfident },
+                                nowMs - lastFreshHeadingMs
+                            )
+                            if (motion != null && pose.headingFresh &&
+                                kotlin.math.abs(shortestDeltaDeg(pose.headingDeg, motion)) > 35.0
+                            ) motion
+                            else if (pose.headingFresh) pose.headingDeg
+                            else motion
+                        }
                         pose.headingFresh -> pose.headingDeg
-                        cursorMoving ->
-                            if (onFootNow.value) motionDeg
-                            else MotionCourse.forVehicle(motionDeg, pose.headingDeg.takeIf { pose.headingConfident }, nowMs - lastFreshHeadingMs)
+                        cursorMoving -> motionDeg
                         else -> null
                     }
                     // Compass drives the arrow only (never course-up): walking compass steps ~3x the filter and
@@ -871,7 +884,7 @@ fun OsmMapView(
                         }
                     }
                     val effectiveAccuracy = pose.accuracyM ?: fix.accuracy
-                    accuracyOverlay.updatePosition(pose.lat, pose.lng, effectiveAccuracy)
+                    accuracyOverlay.updatePosition(dispLat, dispLng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
                         it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -940,16 +953,25 @@ fun OsmMapView(
                         }
                         val before = pencilTrail.size
                         pencilTrail.pruneThrough(committedThroughMs)
-                        redrawFromMs?.let { pencilTrail.dropAfter(it) }
-                        // Frames were not rendered (screen off, app paused) or a batch replaced dead reckoning:
-                        // refill the pencil with the path between the real states, so the line does not chord
-                        // from its end to the cursor.
+                        // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
+                        // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
+                        val catchUp = framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES
+                        if (catchUp) {
+                            pencilTrail.dropAfter(committedThroughMs)
+                        } else {
+                            redrawFromMs?.let { pencilTrail.dropAfter(it) }
+                        }
+                        val vehiclePencil = !onFootNow.value
                         val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
-                        val backfilled = (framesMissed || redrawFromMs != null) && !pose.isStationary && pencilEndMs > 0L &&
-                            renderPipeline.pathBetween(pencilEndMs, pose.renderTimeMs)
-                                .count { pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps) } > 0
+                        val refillFromMs = if (catchUp && committedThroughMs > 0L) committedThroughMs else pencilEndMs
+                        val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
+                            renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
+                                .count {
+                                    val (la, ln) = TrackingRuntime.displaySnap.apply(it.lat, it.lng)
+                                    pencilTrail.add(it.tMs, la, ln, it.speedMps, vehicle = vehiclePencil)
+                                } > 0
                         val added = !pose.isStationary &&
-                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
+                            pencilTrail.add(pose.renderTimeMs, dispLat, dispLng, pose.speedMps, vehicle = vehiclePencil)
                         if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                             liveLine.rebuildTail(pencilTrail, gp, committedThroughMs)
                             line.setPoints(liveLine.points)
@@ -1121,7 +1143,12 @@ fun OsmMapView(
             // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
             // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
             // loop appends the dynamic tail. This is the single source of the live polyline.
-            liveLine.setCommitted(trackPoints)
+            // Display-only road snap (same offset as the cursor) so the red line does not sit in buildings.
+            val snappedCommitted = trackPoints.map { p ->
+                val (la, ln) = TrackingRuntime.displaySnap.apply(p.latitude, p.longitude)
+                GeoPoint(la, ln)
+            }
+            liveLine.setCommitted(snappedCommitted)
             committedThroughMs = tripManagerRef.lastCommittedElapsedMs
             if (trackPoints.isEmpty()) pencilTrail.clear()
             pencilTrail.pruneThrough(committedThroughMs)

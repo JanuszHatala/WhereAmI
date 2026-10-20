@@ -9168,10 +9168,11 @@ private fun LocalityCard(
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
 
-                val streetOrRoad = listOfNotNull(
-                    effectiveStreet?.takeIf { it.isNotBlank() },
-                    primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
-                ).joinToString(" • ")
+                val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
+                    effectiveStreet,
+                    primaryPlace?.roadRef,
+                    primaryPlace?.countryCode
+                ).orEmpty()
 
                 // Check if current location matches any saved place
                 val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
@@ -9854,10 +9855,11 @@ private fun LocalityCard(
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
 
-                val streetOrRoad = listOfNotNull(
-                    effectiveStreet?.takeIf { it.isNotBlank() },
-                    primaryPlace?.roadRef?.takeIf { it.isNotBlank() }
-                ).joinToString(" • ")
+                val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
+                    effectiveStreet,
+                    primaryPlace?.roadRef,
+                    primaryPlace?.countryCode
+                ).orEmpty()
 
                 if (streetOrRoad.isNotEmpty()) {
                     Text(

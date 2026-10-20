@@ -39,4 +39,6 @@ object TrackingRuntime {
     val gyro = GyroYawTracker()
     val compass = CompassTracker()
     val states = TrackStateLog()
+    /** Soft display-only pull of the live cursor/line toward OSRM `/nearest` (not persisted). */
+    val displaySnap = DisplayRoadSnap()
 }

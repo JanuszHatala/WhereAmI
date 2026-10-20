@@ -213,6 +213,10 @@ Battery optimization is the highest engineering priority:
   - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
+- **Amendment (v1.17.1, driving vs Wikiloc/Komoot/hiking maps, 2026-10-20)**:
+  - *Display road snap*: OSRM `/nearest` already used for street names now also returns snapped coordinates; `DisplayRoadSnap` applies a bounded EMA offset (max 18 m) to the live cursor and polyline only (recorded `track_points` unchanged).
+  - *Resume catch-up*: after missed frames or a batch, the pencil is cleared from the committed vertex and refilled from `pathBetween` (no hieroglyph chords).
+  - *Street card*: `RoadNameNormalizer.formatStreetDisplay` so "Krakowska" + ref `52` shows as `Krakowska (DK52)`, never `Krakowska • 52`.
 
 ## 6. Code Quality, Testing Gates & Coverage Requirements
 

@@ -252,6 +252,8 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
   - `TripManager.kt`: Sensitive auto-start ($\ge 25\text{m}$ displacement over 8s) and configurable stationary auto-stop (1m, 3m, 5m, 10m).
+  - Driving display road snap (v1.17.1): live cursor/polyline may pull ≤18 m toward OSRM `/nearest` for road alignment (`DisplayRoadSnap`); recorded `track_points` stay GNSS/filter geometry.
+  - Street card formatting (v1.17.1): `formatStreetDisplay` shows `Krakowska (DK52)` instead of `Krakowska • 52` when street name and road ref are both present.
   - Crash / hard-reset survival (v1.17.0): open trip (`end_time IS NULL`) with batched `track_points` flush (5 pts / 3 s + lifecycle/shutdown flush); `TripRecovery` resumes automatically (Option A) using last track-point time for zombie detection; `TripSurvivalReceiver` for SHUTDOWN/BATTERY_LOW.
 - **Decision History & Evolution**:
   - *Issue*: Auto-stop failed to trigger when parked at home because of a hardcoded 45m displacement override.

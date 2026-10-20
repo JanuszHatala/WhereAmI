@@ -11,12 +11,27 @@ import kotlin.math.roundToInt
  * This completely eliminates "perpendicular cross-street snapping" where point-based
  * geocoding snaps to a side street because it happens to be 2 meters closer to the raw GPS dot.
  */
+data class OsrmNearest(
+    val name: String?,
+    val lat: Double,
+    val lng: Double,
+    val distanceM: Double
+)
+
 object OsmMapMatcher : janush.tech.whereami.tracking.RouteMatchApi {
     private var lastRequestTime = 0L
     private var rateLimitCooldownUntil = 0L
 
     @Synchronized
-    fun getNearestStreet(lat: Double, lng: Double, bearing: Float?): String? {
+    fun getNearestStreet(lat: Double, lng: Double, bearing: Float?): String? =
+        getNearest(lat, lng, bearing)?.name
+
+    /**
+     * OSRM `/nearest` waypoint (name + snapped coordinates). Same rate limit as street lookups so live
+     * display snapping does not add extra traffic to the public demo server.
+     */
+    @Synchronized
+    fun getNearest(lat: Double, lng: Double, bearing: Float?): OsrmNearest? {
         val now = System.currentTimeMillis()
         if (now < rateLimitCooldownUntil) return null
 
@@ -56,13 +71,16 @@ object OsmMapMatcher : janush.tech.whereami.tracking.RouteMatchApi {
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
                 val root = JSONObject(body)
-                
                 val waypoints = root.optJSONArray("waypoints")
                 if (waypoints != null && waypoints.length() > 0) {
                     val waypoint = waypoints.getJSONObject(0)
-                    val name = waypoint.optString("name")
-                    // OSRM returns empty string if unnamed
-                    return name.takeIf { it.isNotBlank() }
+                    val loc = waypoint.optJSONArray("location") ?: return null
+                    val snapLng = loc.optDouble(0, Double.NaN)
+                    val snapLat = loc.optDouble(1, Double.NaN)
+                    if (snapLat.isNaN() || snapLng.isNaN()) return null
+                    val name = waypoint.optString("name").takeIf { it.isNotBlank() }
+                    val dist = waypoint.optDouble("distance", Double.NaN).takeIf { !it.isNaN() } ?: 0.0
+                    return OsrmNearest(name, snapLat, snapLng, dist)
                 }
             }
             null
