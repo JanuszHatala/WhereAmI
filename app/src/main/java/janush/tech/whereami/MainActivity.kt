@@ -1426,10 +1426,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             // Filter trips based on search text, activity mode, and date range
             val filteredTrips = remember(savedTrips, tripSearchQuery, selectedActivityFilter, selectedDateFilter, startOfTodayMs, startOfWeekMs, startOfMonthMs) {
                 savedTrips.filter { trip ->
-                    // 1. Search Query (matches title or visited localities)
-                    val matchesQuery = tripSearchQuery.isBlank() ||
-                            trip.title.contains(tripSearchQuery, ignoreCase = true) ||
-                            trip.placesVisited.any { it.placeName.contains(tripSearchQuery, ignoreCase = true) }
+                    // 1. Search Query (matches title, formatted dates, months, localities, hierarchy subtitles)
+                    val matchesQuery = SearchNormalizer.matchesTrip(tripSearchQuery, trip)
 
                     // 2. Exact Calendar Date Range
                     val matchesDate = when (selectedDateFilter) {
