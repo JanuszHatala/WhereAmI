@@ -577,6 +577,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         cleanUpTrailingDestinationPauses(db)
         ensureSavedPlacesColumns(db)
         sanitizeStoredPlaces(db)
+        repairCorruptedTripTimes(db)
     }
 
     private fun sanitizeStoredPlaces(db: SQLiteDatabase) {
@@ -669,6 +670,97 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         } catch (e: Exception) {
             TelemetryLogger.log("DB_MIGRATION", "Error during cleanUpTrailingDestinationPauses: ${e.message}")
         }
+    }
+
+    /**
+     * Scans for trips where recorded duration is implausibly truncated (< 15s) despite having
+     * significant distance (> 50m) and a recorded average speed (> 0.5 km/h).
+     * Reconstructs realistic endTime from distance / avgSpeed, and interpolates synthetic
+     * monotonic timestamps in track_points if t_utc values are missing.
+     * Returns the count of repaired trips.
+     */
+    fun repairCorruptedTripTimes(db: SQLiteDatabase = writableDatabase): Int {
+        var repairedCount = 0
+        try {
+            val cursor = db.rawQuery(
+                "SELECT $COL_ID, $COL_START_TIME, $COL_END_TIME, $COL_DISTANCE, $COL_AVG_SPEED " +
+                    "FROM $TABLE_TRIPS " +
+                    "WHERE $COL_DISTANCE > 50.0 AND $COL_AVG_SPEED > 0.5 AND $COL_END_TIME IS NOT NULL " +
+                    "AND ($COL_END_TIME - $COL_START_TIME) < 15000",
+                null
+            )
+            val toRepair = mutableListOf<Triple<Long, Long, Long>>() // id, startTime, newEndTime
+            cursor.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(COL_ID)
+                val startIdx = c.getColumnIndexOrThrow(COL_START_TIME)
+                val distIdx = c.getColumnIndexOrThrow(COL_DISTANCE)
+                val speedIdx = c.getColumnIndexOrThrow(COL_AVG_SPEED)
+                while (c.moveToNext()) {
+                    val id = c.getLong(idIdx)
+                    val start = c.getLong(startIdx)
+                    val dist = c.getDouble(distIdx)
+                    val speed = c.getFloat(speedIdx)
+                    val speedMps = speed * (1000.0 / 3600.0)
+                    if (speedMps > 0.1) {
+                        val durationSec = (dist / speedMps).toLong()
+                        val newEndTime = start + (durationSec * 1000L).coerceAtLeast(15_000L)
+                        toRepair.add(Triple(id, start, newEndTime))
+                    }
+                }
+            }
+
+            if (toRepair.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for ((id, start, newEnd) in toRepair) {
+                        val cv = ContentValues().apply {
+                            put(COL_END_TIME, newEnd)
+                        }
+                        db.update(TABLE_TRIPS, cv, "$COL_ID = ?", arrayOf(id.toString()))
+                        backfillTrackPointTimes(db, id, start, newEnd)
+                        repairedCount++
+                    }
+                    db.setTransactionSuccessful()
+                    TelemetryLogger.log("DB_MIGRATION", "Repaired $repairedCount trips with truncated duration")
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("DB_MIGRATION", "Error during repairCorruptedTripTimes: ${e.message}")
+        }
+        return repairedCount
+    }
+
+    private fun backfillTrackPointTimes(db: SQLiteDatabase, tripId: Long, startTime: Long, endTime: Long) {
+        try {
+            val countCursor = db.rawQuery(
+                "SELECT count(*), count($COL_TP_T) FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ?",
+                arrayOf(tripId.toString())
+            )
+            var totalPoints = 0
+            var pointsWithTime = 0
+            countCursor.use { c ->
+                if (c.moveToFirst()) {
+                    totalPoints = c.getInt(0)
+                    pointsWithTime = c.getInt(1)
+                }
+            }
+            if (totalPoints > 1 && pointsWithTime == 0) {
+                val totalDurMs = (endTime - startTime).coerceAtLeast(1000L)
+                val stepMs = totalDurMs.toDouble() / (totalPoints - 1)
+                val stmt = db.compileStatement(
+                    "UPDATE $TABLE_TRACK_POINTS SET $COL_TP_T = ? WHERE $COL_TP_TRIP = ? AND $COL_TP_SEQ = ?"
+                )
+                for (seq in 0 until totalPoints) {
+                    val pointTime = startTime + (seq * stepMs).toLong()
+                    stmt.bindLong(1, pointTime)
+                    stmt.bindLong(2, tripId)
+                    stmt.bindLong(3, seq.toLong())
+                    stmt.executeUpdateDelete()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun countPointsFromJson(jsonStr: String): Int {

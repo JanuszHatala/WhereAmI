@@ -1399,6 +1399,14 @@ fun LocationScreen(viewModel: MainViewModel) {
             var expandedPauseTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
             var expandedRouteTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
             var selectedTripForDetail by remember { mutableStateOf<TripRecord?>(null) }
+            var tripSelectionFilterMode by remember { mutableStateOf(TripSelectionFilterMode.ALL) }
+
+            // Auto-reset filter mode to ALL when selection is cleared
+            LaunchedEffect(selectedTripIds.isEmpty()) {
+                if (selectedTripIds.isEmpty()) {
+                    tripSelectionFilterMode = TripSelectionFilterMode.ALL
+                }
+            }
             // Dropdown expanded states for compact filter row
             var dateFilterExpanded by remember { mutableStateOf(false) }
             var activityFilterExpanded by remember { mutableStateOf(false) }
@@ -1452,8 +1460,20 @@ fun LocationScreen(viewModel: MainViewModel) {
                 }
             }
 
-            val tripGroups = remember(filteredTrips, tripGroupBy) {
-                TripGroupingHelper.groupTrips(filteredTrips, tripGroupBy)
+            val displayedTrips = remember(filteredTrips, selectedTripIds, tripSelectionFilterMode) {
+                if (selectedTripIds.isEmpty()) {
+                    filteredTrips
+                } else {
+                    when (tripSelectionFilterMode) {
+                        TripSelectionFilterMode.ALL -> filteredTrips
+                        TripSelectionFilterMode.SELECTED_ONLY -> filteredTrips.filter { selectedTripIds.contains(it.id) }
+                        TripSelectionFilterMode.UNSELECTED_ONLY -> filteredTrips.filter { !selectedTripIds.contains(it.id) }
+                    }
+                }
+            }
+
+            val tripGroups = remember(displayedTrips, tripGroupBy) {
+                TripGroupingHelper.groupTrips(displayedTrips, tripGroupBy)
             }
 
             Surface(
@@ -2169,8 +2189,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Spacer(modifier = Modifier.height(6.dp))
                         }
 
-                        // Multi-Select Action Bar (Fit Map, Merge, Select All / Deselect All)
-                        val allFilteredSelected = filteredTrips.isNotEmpty() && filteredTrips.all { selectedTripIds.contains(it.id) }
+                        // Multi-Select Action Bar (Fit Map, Merge, Filter Selection, Select All / Deselect All)
+                        val allFilteredSelected = displayedTrips.isNotEmpty() && displayedTrips.all { selectedTripIds.contains(it.id) }
 
                         // Action Bar: Selection Actions & Select All
                         Row(
@@ -2236,20 +2256,64 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text("Fit Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                     }
+
+                                    Button(
+                                        onClick = {
+                                            tripSelectionFilterMode = when (tripSelectionFilterMode) {
+                                                TripSelectionFilterMode.ALL -> TripSelectionFilterMode.SELECTED_ONLY
+                                                TripSelectionFilterMode.SELECTED_ONLY -> TripSelectionFilterMode.UNSELECTED_ONLY
+                                                TripSelectionFilterMode.UNSELECTED_ONLY -> TripSelectionFilterMode.ALL
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = when (tripSelectionFilterMode) {
+                                                TripSelectionFilterMode.ALL -> Color(0xFF334155)
+                                                TripSelectionFilterMode.SELECTED_ONLY -> Color(0xFF0D9488)
+                                                TripSelectionFilterMode.UNSELECTED_ONLY -> Color(0xFF475569)
+                                            }
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = when (tripSelectionFilterMode) {
+                                                TripSelectionFilterMode.ALL -> Icons.Default.FilterList
+                                                TripSelectionFilterMode.SELECTED_ONLY -> Icons.Default.CheckCircle
+                                                TripSelectionFilterMode.UNSELECTED_ONLY -> Icons.Default.RadioButtonUnchecked
+                                            },
+                                            contentDescription = "Filter Selection",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = when (tripSelectionFilterMode) {
+                                                TripSelectionFilterMode.ALL -> "All"
+                                                TripSelectionFilterMode.SELECTED_ONLY -> "Selected"
+                                                TripSelectionFilterMode.UNSELECTED_ONLY -> "Unselected"
+                                            },
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
                                 }
                             } else {
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (filteredTrips.size != savedTrips.size) {
+                                    if (displayedTrips.size != savedTrips.size) {
                                         Text(
-                                            text = "Filtered: ${filteredTrips.size} of ${savedTrips.size}",
+                                            text = "Filtered: ${displayedTrips.size} of ${savedTrips.size}",
                                             fontSize = 11.sp,
                                             color = Color(0xFF94A3B8)
                                         )
                                     }
-                                    val filteredTripsWithPauses = filteredTrips.filter { it.pauses.isNotEmpty() }
+                                    val filteredTripsWithPauses = displayedTrips.filter { it.pauses.isNotEmpty() }
                                     if (filteredTripsWithPauses.isNotEmpty()) {
                                         val allPausesExpanded = filteredTripsWithPauses.all { expandedPauseTripIds.contains(it.id) }
                                         TextButton(
@@ -2279,13 +2343,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     if (allFilteredSelected) {
                                         viewModel.clearTripSelection()
                                     } else {
-                                        viewModel.setSelectedTripIds(filteredTrips.map { it.id }.toSet())
+                                        viewModel.setSelectedTripIds(displayedTrips.map { it.id }.toSet())
                                     }
                                 },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = if (allFilteredSelected) "Deselect All" else "Select All (${filteredTrips.size})",
+                                    text = if (allFilteredSelected) "Deselect All" else "Select All (${displayedTrips.size})",
                                     color = Color(0xFF38BDF8),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium
@@ -11118,10 +11182,18 @@ fun TripDetailDialog(
     elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress(),
     countNonDemAltitudePoints: suspend (Long) -> Int = { 0 }
 ) {
-    val effectiveEndTime = trip.endTime?.takeIf { it > trip.startTime }
-        ?: if (trip.avgSpeedKmh > 0.5f && trip.distanceMeters > 50.0) {
-            trip.startTime + ((trip.distanceMeters / (trip.avgSpeedKmh * (1000.0 / 3600.0))) * 1000L).toLong()
-        } else null
+    val expectedDurationMs = if (trip.avgSpeedKmh > 0.5f && trip.distanceMeters > 50.0) {
+        ((trip.distanceMeters / (trip.avgSpeedKmh * (1000.0 / 3600.0))) * 1000L).toLong()
+    } else null
+
+    val isTruncatedTime = trip.endTime != null && trip.distanceMeters > 50.0 &&
+        ((trip.endTime - trip.startTime) < 15_000L || (expectedDurationMs != null && (trip.endTime - trip.startTime) < expectedDurationMs / 5))
+
+    val effectiveEndTime = if (isTruncatedTime) {
+        expectedDurationMs?.let { trip.startTime + it }
+    } else {
+        trip.endTime?.takeIf { it > trip.startTime } ?: expectedDurationMs?.let { trip.startTime + it }
+    }
 
     val shortDateFmt = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
     val startDateStr = shortDateFmt.format(Date(trip.startTime))
@@ -11137,7 +11209,7 @@ fun TripDetailDialog(
     )
 
     val startTimeStr = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.startTime))
-    val endTimeStr = if (trip.endTime != null && trip.endTime > trip.startTime) {
+    val endTimeStr = if (trip.endTime != null && trip.endTime > trip.startTime && !isTruncatedTime) {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(trip.endTime))
     } else if (effectiveEndTime != null) {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(effectiveEndTime)) + " (est.)"
@@ -12502,10 +12574,28 @@ private fun ElevationStatChip(label: String, color: Color) {
 fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Modifier = Modifier) {
     val altPairs = remember(points) {
         val distances = calculateCumulativeDistances(points)
-        points.mapIndexed { i, p ->
+        val rawPairs = points.mapIndexed { i, p ->
             val dist = distances.getOrElse(i) { 0.0 }
             dist to p.altitude
         }.filter { (_, a) -> a != 0.0 && !a.isNaN() }
+
+        if (rawPairs.size < 2) return@remember emptyList()
+
+        // Moving average window smoothing (window size 5, preserving edge points)
+        // Eliminates 1m integer DEM quantization staircases while preserving overall terrain structure
+        val windowSize = 5.coerceAtMost(rawPairs.size)
+        val halfWin = windowSize / 2
+        rawPairs.indices.map { i ->
+            val startIdx = (i - halfWin).coerceAtLeast(0)
+            val endIdx = (i + halfWin).coerceAtMost(rawPairs.size - 1)
+            var sumAlt = 0.0
+            var count = 0
+            for (k in startIdx..endIdx) {
+                sumAlt += rawPairs[k].second
+                count++
+            }
+            rawPairs[i].first to (sumAlt / count)
+        }
     }
 
     if (altPairs.size < 2) return
@@ -12530,11 +12620,25 @@ fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Mo
         fun toY(alt: Double): Float = (h * (1.0 - (alt - minAlt) / altRange)).toFloat().coerceIn(0f, h)
 
         val fillPath = androidx.compose.ui.graphics.Path()
-        altPairs.forEachIndexed { i, (d, a) ->
-            val x = toX(d)
-            val y = toY(a)
-            if (i == 0) fillPath.moveTo(x, y) else fillPath.lineTo(x, y)
+        val linePath = androidx.compose.ui.graphics.Path()
+
+        val startX = toX(altPairs.first().first)
+        val startY = toY(altPairs.first().second)
+        fillPath.moveTo(startX, startY)
+        linePath.moveTo(startX, startY)
+
+        for (i in 0 until altPairs.size - 1) {
+            val p0 = altPairs[i]
+            val p1 = altPairs[i + 1]
+            val x0 = toX(p0.first)
+            val y0 = toY(p0.second)
+            val x1 = toX(p1.first)
+            val y1 = toY(p1.second)
+            val midX = (x0 + x1) / 2f
+            linePath.cubicTo(midX, y0, midX, y1, x1, y1)
+            fillPath.cubicTo(midX, y0, midX, y1, x1, y1)
         }
+
         fillPath.lineTo(toX(altPairs.last().first), h)
         fillPath.lineTo(toX(altPairs.first().first), h)
         fillPath.close()
@@ -12548,12 +12652,6 @@ fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Mo
             )
         )
 
-        val linePath = androidx.compose.ui.graphics.Path()
-        altPairs.forEachIndexed { i, (d, a) ->
-            val x = toX(d)
-            val y = toY(a)
-            if (i == 0) linePath.moveTo(x, y) else linePath.lineTo(x, y)
-        }
         drawPath(
             path = linePath,
             color = Color(0xFF34D399),
