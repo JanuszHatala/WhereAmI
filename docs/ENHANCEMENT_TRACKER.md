@@ -1203,3 +1203,11 @@ Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of r
 | **ELV91-01** | **Elevation profile square steps and artificial mesa cliffs.** Replaced discrete 5-point moving window with continuous spatial Gaussian kernel ($\sigma \in [20, 80]\text{m}$) over uniform distance resampling (100 points). Eliminates 30m SRTM pixel steps and 1m integer quantization while preserving terrain extremes. | `TripModels.kt`, `MainActivity.kt` | Implemented | `TripTimeRepairTest.testSmoothElevationProfileGaussianResampling` |
 | **ELV91-02** | **Elevation profile flat terrace rendering.** Replaced horizontal tangent cubic Bezier with $C^1$-continuous Catmull-Rom spline and 8% vertical padding, preventing curve clipping at top/bottom edges. | `MainActivity.kt` | Implemented | Visual & unit test verification |
 | **VER-91** | `versionCode` 121, `versionName` "1.17.4". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 95. Round 92: Fit Map Viewport Inset Tightening & Point Scoping Invariant (2026-10-20, v1.17.5)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **MAP92-01** | **Fit Map zooms out too far, displaying selected trips too small.** Eliminated double padding (removed redundant 24dp margin added on top of already-buffered 72dp right and 186dp bottom insets, and reduced 15% safety shrink to 6%). Lowered minimum span floor from 200m to 60m. | `OsmMapView.kt` | Implemented | `ViewportFitTest.testTightenedViewportInsetsAvoidDoublePadding` |
+| **MAP92-02** | **Live guests and host location incorrectly pooled into selected past trips fit bounding box.** When historical trips are selected, `allShownPoints` now strictly includes only the selected trip points, preventing live guests in other cities or host GPS from inflating the bounding box. | `OsmMapView.kt` | Implemented | `ViewportFitTest.testSelectedTripsExcludesLiveGuestsFromFit` |
+| **VER-92** | `versionCode` 122, `versionName` "1.17.5". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |

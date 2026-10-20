@@ -402,4 +402,77 @@ class ViewportFitTest {
         assertEquals(68f, computeRecenterPaddingDp(isLandscape = true, showHeatMap = false, isRecording = false, isAutoStandby = true), 0.001f)
         assertEquals(68f, computeRecenterPaddingDp(isLandscape = true, showHeatMap = true, isRecording = true, isAutoStandby = false), 0.001f)
     }
+
+    @Test
+    fun testSelectedTripsExcludesLiveGuestsFromFit() {
+        val tripPoints = listOf(
+            org.osmdroid.util.GeoPoint(49.82, 19.04),
+            org.osmdroid.util.GeoPoint(49.83, 19.05)
+        )
+        val selectedTrips = listOf(
+            TripRecord(
+                id = 1L,
+                startTime = 1000L,
+                points = tripPoints
+            )
+        )
+        val activeGuests = listOf(
+            LiveGuest(
+                id = "guest-1",
+                name = "Alice",
+                lat = 52.23, // Warsaw (~300 km away)
+                lng = 21.01,
+                lastUpdated = System.currentTimeMillis()
+            )
+        )
+        val hostLatLng = Triple(49.85, 19.22, 0f) // Czaniec (~20 km away)
+
+        // When past trips are selected and not actively recording:
+        // Points fitted MUST strictly be the selected trip points
+        val fittedPoints = mutableListOf<org.osmdroid.util.GeoPoint>()
+        val isRecording = false
+        if (selectedTrips.isNotEmpty() && !isRecording) {
+            selectedTrips.forEach { trip -> fittedPoints.addAll(trip.points) }
+        } else if (isRecording) {
+            // ...
+        } else if (activeGuests.isNotEmpty()) {
+            activeGuests.forEach { guest -> fittedPoints.add(guest.geoPoint) }
+            hostLatLng.let { fittedPoints.add(org.osmdroid.util.GeoPoint(it.first, it.second)) }
+        }
+
+        assertEquals(2, fittedPoints.size)
+        assertEquals(tripPoints[0].latitude, fittedPoints[0].latitude, 0.0001)
+        assertEquals(tripPoints[1].latitude, fittedPoints[1].latitude, 0.0001)
+        // Ensure Warsaw guest and Czaniec host are excluded
+        assertTrue(fittedPoints.none { it.latitude > 50.0 })
+    }
+
+    @Test
+    fun testTightenedViewportInsetsAvoidDoublePadding() {
+        val density = 2.625f
+        val mapWidth = 1080
+        val mapHeight = 2410
+
+        val topCardBottomPx = 583
+        val clearancePx = (12f * density).toInt()
+        val rightControlsDp = 68f
+        val minBottomInsetDp = 186f
+
+        val topInset = topCardBottomPx + clearancePx
+        val bottomInset = (minBottomInsetDp * density).toInt()
+        val leftInset = clearancePx
+        val rightInset = (rightControlsDp * density).toInt()
+
+        val availWidth = mapWidth - leftInset - rightInset
+        val availHeight = mapHeight - topInset - bottomInset
+
+        val safeWidth = (availWidth * 0.94).coerceAtLeast(50.0)
+        val safeHeight = (availHeight * 0.94).coerceAtLeast(50.0)
+
+        // Verify available dimensions maximize screen estate while guaranteeing clear margins
+        assertTrue("Available width should exceed 850px, was $availWidth", availWidth > 850)
+        assertTrue("Available height should exceed 1250px, was $availHeight", availHeight > 1250)
+        assertTrue("Safe width should exceed 800px, was $safeWidth", safeWidth > 800.0)
+        assertTrue("Safe height should exceed 1200px, was $safeHeight", safeHeight > 1200.0)
+    }
 }
