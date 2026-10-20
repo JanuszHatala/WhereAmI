@@ -63,7 +63,9 @@ class LiveTrackingService : Service() {
         locationManager = LocationManager.getInstance(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock")
+        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock").also {
+            it.setReferenceCounted(false)
+        }
 
         val hasTrip = TripManager.getInstance(this).activeTrip.value != null
         // Strict WakeLock scoping (AGENTS.md Rule 2.A):
@@ -81,22 +83,30 @@ class LiveTrackingService : Service() {
         startTracking()
     }
 
+    private var wakeLockAcquiredElapsedMs = 0L
+
     private fun updateWakeLock(shouldHold: Boolean) {
         try {
-            if (shouldHold) {
+            if (shouldHold && WakeLockPolicy.shouldHoldTripWakeLock(true)) {
                 if (wakeLock == null) {
                     val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock")
+                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:LiveTrackingWakeLock").also {
+                        it.setReferenceCounted(false)
+                    }
                 }
-                if (wakeLock?.isHeld != true) {
-                    wakeLock?.acquire(3 * 60 * 60 * 1000L) // 3h safe timeout while active
-                    TelemetryLogger.log("POWER", "LiveTrackingWakeLock acquired (active trip or live sharing)")
+                val now = android.os.SystemClock.elapsedRealtime()
+                val heldFor = if (wakeLock?.isHeld == true) now - wakeLockAcquiredElapsedMs else Long.MAX_VALUE
+                if (WakeLockPolicy.shouldRefreshHeldLock(wakeLock?.isHeld == true, heldFor)) {
+                    wakeLock?.acquire(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS)
+                    wakeLockAcquiredElapsedMs = now
+                    TelemetryLogger.log("POWER", "LiveTrackingWakeLock acquired/refreshed (active trip, ${WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 60_000}m slice)")
                 }
             } else {
                 if (wakeLock?.isHeld == true) {
                     wakeLock?.release()
                     TelemetryLogger.log("POWER", "LiveTrackingWakeLock released (standby or stopped)")
                 }
+                wakeLockAcquiredElapsedMs = 0L
             }
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "Error updating LiveTrackingWakeLock: ${e.message}")
@@ -662,9 +672,24 @@ class LiveTrackingService : Service() {
                 updateNotification(force = true)
             }
         }
+        // Refresh the trip wake-lock slice so multi-hour recordings never hit a hard timeout.
+        serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 3)
+                if (TripManager.getInstance(this@LiveTrackingService).activeTrip.value != null) {
+                    updateWakeLock(true)
+                }
+            }
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        TripManager.getInstance(this).flushPendingForSurvival()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
+        TripManager.getInstance(this).flushPendingForSurvival()
         super.onDestroy()
         stopLocationTracking()
         serviceJob.cancel()

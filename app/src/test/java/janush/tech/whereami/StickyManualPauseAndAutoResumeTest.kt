@@ -68,25 +68,20 @@ class StickyManualPauseAndAutoResumeTest {
     }
 
     @Test
-    fun testDaytimeStandbyHibernationBlockedOutsideBedtime() {
-        // Bedtime window: 22:30 to 06:30
-        // At 09:20 or 14:00 (daytime):
-        val isBedtime920 = AutoSleepManager.isTimeInWindow(9, 20, 22, 30, 6, 30)
-        assertFalse("09:20 is daytime, not bedtime", isBedtime920)
-
-        val isBedtime1400 = AutoSleepManager.isTimeInWindow(14, 0, 22, 30, 6, 30)
-        assertFalse("14:00 is daytime, not bedtime", isBedtime1400)
-
-        // 90 minutes stationary inactivity at desk during the day:
+    fun testStandbyHibernationAfterNinetyMinutesAnyTimeOfDay() {
+        // AGENTS.md: after 90 minutes verified stationary rest, hibernate (not bedtime-gated).
         val inactiveDuration = 90 * 60 * 1000L
-        val shouldHibernateDaytime = inactiveDuration >= AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS && isBedtime920
-        assertFalse("90m stationary dwell during daytime must NOT trigger standby hibernation", shouldHibernateDaytime)
-
-        // 90 minutes stationary inactivity at night (e.g. 02:00):
-        val isBedtime0200 = AutoSleepManager.isTimeInWindow(2, 0, 22, 30, 6, 30)
-        assertTrue("02:00 is within bedtime window", isBedtime0200)
-
-        val shouldHibernateNight = inactiveDuration >= AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS && isBedtime0200
-        assertTrue("90m stationary dwell at night MUST trigger standby hibernation", shouldHibernateNight)
+        assertTrue(
+            "90m stationary dwell during daytime must hibernate",
+            inactiveDuration >= AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS
+        )
+        assertTrue(
+            "90m stationary dwell at night must hibernate",
+            inactiveDuration >= AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS
+        )
+        assertFalse(
+            "under 90m must not hibernate",
+            (89 * 60 * 1000L) >= AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS
+        )
     }
 }

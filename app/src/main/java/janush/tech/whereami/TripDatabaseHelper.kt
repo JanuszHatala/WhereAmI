@@ -419,6 +419,17 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /** Newest `t_utc` for an open trip, or null when the table has no timed points. */
+    fun getLastTrackPointUtcMs(tripId: Long): Long? {
+        val db = readableDatabase
+        return db.rawQuery(
+            "SELECT MAX($COL_TP_T) FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ?",
+            arrayOf(tripId.toString())
+        ).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+        }
+    }
+
     fun getTrackPointRows(tripId: Long): List<TrackPointRow> {
         val db = readableDatabase
         val store = db.rawQuery("SELECT $COL_POINTS_STORE FROM $TABLE_TRIPS WHERE $COL_ID = ?", arrayOf(tripId.toString())).use {

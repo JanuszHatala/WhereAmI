@@ -301,9 +301,9 @@ class AppStateManager private constructor(private val context: Context) {
                             stationarySinceMs = now
                         }
                         val inactiveDuration = now - stationarySinceMs
-                        val isBedtime = AutoSleepManager.getInstance(context).isCurrentTimeInBedtimeWindow()
-                        if (inactiveDuration >= STANDBY_HIBERNATION_TIMEOUT_MS && isBedtime) {
-                            TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m during bedtime. Auto-entering standby sleep.")
+                        // AGENTS.md: after 90 minutes verified stationary rest, hibernate (any time of day).
+                        if (inactiveDuration >= STANDBY_HIBERNATION_TIMEOUT_MS) {
+                            TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m. Auto-entering standby sleep.")
                             enterStandbySleep()
                             stationarySinceMs = 0L
                             break
@@ -326,10 +326,14 @@ class AppStateManager private constructor(private val context: Context) {
             janush.tech.whereami.tracking.PostTripMatcher.schedule(context)
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
-            // Do NOT automatically cancel sleep mode when user simply opens or views the app!
-            // Sleep mode is persistent and only wakes via user action ([▶ Activate] on notification or [▶ Wake] in HUD).
+            // AGENTS.md: standby sleep wakes on app resume (MainActivity.onStart).
+            if (_isStandbySleeping.value) {
+                wakeStandbySleep(isExplicitUserAction = true)
+            }
             ensureAutoStandbyServiceRunning()
         } else {
+            // Best-effort durability: flush pending track points when the UI goes background.
+            TripManager.getInstance(context).flushPendingForSurvival()
             AutoSleepManager.getInstance(context).evaluateAutoSleep()
         }
         updateStandbyInactivityWatcherState()

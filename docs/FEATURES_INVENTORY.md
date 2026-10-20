@@ -252,9 +252,11 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
   - `TripManager.kt`: Sensitive auto-start ($\ge 25\text{m}$ displacement over 8s) and configurable stationary auto-stop (1m, 3m, 5m, 10m).
+  - Crash / hard-reset survival (v1.17.0): open trip (`end_time IS NULL`) with batched `track_points` flush (5 pts / 3 s + lifecycle/shutdown flush); `TripRecovery` resumes automatically (Option A) using last track-point time for zombie detection; `TripSurvivalReceiver` for SHUTDOWN/BATTERY_LOW.
 - **Decision History & Evolution**:
   - *Issue*: Auto-stop failed to trigger when parked at home because of a hardcoded 45m displacement override.
   - *Fix*: Removed override; now strictly respects user's configured auto-stop timeout while checking stationary detector.
+  - *User request (2026-10-20)*: survive battery death / hard reset; Option A auto-resume + battery hardening (wake-lock slices, sleep-on-resume, AutoMedia trip-scoped lock, 90 min hibernation any time of day).
 
 ### TRP-03: Gapless Low-Speed Polyline Recording
 - **Core Value**: Continuous, accurate GPS tracks during slow maneuvers, traffic jams, and walking ($< 18\text{ km/h}$).
