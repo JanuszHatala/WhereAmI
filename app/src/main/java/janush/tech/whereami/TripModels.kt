@@ -145,6 +145,12 @@ enum class TripMode {
     AUTO
 }
 
+enum class TripSelectionFilterMode(val label: String) {
+    ALL("All"),
+    SELECTED_ONLY("Selected"),
+    UNSELECTED_ONLY("Unselected")
+}
+
 enum class LocalityCardStyle {
     NORMAL,
     COMPACT
