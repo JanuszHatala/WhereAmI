@@ -250,46 +250,48 @@ fun fitPointsToUnobstructedViewport(
 
     // 1. Calculate unobstructed viewport insets (in pixels)
     // Map controls: 42dp width + 12dp end padding = 54dp minimum.
-    // Adding 18dp safe boundary clearance = 72dp rightControls.
+    // Adding 14dp safe boundary clearance = 68dp rightControls.
     // In portrait, use actual measured composable bounds when available (topCardBottomPx, bottomControlsTopPx)
     // with fallback to density-scaled dp estimates.
-    val marginPx = (24f * density).toInt()
     val (leftInset, rightInset, topInset, bottomInset) = if (isLandscape) {
-        val leftCardPx = (mapWidth * 0.38f).toInt()
-        val rightControlsPx = (72f * density).toInt()
-        val bottomToolbarPx = (72f * density).toInt()
+        val leftCardPx = (mapWidth * 0.36f).toInt()
+        val rightControlsPx = (68f * density).toInt()
+        val bottomToolbarPx = (64f * density).toInt()
+        val marginPx = (12f * density).toInt()
         listOf(
             leftCardPx + marginPx,
-            rightControlsPx + marginPx,
+            rightControlsPx,
             marginPx,
-            bottomToolbarPx + marginPx
+            bottomToolbarPx
         )
     } else {
-        val topCardDp = if (isCompact) 160f else 280f
+        val topCardDp = if (isCompact) 160f else 240f
         val statusBarDp = 36f
-        val rightControlsDp = 72f
+        val rightControlsDp = 68f // 42dp button + 12dp margin + 14dp clearance
+        val clearancePx = (12f * density).toInt()
 
         // Minimum bottom clearance must guarantee clear space above bottom toolbar and floating Recenter pill
-        // Floating recenter button is at padding(bottom = if (isRecording || isAutoStandby) 136.dp else 78.dp) + height 40.dp
-        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 130f
+        // Recenter button top is at 172dp when isRecording or isAutoStandby; 114dp otherwise.
+        // Adding 14dp clearance gives 186dp / 128dp minimum bottom clearance.
+        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 128f
         val minBottomInsetPx = (minBottomInsetDp * density).toInt()
 
         val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
-            measuredTopInsetPx + marginPx
+            measuredTopInsetPx + clearancePx
         } else {
-            ((topCardDp + statusBarDp) * density).toInt() + marginPx
+            ((topCardDp + statusBarDp) * density).toInt() + clearancePx
         }
 
         val measuredBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
-            (mapHeight - measuredBottomInsetPx) + marginPx
+            (mapHeight - measuredBottomInsetPx) + clearancePx
         } else {
             minBottomInsetPx
         }
         val resolvedBottomInset = maxOf(measuredBottomInset, minBottomInsetPx)
 
         listOf(
-            marginPx,
-            (rightControlsDp * density).toInt() + marginPx,
+            clearancePx,
+            (rightControlsDp * density).toInt(),
             resolvedTopInset,
             resolvedBottomInset
         )
@@ -313,16 +315,16 @@ fun fitPointsToUnobstructedViewport(
         val cameraCenter = calculateOpticalCenter(
             lat = target.latitude,
             lon = target.longitude,
-            zoom = 16.0,
+            zoom = 16.5,
             mapOrientation = orientationDeg,
             offsetPixelsY = offsetPixelsY,
             offsetPixelsX = offsetPixelsX,
             tilesScaleFactor = map.tilesScaleFactor
         )
         map.controller.stopAnimation(false)
-        map.controller.setZoom(16.0)
+        map.controller.setZoom(16.5)
         map.controller.setCenter(cameraCenter)
-        onZoomCalculated?.invoke(16.0)
+        onZoomCalculated?.invoke(16.5)
         map.invalidate()
         return
     }
@@ -357,21 +359,21 @@ fun fitPointsToUnobstructedViewport(
         if (v > maxV) maxV = v
     }
 
-    // Minimum span of 200m to avoid over-zooming on stationary points
-    val spanU = (maxU - minU).coerceAtLeast(200.0)
-    val spanV = (maxV - minV).coerceAtLeast(200.0)
+    // Minimum span of 60m to avoid over-zooming on stationary points
+    val spanU = (maxU - minU).coerceAtLeast(60.0)
+    val spanV = (maxV - minV).coerceAtLeast(60.0)
 
-    // 3. Compute zoom fitting both rotated width and height into unobstructed window with 15% safety padding
+    // 3. Compute zoom fitting both rotated width and height into unobstructed window with 6% safety margin
     val scaleFactor = map.tilesScaleFactor.takeIf { it > 0f } ?: 1.0f
     val equatorRes = 156543.03392 / scaleFactor
-    val safeWidth = availWidth * 0.85
-    val safeHeight = availHeight * 0.85
+    val safeWidth = (availWidth * 0.94).coerceAtLeast(50.0)
+    val safeHeight = (availHeight * 0.94).coerceAtLeast(50.0)
     val metersPerPixelX = spanU / safeWidth
     val metersPerPixelY = spanV / safeHeight
     val requiredMpp = kotlin.math.max(metersPerPixelX, metersPerPixelY)
 
     val calculatedZoom = (kotlin.math.log2((equatorRes * cosMeanLat) / requiredMpp))
-        .coerceIn(map.minZoomLevel, 18.0)
+        .coerceIn(map.minZoomLevel, 18.5)
 
     val actualMpp = (equatorRes * cosMeanLat) / Math.pow(2.0, calculatedZoom)
 
@@ -1401,23 +1403,26 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Collect all visible points (active recording track OR selected past trips + guests)
-    // Invariant: When recording, ONLY fit active track points. Do not include past trips.
-    // Also include all visible guests (active and dimmed) and host position if no track points exist yet.
+    // Collect all visible points (selected past trips OR active recording track OR live sharing group)
+    // Invariant 1: When past trips are selected, ONLY fit the selected trip points. Never inflate the bounding box with live guests or host location in other cities.
+    // Invariant 2: When recording, ONLY fit active track points. Do not include past trips or live guests.
+    // Invariant 3: When neither is active, fit active live sharing guests + host position.
     val allShownPoints = remember(trackPoints, selectedTrips, isRecording, activeGuests, latLng) {
         val pts = mutableListOf<GeoPoint>()
-        if (isRecording || trackPoints.isNotEmpty()) {
-            pts.addAll(trackPoints)
-        } else {
+        if (selectedTrips.isNotEmpty() && !isRecording) {
+            // Selected past trips take absolute priority for map fitting
             selectedTrips.forEach { trip ->
                 pts.addAll(trip.points)
             }
-        }
-        if (activeGuests.isNotEmpty()) {
+        } else if (isRecording || trackPoints.isNotEmpty()) {
+            // Active trip recording
+            pts.addAll(trackPoints)
+        } else if (activeGuests.isNotEmpty()) {
+            // Live sharing group (only when no trip is recording or selected)
             activeGuests.forEach { guest ->
                 pts.add(guest.geoPoint)
             }
-            if (trackPoints.isEmpty() && latLng != null) {
+            if (latLng != null) {
                 pts.add(GeoPoint(latLng.first, latLng.second))
             }
         }
