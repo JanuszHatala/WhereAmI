@@ -713,10 +713,11 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Feed new filtered states into the render pipeline
+    // Filtered states reach the render pipeline from TrackingRuntime.states in the frame loop (every state,
+    // in order); a fix without one (cached startup position) is fed here so the cursor can snap to it.
     LaunchedEffect(currentFix) {
         val fix = currentFix ?: return@LaunchedEffect
-        renderPipeline.onState(fix.track ?: syntheticTrackState(fix))
+        if (fix.track == null) renderPipeline.onState(syntheticTrackState(fix))
         if (fix.bearing != null && lastFrozenBearing == null) {
             lastFrozenBearing = fix.bearing
         }
@@ -791,6 +792,7 @@ fun OsmMapView(
         var lastRenderedFontScaleFactor: Float = fontScale.scaleFactor
         var lastFrameMs = 0L
         var lastActiveMs = 0L
+        var lastFedStateMs = Long.MIN_VALUE
 
         while (isActive) {
             val map = mapView
@@ -799,8 +801,18 @@ fun OsmMapView(
             if (map != null && fix != null) {
                 val nowMs = android.os.SystemClock.elapsedRealtime()
                 val dtSec = if (lastFrameMs > 0L) ((nowMs - lastFrameMs).coerceIn(1L, 250L) / 1000.0) else 0.016
+                val framesMissed = lastFrameMs == 0L || nowMs - lastFrameMs > 1_000L
                 lastFrameMs = nowMs
                 renderPipeline.movingOnSpeedMps = if (latestRecording) 0.5 else 0.8
+                val knownStateMs = renderPipeline.latestState?.tElapsedMs
+                val newStates = TrackingRuntime.states.since(lastFedStateMs)
+                for (s in newStates) {
+                    renderPipeline.onState(s)
+                    lastFedStateMs = s.tElapsedMs
+                }
+                // Several states at once (a delivered batch): pencil points drawn after the previously known
+                // state were dead reckoning; they are redrawn from the real states below.
+                val redrawFromMs = if (newStates.size >= PencilTrail.BATCH_STATES) knownStateMs else null
                 val pose = renderPipeline.frame(nowMs)
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
@@ -917,11 +929,19 @@ fun OsmMapView(
                             addOverlayAboveTiles(map, it)
                             polyline = it
                         }
-                        val added = !pose.isStationary &&
-                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
                         val before = pencilTrail.size
                         pencilTrail.pruneThrough(committedThroughMs)
-                        if (added || pencilTrail.size != before || !liveLine.hasTail) {
+                        redrawFromMs?.let { pencilTrail.dropAfter(it) }
+                        // Frames were not rendered (screen off, app paused) or a batch replaced dead reckoning:
+                        // refill the pencil with the path between the real states, so the line does not chord
+                        // from its end to the cursor.
+                        val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
+                        val backfilled = (framesMissed || redrawFromMs != null) && !pose.isStationary && pencilEndMs > 0L &&
+                            renderPipeline.pathBetween(pencilEndMs, pose.renderTimeMs)
+                                .count { pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps) } > 0
+                        val added = !pose.isStationary &&
+                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps)
+                        if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                             liveLine.rebuildTail(pencilTrail, gp, committedThroughMs)
                             line.setPoints(liveLine.points)
                         } else if (liveLine.moveTip(gp)) {

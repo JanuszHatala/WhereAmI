@@ -13,8 +13,6 @@ import org.osmdroid.util.GeoPoint
 import janush.tech.whereami.tracking.AdaptiveTrackSampler
 import janush.tech.whereami.tracking.SmoothedPoint
 import janush.tech.whereami.tracking.TrackPointRow
-import java.util.concurrent.atomic.AtomicBoolean
-
 class TripManager private constructor(private val context: Context) {
 
     companion object {
@@ -118,7 +116,6 @@ class TripManager private constructor(private val context: Context) {
     private val pendingRows = ArrayList<TrackPointRow>()
     private var persistedPointCount = 0
     private var lastRowFlushMs = 0L
-    private val gpsFallbackSeen = AtomicBoolean(false)
     private var lastSmoothedForDistance: SmoothedPoint? = null
     private val trackSampler = AdaptiveTrackSampler()
 
@@ -352,12 +349,10 @@ class TripManager private constructor(private val context: Context) {
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastPointTime)/60000}m ago")
                 } else {
                     _activeTrip.value = unclosed
-                    val (_, restoredSources) = dbHelper.getTripPointsWithSources(unclosed.id)
                     synchronized(rowLock) {
                         pendingRows.clear()
                         persistedPointCount = unclosed.points.size
                     }
-                    gpsFallbackSeen.set(restoredSources.any { it != "DEM" })
                     lastSmoothedForDistance = null
                     trackSampler.reset()
                     lastCommittedElapsedMs = -1L
@@ -517,7 +512,6 @@ class TripManager private constructor(private val context: Context) {
             pendingRows.clear()
             persistedPointCount = 0
         }
-        gpsFallbackSeen.set(false)
         lastSmoothedForDistance = null
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
@@ -615,17 +609,11 @@ class TripManager private constructor(private val context: Context) {
                 CacheManager.getInstance(context).onTripFinished()
             } catch (_: Exception) {}
 
+            // DEM mode: every saved trip gets DEM altitudes for the points recorded without a cached DEM value,
+            // with the shared progress (trip details "Correcting…" and the notification). Points already DEM
+            // cost nothing; when offline the trip details still offer the correction.
             if (finishedTrip.points.isNotEmpty() && MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM) {
-                scope.launch {
-                    try {
-                        if (!gpsFallbackSeen.get()) return@launch
-                        ElevationCorrectionHelper.correctTrip(
-                            trip = finishedTrip,
-                            mode = OverrideMode.FILL_MISSING,
-                            db = dbHelper
-                        ) { _, _ -> }
-                    } catch (_: Exception) {}
-                }
+                ElevationCorrectionManager.startSingleTrip(context, finishedTrip.id, OverrideMode.FILL_MISSING, notifyCompletion = false)
             }
         }
         _activeTrip.value = null
@@ -1041,12 +1029,7 @@ class TripManager private constructor(private val context: Context) {
         val demMode = MapProfileConfigHelper.getAltitudeSourceMode(context) == AltitudeSourceMode.DEM
         val rows = batch.map { r ->
             val dem = if (demMode) dbHelper.getCachedElevation(r.lat, r.lng) else null
-            if (dem != null) {
-                r.copy(altitudeM = dem, altSource = "DEM")
-            } else {
-                gpsFallbackSeen.set(true)
-                r
-            }
+            if (dem != null) r.copy(altitudeM = dem, altSource = "DEM") else r
         }
         dbHelper.appendTrackPoints(tripId, startSeq, rows)
     }

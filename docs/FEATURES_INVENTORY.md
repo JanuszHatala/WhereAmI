@@ -150,6 +150,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - `PencilTrail.blendedFrom`: join blend removing the hook behind the cursor (v1.14.0).
   - CTRA motion model, stop-entry variance re-open, `tracking/CourseConsistency.kt` (biased bearing), vehicle render latency 1.0 s, `MotionCourse.forVehicle` arrow guard (v1.15.0).
   - `ResumeMotionGate.kt`: pause auto-resume only on accurate sustained motion (v1.15.0).
+  - `BatchedRequestSequencer.kt` (flush before a batched request changes), `tracking/TrackStateLog.kt` (every state to the renderer), `RenderPipeline.pathBetween` pencil refill, braking prediction, vehicle latency kept through gaps (v1.16.0).
 - **Decision History & Evolution**:
   - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
   - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).

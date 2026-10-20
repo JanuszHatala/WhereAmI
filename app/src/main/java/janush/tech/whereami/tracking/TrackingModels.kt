@@ -82,7 +82,9 @@ data class TrackState(
     val rejectStreak: Int,
     /** True when the filter was (re)initialised at this fix: the UI must snap, not blend. */
     val isReset: Boolean,
-    val accuracyM: Float?
+    val accuracyM: Float?,
+    /** Longitudinal acceleration (m/s², negative = braking); 0 while stationary. */
+    val accelMps2: Double = 0.0
 )
 
 /** A fixed-lag RTS smoothed point suitable for persistence and polyline drawing. */

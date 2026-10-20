@@ -18,7 +18,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
-        private const val DATABASE_VERSION = 10
+        private const val DATABASE_VERSION = 11
 
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
@@ -549,6 +549,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             // v10: trip_matches (post-trip OSRM alternate geometry).
             try {
                 createTripMatchesTable(db)
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 11) {
+            // v11: every match up to v10 was rejected by the public server's 10-coordinate limit; retry them.
+            try {
+                db.execSQL("DELETE FROM $TABLE_TRIP_MATCHES WHERE state = $MATCH_REJECTED")
             } catch (_: Exception) {}
         }
     }

@@ -91,7 +91,9 @@ class FieldReplayTest {
         )
         println("REPLAY position ${positionMetrics(fixes, profile)}")
         val delay = System.getenv("WAI_REPLAY_DELIVERY_MS")?.toLongOrNull() ?: 300L
-        println("REPLAY render ${LiveRenderSim(profile, deliveryDelayMs = delay).run(fixes, LiveRenderSim::curved)}")
+        val dump = System.getenv("WAI_REPLAY_DUMP")?.let { File(it).printWriter() }
+        println("REPLAY render ${LiveRenderSim(profile, deliveryDelayMs = delay, dumpPose = dump?.let { w -> { t, la, ln -> w.println("$t,$la,$ln") } }).run(fixes, LiveRenderSim::curved)}")
+        dump?.close()
         if (System.getenv("WAI_REPLAY_COMPARE") != null) {
             val legacy: (RenderPipeline) -> Unit = { it.slowOnSpeedMps = 0.0; it.slowOffSpeedMps = 0.0 }
             println("REPLAY legacy ${LiveRenderSim(profile, legacy, pathArrow = false, deliveryDelayMs = delay).run(fixes)}")

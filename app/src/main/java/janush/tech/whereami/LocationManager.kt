@@ -299,6 +299,7 @@ class LocationManager private constructor(private val context: Context) {
 
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
+    private val requestSequencer = BatchedRequestSequencer()
     private val ioScope = CoroutineScope(Dispatchers.IO)
 
     // ── Tracking Engine v2 (CTRV EKF + fixed-lag smoother) ─────────────────────
@@ -374,6 +375,7 @@ class LocationManager private constructor(private val context: Context) {
         if (!isGpsStopped && intervalMs == currentIntervalMs && minIntervalMs == currentMinIntervalMs &&
             maxUpdateDelayMs == currentMaxUpdateDelayMs && synchronized(activeCallbacks) { activeCallbacks.isNotEmpty() }
         ) return
+        val wasBatched = isBatchedRequestActive()
         currentIntervalMs = intervalMs
         currentMinIntervalMs = minIntervalMs
         currentMaxUpdateDelayMs = maxUpdateDelayMs
@@ -382,27 +384,45 @@ class LocationManager private constructor(private val context: Context) {
             StationaryDetector.getInstance(context).startListening()
         } catch (_: Exception) {}
         val req = buildRequest(intervalMs, minIntervalMs, maxUpdateDelayMs)
-        synchronized(activeCallbacks) {
-            for (cb in activeCallbacks) {
-                try {
-                    fusedLocationClient.requestLocationUpdates(req, cb, Looper.getMainLooper())
-                } catch (_: Exception) {}
+        requestSequencer.run(wasBatched, ::flushBatchedFixes) {
+            synchronized(activeCallbacks) {
+                for (cb in activeCallbacks) {
+                    try {
+                        fusedLocationClient.requestLocationUpdates(req, cb, Looper.getMainLooper())
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
 
     fun stopLocationUpdates(preserveStationaryState: Boolean = false) {
+        val wasBatched = isBatchedRequestActive()
         isGpsStopped = true
         persistLastFix(force = true)
         try {
             StationaryDetector.getInstance(context).stopListening(preserveStationaryState)
         } catch (_: Exception) {}
-        synchronized(activeCallbacks) {
-            for (cb in activeCallbacks) {
-                try {
-                    fusedLocationClient.removeLocationUpdates(cb)
-                } catch (_: Exception) {}
+        requestSequencer.run(wasBatched, ::flushBatchedFixes) {
+            synchronized(activeCallbacks) {
+                for (cb in activeCallbacks) {
+                    try {
+                        fusedLocationClient.removeLocationUpdates(cb)
+                    } catch (_: Exception) {}
+                }
             }
+        }
+    }
+
+    private fun isBatchedRequestActive(): Boolean =
+        !isGpsStopped && currentMaxUpdateDelayMs > 0L && synchronized(activeCallbacks) { activeCallbacks.isNotEmpty() }
+
+    /** Delivers fixes Fused is holding in a batch to the registered callbacks, then calls [onDone]. */
+    @SuppressLint("MissingPermission")
+    private fun flushBatchedFixes(onDone: () -> Unit) {
+        try {
+            fusedLocationClient.flushLocations().addOnCompleteListener { onDone() }
+        } catch (_: Exception) {
+            onDone()
         }
     }
 
@@ -977,6 +997,7 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 val state = result.state
                 if (!result.accepted || state == null) return
+                TrackingRuntime.states.add(state)
 
                 val lat = state.lat
                 val lng = state.lng
@@ -1426,8 +1447,8 @@ class LocationManager private constructor(private val context: Context) {
         val rawOsrmStreet = OsmMapMatcher.getNearestStreet(lat, lng, effectiveBearing)
         val committedStreet = committedPlace?.pl?.street
         val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreet, committedPlace?.pl?.roadRef)
-        val osrmStreet = if (speedKmh != null && speedKmh > 35f && isCommittedMajor && rawOsrmStreet != null && !RoadNameNormalizer.isMajorRoad(rawOsrmStreet)) {
-            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreet' from non-major OSRM snap '$rawOsrmStreet' at ${speedKmh.toInt()} km/h")
+        val osrmStreet = if (RoadNameNormalizer.shouldShieldMajorCorridor(speedKmh, isCommittedMajor, rawOsrmStreet, sharedOsm?.roadRef)) {
+            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreet' from non-major OSRM snap '$rawOsrmStreet' at ${speedKmh?.toInt()} km/h")
             null
         } else {
             rawOsrmStreet
@@ -1660,7 +1681,7 @@ class LocationManager private constructor(private val context: Context) {
 
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
-                    "&accept-language=$language&zoom=$zoom&addressdetails=1"
+                    "&accept-language=$language&zoom=$zoom&addressdetails=1&namedetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -1682,6 +1703,9 @@ class LocationManager private constructor(private val context: Context) {
                 val rawRoad = str("road") ?: str("street") ?: str("pedestrian") ?: str("footway")
                 val houseNum = str("house_number")
                 val rawRef = str("ref")
+                    ?: RoadNameNormalizer.wayRef(rawRoad, root.optJSONObject("namedetails")?.let { nd ->
+                        nd.optString("name").takeIf { it.isNotEmpty() } to nd.optString("ref").takeIf { it.isNotEmpty() }
+                    })
                 val osmCountryCode = str("country_code")?.uppercase()
 
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways

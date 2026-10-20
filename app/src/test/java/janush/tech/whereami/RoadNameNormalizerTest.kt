@@ -150,5 +150,25 @@ class RoadNameNormalizerTest {
         assertEquals("18", RoadNameNormalizer.normalize("18", countryCode = "CZ"))
         assertEquals("537", RoadNameNormalizer.normalize("537", countryCode = "DE"))
     }
+
+    @Test
+    fun corridorLocalName_isNotShieldedWhenTheWayCarriesTheRoadNumber() {
+        // DK52 through Bujaków: OSRM snaps "Bielska", Nominatim's way has ref 52.
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Bielska", "52"))
+        assertEquals("Bielska (DK52)", RoadNameNormalizer.normalize("Bielska", "52"))
+        // A parallel / crossing local street without a road number stays shielded at speed.
+        assertTrue(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Polna", null))
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(30f, true, "Polna", null))
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(54f, false, "Polna", null))
+    }
+
+    @Test
+    fun wayRef_onlyFromTheRoadObjectItself() {
+        assertEquals("52", RoadNameNormalizer.wayRef("Bielska", "Bielska" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", "Bujaków" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", "Bielska" to null))
+        assertEquals(null, RoadNameNormalizer.wayRef(null, "Bielska" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", null))
+    }
 }
 

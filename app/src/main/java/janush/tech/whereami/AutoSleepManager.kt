@@ -35,6 +35,8 @@ class AutoSleepManager private constructor(private val context: Context) {
         const val KEY_AUTO_SLEEP_FOLLOW_DND = "pref_auto_sleep_follow_dnd"
         const val KEY_AUTO_SLEEP_FOLLOW_ALARM = "pref_auto_sleep_follow_alarm"
         const val KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE = "pref_auto_sleep_pause_live_share"
+        private const val KEY_UPCOMING_ALARM_MS = "auto_sleep_upcoming_alarm_ms"
+        private const val KEY_LAST_FIRED_ALARM_MS = "auto_sleep_last_fired_alarm_ms"
 
         const val DEFAULT_START_TIME = "22:30"
         const val DEFAULT_END_TIME = "06:30"
@@ -214,10 +216,15 @@ class AutoSleepManager private constructor(private val context: Context) {
     private var isManualSleep = false
     private var wasDndActiveInSession = false
     private var wasLiveShareAutoPaused = false
+    private val alarmTracker = AlarmFireTracker(
+        upcomingTriggerMs = prefs.getLong(KEY_UPCOMING_ALARM_MS, 0L),
+        lastFiredMs = prefs.getLong(KEY_LAST_FIRED_ALARM_MS, 0L)
+    )
 
     init {
         INSTANCE = this
         registerSystemReceivers()
+        checkAndRecordAlarmState()
     }
 
     fun onManualSleepEntered() {
@@ -320,33 +327,25 @@ class AutoSleepManager private constructor(private val context: Context) {
         }
     }
 
-    private var lastRecordedAlarmTriggerTime = 0L
     private var lastScheduledBoundaryTriggerMs = 0L
 
     fun checkAndRecordAlarmState() {
         val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val next = am.nextAlarmClock
-        if (next != null) {
-            lastRecordedAlarmTriggerTime = next.triggerTime
+        val firedBefore = alarmTracker.lastFiredMs
+        alarmTracker.update(System.currentTimeMillis(), am.nextAlarmClock?.triggerTime)
+        prefs.edit()
+            .putLong(KEY_UPCOMING_ALARM_MS, alarmTracker.upcomingTriggerMs)
+            .putLong(KEY_LAST_FIRED_ALARM_MS, alarmTracker.lastFiredMs)
+            .apply()
+        if (alarmTracker.lastFiredMs != firedBefore) {
+            TelemetryLogger.log("POWER", "AutoSleep: alarm clock fired at ${alarmTracker.lastFiredMs}")
         }
     }
 
     fun isAlarmFiredRecently(): Boolean {
         if (!_followAlarm.value) return false
-        val now = System.currentTimeMillis()
-        if (lastRecordedAlarmTriggerTime in (now - 15 * 60_000L)..now) {
-            return true
-        }
-        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        val next = am.nextAlarmClock
-        if (next != null) {
-            val trigger = next.triggerTime
-            if (trigger in (now - 15 * 60_000L)..now) {
-                return true
-            }
-            lastRecordedAlarmTriggerTime = trigger
-        }
-        return false
+        checkAndRecordAlarmState()
+        return alarmTracker.firedWithin(System.currentTimeMillis())
     }
 
     fun scheduleBoundaryAlarm() {

@@ -5,6 +5,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -170,7 +171,9 @@ class RenderPipeline(
         slow = onFoot && if (slow) latest.speedMps < slowOffSpeedMps else latest.speedMps < slowOnSpeedMps
         if (slow) target = max(target, slowLatencyMs)
         if (!onFoot) target = max(target, minLatencyMs)
-        if (now - latest.tElapsedMs > 2500.0) target = 0.0
+        // A vehicle keeps its latency through a data gap: dropping to "now" would dead-reckon the cursor
+        // further along an unobserved path (screen-on after batched fixes drew loops into side roads).
+        if (onFoot && now - latest.tElapsedMs > 2500.0) target = 0.0
         // At foot pace a faster ramp is invisible (the cursor briefly runs at 75-125 % of the real pace).
         val maxStep = (if (onFoot) 250.0 else 100.0) * dtSec
         latencyMs += (target - latencyMs).coerceIn(-maxStep, maxStep)
@@ -387,13 +390,55 @@ class RenderPipeline(
         val h0 = Math.toRadians(s.headingDeg)
         val half = Math.toRadians(dTheta) / 2.0 * (tauEff / dt)
         val sinc = if (abs(half) < 1e-4) 1.0 - half * half / 6.0 else sin(half) / half
-        val dist = s.speedMps * tauEff * sinc
+        val (travel, vEnd) = brakedTravel(s, tauEff)
+        val dist = travel * sinc
         val mLat = LocalFrame.METERS_PER_DEG_LAT
         val mLng = mLat * cos(Math.toRadians(s.lat)).coerceAtLeast(0.01)
         val lat = s.lat + dist * cos(h0 + half) / mLat
         val lng = s.lng + dist * sin(h0 + half) / mLng
-        val speed = s.speedMps * (if (dt <= FULL_TRUST_S) 1.0 else exp(-(dt - FULL_TRUST_S) / FADE_S))
+        val speed = vEnd * (if (dt <= FULL_TRUST_S) 1.0 else exp(-(dt - FULL_TRUST_S) / FADE_S))
         return Raw(lat, lng, wrapDeg360(s.headingDeg + dTheta), speed, false, true)
+    }
+
+    /**
+     * Distance travelled and speed after [tauS] seconds from [s]. Braking follows the filter's Singer
+     * acceleration (as [KinematicEkf] predicts it) and stops at zero, so a car pulling up at a junction is
+     * not extrapolated past its stop and then pulled back. Acceleration is not extrapolated.
+     */
+    private fun brakedTravel(s: TrackState, tauS: Double): Pair<Double, Double> {
+        val v = s.speedMps
+        val a = s.accelMps2
+        if (a >= 0.0 || tauS <= 0.0) return v * tauS to v
+        val tau = profile.accelTauS
+        val decay = exp(-tauS / tau)
+        val vEnd = v + a * tau * (1.0 - decay)
+        if (vEnd > 0.0) return max(0.0, v * tauS + a * tau * (tauS - tau * (1.0 - decay))) to vEnd
+        // Stops within the horizon: integrate up to the stop time.
+        val tStop = -tau * ln(1.0 + v / (a * tau))
+        val dStop = exp(-tStop / tau)
+        return max(0.0, v * tStop + a * tau * (tStop - tau * (1.0 - dStop))) to 0.0
+    }
+
+    /** One sample of the cursor's path between filter states (no prediction, no correction offsets). */
+    data class PathSample(val tMs: Long, val lat: Double, val lng: Double, val speedMps: Double)
+
+    /**
+     * The path the cursor takes between [fromMs] and [toMs], sampled every [stepMs] and clamped to the
+     * state history (never beyond the newest state). Used to refill the pencil after frames were not
+     * rendered (screen off), so the live line follows the filter instead of drawing a chord to the cursor.
+     */
+    fun pathBetween(fromMs: Long, toMs: Long, stepMs: Long = 200L): List<PathSample> {
+        if (history.size < 2 || toMs <= fromMs) return emptyList()
+        val lo = max(fromMs, history.first().tElapsedMs)
+        val hi = min(toMs, history.last().tElapsedMs)
+        if (hi <= lo) return emptyList()
+        val out = ArrayList<PathSample>()
+        var t = lo
+        while (t < hi) {
+            rawAt(t.toDouble())?.let { if (!it.stationary) out.add(PathSample(t, it.lat, it.lng, it.speedMps)) }
+            t += stepMs
+        }
+        return out
     }
 
     /**
@@ -414,8 +459,9 @@ class RenderPipeline(
         val v = hypot(ve, vn)
         if (v > s.speedMps && v > 1e-9) { val k = s.speedMps / v; ve *= k; vn *= k }
         val fade = if (dt <= FULL_TRUST_S) 1.0 else exp(-(dt - FULL_TRUST_S) / FADE_S)
+        val brake = if (s.speedMps > 1e-6) brakedTravel(s, tauEff).first / (s.speedMps * tauEff) else 1.0
         return Raw(
-            s.lat + vn * tauEff / mLat, s.lng + ve * tauEff / mLng, s.headingDeg, speedOut, false, true,
+            s.lat + vn * tauEff * brake / mLat, s.lng + ve * tauEff * brake / mLng, s.headingDeg, speedOut, false, true,
             ve * fade, vn * fade, slow
         )
     }

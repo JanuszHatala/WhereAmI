@@ -68,15 +68,19 @@ object ElevationCorrectionManager {
         context: Context,
         tripId: Long,
         mode: OverrideMode,
+        notifyCompletion: Boolean = true,
         onTripUpdated: (() -> Unit)? = null
-    ) {
-        if (isRunningInternal) return
+    ): Boolean {
+        if (isRunningInternal) return false
         val appCtx = context.applicationContext
         appContext = appCtx
         isRunningInternal = true
         isPausedInternal = false
 
         createNotificationChannel(appCtx)
+        _progress.value = ElevationCorrectionProgress(
+            isRunning = true, phase = ElevationCorrectionPhase.TRIPS, totalTrips = 1, singleTripId = tripId
+        )
 
         job = scope.launch {
             val dbHelper = TripDatabaseHelper(appCtx)
@@ -120,15 +124,19 @@ object ElevationCorrectionManager {
                     phase = ElevationCorrectionPhase.COMPLETED,
                     processedTrips = 1,
                     totalTrips = 1,
+                    singleTripId = tripId,
                     statusMessage = "Elevation correction complete for 1 trip."
                 )
-                showCompletionNotification(appCtx, "Elevation correction complete for 1 trip.")
+                if (notifyCompletion) showCompletionNotification(appCtx, "Elevation correction complete for 1 trip.")
+                else dismissNotification(appCtx)
             } else {
+                _progress.value = ElevationCorrectionProgress(singleTripId = tripId)
                 dismissNotification(appCtx)
             }
             isRunningInternal = false
             isPausedInternal = false
         }
+        return true
     }
 
     fun startAll(
