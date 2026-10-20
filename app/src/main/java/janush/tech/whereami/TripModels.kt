@@ -71,6 +71,72 @@ fun calculateCumulativeDistances(points: List<GeoPoint>): DoubleArray {
     return arr
 }
 
+/**
+ * Computes a smooth, distance-resampled elevation profile using a continuous spatial Gaussian kernel.
+ * Eliminates 1m integer DEM quantization staircases, spiky multipath noise, and flat mesa artifacts
+ * while faithfully preserving genuine terrain grade and elevation extremes.
+ *
+ * @param points Raw GeoPoint track list.
+ * @param numSamples Number of uniform distance-spaced evaluation samples for vector chart rendering (default 100).
+ * @return List of (distanceMeters, altitudeMeters) pairs, guaranteed to be distance-ordered and smooth.
+ */
+fun smoothElevationProfile(
+    points: List<GeoPoint>,
+    numSamples: Int = 100
+): List<Pair<Double, Double>> {
+    if (points.size < 2) return emptyList()
+    val distances = calculateCumulativeDistances(points)
+    val rawPairs = ArrayList<Pair<Double, Double>>(points.size)
+    for (i in points.indices) {
+        val a = points[i].altitude
+        if (!a.isNaN() && a != 0.0) {
+            val d = if (i < distances.size) distances[i] else 0.0
+            rawPairs.add(d to a)
+        }
+    }
+    if (rawPairs.size < 2) return emptyList()
+
+    val maxDist = distances.lastOrNull() ?: rawPairs.last().first
+    if (maxDist <= 0.0) return emptyList()
+
+    // Ensure boundary coverage
+    if (rawPairs.first().first > 0.0) {
+        rawPairs.add(0, 0.0 to rawPairs.first().second)
+    }
+    if (rawPairs.last().first < maxDist) {
+        rawPairs.add(maxDist to rawPairs.last().second)
+    }
+
+    val effectiveSamples = numSamples.coerceIn(20, 150)
+    // Gaussian filter bandwidth: 2.5% of trip distance, bounded between 20m and 80m.
+    val sigma = (maxDist * 0.025).coerceIn(20.0, 80.0)
+    val twoSigmaSq = 2.0 * sigma * sigma
+    val windowDist = 3.5 * sigma
+
+    val result = ArrayList<Pair<Double, Double>>(effectiveSamples)
+    for (s in 0 until effectiveSamples) {
+        val targetDist = (s.toDouble() / (effectiveSamples - 1).toDouble()) * maxDist
+        var weightSum = 0.0
+        var altSum = 0.0
+        for (j in rawPairs.indices) {
+            val pair = rawPairs[j]
+            val diff = pair.first - targetDist
+            if (kotlin.math.abs(diff) <= windowDist) {
+                val w = kotlin.math.exp(-(diff * diff) / twoSigmaSq)
+                weightSum += w
+                altSum += w * pair.second
+            }
+        }
+        val smoothedAlt = if (weightSum > 0.0) {
+            altSum / weightSum
+        } else {
+            rawPairs.minByOrNull { kotlin.math.abs(it.first - targetDist) }?.second ?: rawPairs.first().second
+        }
+        result.add(targetDist to smoothedAlt)
+    }
+    return result
+}
+
 data class ElevationStats(
     val totalAscentM: Double,
     val totalDescentM: Double,
