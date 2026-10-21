@@ -448,6 +448,8 @@ fun OsmMapView(
     savedPlaces: List<SavedPlace> = emptyList(),
     boundaryPoints: List<GeoPoint>? = null,
     pinnedBoundaryPoints: List<GeoPoint>? = null,
+    showBorders: Boolean = false,
+    onToggleBorders: (() -> Unit)? = null,
     heatMapTracks: List<List<GeoPoint>> = emptyList(),
     showHeatMap: Boolean = false,
     onToggleHeatMap: (() -> Unit)? = null,
@@ -567,6 +569,10 @@ fun OsmMapView(
 
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
+    var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
+    val visibleGuests = remember(activeGuests, showInactiveGuests) {
+        if (showInactiveGuests) activeGuests else activeGuests.filter { !it.isInactive }
+    }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(
@@ -1200,11 +1206,11 @@ fun OsmMapView(
     }
 
     // Render Guest Markers (Follow back guest positions)
-    LaunchedEffect(activeGuests, showGuestDistanceBadge, latLng) {
+    LaunchedEffect(visibleGuests, showGuestDistanceBadge, latLng) {
         val map = mapView ?: return@LaunchedEffect
         guestMarkers.forEach { map.overlays.remove(it) }
 
-        if (activeGuests.isEmpty()) {
+        if (visibleGuests.isEmpty()) {
             guestMarkers = emptyList()
             map.invalidate()
             return@LaunchedEffect
@@ -1213,7 +1219,7 @@ fun OsmMapView(
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
         val newGuestMarkers = mutableListOf<Marker>()
 
-        activeGuests.forEach { guest ->
+        visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
                 val results = FloatArray(1)
                 android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, guest.lat, guest.lng, results)
@@ -1407,7 +1413,7 @@ fun OsmMapView(
     // Invariant 1: When past trips are selected, ONLY fit the selected trip points. Never inflate the bounding box with live guests or host location in other cities.
     // Invariant 2: When recording, ONLY fit active track points. Do not include past trips or live guests.
     // Invariant 3: When neither is active, fit active live sharing guests + host position.
-    val allShownPoints = remember(trackPoints, selectedTrips, isRecording, activeGuests, latLng) {
+    val allShownPoints = remember(trackPoints, selectedTrips, isRecording, visibleGuests, latLng) {
         val pts = mutableListOf<GeoPoint>()
         if (selectedTrips.isNotEmpty() && !isRecording) {
             // Selected past trips take absolute priority for map fitting
@@ -1417,9 +1423,9 @@ fun OsmMapView(
         } else if (isRecording || trackPoints.isNotEmpty()) {
             // Active trip recording
             pts.addAll(trackPoints)
-        } else if (activeGuests.isNotEmpty()) {
+        } else if (visibleGuests.isNotEmpty()) {
             // Live sharing group (only when no trip is recording or selected)
-            activeGuests.forEach { guest ->
+            visibleGuests.forEach { guest ->
                 pts.add(guest.geoPoint)
             }
             if (latLng != null) {
@@ -1724,6 +1730,53 @@ fun OsmMapView(
                         tint = ComposeColor(0xFF38BDF8),
                         modifier = Modifier.size(22.dp)
                     )
+                }
+            }
+
+            // Cache Deficit Alert Button (appears when missing offline routes/boundaries > 0)
+            val cacheManager = remember { CacheManager.getInstance(context) }
+            val cacheDeficit by cacheManager.cacheDeficit.collectAsState()
+            val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
+            if (totalMissingCache > 0 && onOpenCacheManager != null) {
+                Box(contentAlignment = Alignment.TopEnd) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC1E293B))
+                            .clickable { onOpenCacheManager.invoke() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Storage,
+                            contentDescription = "Missing Offline Cache Items ($totalMissingCache)",
+                            tint = ComposeColor(0xFFF59E0B),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .offset(x = 4.dp, y = (-4).dp)
+                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xFFF59E0B))
+                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "!",
+                            color = ComposeColor.Black,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                    includeFontPadding = false
+                                )
+                            )
+                        )
+                    }
                 }
             }
 
@@ -2051,6 +2104,15 @@ fun OsmMapView(
             onBaseLayerChange = { baseLayer = it },
             hikingOverlayEnabled = showHikingOverlay,
             onHikingOverlayToggle = { showHikingOverlay = it },
+            showBorders = showBorders,
+            onToggleBorders = { onToggleBorders?.invoke() },
+            showHeatMap = showHeatMap,
+            onToggleHeatMap = { onToggleHeatMap?.invoke() },
+            showInactiveGuests = showInactiveGuests,
+            onShowInactiveGuestsToggle = {
+                showInactiveGuests = it
+                MapProfileConfigHelper.setShowInactiveGuests(context, it)
+            },
             compassArrowEnabled = compassArrowEnabled,
             onCompassArrowToggle = {
                 compassArrowEnabled = it
@@ -2136,6 +2198,12 @@ private fun MapSettingsDialog(
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     hikingOverlayEnabled: Boolean,
     onHikingOverlayToggle: (Boolean) -> Unit,
+    showBorders: Boolean = false,
+    onToggleBorders: () -> Unit = {},
+    showHeatMap: Boolean = false,
+    onToggleHeatMap: () -> Unit = {},
+    showInactiveGuests: Boolean = true,
+    onShowInactiveGuestsToggle: (Boolean) -> Unit = {},
     compassArrowEnabled: Boolean = true,
     onCompassArrowToggle: (Boolean) -> Unit = {},
     showAltitudeEnabled: Boolean = true,
@@ -2156,6 +2224,7 @@ private fun MapSettingsDialog(
     val context = LocalContext.current
     val cacheDownloadState by MapCacheHelper.downloadState.collectAsState()
     val scrollState = rememberScrollState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(cacheDownloadState) {
         if (cacheDownloadState !is CacheDownloadState.Idle) {
@@ -2165,6 +2234,7 @@ private fun MapSettingsDialog(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = ComposeColor(0xFF0F172A),
         tonalElevation = 8.dp
     ) {
@@ -2296,7 +2366,7 @@ private fun MapSettingsDialog(
                 fontWeight = FontWeight.SemiBold,
                 color = ComposeColor(0xFF94A3B8)
             )
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 MapBaseLayer.values().forEach { layer ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -2304,11 +2374,12 @@ private fun MapSettingsDialog(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { onBaseLayerChange(layer) }
-                            .padding(vertical = 4.dp, horizontal = 6.dp)
+                            .padding(vertical = 2.dp, horizontal = 4.dp)
                     ) {
                         RadioButton(
                             selected = (layer == currentBaseLayer),
                             onClick = { onBaseLayerChange(layer) },
+                            modifier = Modifier.size(24.dp),
                             colors = RadioButtonDefaults.colors(
                                 selectedColor = ComposeColor(0xFF38BDF8),
                                 unselectedColor = ComposeColor(0xFF64748B)
@@ -2318,15 +2389,23 @@ private fun MapSettingsDialog(
                         Column {
                             Text(
                                 text = layer.label,
-                                fontSize = 14.sp,
+                                fontSize = 13.5.sp,
                                 color = if (layer == currentBaseLayer) ComposeColor.White else ComposeColor(0xFFCBD5E1),
-                                fontWeight = if (layer == currentBaseLayer) FontWeight.Bold else FontWeight.Normal
+                                fontWeight = if (layer == currentBaseLayer) FontWeight.Bold else FontWeight.Normal,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
                             )
                             if (layer == MapBaseLayer.FREEMAP_OUTDOOR) {
                                 Text(
                                     text = stringResource(R.string.freemap_outdoor_description),
                                     fontSize = 11.sp,
-                                    color = ComposeColor(0xFF10B981)
+                                    color = ComposeColor(0xFF10B981),
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.sp
+                                    )
                                 )
                             }
                         }
@@ -2374,6 +2453,98 @@ private fun MapSettingsDialog(
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = ComposeColor.White,
                         checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // City / Town / Village Borders
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggleBorders() }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show City/Town Borders",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Highlights territorial boundaries of the current locality on the map",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showBorders,
+                    onCheckedChange = { onToggleBorders() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF0284C7),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Road & Path Heat Map
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggleHeatMap() }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Road & Path Heat Map",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Visualizes all previously traveled routes as glowing heat corridors",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showHeatMap,
+                    onCheckedChange = { onToggleHeatMap() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFFF97316),
                         uncheckedThumbColor = ComposeColor(0xFF94A3B8),
                         uncheckedTrackColor = ComposeColor(0xFF334155)
                     )
@@ -2531,6 +2702,58 @@ private fun MapSettingsDialog(
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
 
+            // Live Sharing Visitors
+            Text(
+                text = "Live Visitors",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShowInactiveGuestsToggle(!showInactiveGuests) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Inactive Visitors",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Display visitor avatars on the map even after >5 minutes without telemetry updates",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showInactiveGuests,
+                    onCheckedChange = { onShowInactiveGuestsToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF38BDF8),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
             // Map Font & Label Scaling
             Text(
                 text = "Map Labels Size",
@@ -2538,7 +2761,7 @@ private fun MapSettingsDialog(
                 fontWeight = FontWeight.SemiBold,
                 color = ComposeColor(0xFF94A3B8)
             )
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 MapFontScale.values().forEach { scale ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -2546,11 +2769,12 @@ private fun MapSettingsDialog(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { onFontScaleChange(scale) }
-                            .padding(vertical = 4.dp, horizontal = 6.dp)
+                            .padding(vertical = 2.dp, horizontal = 4.dp)
                     ) {
                         RadioButton(
                             selected = (scale == currentFontScale),
                             onClick = { onFontScaleChange(scale) },
+                            modifier = Modifier.size(24.dp),
                             colors = RadioButtonDefaults.colors(
                                 selectedColor = ComposeColor(0xFF38BDF8),
                                 unselectedColor = ComposeColor(0xFF64748B)
@@ -2559,8 +2783,12 @@ private fun MapSettingsDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = scale.label,
-                            fontSize = 14.sp,
-                            color = if (scale == currentFontScale) ComposeColor.White else ComposeColor(0xFFCBD5E1)
+                            fontSize = 13.5.sp,
+                            color = if (scale == currentFontScale) ComposeColor.White else ComposeColor(0xFFCBD5E1),
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                 }

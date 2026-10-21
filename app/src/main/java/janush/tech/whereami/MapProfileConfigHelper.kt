@@ -156,6 +156,16 @@ object MapProfileConfigHelper {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString("pref_altitude_source", mode.name).apply()
     }
+
+    fun getShowInactiveGuests(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean("pref_show_inactive_guests", true)
+    }
+
+    fun setShowInactiveGuests(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("pref_show_inactive_guests", enabled).apply()
+    }
 }
 
 enum class AltitudeSourceMode(val label: String, val description: String) {

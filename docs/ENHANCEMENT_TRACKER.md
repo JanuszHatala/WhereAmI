@@ -1359,3 +1359,25 @@ User feedback: (1) "SLEEPING" badge cut at the end in card title; relocate to Be
 | **UI105-03** | Condense 3 Power & Battery Profile buttons. | `MainActivity.kt` | Implemented | `vertical = 7.dp`, `Arrangement.spacedBy(5.dp)`, normalized font metrics (`PlatformTextStyle(includeFontPadding = false)`, `lineHeight = 15.sp / 13.sp`) |
 | **UI105-04** | Standardize typography and line spacing across entire App Settings & Map Settings. | `MainActivity.kt`, `OsmMapView.kt` | Implemented | Applied explicit line heights and disabled font padding to all headers, descriptions, orientation buttons, and layer toggles |
 | **VER-105** | versionCode 140 / 1.18.9 | `build.gradle.kts` | Implemented | Build and unit test gates pass |
+
+## 109. Round 106: Map Settings Reorganization, Inactive Visitor Filter & Cache Deficit Alert (2026-10-21, v1.18.10)
+
+User feedback:
+1. In Map Settings, condense spacing between radio button options (Base Map and Map Labels Size).
+2. Move "Show City/Town Borders" toggle from App Settings to Map Settings.
+3. Move "Road & Path Heat Map" toggle from App Settings to Map Settings.
+4. Add new setting - show/hide inactive visitors.
+5. In App Settings, condense line spacing in "Elevation Data & Terrain Correction" card and align icons.
+6. In "Offline Data & Cache" dialog, align line spacing and typography to modern design system standards.
+7. When there are missing items to fetch, show dedicated map control with warning badge to navigate to Cache Manager.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **UI106-01** | Condense Base Map & Map Labels Size radio buttons. | `OsmMapView.kt` | Implemented | Set `Modifier.size(24.dp)` on RadioButtons, `Arrangement.spacedBy(2.dp)`, `padding(vertical = 2.dp, horizontal = 4.dp)` on row, explicit `lineHeight = 15.sp`, and disabled font padding |
+| **UI106-02** | Move "Show City/Town Borders" and "Road & Path Heat Map" from App Settings to Map Settings. | `MainActivity.kt`, `OsmMapView.kt` | Implemented | Removed toggles from App Settings sheet; integrated cleanly into Map Settings sheet alongside other map layers with state synchronization |
+| **UI106-03** | Add new "Show Inactive Visitors" persistent setting and map filtering. | `MapProfileConfigHelper.kt`, `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Added persistent toggle (`pref_show_inactive_guests`, default true) in new "Live Visitors" section in Map Settings; filtered `activeGuests` markers and viewport bounds |
+| **UI106-04** | Condense "Elevation Data & Terrain Correction" card typography and replace raw emoji. | `MainActivity.kt` | Implemented | Replaced raw `⛰️` with `Icons.Default.Terrain` (tinted `#38BDF8`), applied `PlatformTextStyle(includeFontPadding = false)` and explicit line heights to descriptions, headers, and status messages |
+| **UI106-05** | Align line spacing and typography in "Offline Data & Cache" dialog. | `CacheManagerDialog.kt` | Implemented | Applied explicit line heights, disabled font padding across Storage Breakdown, Battery & Network Rules, Pre-fetch progress, and safety dialogs; normalized button label contrast to `Color.White` |
+| **UI106-06** | Dedicated map button for offline cache deficit alert with amber exclamation badge. | `OsmMapView.kt` | Implemented | Rendered 42dp slate button in right-side map column with `Icons.Default.Storage` + amber `!` badge whenever `cacheDeficit.missingRoutes + missingBoundaries > 0`, tapping opens `CacheManagerDialog` |
+| **VER-106** | versionCode 141 / 1.18.10 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Build and unit test gates pass (`BUILD SUCCESSFUL in 26s`) |
+
