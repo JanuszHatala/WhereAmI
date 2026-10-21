@@ -1255,3 +1255,13 @@ Evidence: trip 240 last vertex 386 m jump at 09:08:25 (auto-stop at home); visib
 | :--- | :--- | :--- | :---: | :--- |
 | **ENG95-01** | Auto-stop recorded location spike. | `TrackSpikeGuard` on commit; reject slow/impossible jumps ≥60 m | Implemented | `TrackSpikeGuardTest` (trip 240 numbers) |
 | **VER-95** | versionCode 126 / 1.17.9 | build.gradle.kts | Done | - |
+
+## 99. Round 96: Keep Real Walks — Scribble Discard Vehicle-Only (2026-10-21, v1.17.12)
+
+Evidence: trip 241 WALKING ~190 m / 2.9 min / net 11 m / cluster 39 m discarded; video screen-20261021-120858; replay headingConfident 100%.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG96-01** | Walk discarded; scribble too strict. | `TripScribble` vehicle-only + path/cluster ≥ 12 | Implemented | `TripScribbleTest` trip 241 keep / 239 discard |
+| **VAL96-01** | Rest of walk recording OK for cycling/walking tests. | tracking | Confirmed OK | replay 241: hc 100%, reshape 0.15/0.51 m, 65 verts |
+| **VER-96** | versionCode 129 / 1.17.12 | build.gradle.kts | Done | - |
