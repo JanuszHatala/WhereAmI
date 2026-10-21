@@ -1376,8 +1376,35 @@ class LocationManager private constructor(private val context: Context) {
                     val cacheAgeMs = now - timedCached.timestamp
                     val committed = committedPlace?.pl
                     val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committed?.street, committed?.roadRef)
-                    val isCachedMajor = RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef)
-                    val isCachedSideStreet = !isCachedMajor && (diskCached.pl.street?.any { it.isDigit() } == true || isCommittedMajor)
+                    // Only true residential addresses (house number) are side-streets. A plain local name
+                    // like "Krakowska" on a DK52 cell is the corridor itself — coalesce, do not shield.
+                    val isCachedSideStreet = RoadNameNormalizer.isResidentialSideStreet(diskCached.pl.street)
+
+                    // Bare DK52 committed + cached "Krakowska" → show Krakowska (DK52) immediately.
+                    val bareUpgrade = if (committed != null) {
+                        RoadNameNormalizer.coalesceBareCodeWithCachedName(
+                            committed.street, committed.roadRef,
+                            diskCached.pl.street, diskCached.pl.roadRef
+                        )
+                    } else null
+                    if (bareUpgrade != null) {
+                        val (localName, roadRef) = bareUpgrade
+                        val display = RoadNameNormalizer.formatStreetDisplay(localName, roadRef, committed?.countryCode)
+                        TelemetryLogger.log(
+                            "STREET",
+                            "Upgrading bare corridor '${committed?.street}' with cached local name '$localName' → '$display'"
+                        )
+                        val upgraded = diskCached.copy(
+                            en = diskCached.en.copy(street = display, roadRef = roadRef),
+                            pl = diskCached.pl.copy(street = display, roadRef = roadRef),
+                            native = diskCached.native.copy(street = display, roadRef = roadRef)
+                        )
+                        spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, upgraded)
+                        try {
+                            SpatialCacheHelper.getInstance(context).put(lat, lng, upgraded)
+                        } catch (_: Exception) {}
+                        return sanitizeMultiDataHouseNumbers(upgraded, speedKmh, accuracyMeters)
+                    }
 
                     if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
                         TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
@@ -1390,6 +1417,12 @@ class LocationManager private constructor(private val context: Context) {
                             return sanitizeMultiDataHouseNumbers(preserved, speedKmh, accuracyMeters)
                         }
                     } else {
+                        // Bare highway-only cache cells are stale naming — serve but revalidate ASAP.
+                        val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street)
+                        if (bareHighwayCache && isNetworkConnected() && allowNetwork) {
+                            scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
+                        }
+
                         spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
                         val result = sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
 

@@ -81,4 +81,44 @@ class RoadDisplayFormatTest {
         assertEquals("DK52", RoadNameNormalizer.extractHighwayCode("Krakowska (DK52)"))
         assertEquals(null, RoadNameNormalizer.extractHighwayCode("Krakowska"))
     }
+
+    @Test
+    fun `normalize does not double-wrap Krakowska DK52`() {
+        assertEquals(
+            "Krakowska (DK52)",
+            RoadNameNormalizer.normalize("Krakowska (DK52)", "52", countryCode = "PL")
+        )
+        assertEquals(
+            "Krakowska (DK52)",
+            RoadNameNormalizer.dedupeParenHighwayRef("Krakowska (DK52) (DK52)")
+        )
+    }
+
+    @Test
+    fun `bare DK52 committed plus cached Krakowska becomes Krakowska DK52`() {
+        val pair = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "52",
+            cachedStreet = "Krakowska",
+            cachedRoadRef = null
+        )
+        assertEquals("Krakowska", pair!!.first)
+        assertEquals("DK52", pair.second)
+        assertEquals(
+            "Krakowska (DK52)",
+            RoadNameNormalizer.formatStreetDisplay(pair.first, pair.second, "PL")
+        )
+    }
+
+    @Test
+    fun `residential side street with house number is not coalesced onto corridor`() {
+        assertTrue(RoadNameNormalizer.isResidentialSideStreet("Kamieniecka 1"))
+        assertFalse(RoadNameNormalizer.isResidentialSideStreet("Krakowska"))
+        assertEquals(
+            null,
+            RoadNameNormalizer.coalesceBareCodeWithCachedName(
+                "DK52", "52", "Kamieniecka 1", null
+            )
+        )
+    }
 }

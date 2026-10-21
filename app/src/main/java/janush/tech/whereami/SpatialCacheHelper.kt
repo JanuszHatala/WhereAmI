@@ -126,6 +126,101 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         migrateLegacyKeys(db)
         sanitizeKnownMismatches(db)
         sanitizePolishHighwayCodesOutsidePoland(db)
+        sanitizeBareHighwayAndDupeParenStreets(db)
+    }
+
+    /**
+     * Removes bare `DK*`/`DW*`/`A*`/`S*` street cells (force re-geocode to local names) and collapses
+     * doubled annotations like `Krakowska (DK52) (DK52)`. Field round 2026-10-21: 600 bare DK52 rows
+     * and 23 doubled-paren rows kept the locality card on the highway code.
+     */
+    fun sanitizeBareHighwayAndDupeParenStreets(db: SQLiteDatabase = writableDatabase) {
+        try {
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_STREET GLOB 'DK[0-9]*'
+                   OR $COL_STREET GLOB 'DW[0-9]*'
+                   OR $COL_STREET GLOB 'A[0-9]*'
+                   OR $COL_STREET GLOB 'S[0-9]*'
+                   OR $COL_STREET GLOB 'E[0-9]*'
+                """.trimIndent()
+            )
+        } catch (_: Exception) {}
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_STREET LIKE '%(%) (%'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val street = it.getString(1)
+                    val roadRef = it.getString(2)
+                    val fixed = RoadNameNormalizer.dedupeParenHighwayRef(street) ?: continue
+                    if (fixed == street) continue
+                    val ref = roadRef ?: RoadNameNormalizer.extractHighwayCode(fixed)
+                    val en = deserializePlaceInfo(it.getString(3))
+                    val pl = deserializePlaceInfo(it.getString(4))
+                    val native = deserializePlaceInfo(it.getString(5))
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_STREET, fixed)
+                        put(COL_ROAD_REF, ref)
+                        if (en != null) {
+                            put(
+                                COL_EN_JSON,
+                                serializePlaceInfo(
+                                    en.copy(
+                                        street = RoadNameNormalizer.dedupeParenHighwayRef(en.street) ?: fixed,
+                                        roadRef = en.roadRef ?: ref
+                                    )
+                                )
+                            )
+                        }
+                        if (pl != null) {
+                            put(
+                                COL_PL_JSON,
+                                serializePlaceInfo(
+                                    pl.copy(
+                                        street = RoadNameNormalizer.dedupeParenHighwayRef(pl.street) ?: fixed,
+                                        roadRef = pl.roadRef ?: ref
+                                    )
+                                )
+                            )
+                        }
+                        if (native != null) {
+                            put(
+                                COL_NATIVE_JSON,
+                                serializePlaceInfo(
+                                    native.copy(
+                                        street = RoadNameNormalizer.dedupeParenHighwayRef(native.street) ?: fixed,
+                                        roadRef = native.roadRef ?: ref
+                                    )
+                                )
+                            )
+                        }
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {}
     }
 
     /**
@@ -429,8 +524,10 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     fun put(lat: Double, lng: Double, info: MultiLanguagePlaceInfo) {
         val key = toGridKey(lat, lng)
         // Never let a bare DW/DK/A/S code overwrite a local street name already cached in this cell
-        // (Kobiernice Krakowska vs DW948 on the same ~11 m grid).
+        // (Kobiernice Krakowska vs DW948 on the same ~11 m grid). Named incoming always wins over bare existing.
         val existing = get(lat, lng, maxAgeMs = null)
+        val incomingNamedWins = existing != null &&
+            RoadNameNormalizer.shouldPreferExistingStreet(info.pl.street, existing.pl.street)
         val toStore = if (existing != null &&
             RoadNameNormalizer.shouldPreferExistingStreet(existing.pl.street, info.pl.street)
         ) {
@@ -440,27 +537,50 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             existing.copy(
                 en = existing.en.copy(
                     roadRef = ref ?: existing.en.roadRef,
-                    street = existing.en.street ?: info.en.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.en.street) ?: existing.en.street
                 ),
                 pl = existing.pl.copy(
                     roadRef = ref ?: existing.pl.roadRef,
-                    street = existing.pl.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.pl.street) ?: existing.pl.street
                 ),
                 native = existing.native.copy(
                     roadRef = ref ?: existing.native.roadRef,
-                    street = existing.native.street ?: info.native.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.native.street) ?: existing.native.street
                 )
+            )
+        } else if (incomingNamedWins) {
+            val ref = info.pl.roadRef
+                ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
+                ?: existing!!.pl.roadRef
+            val streetPl = RoadNameNormalizer.dedupeParenHighwayRef(
+                RoadNameNormalizer.formatStreetDisplay(info.pl.street, ref, info.pl.countryCode)
+            ) ?: info.pl.street
+            info.copy(
+                en = info.en.copy(street = streetPl, roadRef = ref),
+                pl = info.pl.copy(street = streetPl, roadRef = ref),
+                native = info.native.copy(street = streetPl, roadRef = ref)
             )
         } else {
             val refPl = info.pl.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
+            val streetPl = RoadNameNormalizer.dedupeParenHighwayRef(info.pl.street) ?: info.pl.street
             if (refPl != null && info.pl.roadRef.isNullOrBlank()) {
                 info.copy(
-                    en = info.en.copy(roadRef = info.en.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.en.street) ?: refPl),
-                    pl = info.pl.copy(roadRef = refPl),
-                    native = info.native.copy(roadRef = info.native.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.native.street) ?: refPl)
+                    en = info.en.copy(
+                        roadRef = info.en.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.en.street) ?: refPl,
+                        street = RoadNameNormalizer.dedupeParenHighwayRef(info.en.street) ?: info.en.street
+                    ),
+                    pl = info.pl.copy(roadRef = refPl, street = streetPl),
+                    native = info.native.copy(
+                        roadRef = info.native.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.native.street) ?: refPl,
+                        street = RoadNameNormalizer.dedupeParenHighwayRef(info.native.street) ?: info.native.street
+                    )
                 )
             } else {
-                info
+                info.copy(
+                    en = info.en.copy(street = RoadNameNormalizer.dedupeParenHighwayRef(info.en.street) ?: info.en.street),
+                    pl = info.pl.copy(street = streetPl),
+                    native = info.native.copy(street = RoadNameNormalizer.dedupeParenHighwayRef(info.native.street) ?: info.native.street)
+                )
             }
         }
         val db = writableDatabase
