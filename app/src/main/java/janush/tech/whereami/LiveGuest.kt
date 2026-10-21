@@ -104,6 +104,36 @@ data class LiveGuest(
             }
         }
 
+        fun formatCompactLiveDuration(ms: Long): String {
+            if (ms <= 0L) return "0m"
+            val totalMins = ms / 60_000L
+            val totalHrs = totalMins / 60L
+            val totalDays = totalHrs / 24L
+
+            return when {
+                totalHrs < 24L -> {
+                    val mins = totalMins % 60L
+                    if (totalHrs > 0L && mins > 0L) "${totalHrs}h ${mins}m"
+                    else if (totalHrs > 0L) "${totalHrs}h"
+                    else "${mins}m"
+                }
+                totalDays < 7L -> {
+                    val hrs = totalHrs % 24L
+                    if (hrs > 0L) "${totalDays}d ${hrs}h" else "${totalDays}d"
+                }
+                totalDays < 30L -> {
+                    val weeks = totalDays / 7L
+                    val days = totalDays % 7L
+                    if (days > 0L) "${weeks}w ${days}d" else "${weeks}w"
+                }
+                else -> {
+                    val months = totalDays / 30L
+                    val days = totalDays % 30L
+                    if (days > 0L) "${months}mo ${days}d" else "${months}mo"
+                }
+            }
+        }
+
         fun fromJson(json: JSONObject): LiveGuest? {
             val id = json.optString("id").takeIf { it.isNotBlank() } ?: return null
             val lat = json.optDouble("lat", Double.NaN)
@@ -129,6 +159,47 @@ data class LiveGuest(
                 isInactive = isInactive,
                 firstSeen = firstSeen,
                 viewCount = viewCount
+            )
+        }
+    }
+}
+
+data class LiveViewEvent(
+    val id: String,
+    val timestamp: Long,
+    val guestId: String,
+    val guestName: String,
+    val device: String? = null,
+    val colorIndex: Int = 0,
+    val lat: Double? = null,
+    val lng: Double? = null,
+    val accuracy: Float? = null
+) {
+    val hasLocation: Boolean
+        get() = lat != null && lng != null && !lat.isNaN() && !lng.isNaN()
+
+    companion object {
+        fun fromJson(json: JSONObject): LiveViewEvent? {
+            val guestId = json.optString("guestId").takeIf { it.isNotBlank() } ?: return null
+            val t = json.optLong("t", System.currentTimeMillis())
+            val id = json.optString("id").takeIf { it.isNotBlank() } ?: "$t-$guestId"
+            val name = json.optString("name", "Guest")
+            val device = json.optString("device").takeIf { it.isNotBlank() }
+            val colorIndex = json.optInt("colorIndex", 0)
+            val lat = if (json.has("lat") && !json.isNull("lat")) json.optDouble("lat").takeIf { !it.isNaN() } else null
+            val lng = if (json.has("lng") && !json.isNull("lng")) json.optDouble("lng").takeIf { !it.isNaN() } else null
+            val acc = if (json.has("acc") && !json.isNull("acc")) json.optDouble("acc").toFloat() else null
+
+            return LiveViewEvent(
+                id = id,
+                timestamp = t,
+                guestId = guestId,
+                guestName = name,
+                device = device,
+                colorIndex = colorIndex,
+                lat = lat,
+                lng = lng,
+                accuracy = acc
             )
         }
     }
