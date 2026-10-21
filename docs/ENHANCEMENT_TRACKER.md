@@ -1218,3 +1218,40 @@ Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of r
 | :--- | :--- | :--- | :---: | :--- |
 | **UI93-01** | **Selection action bar cramped and "Deselect All" wrapped letter-by-letter.** Replaced single overflowing row with a responsive Two-Tier layout: Tier 1 hosts selection status and view filter toggle + bulk selection with `maxLines = 1, softWrap = false`; Tier 2 hosts primary contextual actions (`Fit Map`, `Merge`) with comfortable 30dp height and spacing. | `MainActivity.kt` | Implemented | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
 | **VER-93** | `versionCode` 123, `versionName` "1.17.6". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 92. Round 89: Driving Path Review + Named Street over Highway Code (2026-10-21, v1.17.7)
+
+Evidence: trip 240 CAR (~13.3 km); videos screen-20261021-085620 / 090242; Screenshot_20261021-085019 (DW948 on Krakowska).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VAL89-01** | Path shift vs roads improved (no longer primary). | DisplayRoadSnap (v1.17.1) | Confirmed improved | visual roundabouts aligned |
+| **VAL89-02** | Resume hieroglyph spikes gone. | OsmMapView catch-up refill | Confirmed improved | video2 background↔foreground |
+| **ENG89-01** | Zigzag / line corrects behind cursor on curves. | Vehicle pencil floor 3 m (v1.17.8) | Implemented | see Round 94 |
+| **ENG89-02** | Parking scribble while standing / creeping. | AdaptiveTrackSampler crawl hold (v1.17.8) | Implemented | see Round 94 |
+| **ENG89-03** | Background vs foreground polyline density differs. | screen-off 1 Hz batch | Design | gaps 36–80 s |
+| **GEO89-01** | DW948 instead of Krakowska despite cache. | coalesceOsrmAndOsmStreet, SpatialCache put protect | Implemented | cache had Krakowska 8 m from DW948 cells; road_ref column empty |
+| **DOC-89** | ADR/docs/tracker. | docs | Done | - |
+| **VER-89** | versionCode 124 / 1.17.7 | build.gradle.kts | Done | - |
+
+## 97. Round 94: SK Highway Sanitize, Indoor Auto-Start Guard, Parking Crawl (2026-10-21, v1.17.8)
+
+Evidence: trip 239 false Driving (0.72 km path / 7 m net / 27 m cluster); SK cache 5643 `DK*`/`DW*` cells under `countryCode=SK`; trip 240 replay after crawl (stored 568→548).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GEO94-01** | Slovak cells hold Polish DK/DW; protect SK trip. | `sanitizeStreetForCountry`, normalize SK path, cache migration on open | Implemented | `SlovakHighwaySanitizeTest`; live+cache |
+| **ENG94-01** | Zigzag tip (from ENG89-01). | `PencilTrail.minStepM(vehicle)=3` | Implemented | `CourseUpHeadingTest`; replay reshape stable |
+| **ENG94-02** | Parking scribble (from ENG89-02). | `AdaptiveTrackSampler` crawl <1.0 m/s until 12 m | Implemented | `WalkingRefinementsTest` crawl nest |
+| **ENG94-03** | Background polyline density (ENG89-03). | screen-off 1 Hz batch | Design / Left | battery tradeoff; no change |
+| **ENG94-04** | False indoor Driving auto-start (trip 239). | `ResumeMotionGate` auto-start + `TripScribble` discard | Implemented | gate + scribble tests; trip 239 matches discard |
+| **VER-94** | versionCode 125 / 1.17.8 | build.gradle.kts | Done | BUILD SUCCESSFUL |
+
+## 98. Round 95: Terminal Track Spike Guard (2026-10-21, v1.17.9)
+
+Evidence: trip 240 last vertex 386 m jump at 09:08:25 (auto-stop at home); visible V-spike on map / road-match tip.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG95-01** | Auto-stop recorded location spike. | `TrackSpikeGuard` on commit; reject slow/impossible jumps ≥60 m | Implemented | `TrackSpikeGuardTest` (trip 240 numbers) |
+| **VER-95** | versionCode 126 / 1.17.9 | build.gradle.kts | Done | - |

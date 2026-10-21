@@ -13,6 +13,7 @@ import org.osmdroid.util.GeoPoint
 import janush.tech.whereami.tracking.AdaptiveTrackSampler
 import janush.tech.whereami.tracking.SmoothedPoint
 import janush.tech.whereami.tracking.TrackPointRow
+import janush.tech.whereami.tracking.TrackSpikeGuard
 class TripManager private constructor(private val context: Context) {
 
     companion object {
@@ -107,6 +108,8 @@ class TripManager private constructor(private val context: Context) {
     private var autoResumeStartDistance: Double = 0.0
     private var autoResumeStartTime: Long = 0L
     private val resumeMotionGate = ResumeMotionGate()
+    /** Same locomotion gate as pause-resume: indoor multipath must not auto-start Driving (trip 239). */
+    private val autoStartGate = ResumeMotionGate()
     // ── Track point persistence (track_points table) ────────────────────────────
     // All geometry writes go through one single-thread dispatcher so appends, metadata writes and the
     // final stop write stay strictly ordered without ever touching the main thread.
@@ -124,6 +127,7 @@ class TripManager private constructor(private val context: Context) {
     @Volatile
     var lastCommittedElapsedMs: Long = -1L
         private set
+    private var lastCommittedUtcMs: Long = -1L
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -292,8 +296,6 @@ class TripManager private constructor(private val context: Context) {
     // Internal state for auto-start / auto-stop
     private var lastMovingTimestamp: Long? = null
     private var movingSinceTimestamp: Long? = null
-    private var autoStartFirstLocation: Location? = null
-    private var autoStartFirstTime: Long = 0L
     private var lastLocation: Location? = null
     private var activePause: TripPause? = null
 
@@ -546,6 +548,7 @@ class TripManager private constructor(private val context: Context) {
         lastSmoothedForDistance = null
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
+        lastCommittedUtcMs = -1L
 
         val profile = _activityProfile.value
 
@@ -557,7 +560,7 @@ class TripManager private constructor(private val context: Context) {
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
         _activeTrip.value = started
-        autoStartFirstLocation = null
+        autoStartGate.reset()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
@@ -626,12 +629,28 @@ class TripManager private constructor(private val context: Context) {
         val durationMs = now - current.startTime
         val profile = current.activityProfile
         val isTrivialTrip = current.distanceMeters < profile.minValidDistanceMeters && durationMs < profile.minValidDurationMs
+        val scribblePts = current.points.map { TripScribble.LatLng(it.latitude, it.longitude) }
+        val isScribbleTrip = TripScribble.isIndoorScribble(
+            isAuto = current.isAutoDetected,
+            durationMs = durationMs,
+            pathDistanceM = current.distanceMeters,
+            points = scribblePts
+        )
 
-        if (isTrivialTrip) {
-            // Discard "empty" accidental / instant start-stop trip (e.g. 0m in 1s or stationary jitter)
+        if (isTrivialTrip || isScribbleTrip) {
+            // Discard empty accidental starts or indoor multipath nests (trip 239: 0.72 km / 7 m net)
             synchronized(rowLock) { pendingRows.clear() }
             scope.launch(dbWriter) { dbHelper.deleteTrip(current.id) }
-            TelemetryLogger.logTrip("DISCARDED_TRIVIAL", current.id, "Trip discarded: dist=${current.distanceMeters.toInt()}m < ${profile.minValidDistanceMeters}m and duration=${durationMs / 1000}s < ${profile.minValidDurationMs / 1000}s")
+            val reason = if (isScribbleTrip) {
+                "DISCARDED_SCRIBBLE"
+            } else {
+                "DISCARDED_TRIVIAL"
+            }
+            TelemetryLogger.logTrip(
+                reason,
+                current.id,
+                "Trip discarded: dist=${current.distanceMeters.toInt()}m duration=${durationMs / 1000}s auto=${current.isAutoDetected} scribble=$isScribbleTrip trivial=$isTrivialTrip"
+            )
         } else {
             val finishedTrip = current.copy(endTime = now, pauses = sanitizedPauses)
             persistTripBlocking(finishedTrip)
@@ -648,7 +667,7 @@ class TripManager private constructor(private val context: Context) {
             }
         }
         _activeTrip.value = null
-        if (!isTrivialTrip) {
+        if (!isTrivialTrip && !isScribbleTrip) {
             // Road-snapped alternate geometry (CAR, online, not while recording); retried later when offline.
             janush.tech.whereami.tracking.PostTripMatcher.schedule(context, force = true)
         }
@@ -668,7 +687,7 @@ class TripManager private constructor(private val context: Context) {
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
-        autoStartFirstLocation = null
+        autoStartGate.reset()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
@@ -780,34 +799,22 @@ class TripManager private constructor(private val context: Context) {
         // ── Auto-Start / Auto-Stop Logic ───────────────────────────────────────
         if (_tripMode.value == TripMode.AUTO) {
             if (_activeTrip.value == null) {
-                // MAP-R02: Gate auto-start behind strict accuracy (<= 25m) to prevent indoor multipath jumps
-                val isAccurate = (accuracy ?: 0f) <= 25f
-                
-                // Sensitive auto-start: triggered by sustained speed OR cumulative displacement >= 25m
+                // Same gate as pause-resume: every sample accurate + sustained speed + real travel.
+                // The old "25 m jump in 8 s" shortcut auto-started indoors (trip 239 scribble).
                 val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
-                val candidateSpeed = speedKmh >= (targetSpeed * 0.7f)
-                if (isAccurate && candidateSpeed) {
-                    if (autoStartFirstLocation == null) {
-                        autoStartFirstLocation = newLoc
-                        autoStartFirstTime = now
-                        movingSinceTimestamp = now
-                    } else {
-                        val elapsed = now - autoStartFirstTime
-                        val distMoved = autoStartFirstLocation!!.distanceTo(newLoc)
-                        val autoStartDurationMs = getAutoStartSecondsForProfile(currentProfile) * 1000L
-                        if ((speedKmh >= targetSpeed && elapsed >= autoStartDurationMs) ||
-                            (distMoved >= 25.0 && elapsed >= 8_000L && speedKmh >= (targetSpeed * 0.7f))
-                        ) {
-                            startTrip(isAuto = true)
-                            autoStartFirstLocation = null
-                            movingSinceTimestamp = null
-                        } else if (elapsed > 45_000L) {
-                            autoStartFirstLocation = newLoc
-                            autoStartFirstTime = now
-                        }
-                    }
-                } else if (speedKmh < 1.0f && autoStartFirstLocation != null && (now - autoStartFirstTime) > 15_000L) {
-                    autoStartFirstLocation = null
+                val autoStartDurationMs = getAutoStartSecondsForProfile(currentProfile) * 1000L
+                val requiredDisplacement = when (currentProfile) {
+                    ActivityProfile.CAR -> 40.0
+                    ActivityProfile.CYCLING, ActivityProfile.MTB -> 25.0
+                    else -> 15.0
+                }
+                if (autoStartGate.offer(
+                        now, lat, lng, speedKmh, accuracy,
+                        targetSpeed, autoStartDurationMs, requiredDisplacement
+                    )
+                ) {
+                    startTrip(isAuto = true)
+                    autoStartGate.reset()
                     movingSinceTimestamp = null
                 }
             } else {
@@ -1011,11 +1018,29 @@ class TripManager private constructor(private val context: Context) {
         fun commit(p: SmoothedPoint) {
             val last = newPoints.lastOrNull()
             if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
+            // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord).
+            if (last != null) {
+                val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
+                if (TrackSpikeGuard.isSpikeStep(
+                        last.latitude, last.longitude, prevUtc,
+                        p.lat, p.lng, p.tUtcMs,
+                        p.speedMps, p.isStationary
+                    )
+                ) {
+                    TelemetryLogger.logTrip(
+                        "SPIKE_REJECTED",
+                        current.id,
+                        "Skipped ${TrackSpikeGuard.distanceM(last.latitude, last.longitude, p.lat, p.lng).toInt()}m tip at ${p.speedMps} m/s"
+                    )
+                    return
+                }
+            }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
             newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
             val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
             synchronized(rowLock) { pendingRows.add(row) }
             lastCommittedElapsedMs = p.tElapsedMs
+            lastCommittedUtcMs = p.tUtcMs
             committed++
         }
 

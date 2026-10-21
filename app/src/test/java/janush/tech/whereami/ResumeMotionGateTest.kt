@@ -70,4 +70,20 @@ class ResumeMotionGateTest {
         }
         assertTrue("resumed at $resumedAt", resumedAt >= 19_000L)
     }
+
+    @Test
+    fun `indoor multipath never auto-starts Driving (trip 239 pattern)`() {
+        // Auto-start uses the same gate with 40 m CAR displacement and 30 s window.
+        val gate = ResumeMotionGate()
+        val rnd = Random(7)
+        var started = false
+        for (s in 0 until 900) {
+            val kmh = (3.0 + rnd.nextDouble() * 11.0).toFloat() // up to ~14 km/h Doppler noise
+            val acc = (8.0 + rnd.nextDouble() * 16.0).toFloat() // often <= 25 m
+            val n = rnd.nextDouble() * 50.0 - 25.0
+            val e = rnd.nextDouble() * 50.0 - 25.0
+            if (gate.offer(s * 1_000L, north(n), east(e), kmh, acc, 10f, 30_000L, 40.0)) started = true
+        }
+        assertFalse(started)
+    }
 }

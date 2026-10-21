@@ -90,6 +90,78 @@ object RoadNameNormalizer {
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
 
+    /**
+     * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
+     * OSM name (`Krakowska`). Prefer the local name and keep the code as [rawRef] so normalize yields
+     * `Krakowska (DW948)` instead of a bare `DW948`.
+     *
+     * @return pair of (streetForNormalize, refForNormalize)
+     */
+    fun coalesceOsrmAndOsmStreet(
+        osrmStreet: String?,
+        osmStreet: String?,
+        osmRoadRef: String?,
+        geocoderStreet: String? = null
+    ): Pair<String?, String?> {
+        val osrm = osrmStreet?.trim()?.takeIf { it.isNotEmpty() }
+        val named = sequenceOf(osmStreet, geocoderStreet)
+            .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() && !isHighwayCodeOnly(s) } }
+            .firstOrNull()
+        val codeFromOsrm = osrm?.takeIf { isHighwayCodeOnly(it) }
+        val ref = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: codeFromOsrm
+        return when {
+            osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+            named != null -> named to ref
+            osrm != null -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+            else -> null to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
+    fun shouldPreferExistingStreet(existing: String?, incoming: String?): Boolean {
+        if (existing.isNullOrBlank() || isHighwayCodeOnly(existing)) return false
+        return incoming.isNullOrBlank() || isHighwayCodeOnly(incoming)
+    }
+
+    /** Pulls a canonical highway code from a street line (`DW948` or `Krakowska (DW948)`). */
+    fun extractHighwayCode(street: String?): String? {
+        if (street.isNullOrBlank()) return null
+        val trimmed = street.trim()
+        if (isHighwayCodeOnly(trimmed)) {
+            return normalize(null, trimmed, null, includeHouseNumber = false) ?: trimmed.uppercase(Locale.ROOT)
+        }
+        val paren = Regex("""\((DK|DW|A|S|E)\s*(\d+)\)""", RegexOption.IGNORE_CASE).find(trimmed) ?: return null
+        return "${paren.groupValues[1].uppercase(Locale.ROOT)}${paren.groupValues[2]}"
+    }
+
+    private val POLISH_DK_TOKEN = Regex("""(?i)\bDK\s*(\d+)\b""")
+    private val POLISH_DW_TOKEN = Regex("""(?i)\bDW\s*(\d+)\b""")
+
+    /**
+     * Rewrites spurious Polish `DK*` / `DW*` tokens for a non-PL [countryCode].
+     * Slovakia: 1–2 digit → `I/<n>`, 3-digit → `II/<n>`. Other countries: bare number.
+     * No-op in Poland. Used for live normalize leftovers and spatial-cache migration.
+     */
+    fun sanitizeStreetForCountry(street: String?, countryCode: String?): String? {
+        if (street.isNullOrBlank()) return street
+        val cc = countryCode?.trim()?.uppercase(Locale.ROOT)
+        if (cc.isNullOrBlank() || cc == "PL") return street
+        if (!POLISH_DK_TOKEN.containsMatchIn(street) && !POLISH_DW_TOKEN.containsMatchIn(street)) return street
+
+        fun mapNum(num: String): String =
+            if (cc == "SK") {
+                if (num.length <= 2) "I/$num" else "II/$num"
+            } else {
+                num
+            }
+
+        var out = POLISH_DK_TOKEN.replace(street) { mapNum(it.groupValues[1]) }
+        out = POLISH_DW_TOKEN.replace(out) { mapNum(it.groupValues[1]) }
+        // Collapse "Name (I/18)" double spaces / empty parens leftovers
+        out = out.replace(Regex("""\s{2,}"""), " ").trim()
+        return out
+    }
+
     private val PAREN_HIGHWAY_REF = Regex("""\((DK|DW|A|S|E)\s*\d+""", RegexOption.IGNORE_CASE)
 
     /**
@@ -188,6 +260,12 @@ object RoadNameNormalizer {
                 normalizedHighway = "DK${match.groupValues[1]}"
                 isRoadSelfHighway = true
             }
+            // Spurious Polish DK/DW labels outside PL (legacy cache / OSM tags) → local form
+            !isPoland && DK_SHORT_REGEX.matches(road) -> {
+                val num = DK_SHORT_REGEX.find(road)!!.groupValues[1]
+                normalizedHighway = sanitizeStreetForCountry("DK$num", countryCode)
+                isRoadSelfHighway = true
+            }
             isPoland && DW_REGEX.matches(road) -> {
                 val match = DW_REGEX.find(road)!!
                 normalizedHighway = "DW${match.groupValues[1]}"
@@ -196,6 +274,11 @@ object RoadNameNormalizer {
             isPoland && DW_SHORT_REGEX.matches(road) -> {
                 val match = DW_SHORT_REGEX.find(road)!!
                 normalizedHighway = "DW${match.groupValues[1]}"
+                isRoadSelfHighway = true
+            }
+            !isPoland && DW_SHORT_REGEX.matches(road) -> {
+                val num = DW_SHORT_REGEX.find(road)!!.groupValues[1]
+                normalizedHighway = sanitizeStreetForCountry("DW$num", countryCode)
                 isRoadSelfHighway = true
             }
             AUTOSTRADA_REGEX.matches(road) -> {
@@ -310,25 +393,27 @@ object RoadNameNormalizer {
         // If it's a major highway:
         if (normalizedHighway != null) {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
-            return if (!isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)) {
+            val combined = if (!isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
                 "$cleanLocal ($normalizedHighway)"
             } else {
                 normalizedHighway
             }
+            return sanitizeStreetForCountry(combined, countryCode) ?: combined
         }
 
-        // It's a residential or local street:
+        // It's a residential or local street (may still carry a Polish DK/DW token outside PL):
         val baseStreet = extractBaseStreet(road)
         val cleanStreet = cleanStreetPrefix(baseStreet)
         val effectiveHouseNumber = houseNumber?.trim()?.takeIf { it.isNotEmpty() }
             ?: extractHouseNumber(road)
 
-        return if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
+        val local = if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
             "$cleanStreet $effectiveHouseNumber"
         } else {
             cleanStreet
         }
+        return sanitizeStreetForCountry(local, countryCode) ?: local
     }
 
     /**

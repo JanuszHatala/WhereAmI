@@ -58,7 +58,7 @@ class CourseUpHeadingTest {
     fun `pencil min step floor is one metre at walking pace and two metres for vehicles`() {
         assertEquals(1.0, PencilTrail.minStepM(1.4), 1e-9)
         assertEquals(1.0, PencilTrail.minStepM(0.5), 1e-9)
-        assertEquals(2.0, PencilTrail.minStepM(1.4, vehicle = true), 1e-9)
+        assertEquals(3.0, PencilTrail.minStepM(1.4, vehicle = true), 1e-9)
         assertEquals(4.0, PencilTrail.minStepM(40.0), 1e-9)
     }
 }
