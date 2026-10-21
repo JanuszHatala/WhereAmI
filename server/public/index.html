@@ -25,40 +25,45 @@
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 20px;
-      padding: 14px 18px;
+      /* Identical padding in expanded and collapsed states so nothing shifts on toggle. */
+      padding: 14px 16px;
       color: #fff;
       z-index: 1000;
       box-shadow: 0 10px 25px rgba(0,0,0,0.5);
     }
+    /* Header grid: [host name | status badge | toggle] over [place name].
+       Narrow viewports re-flow it (see @media below) instead of squeezing the title. */
     .header-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 8px;
-      gap: 12px;
-    }
-    .header-left {
-      flex: 1;
-      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "title badge toggle"
+        "place place place";
+      align-items: center;
+      column-gap: 8px;
+      row-gap: 4px;
     }
     .session-title {
+      grid-area: title;
+      min-width: 0;
       font-weight: 700;
       font-size: 16px;
       color: #38bdf8;
       letter-spacing: 0.01em;
-      line-height: 1.3;
-      word-break: break-word;
+      line-height: 1.25;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
-    .header-right {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 5px;
-      flex-shrink: 0;
-    }
-    .status-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     
     .live-badge {
+      grid-area: badge;
+      justify-self: end;
+      max-width: 100%;
+      white-space: nowrap;
       display: inline-flex; align-items: center; gap: 6px;
       background: rgba(34, 197, 94, 0.18); color: #4ade80;
       border: 1px solid rgba(74, 222, 128, 0.45);
@@ -66,6 +71,7 @@
       text-transform: uppercase; letter-spacing: 0.5px;
       box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
     }
+    .live-badge .badge-short { display: none; }
     .pulse-dot {
       width: 8px; height: 8px;
       background: #4ade80;
@@ -79,17 +85,20 @@
       100% { opacity: 1; transform: scale(1); box-shadow: 0 0 4px rgba(74, 222, 128, 0.6); }
     }
     
-    .countdown-chip {
-      background: rgba(255, 255, 255, 0.08);
-      color: #94a3b8;
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 8px;
-      font-weight: 500;
-      white-space: nowrap;
+    .place-name {
+      grid-area: place;
+      min-width: 0;
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.25;
+      color: #fff;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
-    
-    .place-name { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .activity-badge {
       display: inline-flex;
       align-items: center;
@@ -101,9 +110,9 @@
       border-radius: 10px;
       font-size: 12px;
       font-weight: 600;
-      margin-bottom: 6px;
+      white-space: nowrap;
     }
-    .trekking-badge { font-size: 13px; color: #38bdf8; font-weight: 600; margin-bottom: 8px; }
+    .trekking-badge { font-size: 13px; color: #38bdf8; font-weight: 600; margin-top: 6px; overflow-wrap: anywhere; }
     
     .status-alert {
 
@@ -112,23 +121,52 @@
       border-radius: 10px;
       font-size: 12px;
       font-weight: 600;
-      margin-bottom: 8px;
+      margin-top: 8px;
+      overflow-wrap: anywhere;
     }
     .alert-paused { display: block; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
     .alert-ended { display: block; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
 
-    .stats-row { display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; font-size: 13px; color: #94a3b8; flex-wrap: wrap; gap: 6px; }
+    /* Activity (left) + Maps (right). Short label keeps them on one row longer. */
+    .primary-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .primary-row .activity-badge { flex: 0 1 auto; }
+    .primary-row .gmaps-btn { margin-left: auto; }
+
+    /* Details area (hidden when collapsed): two columns; one column <=360px. */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 12px;
+      row-gap: 6px;
+      margin-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 8px;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .stat-item {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stat-item.stat-wide {
+      grid-column: 1 / -1;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
     .stat-item b { color: #f8fafc; }
 
-    .actions-row {
-      display: flex;
-      justify-content: flex-end;
-      align-items: center;
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-    }
     .gmaps-btn {
+      white-space: nowrap;
+      flex-shrink: 0;
       background: rgba(30, 41, 59, 0.85);
       border: 1px solid rgba(56, 189, 248, 0.4);
       color: #38bdf8;
@@ -142,12 +180,14 @@
       gap: 6px;
       transition: all 0.2s ease;
     }
+    .gmaps-btn .gmaps-label-short { display: none; }
     .gmaps-btn:hover {
       background: rgba(56, 189, 248, 0.2);
       border-color: #38bdf8;
       color: #fff;
     }
     .card-toggle-btn {
+      grid-area: toggle;
       background: rgba(30, 41, 59, 0.85);
       border: 1px solid rgba(255, 255, 255, 0.2);
       color: #cbd5e1;
@@ -172,15 +212,9 @@
     .top-card.collapsed .card-toggle-btn .toggle-icon {
       transform: rotate(180deg);
     }
-    .top-card.collapsed {
-      padding: 10px 14px;
-    }
-    .top-card.collapsed .header-row {
-      margin-bottom: 0;
-    }
     .top-card.collapsed .status-alert,
+    .top-card.collapsed .primary-row,
     .top-card.collapsed .stats-row,
-    .top-card.collapsed .actions-row,
     .top-card.collapsed .guest-sharing-row,
     .top-card.collapsed #trekkingBadge,
     .top-card.collapsed #activityBadge {
@@ -189,8 +223,8 @@
 
     .guest-sharing-row {
       display: flex;
+      flex-wrap: nowrap;
       align-items: center;
-      justify-content: space-between;
       gap: 8px;
       margin-top: 8px;
       padding-top: 8px;
@@ -198,10 +232,16 @@
       font-size: 11px;
       color: #94a3b8;
     }
+    .guest-sharing-label { flex-shrink: 0; white-space: nowrap; }
     .guest-name-pill {
+      min-width: 0;
+      flex: 1 1 auto;
+      max-width: 100%;
       display: inline-flex;
       align-items: center;
+      justify-content: flex-end;
       gap: 4px;
+      margin-left: auto;
       background: rgba(16, 185, 129, 0.15);
       border: 1px solid rgba(16, 185, 129, 0.4);
       color: #34d399;
@@ -217,10 +257,62 @@
       color: #fff;
     }
 
+    #guestNameDisplay {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .guest-edit-icon { flex-shrink: 0; }
+
     .top-card.collapsed .place-name {
       font-size: 15px;
-      margin-bottom: 0;
-      margin-top: 4px;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+    }
+
+    /* Mid-narrow: short Maps label so activity + button stay on one row. */
+    @media (max-width: 400px) {
+      .gmaps-btn .gmaps-label-full { display: none; }
+      .gmaps-btn .gmaps-label-short { display: inline; }
+      .gmaps-btn { padding: 6px 10px; }
+    }
+
+    /* Narrow: badge below place, short badge text, single-column stats, left-align wrapped primary row. */
+    @media (max-width: 360px) {
+      .top-card { top: 10px; left: 10px; right: 10px; }
+      .header-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "title toggle"
+          "place place"
+          "badge badge";
+      }
+      .live-badge {
+        justify-self: start;
+        font-size: 10px;
+        padding: 3px 8px;
+        letter-spacing: 0.2px;
+        gap: 4px;
+      }
+      .live-badge .badge-long { display: none; }
+      .live-badge .badge-short { display: inline; }
+      .stats-row { grid-template-columns: minmax(0, 1fr); }
+      .primary-row .gmaps-btn { margin-left: 0; }
+    }
+
+    /* Extreme narrow: stack guest label above name pill (ellipsis still applies). */
+    @media (max-width: 240px) {
+      .guest-sharing-row {
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .guest-name-pill {
+        margin-left: 0;
+        justify-content: flex-start;
+        max-width: 100%;
+      }
+      .session-title { font-size: 14px; }
     }
     
     .map-controls-group {
@@ -413,50 +505,44 @@
 <body>
   <div class="top-card">
     <div class="header-row">
-      <div class="header-left">
-        <div id="sessionTitle" class="session-title">Live Location</div>
-      </div>
-      <div class="header-right">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div> ONLINE</div>
-          <button id="cardToggleBtn" class="card-toggle-btn" onclick="toggleCard()" title="Collapse / Expand Info Card" aria-label="Toggle Info Card">
-            <svg class="toggle-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </button>
-        </div>
-        <span id="countdownChip" class="countdown-chip">Connecting...</span>
-      </div>
+      <div id="sessionTitle" class="session-title">Live Location</div>
+      <div id="liveBadge" class="live-badge"><div class="pulse-dot"></div><span class="badge-long">ONLINE</span><span class="badge-short">ONLINE</span></div>
+      <button id="cardToggleBtn" class="card-toggle-btn" onclick="toggleCard()" title="Collapse / Expand Info Card" aria-label="Toggle Info Card" aria-expanded="true">
+        <svg class="toggle-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+      </button>
+      <div id="placeName" class="place-name">Connecting...</div>
     </div>
     
-    <div id="statusAlert" class="status-alert"></div>
-    <div id="activityBadge" class="activity-badge" style="display: none;"></div>
-    <div id="placeName" class="place-name">Connecting...</div>
     <div id="trekkingBadge" class="trekking-badge" style="display: none;"></div>
+    <div id="statusAlert" class="status-alert"></div>
+
+    <div class="primary-row">
+      <div id="activityBadge" class="activity-badge" style="display: none;"></div>
+      <button class="gmaps-btn" id="gmapsBtn" onclick="openGoogleMaps()" title="Open current location in Google Maps">
+        🗺️ <span class="gmaps-label-full">Google Maps</span><span class="gmaps-label-short">Maps</span>
+      </button>
+    </div>
     
     <div class="stats-row">
+      <div id="countdownChip" class="stat-item">Elapsed: <b>--</b></div>
       <div class="stat-item">Speed: <b id="speedVal">--</b></div>
       <div class="stat-item">Alt: <b id="altVal">--</b></div>
       <div class="stat-item">Battery: <b id="batteryVal">--</b></div>
       <div class="stat-item" id="accuracyStat" style="display: none;">GPS: <b id="accuracyVal">--</b></div>
       <div class="stat-item" id="visitorDistanceStat" style="display: none;">To Host: <b id="visitorDistanceVal">--</b></div>
-      <div class="stat-item">Last seen: <b id="updatedVal">Waiting...</b></div>
-    </div>
-
-    <div class="actions-row">
-      <label id="pastTripsToggleLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; cursor: pointer; user-select: none;">
+      <div class="stat-item stat-wide">Last seen: <b id="updatedVal">Waiting...</b></div>
+      <label id="pastTripsToggleLabel" class="stat-item stat-wide" style="display: none; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; cursor: pointer; user-select: none;">
         <input type="checkbox" id="pastTripsCheckbox" onchange="togglePastTrips(this.checked)" style="cursor: pointer; accent-color: #38bdf8;">
         <span>Show Past Trips</span>
       </label>
-      <button class="gmaps-btn" id="gmapsBtn" onclick="openGoogleMaps()" title="Open current location in Google Maps">
-        🗺️ Google Maps
-      </button>
     </div>
 
-    <div id="guestSharingRow" class="guest-sharing-row" style="display: none;">
-      <span class="guest-sharing-label">📍 Sharing your location with host as:</span>
+    <div id="guestSharingRow" class="guest-sharing-row" style="display: none;" title="Your location is shared with the host under this name">
+      <span class="guest-sharing-label">📍 Sharing as</span>
       <span class="guest-name-pill" id="guestNamePill" onclick="promptEditGuestName()" title="Click to edit nickname">
-        <span id="guestNameDisplay">Guest</span> ✏️
+        <span id="guestNameDisplay">Guest</span><span class="guest-edit-icon">✏️</span>
       </span>
     </div>
   </div>
@@ -709,7 +795,8 @@
       const btn = document.getElementById('cardToggleBtn');
       if (!card) return;
       const isCollapsed = card.classList.toggle('collapsed');
-      if (btn) btn.textContent = isCollapsed ? '▼' : '▲';
+      // Chevron rotation is CSS-driven (.collapsed .toggle-icon); never replace the SVG child.
+      if (btn) btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
       try {
         localStorage.setItem('whereami_top_card_collapsed', isCollapsed ? '1' : '0');
       } catch (_) {}
@@ -720,7 +807,7 @@
         const card = document.querySelector('.top-card');
         const btn = document.getElementById('cardToggleBtn');
         if (card) card.classList.add('collapsed');
-        if (btn) btn.textContent = '▼';
+        if (btn) btn.setAttribute('aria-expanded', 'false');
       }
     } catch (_) {}
 
@@ -776,7 +863,7 @@
       if (lastCoords && visitorCoords) {
         const dMeters = map.distance(lastCoords, visitorCoords);
         distVal.textContent = dMeters < 1000 ? `${Math.round(dMeters)} m` : `${(dMeters / 1000).toFixed(2)} km`;
-        distEl.style.display = 'inline-block';
+        distEl.style.display = '';
       } else {
         distEl.style.display = 'none';
       }
@@ -914,14 +1001,15 @@
     }
 
     function promptEditGuestName() {
-      const current = getGuestNickname() || (document.getElementById('guestNameDisplay')?.textContent || '');
-      const newName = prompt('Enter your name to share with the host (leave blank to restore default):', current === 'Guest' ? '' : current);
+      const current = getGuestNickname() || lastGuestAssignedName || (document.getElementById('guestNameDisplay')?.textContent || '');
+      const newName = prompt('Enter your name to share with the host (leave blank to restore the server-assigned Guest N):', /^Guest(\s+\d+)?$/i.test(current) ? '' : current);
       if (newName !== null) {
         setGuestNickname(newName);
-        const display = document.getElementById('guestNameDisplay');
-        if (display) display.textContent = newName.trim() || 'Guest';
         if (visitorCoords) {
           streamGuestLocation(visitorCoords[0], visitorCoords[1], null, true);
+        } else {
+          const display = document.getElementById('guestNameDisplay');
+          if (display && newName.trim()) display.textContent = newName.trim();
         }
       }
     }
@@ -983,28 +1071,46 @@
       }
     }
 
-    function formatTimeDisplay(expiresAt, createdAt) {
+    /** Renders elapsed / time-left as a normal stats-grid cell: "Elapsed: <b>1m</b>". */
+    function updateCountdownChip(expiresAt, createdAt) {
+      const chip = document.getElementById('countdownChip');
+      if (!chip) return;
       if (!expiresAt || expiresAt <= 0) {
-        if (!createdAt) return "Continuous";
+        if (!createdAt) {
+          chip.innerHTML = 'Session: <b>Continuous</b>';
+          return;
+        }
         const elapsedMs = Math.max(0, Date.now() - createdAt);
         const hrs = Math.floor(elapsedMs / (1000 * 3600));
         const mins = Math.floor((elapsedMs % (1000 * 3600)) / (1000 * 60));
-        return hrs > 0 ? `⏱️ ${hrs}h ${mins}m elapsed` : `⏱️ ${mins}m elapsed`;
+        const value = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        chip.innerHTML = `Elapsed: <b>${value}</b>`;
+        return;
       }
       const diff = expiresAt - Date.now();
-      if (diff <= 0) return "Expired";
+      if (diff <= 0) {
+        chip.innerHTML = 'Left: <b>Expired</b>';
+        return;
+      }
       const hrs = Math.floor(diff / (1000 * 3600));
       const mins = Math.floor((diff % (1000 * 3600)) / (1000 * 60));
-      return hrs > 0 ? `⏳ ${hrs}h ${mins}m left` : `⏳ ${mins}m left`;
+      const value = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+      chip.innerHTML = `Left: <b>${value}</b>`;
+    }
+
+    function setLiveBadgeContent(badge, longLabel, shortLabel, leadingHtml) {
+      if (!badge) return;
+      const prefix = leadingHtml || '';
+      badge.innerHTML = `${prefix}<span class="badge-long">${longLabel}</span><span class="badge-short">${shortLabel}</span>`;
     }
 
     function updateTimerTicker() {
       if (!currentSessionMeta) return;
       const chip = document.getElementById('countdownChip');
       if (chip && currentSessionMeta.createdAt) {
-        chip.textContent = formatTimeDisplay(currentSessionMeta.expiresAt, currentSessionMeta.createdAt);
+        updateCountdownChip(currentSessionMeta.expiresAt, currentSessionMeta.createdAt);
         if (chip.style.display === 'none') {
-          chip.style.display = 'inline-block';
+          chip.style.display = '';
         }
       }
     }
@@ -1031,9 +1137,10 @@
         if (!res.ok) {
           if (res.status === 404) {
             document.getElementById('placeName').textContent = 'Session not found';
-            document.getElementById('liveBadge').textContent = 'OFFLINE';
-            document.getElementById('liveBadge').style.background = 'rgba(100, 116, 139, 0.2)';
-            document.getElementById('liveBadge').style.color = '#94a3b8';
+            const offlineBadge = document.getElementById('liveBadge');
+            setLiveBadgeContent(offlineBadge, 'OFFLINE', 'OFF');
+            offlineBadge.style.background = 'rgba(100, 116, 139, 0.2)';
+            offlineBadge.style.color = '#94a3b8';
             document.getElementById('countdownChip').style.display = 'none';
           }
           return;
@@ -1052,8 +1159,8 @@
         currentSessionMeta = { expiresAt: data.expiresAt, createdAt: data.createdAt };
         document.getElementById('sessionTitle').textContent = data.title || 'Live Location';
         const countdownChip = document.getElementById('countdownChip');
-        countdownChip.style.display = 'inline-block';
-        countdownChip.textContent = formatTimeDisplay(data.expiresAt, data.createdAt);
+        countdownChip.style.display = '';
+        updateCountdownChip(data.expiresAt, data.createdAt);
 
         const alertBox = document.getElementById('statusAlert');
         const badge = document.getElementById('liveBadge');
@@ -1080,7 +1187,7 @@
         if (!isSessionActive) {
           if (data.isStatic) {
             statusClass = 'stopped';
-            badge.textContent = 'STOPPED';
+            setLiveBadgeContent(badge, 'STOPPED', 'STOP');
             badge.style.background = 'rgba(239, 68, 68, 0.2)';
             badge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
             badge.style.color = '#ef4444';
@@ -1093,7 +1200,7 @@
             }
           } else {
             statusClass = 'ended';
-            badge.textContent = 'STOPPED';
+            setLiveBadgeContent(badge, 'STOPPED', 'STOP');
             badge.style.background = 'rgba(239, 68, 68, 0.2)';
             badge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
             badge.style.color = '#ef4444';
@@ -1103,7 +1210,7 @@
           }
         } else if (isSessionPaused) {
           statusClass = 'paused';
-          badge.textContent = 'PAUSED';
+          setLiveBadgeContent(badge, 'PAUSED', 'PAUSE');
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
           badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badge.style.color = '#fbbf24';
@@ -1113,7 +1220,7 @@
         } else if (isHostSleeping) {
           isOnline = true;
           statusClass = 'sleeping';
-          badge.innerHTML = '🌙 SLEEPING';
+          setLiveBadgeContent(badge, '🌙 SLEEPING', '🌙 SLEEP');
           badge.style.background = 'rgba(148, 163, 184, 0.2)';
           badge.style.borderColor = 'rgba(148, 163, 184, 0.45)';
           badge.style.color = '#94a3b8';
@@ -1122,7 +1229,7 @@
           alertBox.style.display = 'block';
         } else if (isDisconnected) {
           statusClass = 'disconnected';
-          badge.textContent = 'DISCONNECTED';
+          setLiveBadgeContent(badge, 'DISCONNECTED', 'DISC.');
           badge.style.background = 'rgba(245, 158, 11, 0.2)';
           badge.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badge.style.color = '#fbbf24';
@@ -1132,9 +1239,22 @@
         } else {
           isOnline = true;
           statusClass = 'online';
-          badge.innerHTML = isChargingBoost 
-            ? '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div> ⚡ LIVE (boost)' 
-            : `<div class="pulse-dot"></div> ONLINE (${data.syncIntervalMinutes || 1}m)`;
+          if (isChargingBoost) {
+            setLiveBadgeContent(
+              badge,
+              '⚡ LIVE (boost)',
+              '⚡ LIVE',
+              '<div class="pulse-dot" style="background:#60a5fa;box-shadow:0 0 8px #60a5fa;"></div>'
+            );
+          } else {
+            const mins = data.syncIntervalMinutes || 1;
+            setLiveBadgeContent(
+              badge,
+              `ONLINE (${mins}m)`,
+              'ONLINE',
+              '<div class="pulse-dot"></div>'
+            );
+          }
           badge.style.background = isChargingBoost 
             ? 'rgba(59, 130, 246, 0.22)' 
             : 'rgba(34, 197, 94, 0.18)';
@@ -1163,7 +1283,7 @@
           if (accEl && accVal) {
             if (isSessionActive && acc !== null && acc !== undefined && acc > 0) {
               accVal.textContent = `±${Math.round(acc)} m`;
-              accEl.style.display = 'inline-block';
+              accEl.style.display = '';
             } else {
               accEl.style.display = 'none';
             }

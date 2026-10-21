@@ -376,7 +376,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Web viewer provides high glanceability with a dynamic 3D needle rotating to host's GPS bearing and a direct "Open in Google Maps" deep link.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `server/public/index.html`.
+  - `server/public/index.html`: responsive collapsible info card (place under host title, activity | Maps row, elapsed in details grid, stable expand/collapse padding); short LIVE/Maps labels on narrow widths; unique default guest nicknames via `server/guestNaming.js` (lowest unused `Guest N`).
 
 ### LIV-08: Persistent Foreground Notification with Quick Actions
 - **Core Value**: Guarantees Android OS does not kill live sharing, with status updates and quick actions on lock screen.
