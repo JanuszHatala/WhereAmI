@@ -634,7 +634,8 @@ class TripManager private constructor(private val context: Context) {
             isAuto = current.isAutoDetected,
             durationMs = durationMs,
             pathDistanceM = current.distanceMeters,
-            points = scribblePts
+            points = scribblePts,
+            profile = current.activityProfile
         )
 
         if (isTrivialTrip || isScribbleTrip) {

@@ -256,5 +256,13 @@ enum class ActivityProfile(
     MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
     HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 10, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f),
     RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 5, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f)
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 10, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f);
+
+    /** CAR / CYCLING / MTB — indoor multipath scribble discard applies only here. */
+    val isVehicleProfile: Boolean
+        get() = this == CAR || this == CYCLING || this == MTB
+
+    /** On-foot profiles often out-and-back near home; never treat as indoor GPS nests. */
+    val isFootProfile: Boolean
+        get() = this == WALKING || this == HIKING || this == RUNNING
 }

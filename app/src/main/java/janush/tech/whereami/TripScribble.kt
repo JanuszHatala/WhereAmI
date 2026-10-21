@@ -5,17 +5,25 @@ import kotlin.math.hypot
 import kotlin.math.max
 
 /**
- * Detects auto-started "trips" that are really indoor / courtyard GNSS multipath nests
+ * Detects auto-started **vehicle** trips that are really indoor / courtyard GNSS multipath nests
  * (field trip 239: 13 min Driving, 0.72 km path, 7 m net, 27 m cluster).
+ *
+ * Must not discard real short walks / out-and-back loops (field trip 241: Walking 0.19 km, net ~11 m
+ * because start≈end, cluster ~39 m — discarded under the first overly broad rule).
  */
 object TripScribble {
-    /** Max cluster radius (m) for a scribble discard. */
-    const val MAX_CLUSTER_M = 40.0
+    /** Max cluster radius (m) for a vehicle indoor nest. */
+    const val MAX_CLUSTER_M = 35.0
     /** Max start→end net displacement (m). */
-    const val MAX_NET_M = 40.0
-    /** Path length must exceed net by at least this factor (multipath loops). */
-    const val MIN_PATH_OVER_NET = 4.0
-    /** Minimum duration so a brief real pull-out is not discarded. */
+    const val MAX_NET_M = 30.0
+    /**
+     * Path must be this many times the cluster radius (heavy multipath looping).
+     * Trip 239 ≈ 26; trip 241 walk ≈ 4.9 (must stay).
+     */
+    const val MIN_PATH_OVER_CLUSTER = 12.0
+    /** Minimum path length (m) — short real loops stay. */
+    const val MIN_PATH_M = 200.0
+    /** Minimum duration so a brief accidental start is still handled by [minValid*] trivial discard. */
     const val MIN_DURATION_MS = 90_000L
 
     data class LatLng(val lat: Double, val lng: Double)
@@ -24,16 +32,20 @@ object TripScribble {
         isAuto: Boolean,
         durationMs: Long,
         pathDistanceM: Double,
-        points: List<LatLng>
+        points: List<LatLng>,
+        profile: ActivityProfile
     ): Boolean {
-        if (!isAuto || points.size < 8 || durationMs < MIN_DURATION_MS) return false
+        // Foot profiles: out-and-back near home is normal. Never use nest geometry against them.
+        if (!isAuto || !profile.isVehicleProfile || points.size < 8 || durationMs < MIN_DURATION_MS) {
+            return false
+        }
         val net = distanceM(points.first(), points.last())
         if (net > MAX_NET_M) return false
         val cluster = clusterRadiusM(points)
         if (cluster > MAX_CLUSTER_M) return false
-        // Path much longer than net = looping multipath; tiny path with long dwell is also junk.
-        if (pathDistanceM >= max(MIN_PATH_OVER_NET * max(net, 1.0), 80.0)) return true
-        return pathDistanceM < 100.0 && cluster < 25.0
+        if (pathDistanceM < MIN_PATH_M) return false
+        val pathOverCluster = pathDistanceM / max(cluster, 1.0)
+        return pathOverCluster >= MIN_PATH_OVER_CLUSTER
     }
 
     fun clusterRadiusM(points: List<LatLng>): Double {
