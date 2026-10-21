@@ -3012,11 +3012,11 @@ internal fun makeGuestMarkerIcon(
 ): GuestMarkerIconResult {
     val density = context.resources.displayMetrics.density
     val avatarDiameter = (32f * density).toInt()
-    val timeAgoText = LiveGuest.formatCompactTimeAgo(guest.lastUpdated)
-    val distanceText = if (showDistance) {
-        if (distanceMeters != null) "${LiveGuest.formatDistance(distanceMeters)} • $timeAgoText" else timeAgoText
-    } else ""
-    val badgeHeight = if (distanceText.isNotEmpty()) (18f * density).toInt() else 0
+
+    val hasCustomName = GuestMarkerHelper.hasCustomName(guest.name)
+    val badgeText = GuestMarkerHelper.formatBadgeText(guest, distanceMeters, showDistance)
+
+    val badgeHeight = if (badgeText.isNotEmpty()) (18f * density).toInt() else 0
     val badgeSpacing = (3f * density).toInt()
 
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -3026,8 +3026,8 @@ internal fun makeGuestMarkerIcon(
         textAlign = Paint.Align.CENTER
     }
 
-    val textWidth = if (distanceText.isNotEmpty()) textPaint.measureText(distanceText) else 0f
-    val badgeWidth = if (distanceText.isNotEmpty()) (textWidth + 14f * density).toInt() else 0
+    val textWidth = if (badgeText.isNotEmpty()) textPaint.measureText(badgeText) else 0f
+    val badgeWidth = if (badgeText.isNotEmpty()) (textWidth + 14f * density).toInt() else 0
 
     val totalWidth = maxOf(avatarDiameter, badgeWidth) + (8f * density).toInt()
     val totalHeight = avatarDiameter + (if (badgeHeight > 0) badgeHeight + badgeSpacing else 0) + (4f * density).toInt()
@@ -3071,31 +3071,44 @@ internal fun makeGuestMarkerIcon(
     }
     canvas.drawCircle(cx, cy, radius - 1.5f * density, rimPaint)
 
-    // Person Silhouette 👤
-    val personPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (guest.isInactive) Color.argb(alpha, 180, 190, 205) else Color.WHITE
-        style = Paint.Style.FILL
-    }
-    val headRadius = radius * 0.30f
-    val headCenterY = cy - radius * 0.22f
-    canvas.drawCircle(cx, headCenterY, headRadius, personPaint)
+    if (hasCustomName) {
+        // Initial letter inside circle for named visitors
+        val initial = GuestMarkerHelper.formatInitial(guest.name)
+        val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (guest.isInactive) Color.argb(alpha, 180, 190, 205) else Color.WHITE
+            textSize = radius * 1.15f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        val textY = cy - ((initialPaint.descent() + initialPaint.ascent()) / 2f)
+        canvas.drawText(initial, cx, textY, initialPaint)
+    } else {
+        // Person Silhouette 👤 for unnamed visitors
+        val personPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (guest.isInactive) Color.argb(alpha, 180, 190, 205) else Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val headRadius = radius * 0.30f
+        val headCenterY = cy - radius * 0.22f
+        canvas.drawCircle(cx, headCenterY, headRadius, personPaint)
 
-    val bodyRect = RectF(
-        cx - radius * 0.58f,
-        headCenterY + headRadius + 1.5f * density,
-        cx + radius * 0.58f,
-        cy + radius - 2f * density
-    )
-    canvas.save()
-    val clipPath = android.graphics.Path().apply {
-        addCircle(cx, cy, radius - 2f * density, android.graphics.Path.Direction.CW)
+        val bodyRect = RectF(
+            cx - radius * 0.58f,
+            headCenterY + headRadius + 1.5f * density,
+            cx + radius * 0.58f,
+            cy + radius - 2f * density
+        )
+        canvas.save()
+        val clipPath = android.graphics.Path().apply {
+            addCircle(cx, cy, radius - 2f * density, android.graphics.Path.Direction.CW)
+        }
+        canvas.clipPath(clipPath)
+        canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, personPaint)
+        canvas.restore()
     }
-    canvas.clipPath(clipPath)
-    canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, personPaint)
-    canvas.restore()
 
-    // Attached Distance Badge
-    if (badgeHeight > 0 && distanceText.isNotEmpty()) {
+    // Attached Distance & Name Badge
+    if (badgeHeight > 0 && badgeText.isNotEmpty()) {
         val badgeLeft = cx - badgeWidth / 2f
         val badgeTop = cy + radius + badgeSpacing
         val badgeRight = cx + badgeWidth / 2f
@@ -3117,7 +3130,7 @@ internal fun makeGuestMarkerIcon(
 
         val textY = badgeTop + (badgeHeight / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
         textPaint.alpha = alpha
-        canvas.drawText(distanceText, cx, textY, textPaint)
+        canvas.drawText(badgeText, cx, textY, textPaint)
     }
 
     val anchorX = cx / totalWidth.toFloat()

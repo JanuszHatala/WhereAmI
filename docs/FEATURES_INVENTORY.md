@@ -390,6 +390,14 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Architecture & Implementation**:
   - `TripModels.kt`, `LiveSharingManager.kt`, `server/public/index.html`. Covered by `LiveShareChargingSyncTest.kt`.
 
+### LIV-10: Bidirectional Live Sharing Visitor Avatar Name & Initial Display
+- **Core Value**: When visitors assign a custom name in the web viewer (e.g. "Niki", "ja"), render their name on their live avatar pin on the host's Android map: initial letter centered inside the avatar circle, and clean name in the attached bottom badge pill (`$name • $distance • $timeAgo`). Unnamed visitors retain the standard silhouette icon.
+- **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `LiveGuest.kt` (`GuestMarkerHelper`): parsing, 12-char truncation with ellipsis, initial extraction, badge formatting.
+  - `OsmMapView.kt` (`makeGuestMarkerIcon`): renders bold centered initial and formatted badge pill.
+  - Unit tests: `LiveGuestTest.kt`.
+
 ---
 
 

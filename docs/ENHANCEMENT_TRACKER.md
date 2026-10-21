@@ -1328,3 +1328,12 @@ Evidence: trip 244 CYCLING 3.09 km auto; tip jump 59.6 m / 172° after 24 s gap 
 | **VAL102-03** | Spatial cache health. | bare/dupe purge from v1.18.2 | OK | 0 bare highway rows, 0 double-paren |
 | **BKL-102** | Cycling heading: arrowReverse 12%, headingErr p97 127°. | `MotionCourse.forVehicle` / course-up | Backlog | observe next cycling round |
 | **VER-102** | versionCode 137 / 1.18.6 | build.gradle.kts | Done | - |
+
+## 106. Round 103: Live Sharing Visitor Name & Initial on Map Avatar (2026-10-21, v1.18.7)
+
+Evidence: user request with screenshots `Screenshot_20261021-141241.png` and `Screenshot_20261021-141542.png`. When visitor sets custom name in web viewer, show initial inside avatar circle and name in bottom badge pill.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI103-01** | Render visitor initial inside avatar circle and name in attached bottom badge pill. | `OsmMapView.kt` (`makeGuestMarkerIcon`), `LiveGuest.kt` (`GuestMarkerHelper`) | Implemented | Bold centered initial; `$name • $distance • $timeAgo` badge; 12-char truncation; fallback to silhouette for unnamed visitors |
+| **VER-103** | versionCode 138 / 1.18.7 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Unit tests in `LiveGuestTest` passing all permutations |
