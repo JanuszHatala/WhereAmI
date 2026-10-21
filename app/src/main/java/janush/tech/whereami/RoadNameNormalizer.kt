@@ -90,6 +90,50 @@ object RoadNameNormalizer {
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
 
+    /**
+     * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
+     * OSM name (`Krakowska`). Prefer the local name and keep the code as [rawRef] so normalize yields
+     * `Krakowska (DW948)` instead of a bare `DW948`.
+     *
+     * @return pair of (streetForNormalize, refForNormalize)
+     */
+    fun coalesceOsrmAndOsmStreet(
+        osrmStreet: String?,
+        osmStreet: String?,
+        osmRoadRef: String?,
+        geocoderStreet: String? = null
+    ): Pair<String?, String?> {
+        val osrm = osrmStreet?.trim()?.takeIf { it.isNotEmpty() }
+        val named = sequenceOf(osmStreet, geocoderStreet)
+            .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() && !isHighwayCodeOnly(s) } }
+            .firstOrNull()
+        val codeFromOsrm = osrm?.takeIf { isHighwayCodeOnly(it) }
+        val ref = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: codeFromOsrm
+        return when {
+            osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+            named != null -> named to ref
+            osrm != null -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+            else -> null to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
+    fun shouldPreferExistingStreet(existing: String?, incoming: String?): Boolean {
+        if (existing.isNullOrBlank() || isHighwayCodeOnly(existing)) return false
+        return incoming.isNullOrBlank() || isHighwayCodeOnly(incoming)
+    }
+
+    /** Pulls a canonical highway code from a street line (`DW948` or `Krakowska (DW948)`). */
+    fun extractHighwayCode(street: String?): String? {
+        if (street.isNullOrBlank()) return null
+        val trimmed = street.trim()
+        if (isHighwayCodeOnly(trimmed)) {
+            return normalize(null, trimmed, null, includeHouseNumber = false) ?: trimmed.uppercase(Locale.ROOT)
+        }
+        val paren = Regex("""\((DK|DW|A|S|E)\s*(\d+)\)""", RegexOption.IGNORE_CASE).find(trimmed) ?: return null
+        return "${paren.groupValues[1].uppercase(Locale.ROOT)}${paren.groupValues[2]}"
+    }
+
     private val PAREN_HIGHWAY_REF = Regex("""\((DK|DW|A|S|E)\s*\d+""", RegexOption.IGNORE_CASE)
 
     /**

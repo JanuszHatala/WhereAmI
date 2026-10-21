@@ -1218,3 +1218,18 @@ Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of r
 | :--- | :--- | :--- | :---: | :--- |
 | **UI93-01** | **Selection action bar cramped and "Deselect All" wrapped letter-by-letter.** Replaced single overflowing row with a responsive Two-Tier layout: Tier 1 hosts selection status and view filter toggle + bulk selection with `maxLines = 1, softWrap = false`; Tier 2 hosts primary contextual actions (`Fit Map`, `Merge`) with comfortable 30dp height and spacing. | `MainActivity.kt` | Implemented | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
 | **VER-93** | `versionCode` 123, `versionName` "1.17.6". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 92. Round 89: Driving Path Review + Named Street over Highway Code (2026-10-21, v1.17.7)
+
+Evidence: trip 240 CAR (~13.3 km); videos screen-20261021-085620 / 090242; Screenshot_20261021-085019 (DW948 on Krakowska).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VAL89-01** | Path shift vs roads improved (no longer primary). | DisplayRoadSnap (v1.17.1) | Confirmed improved | visual roundabouts aligned |
+| **VAL89-02** | Resume hieroglyph spikes gone. | OsmMapView catch-up refill | Confirmed improved | video2 background↔foreground |
+| **ENG89-01** | Zigzag / line corrects behind cursor on curves. | RTS reshape (design); residual | Backlog | replay reshape p50=0.47 p90=1.68 m |
+| **ENG89-02** | Parking scribble while standing / creeping. | AdaptiveTrackSampler + ZUPT | Backlog | live nest at mid-trip parking |
+| **ENG89-03** | Background vs foreground polyline density differs. | screen-off 1 Hz batch | Design | gaps 36–80 s |
+| **GEO89-01** | DW948 instead of Krakowska despite cache. | coalesceOsrmAndOsmStreet, SpatialCache put protect | Implemented | cache had Krakowska 8 m from DW948 cells; road_ref column empty |
+| **DOC-89** | ADR/docs/tracker. | docs | Done | - |
+| **VER-89** | versionCode 124 / 1.17.7 | build.gradle.kts | Done | - |

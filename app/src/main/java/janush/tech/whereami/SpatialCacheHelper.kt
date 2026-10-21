@@ -353,17 +353,52 @@ class SpatialCacheHelper private constructor(private val context: Context) :
 
     fun put(lat: Double, lng: Double, info: MultiLanguagePlaceInfo) {
         val key = toGridKey(lat, lng)
+        // Never let a bare DW/DK/A/S code overwrite a local street name already cached in this cell
+        // (Kobiernice Krakowska vs DW948 on the same ~11 m grid).
+        val existing = get(lat, lng, maxAgeMs = null)
+        val toStore = if (existing != null &&
+            RoadNameNormalizer.shouldPreferExistingStreet(existing.pl.street, info.pl.street)
+        ) {
+            val ref = info.pl.roadRef
+                ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
+                ?: existing.pl.roadRef
+            existing.copy(
+                en = existing.en.copy(
+                    roadRef = ref ?: existing.en.roadRef,
+                    street = existing.en.street ?: info.en.street
+                ),
+                pl = existing.pl.copy(
+                    roadRef = ref ?: existing.pl.roadRef,
+                    street = existing.pl.street
+                ),
+                native = existing.native.copy(
+                    roadRef = ref ?: existing.native.roadRef,
+                    street = existing.native.street ?: info.native.street
+                )
+            )
+        } else {
+            val refPl = info.pl.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
+            if (refPl != null && info.pl.roadRef.isNullOrBlank()) {
+                info.copy(
+                    en = info.en.copy(roadRef = info.en.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.en.street) ?: refPl),
+                    pl = info.pl.copy(roadRef = refPl),
+                    native = info.native.copy(roadRef = info.native.roadRef ?: RoadNameNormalizer.extractHighwayCode(info.native.street) ?: refPl)
+                )
+            } else {
+                info
+            }
+        }
         val db = writableDatabase
         val values = ContentValues().apply {
             put(COL_GRID_KEY, key)
             put(COL_LAT, lat)
             put(COL_LNG, lng)
-            put(COL_CITY, info.pl.city)
-            put(COL_STREET, info.pl.street)
-            put(COL_ROAD_REF, info.pl.roadRef)
-            put(COL_EN_JSON, serializePlaceInfo(info.en))
-            put(COL_PL_JSON, serializePlaceInfo(info.pl))
-            put(COL_NATIVE_JSON, serializePlaceInfo(info.native))
+            put(COL_CITY, toStore.pl.city)
+            put(COL_STREET, toStore.pl.street)
+            put(COL_ROAD_REF, toStore.pl.roadRef)
+            put(COL_EN_JSON, serializePlaceInfo(toStore.en))
+            put(COL_PL_JSON, serializePlaceInfo(toStore.pl))
+            put(COL_NATIVE_JSON, serializePlaceInfo(toStore.native))
             put(COL_TIMESTAMP, System.currentTimeMillis())
         }
         db.insertWithOnConflict(TABLE_CACHE, null, values, SQLiteDatabase.CONFLICT_REPLACE)

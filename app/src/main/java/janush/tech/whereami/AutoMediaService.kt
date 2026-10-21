@@ -267,8 +267,10 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         // Street / Road
         if (!place.street.isNullOrBlank() || !place.roadRef.isNullOrBlank()) {
-            val road = listOfNotNull(place.street, place.roadRef).joinToString(" • ")
-            addQueueItem("Street / Road", road)
+            val road = RoadNameNormalizer.formatStreetDisplay(place.street, place.roadRef, place.countryCode)
+                ?: place.street
+                ?: place.roadRef
+            if (!road.isNullOrBlank()) addQueueItem("Street / Road", road)
         }
 
         // Hierarchy elements

@@ -1526,27 +1526,35 @@ class LocationManager private constructor(private val context: Context) {
         // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
             val basePlace = address.toPlaceInfo(countryCode)
+            // OSRM may return only DW948 while OSM/Geocoder have Krakowska on the same corridor.
+            val (coalescedStreet, coalescedRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+                osrmStreet = osrmStreet,
+                osmStreet = osm?.street,
+                osmRoadRef = osm?.roadRef,
+                geocoderStreet = address.thoroughfare
+            )
             val canonicalStreet = when {
-                // 1. Highest precision: OSRM Map Matching explicitly provided the road centerline
-                !osrmStreet.isNullOrBlank() -> {
+                // 1. OSRM + OSM/Geocoder coalesced street/ref (prefers local name over bare highway code)
+                !coalescedStreet.isNullOrBlank() || !coalescedRef.isNullOrBlank() -> {
                     val validHouse = if (osmMatchesTrajectory) (osm?.houseNumber ?: address.subThoroughfare) else null
-                    val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
-                    RoadNameNormalizer.normalize(osrmStreet, osm?.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
+                    val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory &&
+                        !RoadNameNormalizer.isHighwayCodeOnly(coalescedStreet)
+                    RoadNameNormalizer.normalize(
+                        coalescedStreet,
+                        coalescedRef,
+                        validHouse,
+                        includeHouseNumber = allowHouse,
+                        countryCode = countryCode
+                    )
                 }
-                // 2. Primary road awareness: OpenStreetMap Nominatim street vector (matches map display)
-                !osm?.street.isNullOrBlank() -> {
-                    val validHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: address.subThoroughfare) else null
-                    val allowHouse = shouldShowHouse && validHouse != null && osmMatchesTrajectory
-                    RoadNameNormalizer.normalize(osm.street, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
-                }
-                // 3. Road ref enrichment if thoroughfare provided
+                // 2. Road ref enrichment if thoroughfare provided (no OSRM/OSM street)
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
                     val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else (address.thoroughfare ?: osm.street)
                     val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
                     val allowHouse = shouldShowHouse && validHouse != null && thoroughfareMatchesTrajectory
                     RoadNameNormalizer.normalize(targetStreet, osm.roadRef, validHouse, includeHouseNumber = allowHouse, countryCode = countryCode)
                 }
-                // 4. Fallback to Android native Geocoder thoroughfare
+                // 3. Fallback to Android native Geocoder thoroughfare
                 else -> {
                     val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else address.thoroughfare
                     val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
@@ -1592,7 +1600,10 @@ class LocationManager private constructor(private val context: Context) {
             return basePlace.copy(
                 city = effectiveCity,
                 street = canonicalStreet,
-                roadRef = osm?.roadRef ?: basePlace.roadRef,
+                roadRef = coalescedRef
+                    ?: osm?.roadRef
+                    ?: RoadNameNormalizer.extractHighwayCode(canonicalStreet)
+                    ?: basePlace.roadRef,
                 gmina = effectiveGmina,
                 powiat = effectivePowiat,
                 voivodeship = effectiveVoivodeship,
