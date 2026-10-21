@@ -379,6 +379,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var showLiveQuickShareModal by remember { mutableStateOf(false) }
+    var showLiveViewsDetailsModal by remember { mutableStateOf(false) }
     var showLiveQrCodeModal by remember { mutableStateOf(false) }
     var qrCodeTargetUrl by remember { mutableStateOf("") }
     var qrCodeTargetTitle by remember { mutableStateOf("") }
@@ -406,6 +407,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         showActiveTripRouteDialog = false
         showLiveShareDialog = false
         showLiveQuickShareModal = false
+        showLiveViewsDetailsModal = false
         showLiveQrCodeModal = false
         showHeatMapSettingsDialog = false
         showMapSettingsDialog = false
@@ -6851,6 +6853,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         val session = liveSession!!
         val tripViewerUrl = session.getViewerUrl(useStatic = false)
         val personalViewerUrl = session.getViewerUrl(useStatic = true, staticId = staticLiveId)
+        val coroutineScope = rememberCoroutineScope()
 
         ModalBottomSheet(
             onDismissRequest = { showLiveQuickShareModal = false },
@@ -6901,65 +6904,84 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Telemetry stats summary card (Unique Guests & Total Views)
+                // Telemetry stats summary card (Unique Guests & Total Views) - Clickable to open Views & Visitors modal
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color(0xFF1E293B),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            coroutineScope.launch {
+                                liveSharingManager.fetchSessionViews()
+                            }
+                            showLiveViewsDetailsModal = true
+                        }
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Unique Guests
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            EmojiText(emoji = "👥", fontSize = 14.sp, yOffsetDp = 0.dp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${activeGuests.size} Guests",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 13.sp
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Unique Guests
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                EmojiText(emoji = "👥", fontSize = 14.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${activeGuests.size} Guests",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 13.sp
+                                    )
                                 )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .height(16.dp)
+                                    .width(1.dp)
+                                    .background(Color(0xFF334155))
                             )
+
+                            // Total Views
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                EmojiText(emoji = "👁️", fontSize = 14.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${session.viewCount} Views",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                            }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .height(16.dp)
-                                .width(1.dp)
-                                .background(Color(0xFF334155))
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "View Details",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
                         )
-
-                        // Total Views
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            EmojiText(emoji = "👁️", fontSize = 14.sp, yOffsetDp = 0.dp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${session.viewCount} Views",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 13.sp
-                                )
-                            )
-                        }
                     }
                 }
 
@@ -7083,6 +7105,30 @@ fun LocationScreen(viewModel: MainViewModel) {
     }
     }
     LocationScreenHost15()
+
+    @Composable fun LocationScreenHost15b() {
+        if (showLiveViewsDetailsModal && liveSession != null && liveSession!!.isActive) {
+            val viewEvents by liveSharingManager.viewEvents.collectAsState()
+            val viewsScope = rememberCoroutineScope()
+            LiveViewsDetailsDialog(
+                session = liveSession!!,
+                guests = activeGuests,
+                viewEvents = viewEvents,
+                currentLatLng = currentLatLng,
+                onRefresh = {
+                    viewsScope.launch {
+                        liveSharingManager.fetchSessionViews()
+                    }
+                },
+                onGuestClick = { guest ->
+                    showLiveViewsDetailsModal = false
+                    selectedGuestDetails = guest
+                },
+                onDismiss = { showLiveViewsDetailsModal = false }
+            )
+        }
+    }
+    LocationScreenHost15b()
 
     // ── Live QR Code Dialog (Offline-Generated via QrCodeHelper) ─────────────
     @Composable fun LocationScreenHost16() {
@@ -9255,17 +9301,11 @@ private fun LocalityCard(
                 if (liveSession == null) ""
                 else if (liveSession.expiresAt <= 0L) {
                     val elapsed = maxOf(0L, tickerNow - liveSession.createdAt)
-                    val hrs = elapsed / 3600000L
-                    val mins = (elapsed % 3600000L) / 60000L
-                    if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+                    LiveGuest.formatCompactLiveDuration(elapsed)
                 } else {
                     val rem = maxOf(0L, liveSession.expiresAt - tickerNow)
                     if (rem <= 0L) "Exp"
-                    else {
-                        val hrs = rem / 3600000L
-                        val mins = (rem % 3600000L) / 60000L
-                        if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
-                    }
+                    else LiveGuest.formatCompactLiveDuration(rem)
                 }
             }
 
@@ -12919,4 +12959,334 @@ fun PostTripDemSupplementDialog(
         },
         dismissButton = null
     )
+}
+
+@Composable
+private fun LiveViewsDetailsDialog(
+    session: LiveSession,
+    guests: List<LiveGuest>,
+    viewEvents: List<LiveViewEvent>,
+    currentLatLng: Triple<Double, Double, Float?>?,
+    onRefresh: () -> Unit,
+    onGuestClick: (LiveGuest) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            border = BorderStroke(1.dp, Color(0xFF334155)),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 24.dp)
+                .heightIn(max = 640.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                // Header with Title, Subtitle, Refresh button, and canonical Close button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            EmojiText(emoji = "👁️", fontSize = 18.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Views & Visitors",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${session.viewCount} total views • ${guests.size} visitors",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onRefresh,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Summary metrics bar (Total Views, Unique Visitors, Last Activity)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Total Views
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("VIEWS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text("${session.viewCount}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
+                        // Unique Visitors
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("VISITORS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text("${guests.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                        }
+                        Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
+                        // Last Activity
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("LAST SEEN", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val lastEventTime = viewEvents.firstOrNull()?.timestamp ?: guests.maxOfOrNull { it.lastUpdated } ?: 0L
+                            val lastSeenStr = if (lastEventTime > 0L) LiveGuest.formatCompactTimeAgo(lastEventTime) else "None"
+                            Text(lastSeenStr, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // List of chronological visit events
+                val displayEvents = remember(viewEvents, guests) {
+                    if (viewEvents.isNotEmpty()) {
+                        viewEvents
+                    } else {
+                        // Fallback synthesis from guests list if server viewLog is empty
+                        guests.sortedByDescending { it.lastUpdated }.map { g ->
+                            LiveViewEvent(
+                                id = g.id,
+                                timestamp = g.lastUpdated,
+                                guestId = g.id,
+                                guestName = g.name,
+                                device = null,
+                                colorIndex = g.colorIndex,
+                                lat = g.lat,
+                                lng = g.lng,
+                                accuracy = g.accuracy
+                            )
+                        }
+                    }
+                }
+
+                if (displayEvents.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            EmojiText(emoji = "👁️", fontSize = 36.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "No views recorded yet",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Share the live link with friends or family to see them here.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(displayEvents, key = { it.id }) { event ->
+                            val matchingGuest = guests.find { it.id == event.guestId }
+                            val guestColor = Color(LiveGuest.getColor(matchingGuest?.colorIndex ?: event.colorIndex))
+                            val hasLocation = event.hasLocation || (matchingGuest != null && matchingGuest.lat != 0.0)
+                            val guestLat = event.lat ?: matchingGuest?.lat
+                            val guestLng = event.lng ?: matchingGuest?.lng
+
+                            val distanceStr = if (currentLatLng != null && guestLat != null && guestLng != null) {
+                                val results = FloatArray(1)
+                                android.location.Location.distanceBetween(
+                                    currentLatLng.first, currentLatLng.second, guestLat, guestLng, results
+                                )
+                                LiveGuest.formatDistance(results[0])
+                            } else null
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF1E293B),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (matchingGuest != null) {
+                                            Modifier.clickable { onGuestClick(matchingGuest) }
+                                        } else Modifier
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Avatar circle
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(CircleShape)
+                                            .background(guestColor),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = (event.guestName.take(1).ifBlank { "G" }).uppercase(),
+                                            color = Color.White,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+
+                                    // Details column
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = event.guestName,
+                                                color = Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+
+                                            if (!event.device.isNullOrBlank()) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(Color(0xFF334155))
+                                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                ) {
+                                                    Text(
+                                                        text = event.device,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = Color(0xFFE2E8F0)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(3.dp))
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            // Timestamp
+                                            Text(
+                                                text = LiveGuest.formatTimeAgo(event.timestamp),
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 11.sp
+                                            )
+
+                                            if (distanceStr != null) {
+                                                Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
+                                                Text(
+                                                    text = "$distanceStr away",
+                                                    color = Color(0xFF38BDF8),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Status badge
+                                    if (hasLocation) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0x3310B981))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "📍 Shared",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF10B981)
+                                            )
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0xFF334155))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "👁️ Viewed",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color(0xFFCBD5E1)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

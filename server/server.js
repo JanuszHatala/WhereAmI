@@ -46,6 +46,7 @@ function loadSessions() {
       for (const [k, v] of sessions.entries()) {
         if (!v.guests || typeof v.guests !== 'object') v.guests = {};
         if (v.followGuests === undefined) v.followGuests = true;
+        if (!v.viewLog || !Array.isArray(v.viewLog)) v.viewLog = [];
       }
       console.log(`Loaded ${sessions.size} sessions and ${staticAliases.size} static aliases from disk.`);
     }
@@ -170,7 +171,8 @@ app.post('/api/sessions/:id', (req, res) => {
       current: null,
       points: [],
       pauses: [],
-      guests: {}
+      guests: {},
+      viewLog: []
     };
     sessions.set(id, session);
   } else {
@@ -215,6 +217,24 @@ app.post('/api/sessions/:id/view-mode', (req, res) => {
   saveSessions();
   res.json({ success: true, trailVisible: session.trailVisible });
 });
+
+function getEnrichedViewLog(session) {
+  if (!session || !Array.isArray(session.viewLog)) return [];
+  return session.viewLog.map(event => {
+    const guest = (session.guests && typeof session.guests === 'object') ? session.guests[event.guestId] : null;
+    return {
+      id: event.id,
+      t: event.t,
+      guestId: event.guestId,
+      name: guest?.name || event.name || 'Guest',
+      device: event.device,
+      colorIndex: typeof guest?.colorIndex === 'number' ? guest.colorIndex : (event.colorIndex || 0),
+      lat: (guest && typeof guest.lat === 'number') ? guest.lat : null,
+      lng: (guest && typeof guest.lng === 'number') ? guest.lng : null,
+      acc: (guest && typeof guest.acc === 'number') ? guest.acc : null
+    };
+  });
+}
 
 app.post('/api/sessions/:id/points', (req, res) => {
   const { id } = req.params;
@@ -301,7 +321,8 @@ app.post('/api/sessions/:id/points', (req, res) => {
     success: true,
     totalPoints: session.points.length,
     viewCount: session.viewCount || 0,
-    guests: guestsList
+    guests: guestsList,
+    viewLog: getEnrichedViewLog(session)
   });
 });
 
@@ -443,6 +464,32 @@ app.get('/api/sessions/:id', (req, res) => {
         session.guests[cleanGuestId].viewCount = (session.guests[cleanGuestId].viewCount || 0) + 1;
         saveSessions();
       }
+
+      if (isPv) {
+        if (!session.viewLog || !Array.isArray(session.viewLog)) {
+          session.viewLog = [];
+        }
+        const userAgent = req.headers['user-agent'] || '';
+        let device = 'Web Browser';
+        if (/iPhone/i.test(userAgent)) device = 'iPhone';
+        else if (/iPad/i.test(userAgent)) device = 'iPad';
+        else if (/Android/i.test(userAgent)) device = 'Android';
+        else if (/Macintosh|Mac OS X/i.test(userAgent)) device = 'Mac';
+        else if (/Windows/i.test(userAgent)) device = 'Windows';
+        else if (/Linux/i.test(userAgent)) device = 'Linux';
+
+        const g = session.guests[cleanGuestId];
+        session.viewLog.unshift({
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          t: Date.now(),
+          guestId: cleanGuestId,
+          name: g ? g.name : `Guest ${(g?.colorIndex || 0) + 1}`,
+          device: device,
+          colorIndex: g ? (g.colorIndex || 0) : 0
+        });
+        if (session.viewLog.length > 200) session.viewLog.pop();
+        saveSessions();
+      }
     }
   }
 
@@ -484,6 +531,53 @@ app.get('/api/sessions/:id', (req, res) => {
     followGuests: session.followGuests !== false,
     paused: isRandomPaused,
     viewCount: session.viewCount || 0
+  });
+});
+
+app.get('/api/sessions/:id/views', (req, res) => {
+  const { id } = req.params;
+  let targetId = id;
+  if (staticAliases.has(id)) {
+    targetId = staticAliases.get(id);
+  } else {
+    for (const [sId, sess] of sessions.entries()) {
+      if (sess.staticId === id) {
+        targetId = sId;
+        staticAliases.set(id, sId);
+        break;
+      }
+    }
+  }
+  const session = sessions.get(targetId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const syncInterval = session.syncIntervalMinutes || 5;
+  const inactivityThresholdMs = Math.max(5 * 60_000, syncInterval * 2 * 60_000);
+  const guestsList = [];
+  if (session.guests) {
+    for (const [gId, g] of Object.entries(session.guests)) {
+      if (!g) continue;
+      const isInactive = (Date.now() - (g.t || g.createdAt || 0)) > inactivityThresholdMs;
+      guestsList.push({
+        id: g.id || gId,
+        name: g.name || `Guest ${(g.colorIndex || 0) + 1}`,
+        lat: typeof g.lat === 'number' ? g.lat : null,
+        lng: typeof g.lng === 'number' ? g.lng : null,
+        acc: typeof g.acc === 'number' ? g.acc : null,
+        t: g.t || g.createdAt || Date.now(),
+        colorIndex: typeof g.colorIndex === 'number' ? g.colorIndex : 0,
+        isInactive: isInactive,
+        firstSeen: g.firstSeen || g.createdAt || g.t,
+        viewCount: g.viewCount || 1
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    viewCount: session.viewCount || 0,
+    viewLog: getEnrichedViewLog(session),
+    guests: guestsList
   });
 });
 

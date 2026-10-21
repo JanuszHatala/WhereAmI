@@ -179,6 +179,9 @@ class LiveSharingManager private constructor(private val context: Context) {
     private val _activeGuests = MutableStateFlow<List<LiveGuest>>(emptyList())
     val activeGuests: StateFlow<List<LiveGuest>> = _activeGuests.asStateFlow()
 
+    private val _viewEvents = MutableStateFlow<List<LiveViewEvent>>(emptyList())
+    val viewEvents: StateFlow<List<LiveViewEvent>> = _viewEvents.asStateFlow()
+
     private val _followGuests = MutableStateFlow<Boolean>(true)
     val followGuests: StateFlow<Boolean> = _followGuests.asStateFlow()
 
@@ -336,6 +339,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         _showGuestDistanceBadge.value = showGuestDistanceBadge
         dismissedGuestIds.clear()
         _activeGuests.value = emptyList()
+        _viewEvents.value = emptyList()
         stopStationaryHeartbeat()
 
         synchronized(memoryPointsQueue) {
@@ -793,6 +797,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         stopStationaryHeartbeat()
         dismissedGuestIds.clear()
         _activeGuests.value = emptyList()
+        _viewEvents.value = emptyList()
         val s = _currentSession.value ?: return
         val stopped = s.copy(isActive = false, isPaused = false)
         prefs.edit().putBoolean(KEY_SESSION_ACTIVE, false).putBoolean(KEY_SESSION_PAUSED, false).apply()
@@ -837,11 +842,44 @@ class LiveSharingManager private constructor(private val context: Context) {
     fun deleteSession() {
         stopSession()
         _activeGuests.value = emptyList()
+        _viewEvents.value = emptyList()
         prefs.edit().clear().apply()
         synchronized(memoryPointsQueue) {
             memoryPointsQueue.clear()
         }
         _currentSession.value = null
+    }
+
+    suspend fun fetchSessionViews(): Pair<Int, List<LiveViewEvent>> = withContext(Dispatchers.IO) {
+        val s = _currentSession.value ?: return@withContext (0 to emptyList())
+        try {
+            val urlStr = "${s.getApiBaseUrl()}/api/sessions/${s.id}/views"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            if (conn.responseCode in 200..299) {
+                val resp = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(resp)
+                val views = json.optInt("viewCount", s.viewCount)
+                _currentSession.value = _currentSession.value?.copy(viewCount = views)
+
+                val viewLogArr = json.optJSONArray("viewLog")
+                val events = mutableListOf<LiveViewEvent>()
+                if (viewLogArr != null) {
+                    for (i in 0 until viewLogArr.length()) {
+                        val vObj = viewLogArr.optJSONObject(i) ?: continue
+                        LiveViewEvent.fromJson(vObj)?.let { events.add(it) }
+                    }
+                }
+                if (events.isNotEmpty()) {
+                    _viewEvents.value = events
+                }
+                return@withContext (views to _viewEvents.value)
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("LIVE_SHARE", "fetchSessionViews failed: ${e.message}")
+        }
+        (s.viewCount to _viewEvents.value)
     }
 
     fun isDeviceCharging(): Boolean {
@@ -1209,6 +1247,18 @@ class LiveSharingManager private constructor(private val context: Context) {
                         _activeGuests.value = parsed
                     } else if (!session.followGuests) {
                         _activeGuests.value = emptyList()
+                    }
+
+                    val viewLogArr = json.optJSONArray("viewLog")
+                    if (viewLogArr != null) {
+                        val events = mutableListOf<LiveViewEvent>()
+                        for (i in 0 until viewLogArr.length()) {
+                            val vObj = viewLogArr.optJSONObject(i) ?: continue
+                            LiveViewEvent.fromJson(vObj)?.let { events.add(it) }
+                        }
+                        if (events.isNotEmpty()) {
+                            _viewEvents.value = events
+                        }
                     }
                 } catch (_: Exception) {}
             } else {
