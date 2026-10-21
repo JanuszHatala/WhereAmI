@@ -7278,12 +7278,20 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             .background(Color(0x33F59E0B))
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
-                                        Text(
-                                            text = "⏸️ Inactive (> 5m)",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFF59E0B)
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            EmojiText(emoji = "⏸️", fontSize = 11.sp, yOffsetDp = 0.dp)
+                                            Text(
+                                                text = "Inactive (> 5m)",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFF59E0B),
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
                                 } else {
                                     Box(
@@ -7296,7 +7304,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             text = "● Active",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF10B981)
+                                            color = Color(0xFF10B981),
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -12981,14 +12991,15 @@ private fun LiveViewsDetailsDialog(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
             border = BorderStroke(1.dp, Color(0xFF334155)),
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .padding(vertical = 24.dp)
-                .heightIn(max = 640.dp)
+                .widthIn(max = 520.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 24.dp)
+                .heightIn(max = 660.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(16.dp)
             ) {
                 // Header with Title, Subtitle, Refresh button, and canonical Close button
                 Row(
@@ -13048,7 +13059,7 @@ private fun LiveViewsDetailsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Summary metrics bar (Total Views, Unique Visitors, Last Activity)
                 Surface(
@@ -13059,31 +13070,39 @@ private fun LiveViewsDetailsDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Total Views
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("VIEWS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("VIEWS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, softWrap = false)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("${session.viewCount}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("${session.viewCount}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
                         }
                         Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
                         // Unique Visitors
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("VISITORS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("VISITORS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, softWrap = false)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("${guests.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                            Text("${guests.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), maxLines = 1, softWrap = false)
                         }
                         Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
                         // Last Activity
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("LAST SEEN", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("LAST SEEN", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, softWrap = false)
                             Spacer(modifier = Modifier.height(2.dp))
                             val lastEventTime = viewEvents.firstOrNull()?.timestamp ?: guests.maxOfOrNull { it.lastUpdated } ?: 0L
                             val lastSeenStr = if (lastEventTime > 0L) LiveGuest.formatCompactTimeAgo(lastEventTime) else "None"
-                            Text(lastSeenStr, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                            Text(lastSeenStr, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981), maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -13125,7 +13144,9 @@ private fun LiveViewsDetailsDialog(
                                 text = "Visitors (${guests.size})",
                                 color = Color.White,
                                 fontSize = 12.sp,
-                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -13150,7 +13171,9 @@ private fun LiveViewsDetailsDialog(
                                 text = "History ($totalLogCount)",
                                 color = Color.White,
                                 fontSize = 12.sp,
-                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -13164,7 +13187,7 @@ private fun LiveViewsDetailsDialog(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .padding(vertical = 36.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -13191,7 +13214,7 @@ private fun LiveViewsDetailsDialog(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .weight(1f, fill = false),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(sortedGuests, key = { it.id }) { guest ->
@@ -13218,28 +13241,44 @@ private fun LiveViewsDetailsDialog(
                                             .padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Avatar circle
+                                        // Avatar circle (38dp) with optional live indicator dot
                                         Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(CircleShape)
-                                                .background(guestColor),
-                                            contentAlignment = Alignment.Center
+                                            modifier = Modifier.size(38.dp),
+                                            contentAlignment = Alignment.BottomEnd
                                         ) {
-                                            Text(
-                                                text = (guest.name.take(1).ifBlank { "G" }).uppercase(),
-                                                color = Color.White,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(38.dp)
+                                                    .clip(CircleShape)
+                                                    .background(guestColor),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = (guest.name.take(1).ifBlank { "G" }).uppercase(),
+                                                    color = Color.White,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                            if (!guest.isInactive) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(10.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFF10B981))
+                                                        .border(1.5.dp, Color(0xFF1E293B), CircleShape)
+                                                )
+                                            }
                                         }
 
                                         Spacer(modifier = Modifier.width(12.dp))
 
                                         Column(modifier = Modifier.weight(1f)) {
+                                            // Line 1: Guest name on left, View count & status badges on right
                                             Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
                                                     text = guest.name,
@@ -13247,97 +13286,108 @@ private fun LiveViewsDetailsDialog(
                                                     fontSize = 14.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
                                                 )
 
-                                                // View count badge
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .background(Color(0xFF334155))
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "${guest.viewCount} ${if (guest.viewCount == 1) "view" else "views"}",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFF38BDF8)
-                                                    )
-                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
 
-                                                if (guest.isInactive) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    // View count badge
                                                     Box(
                                                         modifier = Modifier
                                                             .clip(RoundedCornerShape(6.dp))
-                                                            .background(Color(0x33F59E0B))
-                                                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                            .background(Color(0xFF334155))
+                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                                     ) {
                                                         Text(
-                                                            text = "⏸️ Inactive",
+                                                            text = "${guest.viewCount} ${if (guest.viewCount == 1) "view" else "views"}",
                                                             fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Medium,
-                                                            color = Color(0xFFF59E0B)
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF38BDF8),
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
+                                                    }
+
+                                                    // Status badge: Inactive / Active
+                                                    if (guest.isInactive) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(Color(0x26F59E0B))
+                                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "Inactive",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Medium,
+                                                                color = Color(0xFFF59E0B),
+                                                                maxLines = 1,
+                                                                softWrap = false
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(Color(0x2610B981))
+                                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "Active",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color(0xFF10B981),
+                                                                maxLines = 1,
+                                                                softWrap = false
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
 
-                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Spacer(modifier = Modifier.height(4.dp))
 
+                                            // Line 2: Relative & clock time on left, Location / Distance on right
                                             Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
                                                 val clockStr = timeFormat.format(java.util.Date(guest.lastUpdated))
                                                 Text(
                                                     text = "${LiveGuest.formatTimeAgo(guest.lastUpdated)} ($clockStr)",
                                                     color = Color(0xFF94A3B8),
-                                                    fontSize = 11.sp
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
                                                 )
 
-                                                if (distanceStr != null) {
-                                                    Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
-                                                    Text(
-                                                        text = "$distanceStr away",
-                                                        color = Color(0xFF38BDF8),
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                if (hasLocation) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        EmojiText(emoji = "📍", fontSize = 11.sp, yOffsetDp = 0.dp)
+                                                        Text(
+                                                            text = if (distanceStr != null) "$distanceStr away" else "Shared",
+                                                            color = Color(0xFF10B981),
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            softWrap = false
+                                                        )
+                                                    }
                                                 }
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.width(8.dp))
-
-                                        // Status badge
-                                        if (hasLocation) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0x3310B981))
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "📍 Shared",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color(0xFF10B981)
-                                                )
-                                            }
-                                        } else {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0xFF334155))
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "👁️ Viewed",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    color = Color(0xFFCBD5E1)
-                                                )
                                             }
                                         }
                                     }
@@ -13398,7 +13448,7 @@ private fun LiveViewsDetailsDialog(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .padding(vertical = 36.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -13424,7 +13474,7 @@ private fun LiveViewsDetailsDialog(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .weight(1f, fill = false),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(displayEvents, key = { it.id }) { event ->
@@ -13470,18 +13520,19 @@ private fun LiveViewsDetailsDialog(
                                             Text(
                                                 text = (event.guestName.take(1).ifBlank { "G" }).uppercase(),
                                                 color = Color.White,
-                                                fontSize = 16.sp,
+                                                fontSize = 15.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
 
                                         Spacer(modifier = Modifier.width(12.dp))
 
-                                        // Details column
                                         Column(modifier = Modifier.weight(1f)) {
+                                            // Line 1: Guest name on left, Device badge or View badge on right
                                             Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
                                                     text = event.guestName,
@@ -13489,80 +13540,92 @@ private fun LiveViewsDetailsDialog(
                                                     fontSize = 14.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
                                                 )
 
-                                                if (!event.device.isNullOrBlank()) {
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    if (!event.device.isNullOrBlank()) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(Color(0xFF334155))
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = event.device,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Medium,
+                                                                color = Color(0xFFE2E8F0),
+                                                                maxLines = 1,
+                                                                softWrap = false
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // View badge
                                                     Box(
                                                         modifier = Modifier
-                                                            .clip(RoundedCornerShape(4.dp))
-                                                            .background(Color(0xFF334155))
-                                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                            .clip(RoundedCornerShape(6.dp))
+                                                            .background(Color(0xFF1E3A5F))
+                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                                     ) {
                                                         Text(
-                                                            text = event.device,
+                                                            text = "View",
                                                             fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Medium,
-                                                            color = Color(0xFFE2E8F0)
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF38BDF8),
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
                                                     }
                                                 }
                                             }
 
-                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Spacer(modifier = Modifier.height(4.dp))
 
+                                            // Line 2: Exact timestamp on left, Location / Distance on right
                                             Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
                                                 val clockStr = timeFormat.format(java.util.Date(event.timestamp))
                                                 Text(
                                                     text = "${LiveGuest.formatTimeAgo(event.timestamp)} ($clockStr)",
                                                     color = Color(0xFF94A3B8),
-                                                    fontSize = 11.sp
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
                                                 )
 
-                                                if (distanceStr != null) {
-                                                    Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
-                                                    Text(
-                                                        text = "$distanceStr away",
-                                                        color = Color(0xFF38BDF8),
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                if (hasLocation) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        EmojiText(emoji = "📍", fontSize = 11.sp, yOffsetDp = 0.dp)
+                                                        Text(
+                                                            text = if (distanceStr != null) "$distanceStr away" else "Shared",
+                                                            color = Color(0xFF10B981),
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            softWrap = false
+                                                        )
+                                                    }
                                                 }
                                             }
-                                        }
-
-                                        // Status badge
-                                        if (hasLocation) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0x3310B981))
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "📍 Shared",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF10B981)
-                                            )
-                                        }
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF334155))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "👁️ Viewed",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = Color(0xFFCBD5E1)
-                                            )
                                         }
                                     }
                                 }
@@ -13573,5 +13636,4 @@ private fun LiveViewsDetailsDialog(
             }
         }
     }
-}
 }
