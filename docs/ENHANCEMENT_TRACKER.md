@@ -1277,3 +1277,12 @@ Evidence: pin 49.81984, 19.25870 (Wielka Puszcza); live blue Czaniec borders; ca
 | **GEO97-02** | Mute live GPS borders while pin borders shown. | `MainActivity` → `OsmMapView.boundaryPoints` | Implemented | live poly null when `pinnedBoundaryPoints != null` |
 | **GEO97-03** | Resolve peak/pass/viewpoint for outdoor pins. | `SearchHelper` touristic title + Overpass nearby | Implemented | `MapPinReverseGeocodingTest` viewpoint/peak/POI ranking |
 | **VER-97** | versionCode 131 / 1.18.0 | build.gradle.kts | Done | - |
+
+## 101. Round 98: Live Borders Name-First Regression (2026-10-21, v1.18.1)
+
+Evidence: screenshots 14:15/14:17 Kobiernice; GPS inside Kobiernice; sky-blue border did not match card (v1.18.0 reverse-first cached smaller admin under `kobiernice_pl`).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GEO98-01** | Live locality borders / card mismatch while travelling. | `BoundaryHelper.forPin`, name-first live path, cache gen `v3` | Implemented | `PinBoundaryContainmentTest` live vs pin; pin path unchanged |
+| **VER-98** | versionCode 132 / 1.18.1 | build.gradle.kts | Done | - |

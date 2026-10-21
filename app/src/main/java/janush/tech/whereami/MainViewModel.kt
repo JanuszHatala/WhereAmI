@@ -479,7 +479,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     cityName = locality,
                     countryCode = countryCode ?: "pl",
                     fallbackMunicipality = fallbackMunicipality,
-                    geoPoint = geoPoint
+                    geoPoint = geoPoint,
+                    forPin = true
                 )
                 _pinnedBoundaryPoints.value = poly
             }
