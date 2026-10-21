@@ -1230,7 +1230,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // One-tap Pause / Resume interactive button
+                    // One-tap Sleep / Wake interactive button
                     Box(
                         modifier = Modifier
                             .size(28.dp)
@@ -1242,8 +1242,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isStandbySleeping) Icons.Default.PlayArrow else Icons.Default.Pause,
-                            contentDescription = if (isStandbySleeping) "Resume Auto-record" else "Pause Auto-record",
+                            imageVector = if (isStandbySleeping) Icons.Default.WbSunny else Icons.Default.Bedtime,
+                            contentDescription = if (isStandbySleeping) "Wake Auto-record" else "Sleep Auto-record",
                             tint = Color.White,
                             modifier = Modifier.size(16.dp)
                         )
@@ -9731,8 +9731,8 @@ private fun LocalityCard(
                                         .padding(horizontal = 10.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.Sensors,
-                                        contentDescription = "Live Sharing Active",
+                                        imageVector = if (liveSession.isPaused) Icons.Filled.SensorsOff else Icons.Filled.Sensors,
+                                        contentDescription = if (liveSession.isPaused) "Live Sharing Muted" else "Live Sharing Active",
                                         tint = if (liveSession.isPaused) Color(0xFFF59E0B) else Color(0xFF10B981),
                                         modifier = Modifier.size(20.dp)
                                     )
