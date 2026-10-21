@@ -1337,3 +1337,13 @@ Evidence: user request with screenshots `Screenshot_20261021-141241.png` and `Sc
 | :--- | :--- | :--- | :---: | :--- |
 | **UI103-01** | Render visitor initial inside avatar circle and name in attached bottom badge pill. | `OsmMapView.kt` (`makeGuestMarkerIcon`), `LiveGuest.kt` (`GuestMarkerHelper`) | Implemented | Bold centered initial; `$name • $distance • $timeAgo` badge; 12-char truncation; fallback to silhouette for unnamed visitors |
 | **VER-103** | versionCode 138 / 1.18.7 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Unit tests in `LiveGuestTest` passing all permutations |
+
+## 107. Round 104: Settings Automatic Sleep Mode Checkbox Spacing & Sleep/Wake Naming/Icon Alignment (2026-10-21, v1.18.8)
+
+Evidence: user request with screenshot `Screenshot_20261018-190447.png`. Excessive line spacing in the 3 checkboxes descriptions, unaligned raw emoji icons and naming between settings, standby HUD, and notifications.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI104-01** | Tighten 3 checkboxes line spacing and concise phrasing. | `MainActivity.kt` | Implemented | Tightened `lineHeight`, disabled font padding, aligned checkboxes at top, and made descriptions punchy and concise |
+| **UI104-02** | Align Sleep/Wake naming and vector icons with Standby HUD and notification. | `MainActivity.kt` | Implemented | `Icons.Default.Bedtime` / `Icons.Default.WbSunny` for Sleep/Wake button matching HUD emerald/slate containers; vector icon and SLEEPING badge relocated to card header |
+| **VER-104** | versionCode 139 / 1.18.8 | `build.gradle.kts` | Implemented | Build and unit test gates pass |
