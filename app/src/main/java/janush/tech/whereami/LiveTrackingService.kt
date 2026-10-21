@@ -38,6 +38,7 @@ class LiveTrackingService : Service() {
         const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
         const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
         const val ACTION_PAUSE_WARNING = "janush.tech.whereami.ACTION_PAUSE_WARNING"
+        const val ACTION_TRIP_PAUSE = "janush.tech.whereami.ACTION_TRIP_PAUSE"
         const val ACTION_TRIP_RESUME = "janush.tech.whereami.ACTION_TRIP_RESUME"
         const val ACTION_TRIP_STOP = "janush.tech.whereami.ACTION_TRIP_STOP"
 
@@ -115,6 +116,11 @@ class LiveTrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_TRIP_PAUSE -> {
+                TripManager.getInstance(this).pauseTrip(isManual = true)
+                updateNotification(force = true)
+                return START_STICKY
+            }
             ACTION_TRIP_RESUME -> {
                 TripManager.getInstance(this).resumeTrip()
                 updateNotification(force = true)
@@ -247,16 +253,16 @@ class LiveTrackingService : Service() {
         val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value && !hasTrip
 
         val initialTitle = when {
-            isSleeping && hasLive && isAuto -> "⏸ WhereAmI Paused (Live & Auto-record)"
-            isSleeping && hasLive -> "🌙 WhereAmI Live Sharing Sleeping"
-            isSleeping -> "⏸ WhereAmI Auto-record Paused"
+            isSleeping && hasLive && isAuto -> "WhereAmI Sleeping • Live Sharing (1h sync)"
+            isSleeping && hasLive -> "WhereAmI Sleeping • Live Sharing (1h sync)"
+            isSleeping -> "WhereAmI • Sleeping"
             hasTrip || hasLive -> "WhereAmI Active Tracking"
             else -> "WhereAmI • Auto-record Standby"
         }
         val initialText = when {
-            isSleeping && hasLive && isAuto -> "Auto-record paused • Live Sharing active (1h sync) • Tap to resume"
-            isSleeping && hasLive -> "Overnight hibernation • Live Sharing active (1h sync) • Tap to resume"
-            isSleeping -> "Auto-record paused for battery savings • Tap to resume"
+            isSleeping && hasLive && isAuto -> "Auto-record sleeping • Live Sharing active (1h sync) • Tap to open app"
+            isSleeping && hasLive -> "Overnight hibernation • Live Sharing active (1h sync) • Tap to open app"
+            isSleeping -> "Motion monitoring paused • Tap to wake or open app"
             hasTrip || hasLive -> "Recording trip & background location active"
             else -> "Ready to auto-record (standby • low power)"
         }
@@ -307,7 +313,7 @@ class LiveTrackingService : Service() {
             .setOnlyAlertOnce(true)
 
         if (isSleeping) {
-            // Action 1: Activate / Wake Action
+            // Action 1: Wake Action
             val activateIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 android.app.PendingIntent.getForegroundService(
                     this,
@@ -323,40 +329,37 @@ class LiveTrackingService : Service() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
             }
-            builder.addAction(0, formatActionTitle("▶ Resume", "#10B981"), activateIntent)
+            builder.addAction(R.drawable.ic_action_wb_sunny, formatActionTitle("Wake", "#10B981"), activateIntent)
 
             if (isLiveActive) {
-                // Action 2: Pause / Resume Live Sharing while staying in Sleep Mode
+                // Action 2: Mute / Resume Live Sharing stream while staying in Sleep Mode
                 val pauseIntent = android.app.PendingIntent.getService(
                     this,
                     1,
                     Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                val pauseLabel = if (isPaused) "▶ Resume" else "⏸ Pause"
-                val pauseColor = if (isPaused) "#10B981" else "#F59E0B"
-                builder.addAction(0, formatActionTitle(pauseLabel, pauseColor), pauseIntent)
-
-                // Action 3: Stop Live Sharing (retaining standby sleep mode)
-                val stopIntent = android.app.PendingIntent.getService(
-                    this,
-                    3,
-                    Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
+                val (streamLabel, streamIcon, streamColor) = if (isPaused) {
+                    Triple("Resume Stream", R.drawable.ic_action_sensors, "#10B981")
+                } else {
+                    Triple("Mute Stream", R.drawable.ic_action_sensors_off, "#F59E0B")
+                }
+                builder.addAction(streamIcon, formatActionTitle(streamLabel, streamColor), pauseIntent)
             }
         } else if (isLiveActive) {
-            // 1. Pause / Resume Action
+            // 1. Mute / Resume Live Sharing stream
             val pauseIntent = android.app.PendingIntent.getService(
                 this,
                 1,
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            val pauseLabel = if (isPaused) "▶ Resume" else "⏸ Pause"
-            val pauseColor = if (isPaused) "#10B981" else "#F59E0B"
-            builder.addAction(0, formatActionTitle(pauseLabel, pauseColor), pauseIntent)
+            val (streamLabel, streamIcon, streamColor) = if (isPaused) {
+                Triple("Resume Stream", R.drawable.ic_action_sensors, "#10B981")
+            } else {
+                Triple("Mute Stream", R.drawable.ic_action_sensors_off, "#F59E0B")
+            }
+            builder.addAction(streamIcon, formatActionTitle(streamLabel, streamColor), pauseIntent)
 
             // 2. Quick Share Action
             val sendIntent = Intent().apply {
@@ -382,9 +385,9 @@ class LiveTrackingService : Service() {
                 chooserIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, formatActionTitle("↗ Share", "#38BDF8"), shareIntent)
+            builder.addAction(R.drawable.ic_action_share, formatActionTitle("Share", "#38BDF8"), shareIntent)
 
-            // 3. Sleep Now Action (for overnight live sharing hibernation without recording)
+            // 3. Sleep Action (for overnight live sharing hibernation without recording)
             if (activeTrip == null) {
                 val sleepIntent = android.app.PendingIntent.getService(
                     this,
@@ -392,51 +395,61 @@ class LiveTrackingService : Service() {
                     Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.addAction(0, formatActionTitle("⏸ Pause", "#94A3B8"), sleepIntent)
+                builder.addAction(R.drawable.ic_action_bedtime, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
             }
-
-            // 4. Stop Action
-            val stopIntent = android.app.PendingIntent.getService(
-                this,
-                3,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STOP },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(0, formatActionTitle("🛑 Stop", "#EF4444"), stopIntent)
         } else if (activeTrip == null && isAuto) {
-            // 1. Sleep Now Action (enter standby hibernation immediately)
+            // 1. Sleep Action (enter standby hibernation immediately)
             val sleepIntent = android.app.PendingIntent.getService(
                 this,
                 6,
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(0, formatActionTitle("⏸ Pause", "#94A3B8"), sleepIntent)
+            builder.addAction(R.drawable.ic_action_bedtime, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
+        } else if (activeTrip != null) {
+            val isTripPaused = TripManager.getInstance(this).isPaused.value
+            val tripIntent = android.app.PendingIntent.getService(
+                this,
+                if (isTripPaused) 10 else 9,
+                Intent(this, LiveTrackingService::class.java).apply {
+                    action = if (isTripPaused) ACTION_TRIP_RESUME else ACTION_TRIP_PAUSE
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val (tripLabel, tripIcon, tripColor) = if (isTripPaused) {
+                Triple("Resume Trip", R.drawable.ic_action_play, "#10B981")
+            } else {
+                Triple("Pause Trip", R.drawable.ic_action_pause, "#F59E0B")
+            }
+            builder.addAction(tripIcon, formatActionTitle(tripLabel, tripColor), tripIntent)
 
-            // 2. Disable Auto-start Action
-            val stopIntent = android.app.PendingIntent.getService(
-                this,
-                3,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_DISABLE_AUTO_START },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(0, formatActionTitle("🛑 Disable Auto-start", "#EF4444"), stopIntent)
-        } else if (activeTrip != null && TripManager.getInstance(this).isPaused.value) {
-            val resumeIntent = android.app.PendingIntent.getService(
-                this,
-                10,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_TRIP_RESUME },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(0, formatActionTitle("▶ Resume", "#10B981"), resumeIntent)
-
-            val stopTripIntent = android.app.PendingIntent.getService(
-                this,
-                11,
-                Intent(this, LiveTrackingService::class.java).apply { action = ACTION_TRIP_STOP },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(0, formatActionTitle("🛑 Stop Trip", "#EF4444"), stopTripIntent)
+            // Quick Share if Live Sharing is also on during active trip
+            if (isLiveActive && liveSession != null) {
+                val sendIntent = Intent().apply {
+                    action = Intent.ACTION_SEND
+                    val shareUrl = liveSession.getViewerUrl()
+                    val shareText = if (!shareUrl.isNullOrBlank()) {
+                        "Track my live trip on WhereAmI: $shareUrl"
+                    } else {
+                        val lastLoc = LocationManager.getInstance(this@LiveTrackingService).lastLocationSnapshot
+                        if (lastLoc != null) {
+                            "WhereAmI Location: https://maps.google.com/?q=${lastLoc.lat},${lastLoc.lng}"
+                        } else "WhereAmI Active Tracking"
+                    }
+                    putExtra(Intent.EXTRA_TEXT, shareText)
+                    type = "text/plain"
+                }
+                val chooserIntent = Intent.createChooser(sendIntent, "Share Location via").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                val shareIntent = android.app.PendingIntent.getActivity(
+                    this,
+                    4,
+                    chooserIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(R.drawable.ic_action_share, formatActionTitle("Share", "#38BDF8"), shareIntent)
+            }
         }
 
         return builder.build()
@@ -462,12 +475,12 @@ class LiveTrackingService : Service() {
         val isTripPaused = TripManager.getInstance(this).isPaused.value
 
         val title = when {
-            isSleeping && isLiveActive && isAuto -> "⏸ WhereAmI Paused (Live & Auto-record)"
-            isSleeping && isLiveActive -> "🌙 WhereAmI Live Sharing Sleeping"
-            isSleeping -> "⏸ WhereAmI Auto-record Paused"
-            isLiveActive && !liveSession.title.isNullOrBlank() -> "🔴 ${liveSession.title}"
-            isLiveActive && isAuto -> "🔴 WhereAmI • Live & Auto-record"
-            isLiveActive -> "🔴 WhereAmI Live Sharing"
+            isSleeping && isLiveActive && isAuto -> "WhereAmI Sleeping • Live Sharing (1h sync)"
+            isSleeping && isLiveActive -> "WhereAmI Sleeping • Live Sharing (1h sync)"
+            isSleeping -> "WhereAmI • Sleeping"
+            isLiveActive && !liveSession.title.isNullOrBlank() -> liveSession.title
+            isLiveActive && isAuto -> "WhereAmI • Live & Auto-record"
+            isLiveActive -> "WhereAmI • Live Sharing"
             activeTrip != null -> "WhereAmI Active Tracking"
             isAuto -> "WhereAmI • Auto-record Standby"
             else -> "WhereAmI Tracking"
@@ -476,14 +489,14 @@ class LiveTrackingService : Service() {
         val text = when {
             !overrideText.isNullOrBlank() -> overrideText
             isSleeping && isLiveActive && isAuto -> {
-                val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
-                "Auto-record paused • $liveStatus • Tap to resume"
+                val liveStatus = if (isPaused) "Live Sharing muted" else "Live Sharing active (1h sync)"
+                "Auto-record sleeping • $liveStatus • Tap to open app"
             }
             isSleeping && isLiveActive -> {
-                val liveStatus = if (isPaused) "Live Sharing paused" else "Live Sharing active (1h sync)"
-                "Overnight hibernation • $liveStatus • Tap to wake"
+                val liveStatus = if (isPaused) "Live Sharing muted" else "Live Sharing active (1h sync)"
+                "Overnight hibernation • $liveStatus • Tap to open app"
             }
-            isSleeping -> "Auto-record paused for battery savings • Tap to resume"
+            isSleeping -> "Motion monitoring paused • Tap to wake or open app"
             activeTrip != null -> {
                 val distKm = activeTrip.distanceMeters / 1000.0
                 val statusTag = when {
