@@ -329,7 +329,7 @@ class LiveTrackingService : Service() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
             }
-            builder.addAction(R.drawable.ic_action_wb_sunny, formatActionTitle("Wake", "#10B981"), activateIntent)
+            builder.addAction(0, formatActionTitle("Wake", "#10B981"), activateIntent)
 
             if (isLiveActive) {
                 // Action 2: Mute / Resume Live Sharing stream while staying in Sleep Mode
@@ -339,12 +339,12 @@ class LiveTrackingService : Service() {
                     Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                val (streamLabel, streamIcon, streamColor) = if (isPaused) {
-                    Triple("Resume Stream", R.drawable.ic_action_sensors, "#10B981")
+                val (streamLabel, streamColor) = if (isPaused) {
+                    Pair("Resume Stream", "#10B981")
                 } else {
-                    Triple("Mute Stream", R.drawable.ic_action_sensors_off, "#F59E0B")
+                    Pair("Mute Stream", "#F59E0B")
                 }
-                builder.addAction(streamIcon, formatActionTitle(streamLabel, streamColor), pauseIntent)
+                builder.addAction(0, formatActionTitle(streamLabel, streamColor), pauseIntent)
             }
         } else if (isLiveActive) {
             // 1. Mute / Resume Live Sharing stream
@@ -354,12 +354,12 @@ class LiveTrackingService : Service() {
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_PAUSE_RESUME },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            val (streamLabel, streamIcon, streamColor) = if (isPaused) {
-                Triple("Resume Stream", R.drawable.ic_action_sensors, "#10B981")
+            val (streamLabel, streamColor) = if (isPaused) {
+                Pair("Resume Stream", "#10B981")
             } else {
-                Triple("Mute Stream", R.drawable.ic_action_sensors_off, "#F59E0B")
+                Pair("Mute Stream", "#F59E0B")
             }
-            builder.addAction(streamIcon, formatActionTitle(streamLabel, streamColor), pauseIntent)
+            builder.addAction(0, formatActionTitle(streamLabel, streamColor), pauseIntent)
 
             // 2. Quick Share Action
             val sendIntent = Intent().apply {
@@ -385,7 +385,7 @@ class LiveTrackingService : Service() {
                 chooserIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(R.drawable.ic_action_share, formatActionTitle("Share", "#38BDF8"), shareIntent)
+            builder.addAction(0, formatActionTitle("Share", "#38BDF8"), shareIntent)
 
             // 3. Sleep Action (for overnight live sharing hibernation without recording)
             if (activeTrip == null) {
@@ -395,7 +395,7 @@ class LiveTrackingService : Service() {
                     Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.addAction(R.drawable.ic_action_bedtime, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
+                builder.addAction(0, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
             }
         } else if (activeTrip == null && isAuto) {
             // 1. Sleep Action (enter standby hibernation immediately)
@@ -405,7 +405,7 @@ class LiveTrackingService : Service() {
                 Intent(this, LiveTrackingService::class.java).apply { action = ACTION_STANDBY_SLEEP },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            builder.addAction(R.drawable.ic_action_bedtime, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
+            builder.addAction(0, formatActionTitle("Sleep", "#94A3B8"), sleepIntent)
         } else if (activeTrip != null) {
             val isTripPaused = TripManager.getInstance(this).isPaused.value
             val tripIntent = android.app.PendingIntent.getService(
@@ -416,12 +416,12 @@ class LiveTrackingService : Service() {
                 },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            val (tripLabel, tripIcon, tripColor) = if (isTripPaused) {
-                Triple("Resume Trip", R.drawable.ic_action_play, "#10B981")
+            val (tripLabel, tripColor) = if (isTripPaused) {
+                Pair("Resume Trip", "#10B981")
             } else {
-                Triple("Pause Trip", R.drawable.ic_action_pause, "#F59E0B")
+                Pair("Pause Trip", "#F59E0B")
             }
-            builder.addAction(tripIcon, formatActionTitle(tripLabel, tripColor), tripIntent)
+            builder.addAction(0, formatActionTitle(tripLabel, tripColor), tripIntent)
 
             // Quick Share if Live Sharing is also on during active trip
             if (isLiveActive && liveSession != null) {
@@ -448,7 +448,7 @@ class LiveTrackingService : Service() {
                     chooserIntent,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.addAction(R.drawable.ic_action_share, formatActionTitle("Share", "#38BDF8"), shareIntent)
+                builder.addAction(0, formatActionTitle("Share", "#38BDF8"), shareIntent)
             }
         }
 
