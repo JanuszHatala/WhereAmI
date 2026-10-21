@@ -73,17 +73,46 @@ class ResumeMotionGateTest {
 
     @Test
     fun `indoor multipath never auto-starts Driving (trip 239 pattern)`() {
-        // Auto-start uses the same gate with 40 m CAR displacement and 30 s window.
-        val gate = ResumeMotionGate()
+        // Vehicle auto-start: 25 m CAR displacement, 30 s window, 35 m accuracy + one miss.
+        val gate = ResumeMotionGate.forVehicleAutoStart()
         val rnd = Random(7)
         var started = false
         for (s in 0 until 900) {
             val kmh = (3.0 + rnd.nextDouble() * 11.0).toFloat() // up to ~14 km/h Doppler noise
-            val acc = (8.0 + rnd.nextDouble() * 16.0).toFloat() // often <= 25 m
+            val acc = (8.0 + rnd.nextDouble() * 16.0).toFloat() // often <= 35 m
             val n = rnd.nextDouble() * 50.0 - 25.0
             val e = rnd.nextDouble() * 50.0 - 25.0
-            if (gate.offer(s * 1_000L, north(n), east(e), kmh, acc, 10f, 30_000L, 40.0)) started = true
+            if (gate.offer(s * 1_000L, north(n), east(e), kmh, acc, 10f, 30_000L, 25.0)) started = true
         }
         assertFalse(started)
+    }
+
+    @Test
+    fun `vehicle auto-start begins window at seventy percent of target speed`() {
+        val gate = ResumeMotionGate.forVehicleAutoStart()
+        var startedAt = -1L
+        for (s in 0 until 40) {
+            val t = s * 1_000L
+            // 7.5 km/h is below full 10 km/h target but above 70% — must accumulate.
+            if (startedAt < 0 && gate.offer(t, north(s * 6.0), east(0.0), 7.5f, 8f, 10f, 10_000L, 25.0)) {
+                startedAt = t
+            }
+        }
+        assertTrue("started at $startedAt", startedAt in 10_000L..15_000L)
+    }
+
+    @Test
+    fun `vehicle auto-start forgives one accuracy miss without full reset`() {
+        val gate = ResumeMotionGate.forVehicleAutoStart()
+        var startedAt = -1L
+        for (s in 0 until 40) {
+            val t = s * 1_000L
+            val acc = if (s == 5) 50f else 8f
+            if (startedAt < 0 && gate.offer(t, north(s * 8.0), east(0.0), 29f, acc, 10f, 10_000L, 25.0)) {
+                startedAt = t
+            }
+        }
+        // One miss at s=5: still completes near the 10 s mark (not a full restart past 19 s).
+        assertTrue("started at $startedAt", startedAt in 10_000L..16_000L)
     }
 }

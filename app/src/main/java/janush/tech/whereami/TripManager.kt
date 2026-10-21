@@ -108,8 +108,23 @@ class TripManager private constructor(private val context: Context) {
     private var autoResumeStartDistance: Double = 0.0
     private var autoResumeStartTime: Long = 0L
     private val resumeMotionGate = ResumeMotionGate()
-    /** Same locomotion gate as pause-resume: indoor multipath must not auto-start Driving (trip 239). */
-    private val autoStartGate = ResumeMotionGate()
+    /** Foot auto-start: strict accuracy (indoor multipath must not start walks). */
+    private val footAutoStartGate = ResumeMotionGate()
+    /**
+     * Vehicle auto-start: softer accuracy / one-miss grace
+     * (field trip 243 started ~244 m from home under a 30 s window + 25 m resets).
+     * Indoor multipath still fails the net-displacement floor (trip 239).
+     */
+    private val vehicleAutoStartGate = ResumeMotionGate.forVehicleAutoStart()
+
+    private fun autoStartGateFor(profile: ActivityProfile): ResumeMotionGate =
+        if (profile.isVehicleProfile) vehicleAutoStartGate else footAutoStartGate
+
+    private fun resetAutoStartGates() {
+        footAutoStartGate.reset()
+        vehicleAutoStartGate.reset()
+    }
+
     // ── Track point persistence (track_points table) ────────────────────────────
     // All geometry writes go through one single-thread dispatcher so appends, metadata writes and the
     // final stop write stay strictly ordered without ever touching the main thread.
@@ -560,7 +575,7 @@ class TripManager private constructor(private val context: Context) {
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
         _activeTrip.value = started
-        autoStartGate.reset()
+        resetAutoStartGates()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
@@ -688,7 +703,7 @@ class TripManager private constructor(private val context: Context) {
         lastLocation = null
         lastMovingTimestamp = null
         movingSinceTimestamp = null
-        autoStartGate.reset()
+        resetAutoStartGates()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
         movingSinceInPauseTimestamp = null
@@ -805,17 +820,18 @@ class TripManager private constructor(private val context: Context) {
                 val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
                 val autoStartDurationMs = getAutoStartSecondsForProfile(currentProfile) * 1000L
                 val requiredDisplacement = when (currentProfile) {
-                    ActivityProfile.CAR -> 40.0
-                    ActivityProfile.CYCLING, ActivityProfile.MTB -> 25.0
-                    else -> 15.0
+                    ActivityProfile.CAR -> 25.0
+                    ActivityProfile.CYCLING, ActivityProfile.MTB -> 20.0
+                    else -> 12.0
                 }
-                if (autoStartGate.offer(
+                val gate = autoStartGateFor(currentProfile)
+                if (gate.offer(
                         now, lat, lng, speedKmh, accuracy,
                         targetSpeed, autoStartDurationMs, requiredDisplacement
                     )
                 ) {
                     startTrip(isAuto = true)
-                    autoStartGate.reset()
+                    resetAutoStartGates()
                     movingSinceTimestamp = null
                 }
             } else {

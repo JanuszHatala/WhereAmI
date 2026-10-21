@@ -213,6 +213,9 @@ Battery optimization is the highest engineering priority:
   - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
+- **Amendment (v1.18.2, bare DK52 + late auto-start, 2026-10-21)**:
+  - *Corridor name*: when committed display is a bare highway code and the spatial-cache cell has a local name without a house number, coalesce to `Krakowska (DK52)`. Viaduct shield only rejects residential addresses (house number). On open, purge bare `DK*`/`DW*`/`A*`/`S*` cache rows and dedupe doubled `(DK52) (DK52)` annotations.
+  - *Vehicle auto-start*: softer gate (`35 m` accuracy, one forgiven miss, window starts at 70% of target speed); CAR displacement floor 25 m. Foot auto-start stays strict. User-configured duration still applies (`pref_auto_start_sec_*`).
 - **Amendment (v1.17.12, discarded walk trip 241, 2026-10-21)**:
   - *Scribble discard*: restricted to vehicle profiles; requires path/cluster ≥ 12 and path ≥ 200 m. Foot out-and-back trips are kept.
 - **Amendment (v1.17.8, indoor auto-start + SK cache, 2026-10-21)**:

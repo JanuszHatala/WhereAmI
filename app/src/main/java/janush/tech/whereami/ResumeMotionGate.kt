@@ -12,14 +12,23 @@ import kotlin.math.max
  * to resume a manually paused car trip (field trip 233, 16:22). Here every sample must be accurate and at
  * least [SPEED_FRACTION] of the target speed, otherwise the confirmation restarts, and the displacement
  * must match travelling at half the target speed for the whole window.
+ *
+ * Auto-start (trip 243): a single 26–35 m accuracy blip used to zero the whole window; vehicles now allow
+ * one forgiven miss and start the window at [SPEED_FRACTION] (not full target). Indoor multipath still
+ * fails the displacement floor.
  */
-class ResumeMotionGate(private val maxAccuracyM: Float = MAX_ACCURACY_M) {
+class ResumeMotionGate(
+    private val maxAccuracyM: Float = MAX_ACCURACY_M,
+    private val accuracyMissGrace: Int = 0
+) {
     private var startMs = -1L
     private var startLat = 0.0
     private var startLng = 0.0
+    private var accuracyMisses = 0
 
     fun reset() {
         startMs = -1L
+        accuracyMisses = 0
     }
 
     /** Offers a fix; returns true when motion is confirmed (the caller resumes and should then [reset]). */
@@ -33,15 +42,26 @@ class ResumeMotionGate(private val maxAccuracyM: Float = MAX_ACCURACY_M) {
         requiredDurationMs: Long,
         requiredDisplacementM: Double
     ): Boolean {
-        if (accuracyM == null || accuracyM > maxAccuracyM || speedKmh < targetSpeedKmh * SPEED_FRACTION) {
+        val minSpeed = targetSpeedKmh * SPEED_FRACTION
+        if (speedKmh < minSpeed) {
+            reset()
+            return false
+        }
+        if (accuracyM == null || accuracyM > maxAccuracyM) {
+            if (startMs >= 0L && accuracyMisses < accuracyMissGrace) {
+                accuracyMisses++
+                return false
+            }
             reset()
             return false
         }
         if (startMs < 0L) {
-            if (speedKmh < targetSpeedKmh) return false
+            // Window starts at the fraction threshold (was: full target), so a clean pull-away at
+            // 7–9 km/h on a 10 km/h CAR profile is not ignored until a later spike.
             startMs = nowMs
             startLat = lat
             startLng = lng
+            accuracyMisses = 0
             return false
         }
         val elapsedMs = nowMs - startMs
@@ -56,9 +76,16 @@ class ResumeMotionGate(private val maxAccuracyM: Float = MAX_ACCURACY_M) {
     }
 
     companion object {
-        /** Same accuracy gate as auto-start. */
+        /** Pause-resume accuracy gate (strict). */
         const val MAX_ACCURACY_M = 25f
+        /** Vehicle auto-start may accept slightly softer GNSS while leaving courtyards / tree cover. */
+        const val AUTO_START_MAX_ACCURACY_M = 35f
         const val SPEED_FRACTION = 0.7f
         private const val METERS_PER_DEG = 111_320.0
+
+        fun forVehicleAutoStart() = ResumeMotionGate(
+            maxAccuracyM = AUTO_START_MAX_ACCURACY_M,
+            accuracyMissGrace = 1
+        )
     }
 }

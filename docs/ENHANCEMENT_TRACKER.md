@@ -1286,3 +1286,13 @@ Evidence: screenshots 14:15/14:17 Kobiernice; GPS inside Kobiernice; sky-blue bo
 | :--- | :--- | :--- | :---: | :--- |
 | **GEO98-01** | Live locality borders / card mismatch while travelling. | `BoundaryHelper.forPin`, name-first live path, cache gen `v3` | Implemented | `PinBoundaryContainmentTest` live vs pin; pin path unchanged |
 | **VER-98** | versionCode 132 / 1.18.1 | build.gradle.kts | Done | - |
+
+## 102. Round 99: Bare DK52 Corridor Name + Faster Vehicle Auto-Start (2026-10-21, v1.18.2)
+
+Evidence: screenshot `Screenshot_20261021-141542.png` (Kobiernice shows bare **DK52** at 39.5 km/h while cache cell is `Krakowska`); trip 243 auto-start ~244 m from home under `pref_auto_start_sec_CAR=30`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GEO99-01** | Still shows DK52 instead of street name. | `coalesceBareCodeWithCachedName`, residential-only viaduct shield, bare-code cache purge + dupe-paren fix | Implemented | `RoadDisplayFormatTest`; exact cell was Krakowska shielded away |
+| **ENG99-02** | Driving auto-start too late. | Vehicle `ResumeMotionGate` 35 m + 1 miss grace; window at 70% speed; CAR displacement 25 m | Implemented | `ResumeMotionGateTest`; note user pref still 30 s |
+| **VER-99** | versionCode 133 / 1.18.2 | build.gradle.kts | Done | - |

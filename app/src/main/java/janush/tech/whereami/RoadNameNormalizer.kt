@@ -123,6 +123,58 @@ object RoadNameNormalizer {
         return incoming.isNullOrBlank() || isHighwayCodeOnly(incoming)
     }
 
+    /**
+     * True when [street] looks like a residential address that must not replace a committed major corridor
+     * (house number present, e.g. "Kamieniecka 1"). Plain local names without a house number ("Krakowska")
+     * are the corridor's own name and must be coalesced with the highway code instead of shielded away.
+     */
+    fun isResidentialSideStreet(street: String?): Boolean {
+        if (street.isNullOrBlank() || isHighwayCodeOnly(street) || isMajorRoad(street)) return false
+        return !extractHouseNumber(street).isNullOrBlank()
+    }
+
+    /**
+     * When the committed display is a bare highway code (DK52) and the spatial cache has the corridor's
+     * local name (Krakowska), prefer `Krakowska (DK52)`. Field screenshot 2026-10-21 14:15 kept bare DK52
+     * because the viaduct shield treated every non-major cache hit as a side street whenever committed
+     * was already major.
+     */
+    fun coalesceBareCodeWithCachedName(
+        committedStreet: String?,
+        committedRoadRef: String?,
+        cachedStreet: String?,
+        cachedRoadRef: String?
+    ): Pair<String?, String?>? {
+        val committedCode = when {
+            isHighwayCodeOnly(committedStreet) -> extractHighwayCode(committedStreet)
+            isHighwayCodeOnly(committedRoadRef) -> extractHighwayCode(committedRoadRef)
+            else -> null
+        } ?: return null
+        val cached = cachedStreet?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (isHighwayCodeOnly(cached) || isResidentialSideStreet(cached)) return null
+        val local = stripParenHighwayRef(extractBaseStreet(cached))?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val ref = cachedRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: committedCode
+        return local to ref
+    }
+
+    /** Removes a trailing `(DK52)` / `(S1)` annotation so normalize does not double-wrap. */
+    fun stripParenHighwayRef(street: String?): String? {
+        if (street.isNullOrBlank()) return street
+        return street.replace(PAREN_HIGHWAY_REF_FULL, "").trim().ifEmpty { null }
+    }
+
+    /** Collapse `Name (DK52) (DK52)` / repeated highway paren groups into a single annotation. */
+    fun dedupeParenHighwayRef(street: String?): String? {
+        if (street.isNullOrBlank()) return street
+        var out = street.trim()
+        val matches = PAREN_HIGHWAY_REF_FULL.findAll(out).toList()
+        if (matches.size <= 1) return out
+        val code = matches.last().value
+        out = out.replace(PAREN_HIGHWAY_REF_FULL, "").trim()
+        return "$out $code".replace(Regex("""\s{2,}"""), " ").trim()
+    }
+
     /** Pulls a canonical highway code from a street line (`DW948` or `Krakowska (DW948)`). */
     fun extractHighwayCode(street: String?): String? {
         if (street.isNullOrBlank()) return null
@@ -163,6 +215,7 @@ object RoadNameNormalizer {
     }
 
     private val PAREN_HIGHWAY_REF = Regex("""\((DK|DW|A|S|E)\s*\d+""", RegexOption.IGNORE_CASE)
+    private val PAREN_HIGHWAY_REF_FULL = Regex("""\s*\((DK|DW|A|S|E)\s*\d+\)""", RegexOption.IGNORE_CASE)
 
     /**
      * Determines whether a given string is strictly a highway code (e.g. DK52, S1, DW946)
@@ -242,7 +295,9 @@ object RoadNameNormalizer {
         val isPoland = countryCode.isNullOrBlank() || countryCode.equals("PL", ignoreCase = true)
         val isSlovakia = countryCode?.equals("SK", ignoreCase = true) == true
 
-        var road = rawStreet?.trim() ?: ""
+        // Strip an existing `(DK52)` annotation before re-normalizing so we never emit
+        // `Krakowska (DK52) (DK52)` when street already carries the code and ref is repeated.
+        var road = stripParenHighwayRef(rawStreet?.trim()) ?: ""
         val ref = rawRef?.trim() ?: ""
 
         // Check if road itself is a national or provincial highway designation
