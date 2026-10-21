@@ -229,7 +229,9 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Visualizes municipal borders directly on the map.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `BoundaryHelper.kt`: Overpass API polygon fetcher with 2-tier caching (in-memory `ConcurrentHashMap` + persistent on-disk JSON in `cacheDir/boundaries`). Rate-limit mutex (1.5s delay) prevents 429 throttling.
+  - `BoundaryHelper.kt`: Nominatim polygon fetch with 2-tier caching (in-memory `ConcurrentHashMap` + persistent on-disk JSON in `cacheDir/boundaries`). Rate-limit mutex (1.5s delay) prevents 429 throttling.
+  - Pin borders (v1.18.0): reverse-first + point-in-polygon gate; prefer village/sołectwo over gmina; reject powiat+; invalidate cache polygons that do not contain the pin (fixes Wielka Puszcza → Andrychów). Live sky-blue borders muted while pin borders are shown.
+  - Outdoor pin titles (v1.18.0): `SearchHelper` uses named peak/pass/viewpoint from Nominatim; else Overpass nearby ≤400 m (`selectNearestTouristicPoi`).
 
 ### MAP-08: Traversal Road Heat Map
 - **Core Value**: Displays coverage of all historical trips as glowing polyline corridors across the map.

@@ -71,8 +71,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 75** | Field Testing (2026-10-16) Sleep/Standby Oscillation Resolution & GNSS Zero-Drain Enforcement | 3 | 3 | 0 | 0 |
 | **Round 76** | Field Testing (2026-10-16) Altitude Speed Gating, Frozen Altitude Fix, Map Pins Dem-Decoupling & Post-Trip DEM Supplementation | 4 | 4 | 0 | 0 |
 | **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 5 | 5 | 0 | 0 |
+| **Round 97** | Pin Boundary Containment, Live-Border Mute & Outdoor POI Titles (2026-10-21) | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **309** | **301** | **0** | **8** |
+| **Total** | | **312** | **304** | **0** | **8** |
 
 
 ---
@@ -1265,3 +1266,14 @@ Evidence: trip 241 WALKING ~190 m / 2.9 min / net 11 m / cluster 39 m discarded;
 | **ENG96-01** | Walk discarded; scribble too strict. | `TripScribble` vehicle-only + path/cluster ≥ 12 | Implemented | `TripScribbleTest` trip 241 keep / 239 discard |
 | **VAL96-01** | Rest of walk recording OK for cycling/walking tests. | tracking | Confirmed OK | replay 241: hc 100%, reshape 0.15/0.51 m, 65 verts |
 | **VER-96** | versionCode 129 / 1.17.12 | build.gradle.kts | Done | - |
+
+## 100. Round 97: Pin Boundary Containment + Outdoor POI Titles (2026-10-21, v1.18.0)
+
+Evidence: pin 49.81984, 19.25870 (Wielka Puszcza); live blue Czaniec borders; cached `wielka_puszcza_pl.json` was gmina Andrychów (does not contain pin).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GEO97-01** | Pin borders show wrong distant area in forest. | `BoundaryHelper` reverse-first, `polygonContains`, cache invalidate, admin tightness | Implemented | `PinBoundaryContainmentTest`; rejects Andrychów; prefers village over gmina |
+| **GEO97-02** | Mute live GPS borders while pin borders shown. | `MainActivity` → `OsmMapView.boundaryPoints` | Implemented | live poly null when `pinnedBoundaryPoints != null` |
+| **GEO97-03** | Resolve peak/pass/viewpoint for outdoor pins. | `SearchHelper` touristic title + Overpass nearby | Implemented | `MapPinReverseGeocodingTest` viewpoint/peak/POI ranking |
+| **VER-97** | versionCode 131 / 1.18.0 | build.gradle.kts | Done | - |

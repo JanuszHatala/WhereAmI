@@ -676,7 +676,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             activeGuests = activeGuests,
             showGuestDistanceBadge = showGuestDistanceBadge,
             onGuestClick = { guest -> selectedGuestDetails = guest },
-            boundaryPoints = boundaryPoints,
+            // Mute live GPS borders while pin borders are shown so Czaniec ≠ pin area.
+            boundaryPoints = if (pinnedBoundaryPoints != null) null else boundaryPoints,
             pinnedBoundaryPoints = pinnedBoundaryPoints,
             heatMapTracks = heatMapTracks,
             showHeatMap = showHeatMap,

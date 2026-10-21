@@ -58,17 +58,41 @@ object BoundaryHelper {
             return@withContext null
         }
 
+        fun usableCached(pts: List<GeoPoint>): List<GeoPoint>? {
+            if (pts.isEmpty()) return null
+            if (geoPoint != null && !isCachePolygonUsableForPin(pts, geoPoint)) {
+                TelemetryLogger.log(
+                    "BOUNDARY",
+                    "Discarding cached polygon for $cleanKey — does not contain pin " +
+                        "(${geoPoint.latitude}, ${geoPoint.longitude})"
+                )
+                return null
+            }
+            return pts
+        }
+
         // Tier 1: In-memory cache
-        memoryCache[cleanKey]?.let { return@withContext it }
+        memoryCache[cleanKey]?.let { cached ->
+            usableCached(cached)?.let { return@withContext it }
+            memoryCache.remove(cleanKey)
+        }
 
         // Tier 2: Persistent disk cache
         val diskPoints = loadFromDiskCache(context, cleanKey)
         if (diskPoints != null) {
-            if (diskPoints.isNotEmpty()) {
-                memoryCache[cleanKey] = diskPoints
-                return@withContext diskPoints
-            } else {
+            val usable = usableCached(diskPoints)
+            if (usable != null) {
+                memoryCache[cleanKey] = usable
+                return@withContext usable
+            }
+            // Empty negative cache OR wrong polygon for this pin: do not early-return when
+            // a geoPoint is available — fall through to network / reverse-first resolution.
+            if (diskPoints.isEmpty() && geoPoint == null) {
                 return@withContext null
+            }
+            if (diskPoints.isNotEmpty() && geoPoint != null) {
+                // Invalidate wrong cached geometry so the next successful fetch overwrites it.
+                File(getCacheDir(context), "$cleanKey.json").delete()
             }
         }
 
@@ -82,7 +106,9 @@ object BoundaryHelper {
 
         requestMutex.withLock {
             // Re-check cache after acquiring lock
-            memoryCache[cleanKey]?.let { return@withContext it }
+            memoryCache[cleanKey]?.let { cached ->
+                usableCached(cached)?.let { return@withContext it }
+            }
 
             // Helper to throttle every individual network query
             suspend fun throttle() {
@@ -95,21 +121,35 @@ object BoundaryHelper {
 
             var fetched: List<GeoPoint>? = null
 
-            // 1. When pin has resolved address, take the place from the address (village/town/city)
-            // and find the boundary for that exact place first:
-            if (cleanCity != null) {
-                throttle()
-                fetched = fetchFromNetwork(cleanCity, countryCode)
-                if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+            // Pin / coordinate-anchored path: reverse-first so the polygon truly encloses the point.
+            // Prefer tightest admin (village/sołectwo) over gmina; never trust a distant name hit.
+            if (geoPoint != null) {
+                for (zoom in listOf(14, 12, 10)) {
+                    if (fetched != null) break
                     throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Polska")
-                } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
-                    throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Slovensko")
+                    fetched = fetchReverseBoundary(
+                        geoPoint.latitude,
+                        geoPoint.longitude,
+                        zoom = zoom,
+                        mustContain = geoPoint
+                    )
                 }
             }
 
-            // 2. Point organizational structure fallback (e.g. gmina / municipality when village is an OSM node without polygon):
+            // Name search (live GPS or pin fallback). When geoPoint is set, containment is mandatory.
+            if (fetched == null && cleanCity != null) {
+                throttle()
+                fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = geoPoint)
+                if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
+                    throttle()
+                    fetched = fetchFromNetwork(cleanCity, "Polska", mustContain = geoPoint)
+                } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
+                    throttle()
+                    fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = geoPoint)
+                }
+            }
+
+            // Municipality / gmina fallback
             if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cleanCity, ignoreCase = true)) {
                 val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
                     .replace("gmina ", "", ignoreCase = true)
@@ -117,24 +157,24 @@ object BoundaryHelper {
                 if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                     val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
                     throttle()
-                    fetched = fetchFromNetwork(munQuery, countryCode)
+                    fetched = fetchFromNetwork(munQuery, countryCode, mustContain = geoPoint)
                     if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
                         throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Polska")
+                        fetched = fetchFromNetwork(cleanMun, "Polska", mustContain = geoPoint)
                     } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
                         throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Slovensko")
+                        fetched = fetchFromNetwork(cleanMun, "Slovensko", mustContain = geoPoint)
                     }
                 }
             }
 
-            // 3. Coordinate-based enclosing boundary fallback (when pin is not resolved to specify village/town/city or place node has no polygon):
+            // Legacy coordinate fallback for callers without the reverse-first loop above
             if (fetched == null && geoPoint != null) {
                 throttle()
-                fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 12)
+                fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 12, mustContain = geoPoint)
                 if (fetched == null) {
                     throttle()
-                    fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 10)
+                    fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 10, mustContain = geoPoint)
                 }
             }
 
@@ -143,8 +183,9 @@ object BoundaryHelper {
                 memoryCache[cleanKey] = simplified
                 saveToDiskCache(context, cleanKey, simplified)
                 return@withContext simplified
-            } else if (System.currentTimeMillis() >= coolDownUntil) {
+            } else if (System.currentTimeMillis() >= coolDownUntil && geoPoint == null) {
                 // Authoritative non-429 response had no polygon. Cache empty array so we don't hammer Nominatim repeatedly.
+                // Never negative-cache pin/geoPoint lookups — containment fallbacks must remain available.
                 saveToDiskCache(context, cleanKey, emptyList())
             }
         }
@@ -161,10 +202,14 @@ object BoundaryHelper {
         return file.exists()
     }
 
-    private fun fetchFromNetwork(cityName: String, countryPart: String): List<GeoPoint>? {
+    private fun fetchFromNetwork(
+        cityName: String,
+        countryPart: String,
+        mustContain: GeoPoint? = null
+    ): List<GeoPoint>? {
         return try {
             val q = URLEncoder.encode("$cityName, $countryPart", "UTF-8")
-            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=5"
+            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=5&extratags=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -180,7 +225,7 @@ object BoundaryHelper {
             if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
                 val array = JSONArray(body)
-                return selectBestBoundaryPolygon(array)
+                return selectBestBoundaryPolygon(array, mustContain = mustContain)
             }
             null
         } catch (e: Exception) {
@@ -189,9 +234,15 @@ object BoundaryHelper {
         }
     }
 
-    private fun fetchReverseBoundary(lat: Double, lon: Double, zoom: Int): List<GeoPoint>? {
+    private fun fetchReverseBoundary(
+        lat: Double,
+        lon: Double,
+        zoom: Int,
+        mustContain: GeoPoint? = null
+    ): List<GeoPoint>? {
         return try {
-            val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=$zoom&polygon_geojson=1"
+            val urlStr =
+                "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=$zoom&polygon_geojson=1&extratags=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -208,13 +259,64 @@ object BoundaryHelper {
                 val body = conn.inputStream.bufferedReader().readText()
                 val obj = JSONObject(body)
                 val geojson = obj.optJSONObject("geojson") ?: return null
-                return parseGeoJsonPolygon(geojson)
+                val poly = parseGeoJsonPolygon(geojson) ?: return null
+                if (mustContain != null && !polygonContains(poly, mustContain.latitude, mustContain.longitude)) {
+                    return null
+                }
+                // Reject powiat / voivodeship / country for pin borders when possible
+                val adminLevel = obj.optJSONObject("extratags")?.optString("admin_level")?.toIntOrNull()
+                val placeRank = obj.optInt("place_rank", -1).takeIf { it > 0 }
+                if (mustContain != null && adminTightnessScore(adminLevel, placeRank) < 0) {
+                    return null
+                }
+                return poly
             }
             null
         } catch (e: Exception) {
             TelemetryLogger.log("BOUNDARY", "Reverse boundary error at ($lat, $lon, zoom=$zoom): ${e.message}")
             null
         }
+    }
+
+    /**
+     * Ray-casting point-in-polygon. [points] outer ring in GeoPoint(lat, lon) order.
+     */
+    fun polygonContains(points: List<GeoPoint>, lat: Double, lon: Double): Boolean {
+        if (points.size < 3) return false
+        var inside = false
+        var j = points.size - 1
+        for (i in points.indices) {
+            val yi = points[i].latitude
+            val xi = points[i].longitude
+            val yj = points[j].latitude
+            val xj = points[j].longitude
+            val intersect = ((yi > lat) != (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / (yj - yi + 1e-15) + xi)
+            if (intersect) inside = !inside
+            j = i
+        }
+        return inside
+    }
+
+    fun isCachePolygonUsableForPin(points: List<GeoPoint>, pin: GeoPoint): Boolean {
+        return points.size >= 3 && polygonContains(points, pin.latitude, pin.longitude)
+    }
+
+    /**
+     * Higher score = tighter locality. Negative = reject for pin borders (powiat and coarser).
+     * OSM: admin_level 10 ≈ village/sołectwo, 7–8 ≈ gmina, 6 ≈ powiat, 4 ≈ województwo.
+     */
+    fun adminTightnessScore(adminLevel: Int?, placeRank: Int?): Int {
+        if (adminLevel != null) {
+            if (adminLevel <= 6) return -100 + adminLevel
+            return adminLevel * 10 + (placeRank ?: 0)
+        }
+        if (placeRank != null) {
+            // Nominatim place_rank: higher ≈ more specific; ~16 gmina, ~20 village
+            if (placeRank < 14) return -50 + placeRank
+            return placeRank
+        }
+        return 0
     }
 
     fun parseGeoJsonPolygon(geojson: JSONObject): List<GeoPoint>? {
@@ -311,8 +413,13 @@ object BoundaryHelper {
     /**
      * Evaluates all returned items from Nominatim and selects the best administrative boundary polygon,
      * strongly deprioritizing non-administrative features like airfields (aeroway), buildings, and landuse.
+     * When [mustContain] is set, candidates that do not enclose the point are discarded, and tighter
+     * admin units (higher admin_level / place_rank) win over gmina / county.
      */
-    fun selectBestBoundaryPolygon(jsonArray: JSONArray): List<GeoPoint>? {
+    fun selectBestBoundaryPolygon(
+        jsonArray: JSONArray,
+        mustContain: GeoPoint? = null
+    ): List<GeoPoint>? {
         var bestPolygon: List<GeoPoint>? = null
         var bestScore = -1000
 
@@ -322,9 +429,17 @@ object BoundaryHelper {
             val poly = parseGeoJsonPolygon(geojson) ?: continue
             if (poly.isEmpty()) continue
 
+            if (mustContain != null &&
+                !polygonContains(poly, mustContain.latitude, mustContain.longitude)
+            ) {
+                continue
+            }
+
             val osmClass = obj.optString("class", "").lowercase()
             val osmType = obj.optString("type", "").lowercase()
             val entityType = obj.optString("osm_type", "").lowercase()
+            val adminLevel = obj.optJSONObject("extratags")?.optString("admin_level")?.toIntOrNull()
+            val placeRank = obj.optInt("place_rank", -1).takeIf { it > 0 }
 
             var score = 10
             if (osmClass == "boundary" && osmType == "administrative") {
@@ -344,6 +459,18 @@ object BoundaryHelper {
             // Prefer relations with comprehensive vertex sets
             if (poly.size >= 80) {
                 score += 20
+            }
+
+            val tightness = adminTightnessScore(adminLevel, placeRank)
+            if (mustContain != null) {
+                if (tightness < 0) continue
+                score += tightness
+                // Prefer smaller geographic extent among containing candidates (village over gmina)
+                val latSpan = poly.maxOf { it.latitude } - poly.minOf { it.latitude }
+                val lonSpan = poly.maxOf { it.longitude } - poly.minOf { it.longitude }
+                score += (1000 - ((latSpan + lonSpan) * 500).toInt()).coerceIn(0, 1000)
+            } else if (tightness > 0) {
+                score += tightness / 5
             }
 
             if (score > bestScore) {

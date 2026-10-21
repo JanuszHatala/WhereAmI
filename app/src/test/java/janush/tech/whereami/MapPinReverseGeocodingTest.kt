@@ -173,4 +173,106 @@ class MapPinReverseGeocodingTest {
         assertEquals(49.80, poly[0].latitude, 0.0001)
         assertEquals(19.20, poly[0].longitude, 0.0001)
     }
+
+    @Test
+    fun testTourismViewpointUsesFeatureNameAsTitleNotCoordinates() {
+        val json = """
+            {
+              "lat": "49.81984",
+              "lon": "19.25870",
+              "name": "Franoskówki",
+              "class": "tourism",
+              "type": "viewpoint",
+              "address": {
+                "road": "Franoskówki",
+                "hamlet": "Bielańskie",
+                "village": "Wielka Puszcza",
+                "municipality": "gmina Porąbka",
+                "county": "powiat bielski",
+                "state": "województwo śląskie",
+                "country": "Polska",
+                "country_code": "pl"
+              }
+            }
+        """.trimIndent()
+
+        val result = SearchHelper.parseNominatimReverse(json, 49.81984, 19.25870)
+        assertEquals("Franoskówki", result.title)
+        assertEquals("Wielka Puszcza", result.localityName)
+        assertEquals("Porąbka", result.municipalityName)
+        assertTrue(result.subtitle.contains("gm. Porąbka"))
+        assertFalse(result.title.contains("49.81984"))
+    }
+
+    @Test
+    fun testNaturalPeakUsesPeakNameAsTitle() {
+        val json = """
+            {
+              "lat": "49.82000",
+              "lon": "19.26000",
+              "name": "Magurka Wilkowicka",
+              "class": "natural",
+              "type": "peak",
+              "address": {
+                "village": "Bystra",
+                "municipality": "gmina Wilkowice",
+                "county": "powiat bielski",
+                "state": "województwo śląskie",
+                "country": "Polska",
+                "country_code": "pl"
+              }
+            }
+        """.trimIndent()
+
+        val result = SearchHelper.parseNominatimReverse(json, 49.82000, 19.26000)
+        assertEquals("Magurka Wilkowicka", result.title)
+        assertEquals("Bystra", result.localityName)
+    }
+
+    @Test
+    fun testSelectNearestTouristicPoiPrefersPeakOverViewpoint() {
+        val overpass = """
+            {
+              "elements": [
+                {
+                  "type": "node",
+                  "id": 1,
+                  "lat": 49.82000,
+                  "lon": 19.25900,
+                  "tags": { "tourism": "viewpoint", "name": "Near View" }
+                },
+                {
+                  "type": "node",
+                  "id": 2,
+                  "lat": 49.82100,
+                  "lon": 19.26000,
+                  "tags": { "natural": "peak", "name": "Distant Peak" }
+                }
+              ]
+            }
+        """.trimIndent()
+        val poi = SearchHelper.selectNearestTouristicPoi(overpass, 49.81984, 19.25870, maxDistanceMeters = 400f)
+        org.junit.Assert.assertNotNull(poi)
+        assertEquals("Distant Peak", poi!!.name)
+        assertEquals("peak", poi.kind)
+    }
+
+    @Test
+    fun testSelectNearestTouristicPoiIgnoresBeyondRadius() {
+        val overpass = """
+            {
+              "elements": [
+                {
+                  "type": "node",
+                  "id": 1,
+                  "lat": 49.83000,
+                  "lon": 19.27000,
+                  "tags": { "natural": "peak", "name": "Far Peak" }
+                }
+              ]
+            }
+        """.trimIndent()
+        val poi = SearchHelper.selectNearestTouristicPoi(overpass, 49.81984, 19.25870, maxDistanceMeters = 400f)
+        org.junit.Assert.assertNull(poi)
+    }
 }

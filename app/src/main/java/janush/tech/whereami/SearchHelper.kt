@@ -21,6 +21,14 @@ data class SearchResultItem(
     val municipalityName: String? = null
 )
 
+data class TouristicPoi(
+    val name: String,
+    val kind: String,
+    val latitude: Double,
+    val longitude: Double,
+    val distanceMeters: Float
+)
+
 object SearchHelper {
 
     suspend fun searchLocation(
@@ -177,6 +185,7 @@ object SearchHelper {
         val coordsStr = String.format(Locale.US, "%.5f, %.5f", geoPoint.latitude, geoPoint.longitude)
 
         // 1. Try Nominatim reverse geocoding first (provides exact OSM place classification, gmina, and natural terrain tags)
+        var nominatimParsed: SearchResultItem? = null
         try {
             val urlStr = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoPoint.latitude}&lon=${geoPoint.longitude}&zoom=18&addressdetails=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
@@ -185,12 +194,24 @@ object SearchHelper {
             conn.readTimeout = 3000
             if (conn.responseCode == 200) {
                 val responseText = conn.inputStream.bufferedReader().readText()
-                val parsed = parseNominatimReverse(responseText, geoPoint.latitude, geoPoint.longitude)
-                if (parsed.localityName != null || parsed.title != coordsStr) {
-                    return@withContext parsed
-                }
+                nominatimParsed = parseNominatimReverse(responseText, geoPoint.latitude, geoPoint.longitude)
             }
         } catch (_: Exception) {}
+
+        // 1b. Outdoor / forest pins: if title is still bare coordinates, look for a nearby peak/pass/viewpoint
+        if (nominatimParsed != null) {
+            val needsPoiTitle = nominatimParsed.title == coordsStr ||
+                looksLikeBareCoordinates(nominatimParsed.title)
+            if (needsPoiTitle) {
+                val poi = fetchNearbyTouristicPoi(geoPoint.latitude, geoPoint.longitude)
+                if (poi != null) {
+                    return@withContext nominatimParsed.copy(title = poi.name)
+                }
+            }
+            if (nominatimParsed.localityName != null || nominatimParsed.title != coordsStr) {
+                return@withContext nominatimParsed
+            }
+        }
 
         // 2. Fallback to Android Geocoder (offline or when Nominatim fails)
         try {
@@ -286,6 +307,7 @@ object SearchHelper {
         val json = org.json.JSONObject(jsonStr)
         val osmClass = json.optString("class", "")
         val osmType = json.optString("type", "")
+        val featureName = json.optString("name", "").takeIf { it.isNotBlank() }
         val snappedLat = json.optDouble("lat", Double.NaN)
         val snappedLon = json.optDouble("lon", Double.NaN)
 
@@ -305,10 +327,11 @@ object SearchHelper {
         val country = addressObj?.optString("country")?.takeIf { it.isNotBlank() }
         val countryCode = addressObj?.optString("country_code", "pl")?.lowercase(Locale.ROOT) ?: "pl"
 
+        val isTouristicFeature = isTouristicOsmFeature(osmClass, osmType)
         val isNaturalTerrain = osmClass in listOf("natural", "landuse", "leisure", "waterway") ||
                 osmType in listOf("forest", "wood", "peak", "scrub", "heath", "grass", "meadow", "fell", "wetland")
 
-        var isOffRoad = isNaturalTerrain
+        var isOffRoad = isNaturalTerrain && !isTouristicFeature
         if (!snappedLat.isNaN() && !snappedLon.isNaN()) {
             val dist = computeDistanceMeters(
                 queryLat, queryLon,
@@ -318,11 +341,17 @@ object SearchHelper {
                 isOffRoad = true
             }
         }
+        // Named peak / viewpoint / pass at the pin: keep as title even when "off-road"
+        if (isTouristicFeature && featureName != null) {
+            isOffRoad = false
+        }
 
         val title = when {
+            isTouristicFeature && featureName != null -> featureName
             isOffRoad -> coordsStr
             road != null && houseNum != null -> "$road $houseNum"
             road != null -> road
+            featureName != null && osmClass == "tourism" -> featureName
             else -> city ?: coordsStr
         }
 
@@ -379,6 +408,103 @@ object SearchHelper {
                 Math.sin(dLon / 2) * Math.sin(dLon / 2)
         val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
         return (6371000.0 * c).toFloat()
+    }
+
+    fun isTouristicOsmFeature(osmClass: String, osmType: String): Boolean {
+        val c = osmClass.lowercase(Locale.ROOT)
+        val t = osmType.lowercase(Locale.ROOT)
+        if (c == "natural" && t in listOf("peak", "saddle", "volcano")) return true
+        if (c == "tourism" && t in listOf("viewpoint", "alpine_hut", "wilderness_hut", "picnic_site")) return true
+        return t == "mountain_pass" || c == "mountain_pass"
+    }
+
+    fun looksLikeBareCoordinates(title: String): Boolean {
+        return title.matches(Regex("""^-?\d+\.\d+,\s*-?\d+\.\d+$"""))
+    }
+
+    /**
+     * Parse Overpass JSON elements and pick the best nearby touristic POI.
+     * Priority: peak > mountain_pass/saddle > viewpoint > shelter/hut. Within a kind, nearest wins.
+     */
+    fun selectNearestTouristicPoi(
+        overpassJson: String,
+        queryLat: Double,
+        queryLon: Double,
+        maxDistanceMeters: Float = 400f
+    ): TouristicPoi? {
+        val root = org.json.JSONObject(overpassJson)
+        val elements = root.optJSONArray("elements") ?: return null
+        var best: TouristicPoi? = null
+        var bestRank = Int.MAX_VALUE
+
+        for (i in 0 until elements.length()) {
+            val el = elements.optJSONObject(i) ?: continue
+            val lat = el.optDouble("lat", Double.NaN)
+            val lon = el.optDouble("lon", Double.NaN)
+            if (lat.isNaN() || lon.isNaN()) continue
+            val tags = el.optJSONObject("tags") ?: continue
+            val name = tags.optString("name", "").takeIf { it.isNotBlank() } ?: continue
+            val kind = touristicKindFromTags(tags) ?: continue
+            val dist = computeDistanceMeters(queryLat, queryLon, lat, lon)
+            if (dist > maxDistanceMeters) continue
+            val rank = touristicKindPriority(kind) * 1_000_000 + dist.toInt()
+            if (rank < bestRank) {
+                bestRank = rank
+                best = TouristicPoi(name, kind, lat, lon, dist)
+            }
+        }
+        return best
+    }
+
+    private fun touristicKindFromTags(tags: org.json.JSONObject): String? {
+        val natural = tags.optString("natural", "")
+        val tourism = tags.optString("tourism", "")
+        val mountainPass = tags.optString("mountain_pass", "")
+        return when {
+            natural == "peak" || natural == "volcano" -> "peak"
+            natural == "saddle" || mountainPass == "yes" -> "pass"
+            tourism == "viewpoint" -> "viewpoint"
+            tourism in listOf("alpine_hut", "wilderness_hut", "picnic_site") -> "shelter"
+            else -> null
+        }
+    }
+
+    /** Lower = preferred. */
+    private fun touristicKindPriority(kind: String): Int = when (kind) {
+        "peak" -> 0
+        "pass" -> 1
+        "viewpoint" -> 2
+        "shelter" -> 3
+        else -> 9
+    }
+
+    private fun fetchNearbyTouristicPoi(lat: Double, lon: Double): TouristicPoi? {
+        return try {
+            val radius = 400
+            val query = """
+                [out:json][timeout:8];
+                (
+                  node(around:$radius,$lat,$lon)[natural=peak][name];
+                  node(around:$radius,$lat,$lon)[natural=saddle][name];
+                  node(around:$radius,$lat,$lon)[natural=volcano][name];
+                  node(around:$radius,$lat,$lon)[tourism=viewpoint][name];
+                  node(around:$radius,$lat,$lon)[tourism=alpine_hut][name];
+                  node(around:$radius,$lat,$lon)[tourism=wilderness_hut][name];
+                  node(around:$radius,$lat,$lon)[mountain_pass=yes][name];
+                );
+                out body;
+            """.trimIndent().replace("\n", "")
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(query, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return null
+            val body = conn.inputStream.bufferedReader().readText()
+            selectNearestTouristicPoi(body, lat, lon, maxDistanceMeters = radius.toFloat())
+        } catch (_: Exception) {
+            null
+        }
     }
 }
 
