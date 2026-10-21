@@ -1306,3 +1306,13 @@ Evidence: screenshots `media_1792590425031_3a0b2ab7.png` and `media_179259044225
 | **UI100-01** | Views & Visitors dialog responsive layout, eliminate vertical word-wrapping. | `MainActivity.kt` (`LiveViewsDetailsDialog`) | Implemented | 2-line responsive layout with `SpaceBetween`, `maxLines = 1`, `softWrap = false`, responsive dialog container |
 | **UI100-02** | Status badges emoji disentanglement in visitor details & lists. | `MainActivity.kt` (`LiveViewsDetailsDialog`, `GuestDetailsDialog`) | Implemented | Conforms to GEMINI.md Rule 7 using `EmojiText` + clean text |
 | **VER-100** | versionCode 135 / 1.18.4 | build.gradle.kts | Done | - |
+
+## 104. Round 101: Live Sharing Modal Return Navigation & Full Sheet Expansion (2026-10-21, v1.18.5)
+
+User request: closing guest visit details must return to views/visitors dialog; opening Manage Session must expand fully (`skipPartiallyExpanded = true`) and return to Live Sharing panel on dismiss.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI101-01** | Return to Views list when closing Guest Details. | `MainActivity.kt` (`returnToLiveViewsOnGuestDismiss`, `dismissGuestDetails`, `BackHandler`) | Implemented | Verified dismissal returns to `LiveViewsDetailsDialog` |
+| **UI101-02** | Full height expansion and return navigation for Manage Session sheet. | `MainActivity.kt` (`liveShareSheetState`, `skipPartiallyExpanded = true`, `returnToLiveQuickShareOnDismiss`) | Implemented | Manage Session opens fully and returns to Live Sharing panel on close |
+| **VER-101** | versionCode 136 / 1.18.5 | build.gradle.kts | Done | - |

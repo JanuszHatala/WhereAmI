@@ -385,6 +385,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     var qrCodeTargetTitle by remember { mutableStateOf("") }
     var activeLocationShareTarget by remember { mutableStateOf<LocationShareTarget?>(null) }
     var selectedGuestDetails by remember { mutableStateOf<LiveGuest?>(null) }
+    var returnToLiveViewsOnGuestDismiss by remember { mutableStateOf(false) }
+    var returnToLiveQuickShareOnDismiss by remember { mutableStateOf(false) }
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
 
@@ -413,6 +415,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         showMapSettingsDialog = false
         activeLocationShareTarget = null
         selectedGuestDetails = null
+        returnToLiveViewsOnGuestDismiss = false
+        returnToLiveQuickShareOnDismiss = false
         viewModel.dismissCacheManager()
     }
 
@@ -644,7 +648,13 @@ fun LocationScreen(viewModel: MainViewModel) {
             selectedTripsList.isNotEmpty()
     BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
         when {
-            selectedGuestDetails != null -> selectedGuestDetails = null
+            selectedGuestDetails != null -> {
+                selectedGuestDetails = null
+                if (returnToLiveViewsOnGuestDismiss) {
+                    returnToLiveViewsOnGuestDismiss = false
+                    showLiveViewsDetailsModal = true
+                }
+            }
             selectedSavedPlace != null -> selectedSavedPlace = null
             destinationPoint != null -> {
                 viewModel.setDestination(null)
@@ -5595,8 +5605,18 @@ fun LocationScreen(viewModel: MainViewModel) {
             liveSharingManager.refreshSessionStatus()
         }
 
+        val liveShareSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val dismissLiveShareDialog = {
+            showLiveShareDialog = false
+            if (returnToLiveQuickShareOnDismiss) {
+                returnToLiveQuickShareOnDismiss = false
+                showLiveQuickShareModal = true
+            }
+        }
+
         ModalBottomSheet(
-            onDismissRequest = { showLiveShareDialog = false },
+            onDismissRequest = dismissLiveShareDialog,
+            sheetState = liveShareSheetState,
             containerColor = Color(0xFF0F172A),
             tonalElevation = 8.dp
         ) {
@@ -5623,7 +5643,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
                     IconButton(
-                        onClick = { showLiveShareDialog = false },
+                        onClick = dismissLiveShareDialog,
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
@@ -5855,6 +5875,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     ) {
                         Button(
                             onClick = {
+                                returnToLiveQuickShareOnDismiss = false
                                 liveSharingManager.stopSession()
                                 android.widget.Toast.makeText(context, "Live sharing stopped", android.widget.Toast.LENGTH_SHORT).show()
                             },
@@ -6858,6 +6879,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
         ModalBottomSheet(
             onDismissRequest = { showLiveQuickShareModal = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = Color(0xFF0F172A),
             tonalElevation = 8.dp
         ) {
@@ -7081,6 +7103,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 ) {
                     TextButton(
                         onClick = {
+                            returnToLiveQuickShareOnDismiss = true
                             showLiveQuickShareModal = false
                             showLiveShareDialog = true
                         }
@@ -7122,10 +7145,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 },
                 onGuestClick = { guest ->
+                    returnToLiveViewsOnGuestDismiss = true
                     showLiveViewsDetailsModal = false
                     selectedGuestDetails = guest
                 },
-                onDismiss = { showLiveViewsDetailsModal = false }
+                onDismiss = {
+                    returnToLiveViewsOnGuestDismiss = false
+                    showLiveViewsDetailsModal = false
+                }
             )
         }
     }
@@ -7223,8 +7250,16 @@ fun LocationScreen(viewModel: MainViewModel) {
         val guestColor = Color(LiveGuest.getColor(currentGuest.colorIndex))
         val coordsStr = String.format(Locale.US, "%.5f, %.5f", currentGuest.lat, currentGuest.lng)
 
+        val dismissGuestDetails = {
+            selectedGuestDetails = null
+            if (returnToLiveViewsOnGuestDismiss) {
+                returnToLiveViewsOnGuestDismiss = false
+                showLiveViewsDetailsModal = true
+            }
+        }
+
         ModalBottomSheet(
-            onDismissRequest = { selectedGuestDetails = null },
+            onDismissRequest = dismissGuestDetails,
             sheetState = guestSheetState,
             containerColor = Color(0xFF0F172A),
             tonalElevation = 8.dp
@@ -7315,7 +7350,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
 
                     IconButton(
-                        onClick = { selectedGuestDetails = null },
+                        onClick = dismissGuestDetails,
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
@@ -7609,7 +7644,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     Button(
                         onClick = {
                             liveSharingManager.removeGuest(currentGuest.id)
-                            selectedGuestDetails = null
+                            dismissGuestDetails()
                             Toast.makeText(context, "Removed ${currentGuest.name} from map", Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.buttonColors(
