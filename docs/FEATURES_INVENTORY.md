@@ -259,6 +259,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - Indoor auto-start guard (v1.17.8): `ResumeMotionGate` for AUTO start; discard multipath scribble trips; SK `DK`/`DW`→`I`/`II` cache sanitize; parking crawl vertex hold.
   - Named street over highway code (v1.17.7 / v1.18.2): OSRM bare `DW*`/`DK*` coalesced with OSM local name; cache upgrade bare→named at drive time; purge bare highway-only cache rows on open; refuse code-only overwrites of named streets.
   - Vehicle auto-start soften (v1.18.2): 35 m accuracy + one miss grace, 70% speed to open window, CAR displacement 25 m; foot gate unchanged.
+  - Track spike guard (v1.17.9 / v1.18.6): reject slow impossible tips and cycling gap+course-reversal multipath chords near pause/stop.
   - Driving display road snap (v1.17.1): live cursor/polyline may pull ≤18 m toward OSRM `/nearest` for road alignment (`DisplayRoadSnap`); recorded `track_points` stay GNSS/filter geometry.
   - Street card formatting (v1.17.1): `formatStreetDisplay` shows `Krakowska (DK52)` instead of `Krakowska • 52` when street name and road ref are both present.
   - Crash / hard-reset survival (v1.17.0): open trip (`end_time IS NULL`) with batched `track_points` flush (5 pts / 3 s + lifecycle/shutdown flush); `TripRecovery` resumes automatically (Option A) using last track-point time for zombie detection; `TripSurvivalReceiver` for SHUTDOWN/BATTERY_LOW.
