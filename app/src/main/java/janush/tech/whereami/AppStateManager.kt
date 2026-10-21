@@ -191,7 +191,7 @@ class AppStateManager private constructor(private val context: Context) {
     fun enterStandbySleep(isManual: Boolean = false) {
         if (_isStandbySleeping.value) return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastSleepStateTransitionMs < SLEEP_STATE_TRANSITION_DEBOUNCE_MS) {
+        if (!isManual && (now - lastSleepStateTransitionMs < SLEEP_STATE_TRANSITION_DEBOUNCE_MS)) {
             TelemetryLogger.log("POWER", "enterStandbySleep dropped: transition debounce active (${now - lastSleepStateTransitionMs}ms < ${SLEEP_STATE_TRANSITION_DEBOUNCE_MS}ms)")
             return
         }
@@ -326,9 +326,12 @@ class AppStateManager private constructor(private val context: Context) {
             janush.tech.whereami.tracking.PostTripMatcher.schedule(context)
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
-            // AGENTS.md: standby sleep wakes on app resume (MainActivity.onStart).
-            if (_isStandbySleeping.value) {
-                wakeStandbySleep(isExplicitUserAction = true)
+            // AGENTS.md: standby sleep wakes on app resume (MainActivity.onStart) for 90m inactivity hibernation.
+            // Do NOT wake if the user manually entered sleep, or if currently inside the Bedtime/DND sleep window.
+            val autoSleepMgr = AutoSleepManager.getInstance(context)
+            val isBedtimeOrDnd = autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()
+            if (_isStandbySleeping.value && !autoSleepMgr.isManualSleepActive() && !isBedtimeOrDnd) {
+                wakeStandbySleep(isExplicitUserAction = false)
             }
             ensureAutoStandbyServiceRunning()
         } else {

@@ -2240,7 +2240,16 @@ private fun MapSettingsDialog(
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text(label, fontSize = 11.sp, color = ComposeColor.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            color = ComposeColor.White,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 13.sp
+                            )
+                        )
                     }
                 }
             }
@@ -2264,7 +2273,16 @@ private fun MapSettingsDialog(
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text(label, fontSize = 11.sp, color = ComposeColor.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            color = ComposeColor.White,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 13.sp
+                            )
+                        )
                     }
                 }
             }
@@ -2333,12 +2351,21 @@ private fun MapSettingsDialog(
                         text = "Hiking Trails & Peaks",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = ComposeColor.White
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
                     )
                     Text(
                         text = "Marked color-coded trails & summits (Waymarked Trails)",
                         fontSize = 11.sp,
-                        color = ComposeColor(0xFF94A3B8)
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
                     )
                 }
                 Switch(
@@ -2370,12 +2397,21 @@ private fun MapSettingsDialog(
                         text = "Compass Arrow",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = ComposeColor.White
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
                     )
                     Text(
                         text = "Walking, hiking, running: arrow from the phone compass, checked against your track",
                         fontSize = 11.sp,
-                        color = ComposeColor(0xFF94A3B8)
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
                     )
                 }
                 Switch(
@@ -2407,12 +2443,21 @@ private fun MapSettingsDialog(
                         text = "Altitude on Map",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = ComposeColor.White
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
                     )
                     Text(
                         text = "Show elevation badge beside vehicle cursor",
                         fontSize = 11.sp,
-                        color = ComposeColor(0xFF94A3B8)
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
                     )
                 }
                 Switch(
@@ -2475,7 +2520,11 @@ private fun MapSettingsDialog(
                             "Raw direct GPS satellite altitude (dashed border)",
                         fontSize = 10.5.sp,
                         color = ComposeColor(0xFF64748B),
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 13.sp
+                        )
                     )
                 }
             }

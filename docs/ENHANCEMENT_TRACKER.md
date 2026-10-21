@@ -1347,3 +1347,15 @@ Evidence: user request with screenshot `Screenshot_20261018-190447.png`. Excessi
 | **UI104-01** | Tighten 3 checkboxes line spacing and concise phrasing. | `MainActivity.kt` | Implemented | Tightened `lineHeight`, disabled font padding, aligned checkboxes at top, and made descriptions punchy and concise |
 | **UI104-02** | Align Sleep/Wake naming and vector icons with Standby HUD and notification. | `MainActivity.kt` | Implemented | `Icons.Default.Bedtime` / `Icons.Default.WbSunny` for Sleep/Wake button matching HUD emerald/slate containers; vector icon and SLEEPING badge relocated to card header |
 | **VER-104** | versionCode 139 / 1.18.8 | `build.gradle.kts` | Implemented | Build and unit test gates pass |
+
+## 108. Round 105: Sleep Mode Badge Relocation, App-Resume Wake Bugfix & Full Settings Spacing Alignment (2026-10-21, v1.18.9)
+
+User feedback: (1) "SLEEPING" badge cut at the end in card title; relocate to Bedtime Window row aligned with right edge of Wake Up box; (2) clicking "Enter Sleep Mode" sometimes unresponsive; investigate why opening Settings shows sleep as not turned on; (3) condense 3 buttons in Power & Battery Profile; (4) align line spacing across all App Settings and Map Settings sections.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI105-01** | Relocate SLEEPING badge to Bedtime Window row aligned right. | `MainActivity.kt` | Implemented | Clean row with `Arrangement.SpaceBetween`, perfectly aligned above right edge of "Wake Up" box; title row unconstrained |
+| **ENG105-02** | Root-cause and fix sleep mode button unresponsiveness & app-resume sleep cancellation. | `AppStateManager.kt` | Implemented | (1) Bypassed transition debounce for manual sleep enters (`!isManual`). (2) Stopped `setAppForegroundState(true)` from unconditionally waking sleep mode on app resume when in manual sleep or bedtime/DND window |
+| **UI105-03** | Condense 3 Power & Battery Profile buttons. | `MainActivity.kt` | Implemented | `vertical = 7.dp`, `Arrangement.spacedBy(5.dp)`, normalized font metrics (`PlatformTextStyle(includeFontPadding = false)`, `lineHeight = 15.sp / 13.sp`) |
+| **UI105-04** | Standardize typography and line spacing across entire App Settings & Map Settings. | `MainActivity.kt`, `OsmMapView.kt` | Implemented | Applied explicit line heights and disabled font padding to all headers, descriptions, orientation buttons, and layer toggles |
+| **VER-105** | versionCode 140 / 1.18.9 | `build.gradle.kts` | Implemented | Build and unit test gates pass |
