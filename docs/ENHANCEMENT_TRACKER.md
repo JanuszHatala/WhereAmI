@@ -1296,3 +1296,13 @@ Evidence: screenshot `Screenshot_20261021-141542.png` (Kobiernice shows bare **D
 | **GEO99-01** | Still shows DK52 instead of street name. | `coalesceBareCodeWithCachedName`, residential-only viaduct shield, bare-code cache purge + dupe-paren fix | Implemented | `RoadDisplayFormatTest`; exact cell was Krakowska shielded away |
 | **ENG99-02** | Driving auto-start too late. | Vehicle `ResumeMotionGate` 35 m + 1 miss grace; window at 70% speed; CAR displacement 25 m | Implemented | `ResumeMotionGateTest`; note user pref still 30 s |
 | **VER-99** | versionCode 133 / 1.18.2 | build.gradle.kts | Done | - |
+
+## 103. Round 100: Live Sharing Views Dialog Responsive UI (2026-10-21, v1.18.4)
+
+Evidence: screenshots `media_1792590425031_3a0b2ab7.png` and `media_1792590442250_9c5c0618.png` (distance wrapping into single-character vertical columns `1.7 \n km \n awa \n y`, `[ ⏸ \n Inactive ]` wrapped inside pill, bottom items cut off).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI100-01** | Views & Visitors dialog responsive layout, eliminate vertical word-wrapping. | `MainActivity.kt` (`LiveViewsDetailsDialog`) | Implemented | 2-line responsive layout with `SpaceBetween`, `maxLines = 1`, `softWrap = false`, responsive dialog container |
+| **UI100-02** | Status badges emoji disentanglement in visitor details & lists. | `MainActivity.kt` (`LiveViewsDetailsDialog`, `GuestDetailsDialog`) | Implemented | Conforms to GEMINI.md Rule 7 using `EmojiText` + clean text |
+| **VER-100** | versionCode 135 / 1.18.4 | build.gradle.kts | Done | - |
