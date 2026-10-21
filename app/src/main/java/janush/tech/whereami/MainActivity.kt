@@ -3258,12 +3258,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Activity Profiles & Settings",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Configure auto-start, timeouts, and recording modes for each activity independently",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                 }
@@ -3309,7 +3318,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 text = profile.displayName,
                                                 fontSize = 15.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White
+                                                color = Color.White,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 15.sp
+                                                )
                                             )
                                             if (isCurrentActive) {
                                                 Spacer(modifier = Modifier.width(8.dp))
@@ -3322,7 +3335,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = Color.White,
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                                        style = TextStyle(
+                                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                            lineHeight = 10.sp
+                                                        )
                                                     )
                                                 }
                                             }
@@ -3335,7 +3352,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 "Manual recording • Stop: ${profileTimeout}m"
                                             },
                                             fontSize = 12.sp,
-                                            color = Color(0xFF94A3B8)
+                                            color = Color(0xFF94A3B8),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
                                         )
                                     }
                                 }
@@ -3360,13 +3381,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                     text = "Locality Card Layout",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White
+                    color = Color.White,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 15.sp
+                    )
                 )
                 Text(
                     text = "Normal provides maximum readability; Compact minimizes card height on map",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(bottom = 6.dp)
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 15.sp
+                    )
                 )
                 Row(
                     modifier = Modifier
@@ -3411,12 +3440,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Compact Street Names",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Abbreviate honorifics and first names (e.g. ul. J. Lompy). Always enabled in Android Auto.",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -3445,12 +3483,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Show City/Town Borders",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Highlights territorial boundaries of the current locality on the map",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                     Switch(
@@ -3478,12 +3525,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Road & Path Heat Map",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Visualizes all previously traveled routes as glowing heat corridors",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                     Switch(
@@ -3511,12 +3567,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Diagnostic Telemetry Log",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Export timestamped GPS events, hysteresis triggers, and auto-stop decisions",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                     Button(
@@ -3583,11 +3648,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                     color = Color(0xFF94A3B8),
                     maxLines = 1,
                     softWrap = false,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 14.sp
+                    )
                 )
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     BatteryPowerPolicy.values().forEach { policy ->
                         val isSelected = powerPolicy == policy
@@ -3601,21 +3670,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                     Text(
                                         text = policy.displayName,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = Color.White
+                                        color = Color.White,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 15.sp
+                                        )
                                     )
                                     Text(
                                         text = policy.description,
                                         fontSize = 11.sp,
-                                        color = if (isSelected) Color(0xFFE0F2FE) else Color(0xFF94A3B8)
+                                        color = if (isSelected) Color(0xFFE0F2FE) else Color(0xFF94A3B8),
+                                        modifier = Modifier.padding(top = 1.dp),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
                                     )
                                 }
                                 if (isSelected) {
@@ -3672,34 +3750,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             lineHeight = 15.sp
                                         )
                                     )
-                                    if (isStandbySleeping) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFF047857)
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = "SLEEPING",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White,
-                                                    maxLines = 1,
-                                                    softWrap = false,
-                                                    style = TextStyle(
-                                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                        lineHeightStyle = LineHeightStyle(
-                                                            alignment = LineHeightStyle.Alignment.Center,
-                                                            trim = LineHeightStyle.Trim.Both
-                                                        ),
-                                                        lineHeight = 10.sp
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
                                 }
                                 Text(
                                     text = "Auto-hibernates GPS & tracking overnight to eliminate idle battery drain.",
@@ -3728,7 +3778,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(20.dp),
+                                    .height(24.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
@@ -3747,6 +3798,34 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         lineHeight = 12.sp
                                     )
                                 )
+                                if (isStandbySleeping) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFF047857)
+                                    ) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(
+                                                text = "SLEEPING",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    ),
+                                                    lineHeight = 10.sp
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(
@@ -4021,12 +4100,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                             text = "Storage & Offline Caches",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                         Text(
                             text = "Manage map tiles, boundaries, spatial cache, and battery-safe pre-fetching",
                             fontSize = 12.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
                         )
                     }
                     Button(
