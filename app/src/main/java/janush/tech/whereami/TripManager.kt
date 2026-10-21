@@ -1035,15 +1035,22 @@ class TripManager private constructor(private val context: Context) {
         fun commit(p: SmoothedPoint) {
             val last = newPoints.lastOrNull()
             if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
-            // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord).
+            // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord;
+            // trip 244 cycling 59.6 m / 172° reverse after a GNSS gap near home).
             if (last != null) {
                 val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
-                if (TrackSpikeGuard.isSpikeStep(
-                        last.latitude, last.longitude, prevUtc,
-                        p.lat, p.lng, p.tUtcMs,
-                        p.speedMps, p.isStationary
-                    )
-                ) {
+                val twoPoint = TrackSpikeGuard.isSpikeStep(
+                    last.latitude, last.longitude, prevUtc,
+                    p.lat, p.lng, p.tUtcMs,
+                    p.speedMps, p.isStationary
+                )
+                val prev2 = if (newPoints.size >= 2) newPoints[newPoints.size - 2] else null
+                val threePoint = prev2 != null && TrackSpikeGuard.isReversalSpike(
+                    prev2.latitude, prev2.longitude,
+                    last.latitude, last.longitude, prevUtc,
+                    p.lat, p.lng, p.tUtcMs
+                )
+                if (twoPoint || threePoint) {
                     TelemetryLogger.logTrip(
                         "SPIKE_REJECTED",
                         current.id,

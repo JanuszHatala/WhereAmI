@@ -1316,3 +1316,15 @@ User request: closing guest visit details must return to views/visitors dialog; 
 | **UI101-01** | Return to Views list when closing Guest Details. | `MainActivity.kt` (`returnToLiveViewsOnGuestDismiss`, `dismissGuestDetails`, `BackHandler`) | Implemented | Verified dismissal returns to `LiveViewsDetailsDialog` |
 | **UI101-02** | Full height expansion and return navigation for Manage Session sheet. | `MainActivity.kt` (`liveShareSheetState`, `skipPartiallyExpanded = true`, `returnToLiveQuickShareOnDismiss`) | Implemented | Manage Session opens fully and returns to Live Sharing panel on close |
 | **VER-101** | versionCode 136 / 1.18.5 | build.gradle.kts | Done | - |
+
+## 105. Round 102: Cycling Trip 244 Pause/Stop Spike Filter (2026-10-21, v1.18.6)
+
+Evidence: trip 244 CYCLING 3.09 km auto; tip jump 59.6 m / 172° after 24 s gap (just under old 60 m slow-only guard); second reverse 27.5 m.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG102-01** | Polyline spikes on pause/stop. | `TrackSpikeGuard` gap+Doppler shortfall + course-reversal; `TripManager.onSmoothedPoints` | Implemented | `TrackSpikeGuardTest` trip 244 tips; REPLAY hc 67% / reshape p90 2.54 m |
+| **VAL102-02** | Auto-start / pause / finish assessment. | telemetry trip 244 | Design OK | start ~100 m from home; 6 min pause; manual stop |
+| **VAL102-03** | Spatial cache health. | bare/dupe purge from v1.18.2 | OK | 0 bare highway rows, 0 double-paren |
+| **BKL-102** | Cycling heading: arrowReverse 12%, headingErr p97 127°. | `MotionCourse.forVehicle` / course-up | Backlog | observe next cycling round |
+| **VER-102** | versionCode 137 / 1.18.6 | build.gradle.kts | Done | - |
