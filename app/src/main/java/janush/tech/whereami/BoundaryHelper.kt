@@ -24,6 +24,12 @@ object BoundaryHelper {
     // In-memory cache for fast UI access
     private val memoryCache = ConcurrentHashMap<String, List<GeoPoint>>()
 
+    /**
+     * Bump when on-disk polygon semantics change. v1 = pre-pin; v2 = pin containment;
+     * v3 = live name-first (invalidates v1.18.0 reverse-first pollution under city keys).
+     */
+    private const val CACHE_GEN = "v3"
+
     fun clearMemoryCache() {
         memoryCache.clear()
     }
@@ -38,35 +44,46 @@ object BoundaryHelper {
     private const val MIN_REQUEST_INTERVAL_MS = 1500L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
 
+    /**
+     * Pin borders: reverse-first + must enclose [geoPoint].
+     * Live GPS / prefetch borders: name-first for [cityName]; never overwrite a named
+     * locality cache with a smaller reverse hit (regression: Kobiernice card + wrong sub-area border).
+     */
     suspend fun getLocalityBoundary(
         context: Context,
         cityName: String?,
         countryCode: String = "pl",
         fallbackMunicipality: String? = null,
-        geoPoint: GeoPoint? = null
+        geoPoint: GeoPoint? = null,
+        forPin: Boolean = false
     ): List<GeoPoint>? = withContext(Dispatchers.IO) {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         }
         val cleanKey = if (cleanCity != null) {
-            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN")
         } else if (!fallbackMunicipality.isNullOrBlank()) {
-            sanitizeKey("${fallbackMunicipality.trim().lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+            sanitizeKey("${fallbackMunicipality.trim().lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN")
         } else if (geoPoint != null) {
-            String.format(Locale.US, "coord_%.3f_%.3f", geoPoint.latitude, geoPoint.longitude)
+            String.format(Locale.US, "coord_%.3f_%.3f_$CACHE_GEN", geoPoint.latitude, geoPoint.longitude)
         } else {
             return@withContext null
         }
 
+        val pinMode = forPin && geoPoint != null
+
         fun usableCached(pts: List<GeoPoint>): List<GeoPoint>? {
             if (pts.isEmpty()) return null
-            if (geoPoint != null && !isCachePolygonUsableForPin(pts, geoPoint)) {
-                TelemetryLogger.log(
-                    "BOUNDARY",
-                    "Discarding cached polygon for $cleanKey — does not contain pin " +
-                        "(${geoPoint.latitude}, ${geoPoint.longitude})"
-                )
-                return null
+            if (pinMode) {
+                val pin = geoPoint ?: return null
+                if (!isCachePolygonUsableForPin(pts, pin)) {
+                    TelemetryLogger.log(
+                        "BOUNDARY",
+                        "Discarding cached polygon for $cleanKey — does not contain pin " +
+                            "(${pin.latitude}, ${pin.longitude})"
+                    )
+                    return null
+                }
             }
             return pts
         }
@@ -74,7 +91,7 @@ object BoundaryHelper {
         // Tier 1: In-memory cache
         memoryCache[cleanKey]?.let { cached ->
             usableCached(cached)?.let { return@withContext it }
-            memoryCache.remove(cleanKey)
+            if (pinMode) memoryCache.remove(cleanKey)
         }
 
         // Tier 2: Persistent disk cache
@@ -85,13 +102,10 @@ object BoundaryHelper {
                 memoryCache[cleanKey] = usable
                 return@withContext usable
             }
-            // Empty negative cache OR wrong polygon for this pin: do not early-return when
-            // a geoPoint is available — fall through to network / reverse-first resolution.
-            if (diskPoints.isEmpty() && geoPoint == null) {
-                return@withContext null
-            }
-            if (diskPoints.isNotEmpty() && geoPoint != null) {
-                // Invalidate wrong cached geometry so the next successful fetch overwrites it.
+            if (diskPoints.isEmpty()) {
+                // Live: trust negative cache. Pin: fall through to reverse-first.
+                if (!pinMode) return@withContext null
+            } else if (pinMode) {
                 File(getCacheDir(context), "$cleanKey.json").delete()
             }
         }
@@ -120,15 +134,16 @@ object BoundaryHelper {
             }
 
             var fetched: List<GeoPoint>? = null
+            // Pin: reverse must enclose the point. Live: never force containment on the named city.
+            val containGate = if (pinMode) geoPoint else null
 
-            // Pin / coordinate-anchored path: reverse-first so the polygon truly encloses the point.
-            // Prefer tightest admin (village/sołectwo) over gmina; never trust a distant name hit.
-            if (geoPoint != null) {
+            // Pin-only: reverse-first so the polygon truly encloses the dropped point.
+            if (shouldResolveReverseFirst(forPin = forPin, geoPoint = geoPoint)) {
                 for (zoom in listOf(14, 12, 10)) {
                     if (fetched != null) break
                     throttle()
                     fetched = fetchReverseBoundary(
-                        geoPoint.latitude,
+                        geoPoint!!.latitude,
                         geoPoint.longitude,
                         zoom = zoom,
                         mustContain = geoPoint
@@ -136,16 +151,16 @@ object BoundaryHelper {
                 }
             }
 
-            // Name search (live GPS or pin fallback). When geoPoint is set, containment is mandatory.
+            // Name search — live GPS primary path; pin fallback when reverse has no polygon.
             if (fetched == null && cleanCity != null) {
                 throttle()
-                fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = geoPoint)
+                fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = containGate)
                 if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
                     throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Polska", mustContain = geoPoint)
+                    fetched = fetchFromNetwork(cleanCity, "Polska", mustContain = containGate)
                 } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
                     throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = geoPoint)
+                    fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = containGate)
                 }
             }
 
@@ -157,24 +172,34 @@ object BoundaryHelper {
                 if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                     val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
                     throttle()
-                    fetched = fetchFromNetwork(munQuery, countryCode, mustContain = geoPoint)
+                    fetched = fetchFromNetwork(munQuery, countryCode, mustContain = containGate)
                     if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
                         throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Polska", mustContain = geoPoint)
+                        fetched = fetchFromNetwork(cleanMun, "Polska", mustContain = containGate)
                     } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
                         throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Slovensko", mustContain = geoPoint)
+                        fetched = fetchFromNetwork(cleanMun, "Slovensko", mustContain = containGate)
                     }
                 }
             }
 
-            // Legacy coordinate fallback for callers without the reverse-first loop above
+            // Coordinate reverse fallback (live: when name has no polygon; pin: if earlier reverse missed)
             if (fetched == null && geoPoint != null) {
                 throttle()
-                fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 12, mustContain = geoPoint)
+                fetched = fetchReverseBoundary(
+                    geoPoint.latitude,
+                    geoPoint.longitude,
+                    zoom = 12,
+                    mustContain = containGate
+                )
                 if (fetched == null) {
                     throttle()
-                    fetched = fetchReverseBoundary(geoPoint.latitude, geoPoint.longitude, zoom = 10, mustContain = geoPoint)
+                    fetched = fetchReverseBoundary(
+                        geoPoint.latitude,
+                        geoPoint.longitude,
+                        zoom = 10,
+                        mustContain = containGate
+                    )
                 }
             }
 
@@ -183,9 +208,9 @@ object BoundaryHelper {
                 memoryCache[cleanKey] = simplified
                 saveToDiskCache(context, cleanKey, simplified)
                 return@withContext simplified
-            } else if (System.currentTimeMillis() >= coolDownUntil && geoPoint == null) {
+            } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode) {
                 // Authoritative non-429 response had no polygon. Cache empty array so we don't hammer Nominatim repeatedly.
-                // Never negative-cache pin/geoPoint lookups — containment fallbacks must remain available.
+                // Never negative-cache pin lookups — containment fallbacks must remain available.
                 saveToDiskCache(context, cleanKey, emptyList())
             }
         }
@@ -193,11 +218,23 @@ object BoundaryHelper {
         return@withContext null
     }
 
+    /** Pin borders only — reverse-first requires a concrete dropped-pin coordinate. */
+    fun shouldResolveReverseFirst(forPin: Boolean, geoPoint: GeoPoint?): Boolean {
+        return forPin && geoPoint != null
+    }
+
+    /** Live borders keep the named locality polygon even if GPS briefly leaves it. */
+    fun isCachePolygonUsableForLive(points: List<GeoPoint>, @Suppress("UNUSED_PARAMETER") gps: GeoPoint): Boolean {
+        return points.size >= 3
+    }
+
     fun hasBoundary(context: Context, cityName: String?, countryCode: String = "pl"): Boolean {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         } ?: return true
-        val cleanKey = sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}")
+        val cleanKey = sanitizeKey(
+            "${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN"
+        )
         val file = File(getCacheDir(context), "$cleanKey.json")
         return file.exists()
     }

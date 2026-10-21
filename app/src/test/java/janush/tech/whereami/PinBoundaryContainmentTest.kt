@@ -135,4 +135,22 @@ class PinBoundaryContainmentTest {
             BoundaryHelper.adminTightnessScore(adminLevel = 6, placeRank = 12) < 0
         )
     }
+
+    @Test
+    fun `live GPS borders use name-first only pin mode uses reverse-first`() {
+        assertFalse(BoundaryHelper.shouldResolveReverseFirst(forPin = false, geoPoint = pin))
+        assertTrue(BoundaryHelper.shouldResolveReverseFirst(forPin = true, geoPoint = pin))
+        assertFalse(BoundaryHelper.shouldResolveReverseFirst(forPin = true, geoPoint = null))
+    }
+
+    @Test
+    fun `live mode keeps named cache even when GPS is briefly outside polygon`() {
+        // GPS just outside Kobiernice-named cache must still be usable for live borders
+        assertTrue(
+            BoundaryHelper.isCachePolygonUsableForLive(distantEastSquare(), pin)
+        )
+        assertFalse(
+            BoundaryHelper.isCachePolygonUsableForPin(distantEastSquare(), pin)
+        )
+    }
 }

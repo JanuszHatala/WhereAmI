@@ -230,7 +230,8 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
   - `BoundaryHelper.kt`: Nominatim polygon fetch with 2-tier caching (in-memory `ConcurrentHashMap` + persistent on-disk JSON in `cacheDir/boundaries`). Rate-limit mutex (1.5s delay) prevents 429 throttling.
-  - Pin borders (v1.18.0): reverse-first + point-in-polygon gate; prefer village/sołectwo over gmina; reject powiat+; invalidate cache polygons that do not contain the pin (fixes Wielka Puszcza → Andrychów). Live sky-blue borders muted while pin borders are shown.
+  - Pin borders (v1.18.0): reverse-first + point-in-polygon gate (`forPin=true`); prefer village/sołectwo over gmina; reject powiat+; invalidate cache polygons that do not contain the pin (fixes Wielka Puszcza → Andrychów). Live sky-blue borders muted while pin borders are shown.
+  - Live borders (v1.18.1): name-first only (`forPin=false`); cache generation `v3` orphans v1.18.0 reverse-first pollution under city keys.
   - Outdoor pin titles (v1.18.0): `SearchHelper` uses named peak/pass/viewpoint from Nominatim; else Overpass nearby ≤400 m (`selectNearestTouristicPoi`).
 
 ### MAP-08: Traversal Road Heat Map
