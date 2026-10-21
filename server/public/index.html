@@ -561,8 +561,7 @@
     }
 
     function createHostIcon(isOnline, isPaused, statusClass, bearing) {
-      const mapBearing = (map.getBearing ? map.getBearing() : 0) || 0;
-      const b = (bearing !== null && bearing !== undefined) ? (bearing - mapBearing) : 0;
+      const b = (bearing !== null && bearing !== undefined) ? bearing : 0;
       const dotColor = isOnline ? '#22c55e' : (isPaused ? '#f59e0b' : '#94a3b8');
 
       const html = `
@@ -693,9 +692,6 @@
     map.on('rotate', () => {
       const b = (map.getBearing ? map.getBearing() : 0) || 0;
       updateCompassHeading(b);
-      if (userMarker && lastCoords) {
-        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing, lastHostState.accuracy);
-      }
     });
 
     function resetNorth() {
