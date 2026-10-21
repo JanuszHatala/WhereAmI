@@ -204,3 +204,51 @@ data class LiveViewEvent(
         }
     }
 }
+
+object GuestMarkerHelper {
+    fun hasCustomName(name: String?): Boolean {
+        val trimmed = name?.trim() ?: return false
+        return trimmed.isNotBlank() && !trimmed.equals("Guest", ignoreCase = true)
+    }
+
+    fun formatDisplayName(name: String?, maxLen: Int = 12): String {
+        val trimmed = name?.trim() ?: ""
+        if (!hasCustomName(trimmed)) return ""
+        return if (trimmed.length > maxLen) {
+            "${trimmed.take(maxLen - 1)}…"
+        } else {
+            trimmed
+        }
+    }
+
+    fun formatInitial(name: String?): String {
+        val trimmed = name?.trim() ?: ""
+        return if (hasCustomName(trimmed)) {
+            trimmed.take(1).uppercase(Locale.getDefault())
+        } else {
+            ""
+        }
+    }
+
+    fun formatBadgeText(
+        guest: LiveGuest,
+        distanceMeters: Float?,
+        showDistance: Boolean,
+        now: Long = System.currentTimeMillis()
+    ): String {
+        val hasCustom = hasCustomName(guest.name)
+        val displayName = formatDisplayName(guest.name)
+        val timeAgoText = LiveGuest.formatCompactTimeAgo(guest.lastUpdated, now)
+        val distancePart = if (showDistance && distanceMeters != null) {
+            "${LiveGuest.formatDistance(distanceMeters)} • $timeAgoText"
+        } else if (showDistance) {
+            timeAgoText
+        } else ""
+
+        return if (hasCustom) {
+            if (distancePart.isNotEmpty()) "$displayName • $distancePart" else displayName
+        } else {
+            if (showDistance) distancePart else ""
+        }
+    }
+}

@@ -235,5 +235,66 @@ class LiveGuestTest {
         assertEquals(1, filtered.size)
         assertEquals("g1", filtered[0].id)
     }
+
+    @Test
+    fun `test GuestMarkerHelper hasCustomName detection`() {
+        assertFalse(GuestMarkerHelper.hasCustomName(null))
+        assertFalse(GuestMarkerHelper.hasCustomName(""))
+        assertFalse(GuestMarkerHelper.hasCustomName("   "))
+        assertFalse(GuestMarkerHelper.hasCustomName("Guest"))
+        assertFalse(GuestMarkerHelper.hasCustomName("guest"))
+        assertFalse(GuestMarkerHelper.hasCustomName("GUEST"))
+        assertFalse(GuestMarkerHelper.hasCustomName("  Guest  "))
+
+        assertTrue(GuestMarkerHelper.hasCustomName("Niki"))
+        assertTrue(GuestMarkerHelper.hasCustomName("ja"))
+        assertTrue(GuestMarkerHelper.hasCustomName("Aleksander"))
+        assertTrue(GuestMarkerHelper.hasCustomName("Guest 1")) // "Guest 1" is distinct from bare "Guest"
+    }
+
+    @Test
+    fun `test GuestMarkerHelper formatDisplayName and truncation`() {
+        assertEquals("", GuestMarkerHelper.formatDisplayName(null))
+        assertEquals("", GuestMarkerHelper.formatDisplayName("Guest"))
+        assertEquals("", GuestMarkerHelper.formatDisplayName("   "))
+        assertEquals("Niki", GuestMarkerHelper.formatDisplayName("Niki"))
+        assertEquals("ja", GuestMarkerHelper.formatDisplayName("ja"))
+        assertEquals("Aleksander", GuestMarkerHelper.formatDisplayName("Aleksander"))
+        assertEquals("123456789012", GuestMarkerHelper.formatDisplayName("123456789012"))
+        assertEquals("12345678901…", GuestMarkerHelper.formatDisplayName("1234567890123"))
+        assertEquals("Aleksander-…", GuestMarkerHelper.formatDisplayName("Aleksander-Sikora"))
+    }
+
+    @Test
+    fun `test GuestMarkerHelper formatInitial`() {
+        assertEquals("", GuestMarkerHelper.formatInitial(null))
+        assertEquals("", GuestMarkerHelper.formatInitial(""))
+        assertEquals("", GuestMarkerHelper.formatInitial("Guest"))
+        assertEquals("N", GuestMarkerHelper.formatInitial("Niki"))
+        assertEquals("N", GuestMarkerHelper.formatInitial("niki"))
+        assertEquals("J", GuestMarkerHelper.formatInitial("ja"))
+        assertEquals("K", GuestMarkerHelper.formatInitial("  Kamil  "))
+    }
+
+    @Test
+    fun `test GuestMarkerHelper formatBadgeText permutations`() {
+        val now = 1700000000000L
+        val unnamed = LiveGuest(id = "g1", name = "Guest", lat = 50.0, lng = 20.0, lastUpdated = now)
+        val named = LiveGuest(id = "g2", name = "Niki", lat = 50.0, lng = 20.0, lastUpdated = now)
+        val longNamed = LiveGuest(id = "g3", name = "Aleksander-Sikora", lat = 50.0, lng = 20.0, lastUpdated = now)
+
+        // Unnamed permutations
+        assertEquals("1.1 km • now", GuestMarkerHelper.formatBadgeText(unnamed, 1120f, showDistance = true, now = now))
+        assertEquals("now", GuestMarkerHelper.formatBadgeText(unnamed, null, showDistance = true, now = now))
+        assertEquals("", GuestMarkerHelper.formatBadgeText(unnamed, 1120f, showDistance = false, now = now))
+
+        // Named permutations
+        assertEquals("Niki • 1.1 km • now", GuestMarkerHelper.formatBadgeText(named, 1120f, showDistance = true, now = now))
+        assertEquals("Niki • now", GuestMarkerHelper.formatBadgeText(named, null, showDistance = true, now = now))
+        assertEquals("Niki", GuestMarkerHelper.formatBadgeText(named, 1120f, showDistance = false, now = now))
+
+        // Truncated name permutation
+        assertEquals("Aleksander-… • 1.1 km • now", GuestMarkerHelper.formatBadgeText(longNamed, 1120f, showDistance = true, now = now))
+    }
 }
 
