@@ -13090,175 +13090,458 @@ private fun LiveViewsDetailsDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // List of chronological visit events
-                val displayEvents = remember(viewEvents, guests) {
-                    if (viewEvents.isNotEmpty()) {
-                        viewEvents
-                    } else {
-                        // Fallback synthesis from guests list if server viewLog is empty
-                        guests.sortedByDescending { it.lastUpdated }.map { g ->
-                            LiveViewEvent(
-                                id = g.id,
-                                timestamp = g.lastUpdated,
-                                guestId = g.id,
-                                guestName = g.name,
-                                device = null,
-                                colorIndex = g.colorIndex,
-                                lat = g.lat,
-                                lng = g.lng,
-                                accuracy = g.accuracy
+                // Segmented Tab Bar: Grouped Visitors vs Detailed Chronological History
+                var selectedTab by remember { mutableStateOf(0) } // 0 = Visitors, 1 = Detailed History
+                val totalLogCount = remember(viewEvents, guests, session.viewCount) {
+                    if (viewEvents.isNotEmpty()) viewEvents.size
+                    else guests.sumOf { it.viewCount }.coerceAtLeast(session.viewCount)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Tab 0: Visitors (unique)
+                    Surface(
+                        onClick = { selectedTab = 0 },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selectedTab == 0) Color(0xFF0284C7) else Color.Transparent
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            EmojiText(emoji = "👥", fontSize = 12.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Visitors (${guests.size})",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    // Tab 1: Detailed Log (chronological events)
+                    Surface(
+                        onClick = { selectedTab = 1 },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selectedTab == 1) Color(0xFF0284C7) else Color.Transparent
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            EmojiText(emoji = "📜", fontSize = 12.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "History ($totalLogCount)",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
                 }
 
-                if (displayEvents.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            EmojiText(emoji = "👁️", fontSize = 36.sp, yOffsetDp = 0.dp)
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = "No views recorded yet",
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Share the live link with friends or family to see them here.",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 12.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 24.dp)
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(displayEvents, key = { it.id }) { event ->
-                            val matchingGuest = guests.find { it.id == event.guestId }
-                            val guestColor = Color(LiveGuest.getColor(matchingGuest?.colorIndex ?: event.colorIndex))
-                            val hasLocation = event.hasLocation || (matchingGuest != null && matchingGuest.lat != 0.0)
-                            val guestLat = event.lat ?: matchingGuest?.lat
-                            val guestLng = event.lng ?: matchingGuest?.lng
+                Spacer(modifier = Modifier.height(12.dp))
 
-                            val distanceStr = if (currentLatLng != null && guestLat != null && guestLng != null) {
-                                val results = FloatArray(1)
-                                android.location.Location.distanceBetween(
-                                    currentLatLng.first, currentLatLng.second, guestLat, guestLng, results
+                if (selectedTab == 0) {
+                    // ── Tab 0: Grouped Unique Visitors ───────────────────────
+                    if (guests.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                EmojiText(emoji = "👥", fontSize = 36.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "No visitors yet",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
-                                LiveGuest.formatDistance(results[0])
-                            } else null
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFF1E293B),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (matchingGuest != null) {
-                                            Modifier.clickable { onGuestClick(matchingGuest) }
-                                        } else Modifier
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Share your live link to see visitors here.",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 24.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        val sortedGuests = remember(guests) { guests.sortedByDescending { it.lastUpdated } }
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(sortedGuests, key = { it.id }) { guest ->
+                                val guestColor = Color(LiveGuest.getColor(guest.colorIndex))
+                                val hasLocation = guest.lat != 0.0 && !guest.lat.isNaN()
+                                val distanceStr = if (currentLatLng != null && hasLocation) {
+                                    val results = FloatArray(1)
+                                    android.location.Location.distanceBetween(
+                                        currentLatLng.first, currentLatLng.second, guest.lat, guest.lng, results
                                     )
-                            ) {
-                                Row(
+                                    LiveGuest.formatDistance(results[0])
+                                } else null
+
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF1E293B),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .clickable { onGuestClick(guest) }
                                 ) {
-                                    // Avatar circle
-                                    Box(
+                                    Row(
                                         modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
-                                            .background(guestColor),
-                                        contentAlignment = Alignment.Center
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = (event.guestName.take(1).ifBlank { "G" }).uppercase(),
-                                            color = Color.White,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    // Details column
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        // Avatar circle
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(guestColor),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = event.guestName,
+                                                text = (guest.name.take(1).ifBlank { "G" }).uppercase(),
                                                 color = Color.White,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
+                                        }
 
-                                            if (!event.device.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = guest.name,
+                                                    color = Color.White,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+
+                                                // View count badge
                                                 Box(
                                                     modifier = Modifier
-                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .clip(RoundedCornerShape(6.dp))
                                                         .background(Color(0xFF334155))
-                                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                                 ) {
                                                     Text(
-                                                        text = event.device,
+                                                        text = "${guest.viewCount} ${if (guest.viewCount == 1) "view" else "views"}",
                                                         fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = Color(0xFFE2E8F0)
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF38BDF8)
+                                                    )
+                                                }
+
+                                                if (guest.isInactive) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(6.dp))
+                                                            .background(Color(0x33F59E0B))
+                                                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "⏸️ Inactive",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFFF59E0B)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(3.dp))
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+                                                val clockStr = timeFormat.format(java.util.Date(guest.lastUpdated))
+                                                Text(
+                                                    text = "${LiveGuest.formatTimeAgo(guest.lastUpdated)} ($clockStr)",
+                                                    color = Color(0xFF94A3B8),
+                                                    fontSize = 11.sp
+                                                )
+
+                                                if (distanceStr != null) {
+                                                    Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
+                                                    Text(
+                                                        text = "$distanceStr away",
+                                                        color = Color(0xFF38BDF8),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium
                                                     )
                                                 }
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
 
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            // Timestamp
-                                            Text(
-                                                text = LiveGuest.formatTimeAgo(event.timestamp),
-                                                color = Color(0xFF94A3B8),
-                                                fontSize = 11.sp
-                                            )
-
-                                            if (distanceStr != null) {
-                                                Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
+                                        // Status badge
+                                        if (hasLocation) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0x3310B981))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
                                                 Text(
-                                                    text = "$distanceStr away",
-                                                    color = Color(0xFF38BDF8),
+                                                    text = "📍 Shared",
                                                     fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Medium
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF10B981)
+                                                )
+                                            }
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0xFF334155))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "👁️ Viewed",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = Color(0xFFCBD5E1)
                                                 )
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // ── Tab 1: Detailed Chronological History Log ───────────
+                    val displayEvents = remember(viewEvents, guests) {
+                        if (viewEvents.isNotEmpty()) {
+                            viewEvents.sortedByDescending { it.timestamp }
+                        } else {
+                            // Synthesize individual chronological events from guests
+                            val synth = mutableListOf<LiveViewEvent>()
+                            for (g in guests) {
+                                val count = g.viewCount.coerceAtLeast(1)
+                                if (count == 1 || g.firstSeen == g.lastUpdated) {
+                                    synth.add(
+                                        LiveViewEvent(
+                                            id = "${g.id}-1",
+                                            timestamp = g.lastUpdated,
+                                            guestId = g.id,
+                                            guestName = g.name,
+                                            device = null,
+                                            colorIndex = g.colorIndex,
+                                            lat = g.lat,
+                                            lng = g.lng,
+                                            accuracy = g.accuracy
+                                        )
+                                    )
+                                } else {
+                                    val timeSpan = maxOf(0L, g.lastUpdated - g.firstSeen)
+                                    val step = if (count > 1) timeSpan / (count - 1) else 0L
+                                    for (v in 0 until count) {
+                                        val eventTime = if (v == count - 1) g.lastUpdated else (g.firstSeen + v * step)
+                                        synth.add(
+                                            LiveViewEvent(
+                                                id = "${g.id}-${count - v}",
+                                                timestamp = eventTime,
+                                                guestId = g.id,
+                                                guestName = g.name,
+                                                device = null,
+                                                colorIndex = g.colorIndex,
+                                                lat = g.lat,
+                                                lng = g.lng,
+                                                accuracy = g.accuracy
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                            synth.sortedByDescending { it.timestamp }
+                        }
+                    }
 
-                                    // Status badge
-                                    if (hasLocation) {
+                    if (displayEvents.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                EmojiText(emoji = "📜", fontSize = 36.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "No history recorded yet",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Each page view will appear here chronologically.",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 24.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(displayEvents, key = { it.id }) { event ->
+                                val matchingGuest = guests.find { it.id == event.guestId }
+                                val guestColor = Color(LiveGuest.getColor(matchingGuest?.colorIndex ?: event.colorIndex))
+                                val hasLocation = event.hasLocation || (matchingGuest != null && matchingGuest.lat != 0.0)
+                                val guestLat = event.lat ?: matchingGuest?.lat
+                                val guestLng = event.lng ?: matchingGuest?.lng
+
+                                val distanceStr = if (currentLatLng != null && guestLat != null && guestLng != null) {
+                                    val results = FloatArray(1)
+                                    android.location.Location.distanceBetween(
+                                        currentLatLng.first, currentLatLng.second, guestLat, guestLng, results
+                                    )
+                                    LiveGuest.formatDistance(results[0])
+                                } else null
+
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF1E293B),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (matchingGuest != null) {
+                                                Modifier.clickable { onGuestClick(matchingGuest) }
+                                            } else Modifier
+                                        )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Avatar circle
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x3310B981))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                .size(38.dp)
+                                                .clip(CircleShape)
+                                                .background(guestColor),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = (event.guestName.take(1).ifBlank { "G" }).uppercase(),
+                                                color = Color.White,
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        // Details column
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = event.guestName,
+                                                    color = Color.White,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+
+                                                if (!event.device.isNullOrBlank()) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(4.dp))
+                                                            .background(Color(0xFF334155))
+                                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = event.device,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFFE2E8F0)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(3.dp))
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+                                                val clockStr = timeFormat.format(java.util.Date(event.timestamp))
+                                                Text(
+                                                    text = "${LiveGuest.formatTimeAgo(event.timestamp)} ($clockStr)",
+                                                    color = Color(0xFF94A3B8),
+                                                    fontSize = 11.sp
+                                                )
+
+                                                if (distanceStr != null) {
+                                                    Text("•", color = Color(0xFF64748B), fontSize = 11.sp)
+                                                    Text(
+                                                        text = "$distanceStr away",
+                                                        color = Color(0xFF38BDF8),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Status badge
+                                        if (hasLocation) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0x3310B981))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                                         ) {
                                             Text(
                                                 text = "📍 Shared",
@@ -13290,4 +13573,5 @@ private fun LiveViewsDetailsDialog(
             }
         }
     }
+}
 }
