@@ -85,6 +85,27 @@ class WalkingRefinementsTest {
     }
 
     @Test
+    fun `crawl speed inside parking nest commits nothing until escape distance`() {
+        val s = AdaptiveTrackSampler()
+        val out = ArrayList<SmoothedPoint>()
+        // Anchor at origin while "creeping" at 0.8 m/s inside 12 m
+        out.addAll(s.offer(sp(0L, 0.0, 0.0, 0.8, stationary = false)))
+        for (i in 1..20) {
+            out.addAll(s.offer(sp(i * 1_000L, i * 0.4, 0.0, 0.8, stationary = false)))
+        }
+        assertEquals("crawl nest must not densify", 1, out.size)
+        // Escape beyond PARKING_ESCAPE_M
+        out.addAll(s.offer(sp(25_000L, 15.0, 0.0, 0.8, stationary = false)))
+        assertTrue(out.size >= 2)
+    }
+
+    @Test
+    fun `normal walking speed is not held by the crawl nest rule`() {
+        val walk = sample(AdaptiveTrackSampler(), straight(1.3, 40, hz = 2))
+        assertTrue("walking at 1.3 m/s must still densify", walk.size >= 5)
+    }
+
+    @Test
     fun `density follows measured speed, not the selected profile`() {
         // The sampler has no profile input: a "walking" session that is actually driving gets driving density.
         val asDriving = sample(AdaptiveTrackSampler(), straight(25.0, 60))

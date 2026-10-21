@@ -116,7 +116,8 @@ class PencilTrail(private val maxPoints: Int = 600) {
          * Vehicles use a 2 m floor to cut zig-zag pencil noise on curves before the smoother commits.
          */
         fun minStepM(speedMps: Double, vehicle: Boolean = false): Double {
-            val floor = if (vehicle) 2.0 else 1.0
+            // Vehicles: coarser pencil reduces tip zigzag while RTS reshapes the last second.
+            val floor = if (vehicle) 3.0 else 1.0
             return (0.15 * speedMps).coerceIn(floor, 4.0)
         }
 

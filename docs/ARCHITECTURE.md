@@ -213,6 +213,11 @@ Battery optimization is the highest engineering priority:
   - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
+- **Amendment (v1.17.8, indoor auto-start + SK cache, 2026-10-21)**:
+  - *Auto-start*: uses `ResumeMotionGate` (accuracy + sustained speed + real displacement); removed 25 m / 8 s shortcut.
+  - *Scribble discard*: auto trips with nest geometry (`TripScribble`) deleted on stop.
+  - *SK highways*: `sanitizeStreetForCountry` + spatial-cache migration of Polish `DK*`/`DW*` → `I/`/`II/`.
+  - *Parking crawl*: `AdaptiveTrackSampler` holds vertices below 1.0 m/s until 12 m escape; vehicle pencil floor 3 m.
 - **Amendment (v1.17.7, driving field round 2026-10-21)**:
   - *Named street over bare highway code*: when OSRM `/nearest` returns only `DW948`/`DK52` but OSM/Geocoder has a local name, coalesce to `Krakowska (DW948)` (`RoadNameNormalizer.coalesceOsrmAndOsmStreet`).
   - *Spatial cache write protect*: never overwrite a named street cell with a bare highway code; persist `road_ref` when known.

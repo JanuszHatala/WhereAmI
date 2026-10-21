@@ -80,10 +80,12 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                         "Kozy"
                     } else rawCity
                 } else rawCity
+                val rawStreet = obj.optString("street").takeIf { it.isNotBlank() }
+                val rawRoadRef = obj.optString("roadRef").takeIf { it.isNotBlank() }
                 PlaceInfo(
                     city = resolvedCity,
-                    street = obj.optString("street").takeIf { it.isNotBlank() },
-                    roadRef = obj.optString("roadRef").takeIf { it.isNotBlank() },
+                    street = RoadNameNormalizer.sanitizeStreetForCountry(rawStreet, cc) ?: rawStreet,
+                    roadRef = RoadNameNormalizer.sanitizeStreetForCountry(rawRoadRef, cc) ?: rawRoadRef,
                     gmina = rawGmina,
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
                     voivodeship = resolvedVoivodeship,
@@ -123,6 +125,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         super.onOpen(db)
         migrateLegacyKeys(db)
         sanitizeKnownMismatches(db)
+        sanitizePolishHighwayCodesOutsidePoland(db)
     }
 
     /**
@@ -144,6 +147,78 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                          OR street LIKE '%Bukietowa%'))
                    OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło')
             """.trimIndent())
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Rewrites Polish `DK*` / `DW*` street labels stored under non-PL [countryCode] (e.g. Slovakia
+     * `DW537` → `II/537`). Idempotent; safe to run on every open.
+     */
+    fun sanitizePolishHighwayCodesOutsidePoland(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_STREET LIKE 'DK%' OR $COL_STREET LIKE 'DW%'
+                   OR $COL_STREET LIKE '%(DK%' OR $COL_STREET LIKE '%(DW%'
+                   OR $COL_ROAD_REF LIKE 'DK%' OR $COL_ROAD_REF LIKE 'DW%'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val street = it.getString(1)
+                    val roadRef = it.getString(2)
+                    val en = deserializePlaceInfo(it.getString(3))
+                    val pl = deserializePlaceInfo(it.getString(4))
+                    val native = deserializePlaceInfo(it.getString(5))
+                    val cc = pl?.countryCode?.takeIf { c -> c.isNotBlank() }
+                        ?: en?.countryCode?.takeIf { c -> c.isNotBlank() }
+                        ?: native?.countryCode
+                    if (cc.isNullOrBlank() || cc.equals("PL", ignoreCase = true)) continue
+
+                    val newStreet = RoadNameNormalizer.sanitizeStreetForCountry(street, cc)
+                    val newRef = RoadNameNormalizer.sanitizeStreetForCountry(roadRef, cc)
+                    val newEn = en?.copy(
+                        street = RoadNameNormalizer.sanitizeStreetForCountry(en.street, cc) ?: en.street,
+                        roadRef = RoadNameNormalizer.sanitizeStreetForCountry(en.roadRef, cc) ?: en.roadRef
+                    )
+                    val newPl = pl?.copy(
+                        street = RoadNameNormalizer.sanitizeStreetForCountry(pl.street, cc) ?: pl.street,
+                        roadRef = RoadNameNormalizer.sanitizeStreetForCountry(pl.roadRef, cc) ?: pl.roadRef
+                    )
+                    val newNative = native?.copy(
+                        street = RoadNameNormalizer.sanitizeStreetForCountry(native.street, cc) ?: native.street,
+                        roadRef = RoadNameNormalizer.sanitizeStreetForCountry(native.roadRef, cc) ?: native.roadRef
+                    )
+                    if (newStreet == street && newRef == roadRef &&
+                        newEn?.street == en?.street && newPl?.street == pl?.street
+                    ) continue
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_STREET, newStreet)
+                        put(COL_ROAD_REF, newRef)
+                        if (newEn != null) put(COL_EN_JSON, serializePlaceInfo(newEn))
+                        if (newPl != null) put(COL_PL_JSON, serializePlaceInfo(newPl))
+                        if (newNative != null) put(COL_NATIVE_JSON, serializePlaceInfo(newNative))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         } catch (_: Exception) {}
     }
 

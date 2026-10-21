@@ -252,6 +252,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
   - `TripManager.kt`: Sensitive auto-start ($\ge 25\text{m}$ displacement over 8s) and configurable stationary auto-stop (1m, 3m, 5m, 10m).
+  - Indoor auto-start guard (v1.17.8): `ResumeMotionGate` for AUTO start; discard multipath scribble trips; SK `DK`/`DW`→`I`/`II` cache sanitize; parking crawl vertex hold.
   - Named street over highway code (v1.17.7): OSRM bare `DW*`/`DK*` coalesced with OSM local name; spatial cache refuses code-only overwrites of named streets.
   - Driving display road snap (v1.17.1): live cursor/polyline may pull ≤18 m toward OSRM `/nearest` for road alignment (`DisplayRoadSnap`); recorded `track_points` stay GNSS/filter geometry.
   - Street card formatting (v1.17.1): `formatStreetDisplay` shows `Krakowska (DK52)` instead of `Krakowska • 52` when street name and road ref are both present.

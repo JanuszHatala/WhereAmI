@@ -40,6 +40,11 @@ class AdaptiveTrackSampler {
         }
 
         val chord = distanceM(a, p)
+        // Creeping / parking GNSS texture (< ~4 km/h): do not densify until the vehicle has left the nest.
+        if (p.speedMps < CRAWL_SPEED_MPS && chord < PARKING_ESCAPE_M) {
+            window.add(p)
+            return emptyList()
+        }
         if (chord < minSpacingM(p.speedMps)) {
             window.add(p)
             return emptyList()
@@ -86,6 +91,10 @@ class AdaptiveTrackSampler {
 
     companion object {
         const val MAX_INTERVAL_MS = 30_000L
+        /** Below this (~3.6 km/h), GNSS texture while "moving" is treated as a parking / courtyard nest. */
+        const val CRAWL_SPEED_MPS = 1.0
+        /** Chord length that ends the crawl hold (leaving the lot / building). */
+        const val PARKING_ESCAPE_M = 12.0
 
         /** Allowed sideways error of the stored polyline vs. the smoothed path. */
         fun toleranceM(speedMps: Double): Double = (0.25 + 0.06 * speedMps).coerceIn(0.25, 2.0)
