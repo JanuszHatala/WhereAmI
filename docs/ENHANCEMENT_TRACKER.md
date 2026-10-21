@@ -1381,3 +1381,12 @@ User feedback:
 | **UI106-06** | Dedicated map button for offline cache deficit alert with amber exclamation badge. | `OsmMapView.kt` | Implemented | Rendered 42dp slate button in right-side map column with `Icons.Default.Storage` + amber `!` badge whenever `cacheDeficit.missingRoutes + missingBoundaries > 0`, tapping opens `CacheManagerDialog` |
 | **VER-106** | versionCode 141 / 1.18.10 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Build and unit test gates pass (`BUILD SUCCESSFUL in 26s`) |
 
+## 110. Round 107: Live Web Viewer Info Panel Responsive Redesign & Unique Guest Names (2026-10-21, web-only)
+
+Evidence: narrow-window screenshots of the visitor `/live/:id` card (vertical title crush, stacked Driving/Maps, Guest 1 collisions). No Android `versionCode` bump (server/web only).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **LIV-R07** | Visitor info panel unusable on very narrow windows. | `server/public/index.html` | **Completed** | Header grid (title, badge, toggle) with place under host title; stable expand/collapse padding `14px 16px`; activity \| Maps row; elapsed in details; guest footer "Sharing as". |
+| **LIV-R08** | Narrow follow-up: `Wh...`, mid-value wraps, orphaned Maps, lonely elapsed row. | `server/public/index.html` | **Completed** | Title 2-line clamp; dual-label LIVE badge; Maps short label <=400px; single-column stats + nowrap <=360px; `Elapsed: 1m` as normal grid cell. |
+| **LIV-R09** | Default guest nicknames collide as "Guest 1". | `server/guestNaming.js`, `server/server.js`, `server/guestNaming.test.js`, `server/Dockerfile` | **Completed** | Lowest-unused `Guest N`; `node --test guestNaming.test.js` (7 pass). |

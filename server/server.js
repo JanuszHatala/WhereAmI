@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { allocateGuestIdentity, resolveGuestDisplayName, parseGuestNumber } = require('./guestNaming');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -226,7 +227,9 @@ function getEnrichedViewLog(session) {
       id: event.id,
       t: event.t,
       guestId: event.guestId,
-      name: guest?.name || event.name || 'Guest',
+      name: guest
+        ? resolveGuestDisplayName(guest, session.guests, event.guestId)
+        : (event.name || 'Guest'),
       device: event.device,
       colorIndex: typeof guest?.colorIndex === 'number' ? guest.colorIndex : (event.colorIndex || 0),
       lat: (guest && typeof guest.lat === 'number') ? guest.lat : null,
@@ -302,9 +305,11 @@ app.post('/api/sessions/:id/points', (req, res) => {
     for (const [gId, g] of Object.entries(session.guests)) {
       if (!g || typeof g.lat !== 'number' || typeof g.lng !== 'number') continue;
       const isInactive = (Date.now() - g.t) > inactivityThresholdMs;
+      const displayName = resolveGuestDisplayName(g, session.guests, gId);
+      if (!g.name) g.name = displayName;
       guestsList.push({
         id: g.id || gId,
-        name: g.name || `Guest ${(g.colorIndex || 0) + 1}`,
+        name: displayName,
         lat: g.lat,
         lng: g.lng,
         acc: g.acc,
@@ -356,12 +361,11 @@ app.post('/api/sessions/:id/guests/:guestId', (req, res) => {
 
   let existing = session.guests[guestId];
   if (!existing) {
-    const guestKeys = Object.keys(session.guests);
-    const colorIndex = guestKeys.length % 8;
+    const identity = allocateGuestIdentity(session.guests);
     existing = {
       id: guestId,
-      name: (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 30) : `Guest ${guestKeys.length + 1}`,
-      colorIndex: colorIndex,
+      name: (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 30) : identity.name,
+      colorIndex: identity.colorIndex,
       firstSeen: Date.now(),
       viewCount: 1,
       createdAt: Date.now()
@@ -369,6 +373,12 @@ app.post('/api/sessions/:id/guests/:guestId', (req, res) => {
   } else {
     if (typeof name === 'string' && name.trim()) {
       existing.name = name.trim().slice(0, 30);
+    } else if (!existing.name) {
+      existing.name = resolveGuestDisplayName(existing, session.guests, guestId);
+    }
+    if (typeof existing.colorIndex !== 'number') {
+      const n = parseGuestNumber(existing.name);
+      existing.colorIndex = n !== null ? (n - 1) % 8 : 0;
     }
     if (!existing.firstSeen) existing.firstSeen = existing.createdAt || Date.now();
     if (!existing.viewCount) existing.viewCount = 1;
@@ -450,11 +460,11 @@ app.get('/api/sessions/:id', (req, res) => {
     const cleanGuestId = guestId.trim().slice(0, 64);
     if (cleanGuestId) {
       if (!session.guests[cleanGuestId]) {
-        const guestKeys = Object.keys(session.guests);
+        const identity = allocateGuestIdentity(session.guests);
         session.guests[cleanGuestId] = {
           id: cleanGuestId,
-          name: `Guest ${guestKeys.length + 1}`,
-          colorIndex: guestKeys.length % 8,
+          name: identity.name,
+          colorIndex: identity.colorIndex,
           firstSeen: Date.now(),
           viewCount: 1,
           createdAt: Date.now()
@@ -479,13 +489,17 @@ app.get('/api/sessions/:id', (req, res) => {
         else if (/Linux/i.test(userAgent)) device = 'Linux';
 
         const g = session.guests[cleanGuestId];
+        const logName = g
+          ? resolveGuestDisplayName(g, session.guests, cleanGuestId)
+          : allocateGuestIdentity(session.guests).name;
+        if (g && !g.name) g.name = logName;
         session.viewLog.unshift({
           id: `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
           t: Date.now(),
           guestId: cleanGuestId,
-          name: g ? g.name : `Guest ${(g?.colorIndex || 0) + 1}`,
+          name: logName,
           device: device,
-          colorIndex: g ? (g.colorIndex || 0) : 0
+          colorIndex: g ? (typeof g.colorIndex === 'number' ? g.colorIndex : 0) : 0
         });
         if (session.viewLog.length > 200) session.viewLog.pop();
         saveSessions();
@@ -558,9 +572,11 @@ app.get('/api/sessions/:id/views', (req, res) => {
     for (const [gId, g] of Object.entries(session.guests)) {
       if (!g) continue;
       const isInactive = (Date.now() - (g.t || g.createdAt || 0)) > inactivityThresholdMs;
+      const displayName = resolveGuestDisplayName(g, session.guests, gId);
+      if (!g.name) g.name = displayName;
       guestsList.push({
         id: g.id || gId,
-        name: g.name || `Guest ${(g.colorIndex || 0) + 1}`,
+        name: displayName,
         lat: typeof g.lat === 'number' ? g.lat : null,
         lng: typeof g.lng === 'number' ? g.lng : null,
         acc: typeof g.acc === 'number' ? g.acc : null,
