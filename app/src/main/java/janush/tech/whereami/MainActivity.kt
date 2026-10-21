@@ -3645,20 +3645,71 @@ fun LocationScreen(viewModel: MainViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "🌙 Automatic Sleep Mode",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bedtime,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "Automatic Sleep Mode",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 15.sp
+                                        )
+                                    )
+                                    if (isStandbySleeping) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color(0xFF047857)
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "SLEEPING",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    style = TextStyle(
+                                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                        lineHeightStyle = LineHeightStyle(
+                                                            alignment = LineHeightStyle.Alignment.Center,
+                                                            trim = LineHeightStyle.Trim.Both
+                                                        ),
+                                                        lineHeight = 10.sp
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                                 Text(
                                     text = "Auto-hibernates GPS & tracking overnight to eliminate idle battery drain.",
                                     fontSize = 11.sp,
                                     color = Color(0xFF94A3B8),
-                                    modifier = Modifier.padding(top = 2.dp)
+                                    modifier = Modifier.padding(top = 3.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -3677,8 +3728,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(24.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .height(20.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
@@ -3697,36 +3747,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         lineHeight = 12.sp
                                     )
                                 )
-                                if (isStandbySleeping) {
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = Color(0xFF047857)
-                                    ) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                        ) {
-                                            Text(
-                                                text = "SLEEPING",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                style = TextStyle(
-                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                    lineHeightStyle = LineHeightStyle(
-                                                        alignment = LineHeightStyle.Alignment.Center,
-                                                        trim = LineHeightStyle.Trim.Both
-                                                    ),
-                                                    lineHeight = 10.sp
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
                             }
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -3770,8 +3792,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         isBedtime = true,
                                         onDismiss = { showStartTimeDialog = false },
                                         onConfirm = {
-                                            viewModel.setAutoSleepStartTime(it)
-                                            showStartTimeDialog = false
+                                             viewModel.setAutoSleepStartTime(it)
+                                             showStartTimeDialog = false
                                         }
                                     )
                                 }
@@ -3782,31 +3804,53 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         isBedtime = false,
                                         onDismiss = { showEndTimeDialog = false },
                                         onConfirm = {
-                                            viewModel.setAutoSleepEndTime(it)
-                                            showEndTimeDialog = false
+                                             viewModel.setAutoSleepEndTime(it)
+                                             showEndTimeDialog = false
                                         }
                                     )
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { viewModel.setAutoSleepFollowDnd(!autoSleepFollowDnd) }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Checkbox(
                                     checked = autoSleepFollowDnd,
                                     onCheckedChange = { viewModel.setAutoSleepFollowDnd(it) },
                                     colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Follow Do Not Disturb (DND)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                    Text("Enters sleep early if DND turns on in the evening; wakes if DND turns off in the morning.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 2.dp, top = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Follow Do Not Disturb (DND)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
+                                    )
+                                    Text(
+                                        text = "Sleeps early when DND turns on; wakes when DND turns off.",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF94A3B8),
+                                        modifier = Modifier.padding(top = 1.dp),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
                             }
 
@@ -3815,17 +3859,39 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { viewModel.setAutoSleepFollowAlarm(!autoSleepFollowAlarm) }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Checkbox(
                                     checked = autoSleepFollowAlarm,
                                     onCheckedChange = { viewModel.setAutoSleepFollowAlarm(it) },
                                     colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Sync with Morning Alarm", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                    Text("Wakes automatically when device alarm fires in the morning.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 2.dp, top = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Sync with Morning Alarm",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
+                                    )
+                                    Text(
+                                        text = "Wakes automatically when device morning alarm rings.",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF94A3B8),
+                                        modifier = Modifier.padding(top = 1.dp),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
                             }
 
@@ -3834,22 +3900,44 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { viewModel.setAutoSleepPauseLiveShare(!autoSleepPauseLiveShare) }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Checkbox(
                                     checked = autoSleepPauseLiveShare,
                                     onCheckedChange = { viewModel.setAutoSleepPauseLiveShare(it) },
                                     colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0284C7))
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Pause Live Sharing overnight", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                    Text("Pauses active sharing during sleep to eliminate network pings; resumes upon waking.", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 2.dp, top = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Pause Live Sharing overnight",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
+                                    )
+                                    Text(
+                                        text = "Pauses live sharing while sleeping to eliminate network pings.",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF94A3B8),
+                                        modifier = Modifier.padding(top = 1.dp),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Button(
                             onClick = { viewModel.toggleStandbySleep() },
@@ -3859,12 +3947,28 @@ fun LocationScreen(viewModel: MainViewModel) {
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = if (isStandbySleeping) "▶ Wake from Sleep Now" else "🌙 Enter Sleep Mode Now",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isStandbySleeping) Icons.Default.WbSunny else Icons.Default.Bedtime,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isStandbySleeping) "Wake from Sleep" else "Enter Sleep Mode",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 12.sp
+                                    )
+                                )
+                            }
                         }
                     }
                 }
