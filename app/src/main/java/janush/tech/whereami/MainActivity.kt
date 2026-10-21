@@ -2189,74 +2189,54 @@ fun LocationScreen(viewModel: MainViewModel) {
                             Spacer(modifier = Modifier.height(6.dp))
                         }
 
-                        // Multi-Select Action Bar (Fit Map, Merge, Filter Selection, Select All / Deselect All)
+                        // Multi-Select Action Bar (Two-Tier Contextual Selection Layout)
                         val allFilteredSelected = displayedTrips.isNotEmpty() && displayedTrips.all { selectedTripIds.contains(it.id) }
 
-                        // Action Bar: Selection Actions & Select All
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (selectedTripIds.isNotEmpty()) {
+                        if (selectedTripIds.isNotEmpty()) {
+                            // ── Tier 1: Selection Status & Scope ──
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, bottom = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Left: Selected pill with one-tap clear
+                                Surface(
+                                    color = Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "${selectedTripIds.size} selected",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF38BDF8),
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        IconButton(
+                                            onClick = { viewModel.clearTripSelection() },
+                                            modifier = Modifier.size(20.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Clear Selection",
+                                                tint = Color(0xFF94A3B8),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Right: Selection View Filter toggle & Select/Deselect All
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Surface(
-                                        color = Color(0xFF1E293B),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "${selectedTripIds.size} selected",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF38BDF8)
-                                            )
-                                            IconButton(
-                                                onClick = { viewModel.clearTripSelection() },
-                                                modifier = Modifier.size(20.dp)
-                                            ) {
-                                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color(0xFF94A3B8), modifier = Modifier.size(12.dp))
-                                            }
-                                        }
-                                    }
-
-                                    if (selectedTripIds.size >= 2) {
-                                        Button(
-                                            onClick = { showMergeConfirmationDialog = true },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                            modifier = Modifier.height(28.dp),
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Icon(Icons.Default.CallMerge, contentDescription = "Merge", tint = Color.White, modifier = Modifier.size(13.dp))
-                                            Spacer(modifier = Modifier.width(3.dp))
-                                            Text("Merge", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                        }
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            showTripsSheet = false
-                                            viewModel.triggerFitTrack()
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Icon(Icons.Default.CropFree, contentDescription = "Fit Map", tint = Color.White, modifier = Modifier.size(13.dp))
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Fit Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-
                                     Button(
                                         onClick = {
                                             tripSelectionFilterMode = when (tripSelectionFilterMode) {
@@ -2273,7 +2253,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             }
                                         ),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp),
+                                        modifier = Modifier.height(26.dp),
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Icon(
@@ -2284,7 +2264,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             },
                                             contentDescription = "Filter Selection",
                                             tint = Color.White,
-                                            modifier = Modifier.size(13.dp)
+                                            modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
@@ -2300,8 +2280,100 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             softWrap = false
                                         )
                                     }
+
+                                    TextButton(
+                                        onClick = {
+                                            if (allFilteredSelected) {
+                                                viewModel.clearTripSelection()
+                                            } else {
+                                                viewModel.setSelectedTripIds(displayedTrips.map { it.id }.toSet())
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text(
+                                            text = if (allFilteredSelected) "Deselect All" else "Select All (${displayedTrips.size})",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
                                 }
-                            } else {
+                            }
+
+                            // ── Tier 2: Contextual Actions on Selected Trips ──
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp, bottom = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        showTripsSheet = false
+                                        viewModel.triggerFitTrack()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.CropFree,
+                                        contentDescription = "Fit Map",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Fit Map",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+
+                                if (selectedTripIds.size >= 2) {
+                                    Button(
+                                        onClick = { showMergeConfirmationDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CallMerge,
+                                            contentDescription = "Merge",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            "Merge (${selectedTripIds.size})",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Single row when no trips are selected
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -2310,7 +2382,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = "Filtered: ${displayedTrips.size} of ${savedTrips.size}",
                                             fontSize = 11.sp,
-                                            color = Color(0xFF94A3B8)
+                                            color = Color(0xFF94A3B8),
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                     val filteredTripsWithPauses = displayedTrips.filter { it.pauses.isNotEmpty() }
@@ -2331,29 +2405,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 text = if (allPausesExpanded) "Collapse Pauses" else "Expand Pauses",
                                                 color = Color(0xFFF59E0B),
                                                 fontSize = 11.sp,
-                                                fontWeight = FontWeight.Medium
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
                                 }
-                            }
 
-                            TextButton(
-                                onClick = {
-                                    if (allFilteredSelected) {
-                                        viewModel.clearTripSelection()
-                                    } else {
+                                TextButton(
+                                    onClick = {
                                         viewModel.setSelectedTripIds(displayedTrips.map { it.id }.toSet())
-                                    }
-                                },
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (allFilteredSelected) "Deselect All" else "Select All (${displayedTrips.size})",
-                                    color = Color(0xFF38BDF8),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text(
+                                        text = "Select All (${displayedTrips.size})",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
                             }
                         }
 

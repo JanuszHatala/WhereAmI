@@ -1211,3 +1211,10 @@ Evidence: trip 238 CAR vs Wikiloc/Komoot/hiking-map recordings; screenshots of r
 | **MAP92-01** | **Fit Map zooms out too far, displaying selected trips too small.** Eliminated double padding (removed redundant 24dp margin added on top of already-buffered 72dp right and 186dp bottom insets, and reduced 15% safety shrink to 6%). Lowered minimum span floor from 200m to 60m. | `OsmMapView.kt` | Implemented | `ViewportFitTest.testTightenedViewportInsetsAvoidDoublePadding` |
 | **MAP92-02** | **Live guests and host location incorrectly pooled into selected past trips fit bounding box.** When historical trips are selected, `allShownPoints` now strictly includes only the selected trip points, preventing live guests in other cities or host GPS from inflating the bounding box. | `OsmMapView.kt` | Implemented | `ViewportFitTest.testSelectedTripsExcludesLiveGuestsFromFit` |
 | **VER-92** | `versionCode` 122, `versionName` "1.17.5". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+
+## 96. Round 93: Two-Tier Contextual Selection Bar & Text Wrap Prevention (2026-10-21, v1.17.6)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI93-01** | **Selection action bar cramped and "Deselect All" wrapped letter-by-letter.** Replaced single overflowing row with a responsive Two-Tier layout: Tier 1 hosts selection status and view filter toggle + bulk selection with `maxLines = 1, softWrap = false`; Tier 2 hosts primary contextual actions (`Fit Map`, `Merge`) with comfortable 30dp height and spacing. | `MainActivity.kt` | Implemented | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
+| **VER-93** | `versionCode` 123, `versionName` "1.17.6". | `app/build.gradle.kts` | Done | `./gradlew testDebugUnitTest assembleDebug`: BUILD SUCCESSFUL |
