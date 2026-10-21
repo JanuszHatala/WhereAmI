@@ -1246,3 +1246,12 @@ Evidence: trip 239 false Driving (0.72 km path / 7 m net / 27 m cluster); SK cac
 | **ENG94-03** | Background polyline density (ENG89-03). | screen-off 1 Hz batch | Design / Left | battery tradeoff; no change |
 | **ENG94-04** | False indoor Driving auto-start (trip 239). | `ResumeMotionGate` auto-start + `TripScribble` discard | Implemented | gate + scribble tests; trip 239 matches discard |
 | **VER-94** | versionCode 125 / 1.17.8 | build.gradle.kts | Done | BUILD SUCCESSFUL |
+
+## 98. Round 95: Terminal Track Spike Guard (2026-10-21, v1.17.9)
+
+Evidence: trip 240 last vertex 386 m jump at 09:08:25 (auto-stop at home); visible V-spike on map / road-match tip.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG95-01** | Auto-stop recorded location spike. | `TrackSpikeGuard` on commit; reject slow/impossible jumps ≥60 m | Implemented | `TrackSpikeGuardTest` (trip 240 numbers) |
+| **VER-95** | versionCode 126 / 1.17.9 | build.gradle.kts | Done | - |

@@ -13,6 +13,7 @@ import org.osmdroid.util.GeoPoint
 import janush.tech.whereami.tracking.AdaptiveTrackSampler
 import janush.tech.whereami.tracking.SmoothedPoint
 import janush.tech.whereami.tracking.TrackPointRow
+import janush.tech.whereami.tracking.TrackSpikeGuard
 class TripManager private constructor(private val context: Context) {
 
     companion object {
@@ -126,6 +127,7 @@ class TripManager private constructor(private val context: Context) {
     @Volatile
     var lastCommittedElapsedMs: Long = -1L
         private set
+    private var lastCommittedUtcMs: Long = -1L
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -546,6 +548,7 @@ class TripManager private constructor(private val context: Context) {
         lastSmoothedForDistance = null
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
+        lastCommittedUtcMs = -1L
 
         val profile = _activityProfile.value
 
@@ -1015,11 +1018,29 @@ class TripManager private constructor(private val context: Context) {
         fun commit(p: SmoothedPoint) {
             val last = newPoints.lastOrNull()
             if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
+            // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord).
+            if (last != null) {
+                val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
+                if (TrackSpikeGuard.isSpikeStep(
+                        last.latitude, last.longitude, prevUtc,
+                        p.lat, p.lng, p.tUtcMs,
+                        p.speedMps, p.isStationary
+                    )
+                ) {
+                    TelemetryLogger.logTrip(
+                        "SPIKE_REJECTED",
+                        current.id,
+                        "Skipped ${TrackSpikeGuard.distanceM(last.latitude, last.longitude, p.lat, p.lng).toInt()}m tip at ${p.speedMps} m/s"
+                    )
+                    return
+                }
+            }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
             newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
             val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
             synchronized(rowLock) { pendingRows.add(row) }
             lastCommittedElapsedMs = p.tElapsedMs
+            lastCommittedUtcMs = p.tUtcMs
             committed++
         }
 
