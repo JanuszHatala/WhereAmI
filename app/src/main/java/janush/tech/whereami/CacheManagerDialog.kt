@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -150,7 +152,11 @@ fun CacheManagerDialog(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
-                            letterSpacing = 1.sp
+                            letterSpacing = 1.sp,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
 
                         // 1. Map Tiles
@@ -160,15 +166,43 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Map Tiles", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text(formatBytes(tileBytes), color = Color(0xFFE2E8F0), fontSize = 12.sp)
+                                Text(
+                                    text = "Map Tiles",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = formatBytes(tileBytes),
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
                             }
                             OutlinedButton(
                                 onClick = { cacheClearConfirmTarget = "TILES" },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
                             ) {
-                                Text("Clear", fontSize = 12.sp, color = Color(0xFFF87171))
+                                Text(
+                                    text = "Clear",
+                                    fontSize = 12.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.sp
+                                    )
+                                )
                             }
                         }
 
@@ -182,14 +216,58 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Boundaries", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = "Boundaries",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
                                 val missingBoundaries = cacheDeficit?.missingBoundaries
                                 when {
-                                    missingBoundaries == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                                    missingBoundaries == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    else -> Text("⚠ $missingBoundaries missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    missingBoundaries == null -> Text(
+                                        text = "…",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingBoundaries == 0 -> Text(
+                                        text = "✓ complete",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    else -> Text(
+                                        text = "⚠ $missingBoundaries missing",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
-                                Text("${formatBytes(boundaryBytes)} • $boundaryCount places", color = Color(0xFFE2E8F0), fontSize = 12.sp)
+                                Text(
+                                    text = "${formatBytes(boundaryBytes)} • $boundaryCount places",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val missingBoundaries = cacheDeficit?.missingBoundaries
@@ -208,16 +286,35 @@ fun CacheManagerDialog(
                                                 color = Color.White
                                             )
                                         } else {
-                                            Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "Fetch",
+                                                fontSize = 11.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                     }
                                 }
                                 OutlinedButton(
                                     onClick = { cacheClearConfirmTarget = "BOUNDARIES" },
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
                                 ) {
-                                    Text("Clear", fontSize = 11.sp, color = Color(0xFFF87171))
+                                    Text(
+                                        text = "Clear",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -231,14 +328,58 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Addresses & Streets", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = "Addresses & Streets",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
                                 val missingRoutes = cacheDeficit?.missingRoutes
                                 when {
-                                    missingRoutes == null -> Text("…", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                                    missingRoutes == 0 -> Text("✓ complete", color = Color(0xFF4ADE80), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    else -> Text("⚠ $missingRoutes missing", color = Color(0xFFFBBF24), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    missingRoutes == null -> Text(
+                                        text = "…",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingRoutes == 0 -> Text(
+                                        text = "✓ complete",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    else -> Text(
+                                        text = "⚠ $missingRoutes missing",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
-                                Text("${formatBytes(spatialBytes)} • $spatialCount points", color = Color(0xFFE2E8F0), fontSize = 12.sp)
+                                Text(
+                                    text = "${formatBytes(spatialBytes)} • $spatialCount points",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val missingRoutes = cacheDeficit?.missingRoutes
@@ -257,16 +398,35 @@ fun CacheManagerDialog(
                                                 color = Color.White
                                             )
                                         } else {
-                                            Text("Fetch", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "Fetch",
+                                                fontSize = 11.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                     }
                                 }
                                 OutlinedButton(
                                     onClick = { cacheClearConfirmTarget = "SPATIAL" },
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
                                 ) {
-                                    Text("Clear", fontSize = 11.sp, color = Color(0xFFF87171))
+                                    Text(
+                                        text = "Clear",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -278,8 +438,26 @@ fun CacheManagerDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Total Cached Data", color = Color(0xFF38BDF8), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text(formatBytes(tileBytes + boundaryBytes + spatialBytes), color = Color(0xFF38BDF8), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Total Cached Data",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
+                            )
+                            Text(
+                                text = formatBytes(tileBytes + boundaryBytes + spatialBytes),
+                                color = Color(0xFF38BDF8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
+                            )
                         }
                     }
                 }
@@ -298,7 +476,11 @@ fun CacheManagerDialog(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
-                            letterSpacing = 1.sp
+                            letterSpacing = 1.sp,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
 
                         // Battery toggle
@@ -308,11 +490,25 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Allow on battery", color = Color.White, fontSize = 14.sp)
                                 Text(
-                                    if (allowOnBattery) "Pre-fetching permitted on battery" else "Pre-fetch only runs while charging",
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 11.sp
+                                    text = "Allow on battery",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = if (allowOnBattery) "Pre-fetching permitted on battery" else "Pre-fetch only runs while charging",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.5.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -333,11 +529,25 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Allow on mobile data", color = Color.White, fontSize = 14.sp)
                                 Text(
-                                    if (allowMobileData) "Pre-fetching permitted on cellular" else "Pre-fetch only runs on Wi-Fi",
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 11.sp
+                                    text = "Allow on mobile data",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = if (allowMobileData) "Pre-fetching permitted on cellular" else "Pre-fetch only runs on Wi-Fi",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.5.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -356,7 +566,11 @@ fun CacheManagerDialog(
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF64748B),
-                            letterSpacing = 0.8.sp
+                            letterSpacing = 0.8.sp,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 12.sp
+                            )
                         )
 
                         // Auto-start on WiFi
@@ -366,11 +580,25 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Auto-start on Wi-Fi", color = Color.White, fontSize = 14.sp)
                                 Text(
-                                    if (autoStartOnWifi) "Downloads begin automatically when on Wi-Fi" else "Manual start only",
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 11.sp
+                                    text = "Auto-start on Wi-Fi",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = if (autoStartOnWifi) "Downloads begin automatically when on Wi-Fi" else "Manual start only",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.5.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -391,11 +619,25 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Auto-start when charging", color = Color.White, fontSize = 14.sp)
                                 Text(
-                                    if (autoStartOnCharger) "Downloads begin automatically when plugged into power" else "Manual start only",
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 11.sp
+                                    text = "Auto-start when charging",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = if (autoStartOnCharger) "Downloads begin automatically when plugged into power" else "Manual start only",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.5.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -416,11 +658,25 @@ fun CacheManagerDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text("Notify when updates available", color = Color.White, fontSize = 14.sp)
                                 Text(
-                                    if (notifyWhenAvailable) "System notification with Start/Pause/Stop actions shown when items need updating" else "Silent — no notification",
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 11.sp
+                                    text = "Notify when updates available",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                Text(
+                                    text = if (notifyWhenAvailable) "System notification with Start/Pause/Stop actions shown when items need updating" else "Silent — no notification",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.5.sp
+                                    )
                                 )
                             }
                             Switch(
@@ -436,11 +692,25 @@ fun CacheManagerDialog(
 
                         // Max Cache Storage Budget
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            Text("Max Storage Limit", color = Color.White, fontSize = 14.sp)
                             Text(
-                                "Entries older than 1 year are evicted via LRU only when cache exceeds this limit",
-                                color = Color(0xFFE2E8F0),
-                                fontSize = 11.sp
+                                text = "Max Storage Limit",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
+                            )
+                            Text(
+                                text = "Entries older than 1 year are evicted via LRU only when cache exceeds this limit",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(top = 2.dp),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 13.5.sp
+                                )
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
@@ -464,7 +734,11 @@ fun CacheManagerDialog(
                                             fontSize = 11.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                             textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 6.dp)
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 13.sp
+                                            )
                                         )
                                     }
                                 }
@@ -487,14 +761,22 @@ fun CacheManagerDialog(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
-                            letterSpacing = 1.sp
+                            letterSpacing = 1.sp,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
 
                         Text(
                             text = "Locations visited during trip recording are automatically cached offline. Pre-fetch scans your trip history and fills in missing address & road data along recorded corridors in 2 passes (Pass 1: ~50m skeleton, Pass 2: ~15m precision). Downloads are rate-limited to 1 req/sec per OpenStreetMap usage policies.",
                             color = Color(0xFF94A3B8),
                             fontSize = 11.sp,
-                            lineHeight = 15.sp
+                            lineHeight = 14.5.sp,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.5.sp
+                            )
                         )
 
                         when (val state = prefetchState) {
@@ -535,7 +817,16 @@ fun CacheManagerDialog(
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(buttonText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text(
+                                            text = buttonText,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
+                                        )
                                     }
 
                                     val estimateStr = when (totalMissing) {
@@ -550,7 +841,11 @@ fun CacheManagerDialog(
                                         fontSize = 12.sp,
                                         color = estimateColor,
                                         modifier = Modifier.align(Alignment.CenterHorizontally),
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
                                     )
                                 }
                             }
@@ -569,7 +864,11 @@ fun CacheManagerDialog(
                                             color = Color.White,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
+                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 15.sp
+                                            )
                                         )
                                         Surface(
                                             color = Color(0xFF0284C7).copy(alpha = 0.25f),
@@ -582,7 +881,11 @@ fun CacheManagerDialog(
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                softWrap = false
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 14.sp
+                                                )
                                             )
                                         }
                                     }
@@ -607,7 +910,11 @@ fun CacheManagerDialog(
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
                                             softWrap = false,
-                                            modifier = Modifier.weight(1f, fill = false)
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
                                         )
                                         if (state.added > 0) {
                                             Spacer(modifier = Modifier.width(8.dp))
@@ -616,7 +923,11 @@ fun CacheManagerDialog(
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                softWrap = false
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 14.sp
+                                                )
                                             )
                                         }
                                     }
@@ -632,7 +943,16 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("⏸ Pause", fontSize = 12.sp, color = Color.White)
+                                            Text(
+                                                text = "⏸ Pause",
+                                                fontSize = 12.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                         Button(
                                             onClick = { cacheManager.cancelPrefetch() },
@@ -640,7 +960,16 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("🛑 Stop", fontSize = 12.sp, color = Color.White)
+                                            Text(
+                                                text = "🛑 Stop",
+                                                fontSize = 12.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                     }
                                 }
@@ -660,7 +989,11 @@ fun CacheManagerDialog(
                                             color = Color.White,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
+                                            modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 15.sp
+                                            )
                                         )
                                         Surface(
                                             color = Color(0xFFF59E0B).copy(alpha = 0.25f),
@@ -673,7 +1006,11 @@ fun CacheManagerDialog(
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                softWrap = false
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
                                             )
                                         }
                                     }
@@ -698,7 +1035,11 @@ fun CacheManagerDialog(
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
                                             softWrap = false,
-                                            modifier = Modifier.weight(1f, fill = false)
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
                                         )
                                         if (state.added > 0) {
                                             Spacer(modifier = Modifier.width(8.dp))
@@ -707,7 +1048,11 @@ fun CacheManagerDialog(
                                                 color = Color(0xFF4ADE80),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                softWrap = false
+                                                softWrap = false,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 14.sp
+                                                )
                                             )
                                         }
                                     }
@@ -723,7 +1068,16 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("▶ Resume", fontSize = 12.sp, color = Color.White)
+                                            Text(
+                                                text = "▶ Resume",
+                                                fontSize = 12.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                         Button(
                                             onClick = { cacheManager.cancelPrefetch() },
@@ -731,7 +1085,16 @@ fun CacheManagerDialog(
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("🛑 Stop", fontSize = 12.sp, color = Color.White)
+                                            Text(
+                                                text = "🛑 Stop",
+                                                fontSize = 12.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
                                         }
                                     }
                                 }
@@ -747,7 +1110,11 @@ fun CacheManagerDialog(
                                         text = statusText,
                                         color = Color(0xFF4ADE80),
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 15.sp
+                                        )
                                     )
 
                                     val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries } ?: 0
@@ -761,7 +1128,16 @@ fun CacheManagerDialog(
                                             ),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
-                                            Text("Fetch Remaining Missing Data ($totalMissing)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            Text(
+                                                text = "Fetch Remaining Missing Data ($totalMissing)",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 14.sp
+                                                )
+                                            )
                                         }
                                     } else {
                                         Button(
@@ -773,7 +1149,16 @@ fun CacheManagerDialog(
                                             ),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
-                                            Text("Re-scan Cache", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            Text(
+                                                text = "Re-scan Cache",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 14.sp
+                                                )
+                                            )
                                         }
                                     }
                                 }
@@ -784,7 +1169,11 @@ fun CacheManagerDialog(
                                         text = "⚠️ ${state.reason}",
                                         color = Color(0xFFFBBF24),
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
                                     )
                                     Button(
                                         onClick = { cacheManager.startPrefetch() },
@@ -795,7 +1184,16 @@ fun CacheManagerDialog(
                                         ),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text(
+                                            text = "Retry",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
+                                        )
                                     }
                                 }
                             }
@@ -805,7 +1203,11 @@ fun CacheManagerDialog(
                                         text = "❌ Error: ${state.message}",
                                         color = Color(0xFFF87171),
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 14.sp
+                                        )
                                     )
                                     Button(
                                         onClick = { cacheManager.startPrefetch() },
@@ -816,7 +1218,16 @@ fun CacheManagerDialog(
                                         ),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Retry", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text(
+                                            text = "Retry",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
+                                        )
                                     }
                                 }
                             }
@@ -853,10 +1264,27 @@ fun CacheManagerDialog(
             onDismissRequest = { cacheClearConfirmTarget = null },
             containerColor = Color(0xFF0F172A),
             title = {
-                Text(title, color = Color.White, fontWeight = FontWeight.Bold)
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 18.sp
+                    )
+                )
             },
             text = {
-                Text(msg, color = Color(0xFFE2E8F0), fontSize = 14.sp)
+                Text(
+                    text = msg,
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 16.sp
+                    )
+                )
             },
             confirmButton = {
                 Row(
@@ -865,7 +1293,14 @@ fun CacheManagerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = { cacheClearConfirmTarget = null }) {
-                        Text("Cancel", color = Color.White)
+                        Text(
+                            text = "Cancel",
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
+                        )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -882,7 +1317,15 @@ fun CacheManagerDialog(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
                     ) {
-                        Text("Clear", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Clear",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
+                        )
                     }
                 }
             },

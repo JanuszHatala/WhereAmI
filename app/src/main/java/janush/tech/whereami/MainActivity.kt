@@ -689,6 +689,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             // Mute live GPS borders while pin borders are shown so Czaniec ≠ pin area.
             boundaryPoints = if (pinnedBoundaryPoints != null) null else boundaryPoints,
             pinnedBoundaryPoints = pinnedBoundaryPoints,
+            showBorders = showBorders,
+            onToggleBorders = { viewModel.toggleShowBorders() },
             heatMapTracks = heatMapTracks,
             showHeatMap = showHeatMap,
             onToggleHeatMap = { viewModel.toggleShowHeatMap() },
@@ -3472,90 +3474,6 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Map Layers: City/Town/Village Borders (Phase 2)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Show City/Town Borders",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeight = 15.sp
-                            )
-                        )
-                        Text(
-                            text = "Highlights territorial boundaries of the current locality on the map",
-                            fontSize = 12.sp,
-                            color = Color(0xFF94A3B8),
-                            modifier = Modifier.padding(top = 2.dp),
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeight = 15.sp
-                            )
-                        )
-                    }
-                    Switch(
-                        checked = showBorders,
-                        onCheckedChange = { viewModel.toggleShowBorders() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF0284C7),
-                            uncheckedThumbColor = Color.LightGray,
-                            uncheckedTrackColor = Color(0xFF1E293B)
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Traversal Heat Map Layer Toggle
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Road & Path Heat Map",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeight = 15.sp
-                            )
-                        )
-                        Text(
-                            text = "Visualizes all previously traveled routes as glowing heat corridors",
-                            fontSize = 12.sp,
-                            color = Color(0xFF94A3B8),
-                            modifier = Modifier.padding(top = 2.dp),
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeight = 15.sp
-                            )
-                        )
-                    }
-                    Switch(
-                        checked = showHeatMap,
-                        onCheckedChange = { viewModel.toggleShowHeatMap() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFFF97316),
-                            uncheckedThumbColor = Color.LightGray,
-                            uncheckedTrackColor = Color(0xFF1E293B)
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
                 // Telemetry Logging & Diagnostics
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -4223,23 +4141,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "⛰️ Elevation Data & Terrain Correction",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Terrain,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Elevation Data & Terrain Correction",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
+                            )
+                        }
                         Text(
                             text = "Backfill or correct DEM altitudes for recorded trips and saved places using Open-Meteo & Open-Elevation (SRTM/ASTER ~30m). Requires active internet connection.",
                             fontSize = 11.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
 
                         Text(
                             text = "Primary Altitude Source",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -4264,7 +4205,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         fontSize = 11.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                         color = Color.White,
-                                        textAlign = TextAlign.Center
+                                        textAlign = TextAlign.Center,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
                                     )
                                 }
                             }
@@ -4290,14 +4235,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "Saved Places: $procP/$totalP",
                                         fontSize = 11.sp,
-                                        color = Color(0xFF38BDF8)
+                                        color = Color(0xFF38BDF8),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
                                     )
                                     if (elevationCorrectionProgress.isPaused) {
                                         Text(
                                             text = "⏸ Paused",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFF59E0B)
+                                            color = Color(0xFFF59E0B),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 13.sp
+                                            )
                                         )
                                     }
                                 }
@@ -4318,14 +4271,22 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = "Trip ${procT + 1}/$totalT • ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts",
                                         fontSize = 11.sp,
-                                        color = Color(0xFF38BDF8)
+                                        color = Color(0xFF38BDF8),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
                                     )
                                     if (elevationCorrectionProgress.isPaused) {
                                         Text(
                                             text = "⏸ Paused",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFF59E0B)
+                                            color = Color(0xFFF59E0B),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 13.sp
+                                            )
                                         )
                                     }
                                 }
@@ -4394,7 +4355,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 Text(
                                     text = "✓ ${elevationCorrectionProgress.statusMessage.ifBlank { "Elevation correction complete." }}",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF34D399)
+                                    color = Color(0xFF34D399),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.sp
+                                    )
                                 )
                             }
                         }

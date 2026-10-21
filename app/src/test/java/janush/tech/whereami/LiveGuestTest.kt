@@ -296,5 +296,24 @@ class LiveGuestTest {
         // Truncated name permutation
         assertEquals("Aleksander-… • 1.1 km • now", GuestMarkerHelper.formatBadgeText(longNamed, 1120f, showDistance = true, now = now))
     }
+
+    @Test
+    fun `test filtering active vs inactive guests`() {
+        val activeGuest1 = LiveGuest("g1", "Alice", 50.0, 19.0, isInactive = false)
+        val activeGuest2 = LiveGuest("g2", "Bob", 50.1, 19.1, isInactive = false)
+        val inactiveGuest = LiveGuest("g3", "Charlie", 50.2, 19.2, isInactive = true)
+        val allGuests = listOf(activeGuest1, activeGuest2, inactiveGuest)
+
+        // When showInactiveGuests is true
+        val withInactive = allGuests
+        assertEquals(3, withInactive.size)
+
+        // When showInactiveGuests is false
+        val withoutInactive = allGuests.filter { !it.isInactive }
+        assertEquals(2, withoutInactive.size)
+        assertTrue(withoutInactive.contains(activeGuest1))
+        assertTrue(withoutInactive.contains(activeGuest2))
+        assertFalse(withoutInactive.contains(inactiveGuest))
+    }
 }
 
