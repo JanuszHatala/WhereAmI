@@ -37,7 +37,13 @@ class LiveGuestTest {
         assertEquals(1699990000000L, guest.firstSeen)
         assertEquals(5, guest.viewCount)
         assertEquals(3, guest.colorIndex)
-        assertFalse(guest.isInactive)
+        assertFalse(guest.rawIsInactive)
+        // Timestamp is in 2023 (> 5 minutes ago relative to now), so it's inactive in real time
+        assertTrue(guest.isInactive)
+        // But relative to 1 minute after its timestamp, it was active
+        assertFalse(guest.isInactiveAt(1700000000000L + 60_000L))
+        // And relative to 6 minutes after its timestamp, it was inactive
+        assertTrue(guest.isInactiveAt(1700000000000L + 360_000L))
     }
 
     @Test
@@ -226,7 +232,7 @@ class LiveGuestTest {
     @Test
     fun `test dismissed guest filtering logic`() {
         val g1 = LiveGuest("g1", "Guest 1", 50.0, 20.0)
-        val g2 = LiveGuest("g2", "Guest 2", 50.1, 20.1, isInactive = true)
+        val g2 = LiveGuest("g2", "Guest 2", 50.1, 20.1, rawIsInactive = true)
         val list = listOf(g1, g2)
 
         val dismissedIds = setOf("g2")
@@ -299,9 +305,10 @@ class LiveGuestTest {
 
     @Test
     fun `test filtering active vs inactive guests`() {
-        val activeGuest1 = LiveGuest("g1", "Alice", 50.0, 19.0, isInactive = false)
-        val activeGuest2 = LiveGuest("g2", "Bob", 50.1, 19.1, isInactive = false)
-        val inactiveGuest = LiveGuest("g3", "Charlie", 50.2, 19.2, isInactive = true)
+        val now = System.currentTimeMillis()
+        val activeGuest1 = LiveGuest("g1", "Alice", 50.0, 19.0, lastUpdated = now, rawIsInactive = false)
+        val activeGuest2 = LiveGuest("g2", "Bob", 50.1, 19.1, lastUpdated = now, rawIsInactive = false)
+        val inactiveGuest = LiveGuest("g3", "Charlie", 50.2, 19.2, lastUpdated = now, rawIsInactive = true)
         val allGuests = listOf(activeGuest1, activeGuest2, inactiveGuest)
 
         // When showInactiveGuests is true
@@ -314,6 +321,71 @@ class LiveGuestTest {
         assertTrue(withoutInactive.contains(activeGuest1))
         assertTrue(withoutInactive.contains(activeGuest2))
         assertFalse(withoutInactive.contains(inactiveGuest))
+    }
+
+    @Test
+    fun `test dynamic 5-minute inactivity evaluation and JSON deserialization`() {
+        val now = 1700000000000L
+
+        // Active guest (updated 2 minutes ago, server says false)
+        val activeGuest = LiveGuest(
+            id = "g_act",
+            name = "Active",
+            lat = 50.0,
+            lng = 20.0,
+            lastUpdated = now - 120_000L,
+            rawIsInactive = false
+        )
+        assertFalse(activeGuest.isInactiveAt(now))
+
+        // Inactive guest due to age (> 5 min, server still said false)
+        val oldGuest = LiveGuest(
+            id = "g_old",
+            name = "Old",
+            lat = 50.0,
+            lng = 20.0,
+            lastUpdated = now - 360_000L, // 6 minutes ago
+            rawIsInactive = false
+        )
+        assertTrue(oldGuest.isInactiveAt(now))
+
+        // Inactive guest flagged by server explicitly even if recent
+        val serverInactiveGuest = LiveGuest(
+            id = "g_srv",
+            name = "SrvInactive",
+            lat = 50.0,
+            lng = 20.0,
+            lastUpdated = now - 10_000L,
+            rawIsInactive = true
+        )
+        assertTrue(serverInactiveGuest.isInactiveAt(now))
+
+        // Boundary test: exactly 5 minutes (300_000 ms)
+        val t0 = 1000_000L
+        val boundaryGuest = LiveGuest(
+            id = "g_bnd",
+            name = "Boundary",
+            lat = 50.0,
+            lng = 20.0,
+            lastUpdated = t0,
+            rawIsInactive = false
+        )
+        assertFalse(boundaryGuest.isInactiveAt(t0 + 300_000L)) // exactly 5 min -> active
+        assertTrue(boundaryGuest.isInactiveAt(t0 + 300_001L))  // > 5 min -> inactive
+
+        // JSON deserialization test: server JSON says isInactive = false, but timestamp is 6 minutes ago
+        val json = JSONObject().apply {
+            put("id", "g_json")
+            put("name", "JsonGuest")
+            put("lat", 50.0)
+            put("lng", 20.0)
+            put("t", System.currentTimeMillis() - 360_000L) // 6 min ago
+            put("isInactive", false)
+        }
+        val deserialized = LiveGuest.fromJson(json)
+        assertNotNull(deserialized)
+        assertFalse(deserialized!!.rawIsInactive)
+        assertTrue(deserialized.isInactive) // Client evaluates as inactive!
     }
 }
 

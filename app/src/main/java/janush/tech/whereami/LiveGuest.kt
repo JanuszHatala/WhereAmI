@@ -12,12 +12,19 @@ data class LiveGuest(
     val accuracy: Float? = null,
     val lastUpdated: Long = System.currentTimeMillis(),
     val colorIndex: Int = 0,
-    val isInactive: Boolean = false,
+    val rawIsInactive: Boolean = false,
     val firstSeen: Long = lastUpdated,
     val viewCount: Int = 1
 ) {
     val geoPoint: GeoPoint
         get() = GeoPoint(lat, lng)
+
+    val isInactive: Boolean
+        get() = isInactiveAt(System.currentTimeMillis())
+
+    fun isInactiveAt(now: Long = System.currentTimeMillis()): Boolean {
+        return rawIsInactive || (now - lastUpdated > INACTIVITY_THRESHOLD_MS)
+    }
 
     fun getBearingFrom(hostLat: Double, hostLng: Double): Float {
         val lat1 = Math.toRadians(hostLat)
@@ -48,6 +55,8 @@ data class LiveGuest(
     }
 
     companion object {
+        const val INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000L
+
         val PALETTE_COLORS = intArrayOf(
             0xFF10B981.toInt(), // Emerald
             0xFFF59E0B.toInt(), // Amber
@@ -156,7 +165,7 @@ data class LiveGuest(
                 accuracy = acc,
                 lastUpdated = t,
                 colorIndex = colorIndex,
-                isInactive = isInactive,
+                rawIsInactive = isInactive,
                 firstSeen = firstSeen,
                 viewCount = viewCount
             )

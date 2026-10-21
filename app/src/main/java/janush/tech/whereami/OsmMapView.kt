@@ -427,6 +427,33 @@ private fun bringAltitudeOverlayToFront(map: MapView, altitudeOverlay: AltitudeC
 }
 
 /**
+ * Inserts a guest marker below the host's own position tracking marker and altitude overlay,
+ * ensuring the host marker and altitude badge are always stably positioned on top without z-fighting.
+ */
+private fun insertGuestMarkerBelowHostOverlays(
+    map: MapView,
+    gm: Marker,
+    marker: Marker?,
+    altitudeOverlay: AltitudeCursorBadgeOverlay
+) {
+    if (map.overlays.contains(gm)) {
+        map.overlays.remove(gm)
+    }
+    val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
+    val altIdx = map.overlays.indexOf(altitudeOverlay)
+    val targetIdx = when {
+        mIdx >= 0 -> mIdx
+        altIdx >= 0 -> altIdx
+        else -> -1
+    }
+    if (targetIdx >= 0) {
+        map.overlays.add(targetIdx, gm)
+    } else {
+        map.overlays.add(gm)
+    }
+}
+
+/**
  * Composable OSM map panel with:
  * - Position dot / heading arrow.
  * - Red live trip polyline drawing (#EF4444).
@@ -542,7 +569,8 @@ fun OsmMapView(
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
-    var guestMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    val guestMarkersMap = remember { mutableMapOf<String, Marker>() }
+    val guestMarkerBadgeKeys = remember { mutableMapOf<String, String>() }
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
@@ -1208,16 +1236,30 @@ fun OsmMapView(
     // Render Guest Markers (Follow back guest positions)
     LaunchedEffect(visibleGuests, showGuestDistanceBadge, latLng) {
         val map = mapView ?: return@LaunchedEffect
-        guestMarkers.forEach { map.overlays.remove(it) }
 
         if (visibleGuests.isEmpty()) {
-            guestMarkers = emptyList()
-            map.invalidate()
+            if (guestMarkersMap.isNotEmpty()) {
+                guestMarkersMap.values.forEach { map.overlays.remove(it) }
+                guestMarkersMap.clear()
+                guestMarkerBadgeKeys.clear()
+                map.invalidate()
+            }
             return@LaunchedEffect
         }
 
+        val visibleIds = visibleGuests.map { it.id }.toSet()
+        val removedIds = guestMarkersMap.keys.filter { it !in visibleIds }
+        var mapChanged = false
+
+        if (removedIds.isNotEmpty()) {
+            removedIds.forEach { id ->
+                guestMarkersMap.remove(id)?.let { map.overlays.remove(it) }
+                guestMarkerBadgeKeys.remove(id)
+            }
+            mapChanged = true
+        }
+
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
-        val newGuestMarkers = mutableListOf<Marker>()
 
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
@@ -1226,36 +1268,65 @@ fun OsmMapView(
                 results[0]
             } else null
 
-            val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
-            val gm = Marker(map).apply {
-                position = guest.geoPoint
-                setAnchor(iconResult.anchorX, iconResult.anchorY)
-                icon = iconResult.drawable
-                title = guest.name
-                val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
-                val statusStr = if (guest.isInactive) " (inactive)" else ""
-                snippet = "Guest$statusStr$distStr"
-                infoWindow = null
-                setOnMarkerClickListener { _, _ ->
-                    if (currentOnGuestClick != null) {
-                        currentOnGuestClick?.invoke(guest)
-                    } else {
-                        val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
-                        val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
-                        android.widget.Toast.makeText(
-                            context,
-                            "👤 ${guest.name}$statusInfo$distInfo",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    true
+            val badgeText = GuestMarkerHelper.formatBadgeText(guest, distMeters, showGuestDistanceBadge)
+            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText"
+
+            val existingMarker = guestMarkersMap[guest.id]
+            val gm = if (existingMarker != null) {
+                if (existingMarker.position.latitude != guest.lat || existingMarker.position.longitude != guest.lng) {
+                    existingMarker.position = guest.geoPoint
+                    mapChanged = true
                 }
+                if (guestMarkerBadgeKeys[guest.id] != badgeKey) {
+                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                    existingMarker.icon = iconResult.drawable
+                    existingMarker.setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    guestMarkerBadgeKeys[guest.id] = badgeKey
+                    mapChanged = true
+                }
+                if (!map.overlays.contains(existingMarker)) {
+                    insertGuestMarkerBelowHostOverlays(map, existingMarker, marker, altitudeOverlay)
+                    mapChanged = true
+                }
+                existingMarker
+            } else {
+                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                val newMarker = Marker(map).apply {
+                    position = guest.geoPoint
+                    setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    icon = iconResult.drawable
+                }
+                guestMarkersMap[guest.id] = newMarker
+                guestMarkerBadgeKeys[guest.id] = badgeKey
+                insertGuestMarkerBelowHostOverlays(map, newMarker, marker, altitudeOverlay)
+                mapChanged = true
+                newMarker
             }
-            map.overlays.add(gm)
-            newGuestMarkers.add(gm)
+
+            gm.title = guest.name
+            val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
+            val statusStr = if (guest.isInactive) " (inactive)" else ""
+            gm.snippet = "Guest$statusStr$distStr"
+            gm.infoWindow = null
+            gm.setOnMarkerClickListener { _, _ ->
+                if (currentOnGuestClick != null) {
+                    currentOnGuestClick?.invoke(guest)
+                } else {
+                    val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
+                    val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
+                    android.widget.Toast.makeText(
+                        context,
+                        "👤 ${guest.name}$statusInfo$distInfo",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                true
+            }
         }
-        guestMarkers = newGuestMarkers
-        map.invalidate()
+
+        if (mapChanged) {
+            map.invalidate()
+        }
     }
 
     // Render Boundary Polygon (Phase 2)

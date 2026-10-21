@@ -298,8 +298,7 @@ app.post('/api/sessions/:id/points', (req, res) => {
   }
   saveSessions();
 
-  const syncInterval = session.syncIntervalMinutes || 5;
-  const inactivityThresholdMs = Math.max(5 * 60_000, syncInterval * 2 * 60_000);
+  const inactivityThresholdMs = 5 * 60_000; // 5 minutes inactivity threshold
   const guestsList = [];
   if (session.followGuests !== false && session.guests) {
     for (const [gId, g] of Object.entries(session.guests)) {
@@ -565,8 +564,7 @@ app.get('/api/sessions/:id/views', (req, res) => {
   const session = sessions.get(targetId);
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  const syncInterval = session.syncIntervalMinutes || 5;
-  const inactivityThresholdMs = Math.max(5 * 60_000, syncInterval * 2 * 60_000);
+  const inactivityThresholdMs = 5 * 60_000; // 5 minutes inactivity threshold
   const guestsList = [];
   if (session.guests) {
     for (const [gId, g] of Object.entries(session.guests)) {

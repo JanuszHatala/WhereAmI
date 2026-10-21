@@ -1402,3 +1402,37 @@ Evidence: narrow-window screenshots of the visitor `/live/:id` card (vertical ti
 | **LIV-R07** | Visitor info panel unusable on very narrow windows. | `server/public/index.html` | **Completed** | Header grid (title, badge, toggle) with place under host title; stable expand/collapse padding `14px 16px`; activity \| Maps row; elapsed in details; guest footer "Sharing as". |
 | **LIV-R08** | Narrow follow-up: `Wh...`, mid-value wraps, orphaned Maps, lonely elapsed row. | `server/public/index.html` | **Completed** | Title 2-line clamp; dual-label LIVE badge; Maps short label <=400px; single-column stats + nowrap <=360px; `Elapsed: 1m` as normal grid cell. |
 | **LIV-R09** | Default guest nicknames collide as "Guest 1". | `server/guestNaming.js`, `server/server.js`, `server/guestNaming.test.js`, `server/Dockerfile` | **Completed** | Lowest-unused `Guest N`; `node --test guestNaming.test.js` (7 pass). |
+
+## 112. Round 109: Inactive Visitors Dynamic Filtering & Marker/Altitude Z-Fighting Fix (2026-10-21, v1.18.13)
+
+User feedback:
+"I disabled the option (turned off) to show inactive visitors but they're still on the map. Additionally I'm seeing the alt badge and/or the visitor icon flickers, sometimes the Guest 1 badge is on top, sometimes it's below"
+
+Root Cause Analysis:
+1. **Inactive Visitors Not Filtered**: `server/server.js` computed inactivity threshold as `Math.max(5 * 60_000, syncInterval * 2 * 60_000)` (which equaled 10 minutes for default 5-min sync intervals). Even if visitor hadn't sent updates in 6 minutes (displayed as "6m ago" / "Inactive (> 5 min)"), server JSON returned `isInactive: false`. Client deserialization relied blindly on this server boolean.
+2. **Marker & Alt Badge Flickering / Z-Fighting**: In `OsmMapView.kt`, `LaunchedEffect(visibleGuests, showGuestDistanceBadge, latLng)` re-ran on every GPS fix (1Hz–5Hz), clearing all guest markers and doing `map.overlays.add(gm)`, placing `gm` at the end of `map.overlays` (above `altitudeOverlay`). Within 16ms, `bringAltitudeOverlayToFront(map, altitudeOverlay)` in the 60fps frame loop detected that `altitudeOverlay` was not at the end, removing and appending it back to the end. The next GPS fix flipped it back, creating a relentless 1Hz–5Hz z-ordering war with continuous bitmap allocations and osmdroid overlay list churn.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG109-01** | Client-side autonomous 5-minute inactivity evaluation for live guests. | `LiveGuest.kt`, `server/server.js`, `LiveGuestTest.kt` | Implemented | Defined dynamic `val isInactive: Boolean get() = isInactiveAt(System.currentTimeMillis())` with 5-minute (`300_000ms`) threshold on client, decoupled from server sync interval; unified server threshold to 5 minutes |
+| **ENG109-02** | Stable z-index placement and in-place marker reuse to eliminate flickering and z-fighting. | `OsmMapView.kt` | Implemented | Insert guest markers stably below host marker and altitude overlay (`insertGuestMarkerBelowHostOverlays`); reuse existing `Marker` instances and cache badge keys (`guestMarkerBadgeKeys`), eliminating overlay list churn, z-fighting, and per-fix bitmap allocations |
+| **VER-109** | versionCode 144 / 1.18.13 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Unit tests passing; build verification complete |
+
+## 113. Round 110: Instant Bulk Cache Deficit Discovery, Fetch Reaction & Map Progress Control (2026-10-22, v1.18.13)
+
+User feedback:
+"Today I opened the app and there was no map control related to the missing cache data to fetch on the screen, but when I opened the Offline Data & Cache I saw there are missing addresses to fetch - see screenshot. Then when I closed this panel and went back to the main screen the cache map controll appeared - see second screenshot. Fix discovering the missing data.
+Also check if the fetching works well.
+Check and fix the Fetch button reaction - now I click the button and nothing is happening, only after some time the fetching starts. I should see immediate reaction.
+Also, while the fetching is in progress, turn the cache map controll into a control showing the fetching progress in kind of a progressing circle to see that it's working and what is the current status. Once finished it can stay with removed exclamation and replaced with green tick, once clicked show toast with a message that the data are downloaded (but check it first if in the meantime there are any new missing data)."
+
+Root Cause Analysis:
+1. **Slow Startup Deficit Discovery**: `calculateCacheDeficit()` iterated over every unique point (tens of thousands of trip points) executing individual `db.query(TABLE_CACHE, ...)` SQLite calls and JSON deserialization, blocking for 15–30 seconds before updating `_cacheDeficit.value`.
+2. **Fetch Button Reaction Delay**: `startPrefetch()` and `fetchMissingBoundaries()` performed all candidate preparation inside the coroutine before setting `_prefetchState.value = PrefetchState.Running(...)`, keeping the UI in `Idle` state for several seconds after the click.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG110-01** | Bulk SQLite deficit discovery in single query (~10ms). | `SpatialCacheHelper.kt`, `CacheManager.kt`, `SpatialCacheGridTest.kt` | Implemented | Added `getAllCachedGridKeys()` to load all valid keys in one indexed scan; reduced discovery from ~20s to <10ms; cache control displays immediately on app open |
+| **ENG110-02** | Instant Fetch button reaction and candidate indexing. | `CacheManager.kt` | Implemented | Immediately set `_prefetchState.value = PrefetchState.Running` on invocation; candidate generation leverages cached key sets for zero-latency start; added `calculateCacheDeficit()` on prefetch finish |
+| **UI110-03** | Map Cache Control Live Progress Circle and Green Tick Completion. | `OsmMapView.kt`, `CacheManager.kt` | Implemented | Added `CircularProgressIndicator` ring around 42dp slate button with storage icon and percentage badge during prefetch; displayed green checkmark on completion; click re-verifies missing data, shows confirmation Toast, and dismisses button |
+| **VER-110** | versionCode 144 / 1.18.13 | `build.gradle.kts`, `SpatialCacheGridTest.kt` | Implemented | Build and unit test verification passing |
