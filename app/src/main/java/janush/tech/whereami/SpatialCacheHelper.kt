@@ -127,6 +127,69 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizeKnownMismatches(db)
         sanitizePolishHighwayCodesOutsidePoland(db)
         sanitizeBareHighwayAndDupeParenStreets(db)
+        sanitizeFalseHighwayOnLocalNames(db)
+    }
+
+    /**
+     * Strips glued highway annotations from commemorative / multi-token local names
+     * (e.g. `Kardynała Karola Wojtyły (DK52)` → `Kardynała Karola Wojtyły`, clear road_ref).
+     * Corridor aliases like `Krakowska (DK52)` are kept. Field trip 249 Czaniec 2026-10-22.
+     */
+    fun sanitizeFalseHighwayOnLocalNames(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_STREET LIKE '%(DK%' OR $COL_STREET LIKE '%(DW%'
+                   OR $COL_STREET LIKE '%(A%' OR $COL_STREET LIKE '%(S%'
+                   OR $COL_ROAD_REF LIKE 'DK%' OR $COL_ROAD_REF LIKE 'DW%'
+                   OR $COL_ROAD_REF LIKE 'A%' OR $COL_ROAD_REF LIKE 'S%'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val street = it.getString(1) ?: continue
+                    val roadRef = it.getString(2)
+                    val base = RoadNameNormalizer.stripParenHighwayRef(street) ?: street
+                    if (RoadNameNormalizer.isLikelyCorridorLocalName(base)) continue
+                    val hasParen = street.contains('(')
+                    val hasHighwayRef = !roadRef.isNullOrBlank() &&
+                        RoadNameNormalizer.isHighwayCodeOnly(roadRef.trim())
+                    if (!hasParen && !hasHighwayRef) continue
+                    val en = deserializePlaceInfo(it.getString(3))
+                    val pl = deserializePlaceInfo(it.getString(4))
+                    val native = deserializePlaceInfo(it.getString(5))
+                    fun PlaceInfo.cleaned(): PlaceInfo {
+                        val s = RoadNameNormalizer.stripParenHighwayRef(this.street) ?: this.street
+                        return copy(street = s, roadRef = null)
+                    }
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_STREET, base)
+                        putNull(COL_ROAD_REF)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.cleaned()))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.cleaned()))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.cleaned()))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {}
     }
 
     /**

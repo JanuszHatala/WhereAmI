@@ -92,8 +92,11 @@ object RoadNameNormalizer {
 
     /**
      * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
-     * OSM name (`Krakowska`). Prefer the local name and keep the code as [rawRef] so normalize yields
-     * `Krakowska (DW948)` instead of a bare `DW948`.
+     * OSM name (`Krakowska`). Prefer the local name; attach the code only when OSM confirms [osmRoadRef]
+     * (or when a later bare-code cache coalesce upgrades a committed `DK*`).
+     *
+     * Never glue an OSRM-only code onto an unrelated named way: trip 249 Czaniec showed
+     * `Kardynała Karola Wojtyły (DK52)` because OSRM snapped to DK52 while Nominatim named Wojtyły.
      *
      * @return pair of (streetForNormalize, refForNormalize)
      */
@@ -107,14 +110,33 @@ object RoadNameNormalizer {
         val named = sequenceOf(osmStreet, geocoderStreet)
             .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() && !isHighwayCodeOnly(s) } }
             .firstOrNull()
-        val codeFromOsrm = osrm?.takeIf { isHighwayCodeOnly(it) }
-        val ref = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: codeFromOsrm
+        val osmRef = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
         return when {
-            osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
-            named != null -> named to ref
-            osrm != null -> osrm to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
-            else -> null to osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+            osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRef
+            named != null -> named to osmRef
+            osrm != null -> osrm to osmRef
+            else -> null to osmRef
         }
+    }
+
+    /**
+     * Local names that commonly alias a numbered corridor (`Krakowska`, `Bielska`, `3 Maja`).
+     * Long commemorative names (`Kardynała Karola Wojtyły`) must not inherit a nearby highway code.
+     */
+    fun isLikelyCorridorLocalName(street: String?): Boolean {
+        if (street.isNullOrBlank() || isHighwayCodeOnly(street) || isResidentialSideStreet(street)) return false
+        val stripped = stripParenHighwayRef(street) ?: return false
+        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim()
+        if (base.isEmpty()) return false
+        val lower = base.lowercase(Locale.ROOT)
+        if (lower.startsWith("kardynał") || lower.startsWith("księdz") || lower.startsWith("święt") ||
+            lower.startsWith("św.") || lower.startsWith("sw.") || lower.startsWith("gen.") ||
+            lower.startsWith("marsz") || lower.startsWith("pluton") || lower.startsWith("por.")
+        ) {
+            return false
+        }
+        val words = base.split(Regex("\\s+")).filter { it.isNotBlank() }
+        return words.size <= 2
     }
 
     /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
@@ -154,6 +176,7 @@ object RoadNameNormalizer {
         if (isHighwayCodeOnly(cached) || isResidentialSideStreet(cached)) return null
         val local = stripParenHighwayRef(extractBaseStreet(cached))?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
+        if (!isLikelyCorridorLocalName(local)) return null
         val ref = cachedRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: committedCode
         return local to ref
     }

@@ -337,6 +337,28 @@ class BatteryOptimizationAndAutoStartTest {
     }
 
     @Test
+    fun testMotionBurstContinuesWhileLiveSharing() {
+        // Trips 247/248: LIVE_ONLY must keep the confirmation burst (was aborted because mode != IDLE).
+        assertTrue(AppStateManager.isMotionBurstEvaluationMode(AppLifecycleMode.IDLE))
+        assertTrue(AppStateManager.isMotionBurstEvaluationMode(AppLifecycleMode.LIVE_ONLY))
+        assertFalse(AppStateManager.isMotionBurstEvaluationMode(AppLifecycleMode.FOREGROUND_VIEW))
+        assertFalse(AppStateManager.isMotionBurstEvaluationMode(AppLifecycleMode.TRIP_RECORDING))
+        assertFalse(AppStateManager.isMotionBurstEvaluationMode(AppLifecycleMode.ANDROID_AUTO))
+    }
+
+    @Test
+    fun testVehicleAutoStartCapMatchesProfileDefault() {
+        assertEquals(10, TripManager.VEHICLE_AUTO_START_MAX_SEC)
+        assertEquals(10_000L, ActivityProfile.CAR.autoStartDurationMs)
+        assertEquals(10_000L, ActivityProfile.CYCLING.autoStartDurationMs)
+        assertEquals(10_000L, ActivityProfile.MTB.autoStartDurationMs)
+        // Inflated leftovers (15 after v15 migration, or 30) must still coerce to the cap.
+        assertEquals(10, 15.coerceAtMost(TripManager.VEHICLE_AUTO_START_MAX_SEC))
+        assertEquals(10, 30.coerceAtMost(TripManager.VEHICLE_AUTO_START_MAX_SEC))
+        assertEquals(8, 8.coerceAtMost(TripManager.VEHICLE_AUTO_START_MAX_SEC))
+    }
+
+    @Test
     fun testMotionBurstEarlyAbortConditions() {
         val minDuration = AppStateManager.MOTION_BURST_MIN_DURATION_MS
         assertEquals(15_000L, minDuration)

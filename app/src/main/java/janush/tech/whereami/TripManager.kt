@@ -31,8 +31,8 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_ACTIVITY_PROFILE = "pref_activity_profile"
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
         private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
-        /** Hard cap for CAR/CYCLING/MTB auto-start confirmation (seconds). */
-        const val VEHICLE_AUTO_START_MAX_SEC = 15
+        /** Hard cap for CAR/CYCLING/MTB auto-start confirmation (seconds). Matches profile defaults. */
+        const val VEHICLE_AUTO_START_MAX_SEC = 10
         private const val KEY_AUTO_START_SPEED_PREFIX = "pref_auto_start_speed_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
@@ -181,15 +181,16 @@ class TripManager private constructor(private val context: Context) {
         val defaultSec = (profile.autoStartDurationMs / 1000L).toInt()
         migrateInflatedVehicleAutoStartIfNeeded(profile, defaultSec)
         val stored = prefs.getInt(KEY_AUTO_START_PREFIX + profile.name, defaultSec)
-        // Vehicles: cap confirmation at 15 s so a 30 s user leftover does not miss ~500 m of the drive
-        // (field trips 243/246). Foot profiles keep the stored value.
+        // Vehicles: cap confirmation at 10 s (profile default) so leftover 15–30 s prefs do not miss
+        // hundreds of metres (field trips 243/246/247). Foot profiles keep the stored value.
         return if (profile.isVehicleProfile) stored.coerceAtMost(VEHICLE_AUTO_START_MAX_SEC) else stored
     }
 
     private fun migrateInflatedVehicleAutoStartIfNeeded(profile: ActivityProfile, defaultSec: Int) {
         if (!profile.isVehicleProfile) return
         val key = KEY_AUTO_START_PREFIX + profile.name
-        val migKey = "pref_auto_start_sec_migrated_v15_" + profile.name
+        // v10 supersedes v15: Round 111 found migrated-to-15 still lagged ~250 m with Live Sharing.
+        val migKey = "pref_auto_start_sec_migrated_v10_" + profile.name
         if (prefs.getBoolean(migKey, false)) return
         val stored = if (prefs.contains(key)) prefs.getInt(key, defaultSec) else defaultSec
         val editor = prefs.edit().putBoolean(migKey, true)
@@ -1077,6 +1078,37 @@ class TripManager private constructor(private val context: Context) {
                         "Skipped ${TrackSpikeGuard.distanceM(last.latitude, last.longitude, p.lat, p.lng).toInt()}m tip at ${p.speedMps} m/s"
                     )
                     return
+                }
+                // Lateral outlier vs stable recent course (trip 248 urban corridor zigzags).
+                if (newPoints.size >= TrackSpikeGuard.LATERAL_COURSE_WINDOW + 1) {
+                    val recent = newPoints.takeLast(TrackSpikeGuard.LATERAL_COURSE_WINDOW + 1)
+                        .map { it.latitude to it.longitude }
+                    if (TrackSpikeGuard.isLateralCourseOutlier(recent, p.lat, p.lng, p.speedMps)) {
+                        TelemetryLogger.logTrip(
+                            "SPIKE_REJECTED",
+                            current.id,
+                            "Skipped lateral course outlier ${TrackSpikeGuard.distanceM(last.latitude, last.longitude, p.lat, p.lng).toInt()}m at ${p.speedMps} m/s"
+                        )
+                        return
+                    }
+                }
+                // A→B→C lateral V: drop middle B (still in the in-memory batch) then continue to commit C.
+                if (prev2 != null &&
+                    TrackSpikeGuard.isLateralVSpike(
+                        prev2.latitude, prev2.longitude,
+                        last.latitude, last.longitude,
+                        p.lat, p.lng
+                    )
+                ) {
+                    newPoints.removeAt(newPoints.size - 1)
+                    synchronized(rowLock) {
+                        if (pendingRows.isNotEmpty()) pendingRows.removeAt(pendingRows.lastIndex)
+                    }
+                    TelemetryLogger.logTrip(
+                        "SPIKE_REJECTED",
+                        current.id,
+                        "Dropped lateral V middle before committing tip"
+                    )
                 }
             }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }

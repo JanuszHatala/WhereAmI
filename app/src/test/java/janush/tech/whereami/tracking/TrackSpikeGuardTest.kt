@@ -120,4 +120,59 @@ class TrackSpikeGuardTest {
         assertEquals(2, trimmed.size)
         assertEquals(homeLat + 0.0001, trimmed.last().lat, 1e-9)
     }
+
+    @Test
+    fun `trip 248 style lateral V on a straight corridor is a spike`() {
+        // Along north, middle point jogs ~12 m east then returns — classic urban multipath Z
+        // with a ≥75° turn at B (shallower jogs are kept as road weave).
+        val (aLat, aLng) = at(0.0, 0.0)
+        val (bLat, bLng) = at(8.0, 12.0)
+        val (cLat, cLng) = at(20.0, 0.5)
+        assertTrue(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+        val xt = TrackSpikeGuard.crossTrackM(aLat, aLng, cLat, cLng, bLat, bLng)
+        assertTrue("expected ~12 m cross-track, got $xt", xt in 9.0..14.0)
+    }
+
+    @Test
+    fun `gentle road bend is not a lateral V spike`() {
+        val (aLat, aLng) = at(0.0, 0.0)
+        val (bLat, bLng) = at(20.0, 3.0)
+        val (cLat, cLng) = at(40.0, 8.0) // gradual ~10° curve
+        assertFalse(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
+
+    @Test
+    fun `lateral course outlier rejects sideways jump on stable heading`() {
+        val recent = listOf(
+            at(0.0, 0.0),
+            at(15.0, 0.2),
+            at(30.0, -0.1),
+            at(45.0, 0.3),
+            at(60.0, 0.0)
+        )
+        val (badLat, badLng) = at(72.0, 12.0) // ~12 m east of the corridor
+        assertTrue(
+            TrackSpikeGuard.isLateralCourseOutlier(recent, badLat, badLng, speedMps = 10.0)
+        )
+        val (okLat, okLng) = at(75.0, 0.4) // continues along corridor
+        assertFalse(
+            TrackSpikeGuard.isLateralCourseOutlier(recent, okLat, okLng, speedMps = 10.0)
+        )
+    }
+
+    @Test
+    fun `intersection turn is not a lateral course outlier`() {
+        // Recent steps already turning (course not stable) — left turn into a side street.
+        val recent = listOf(
+            at(0.0, 0.0),
+            at(15.0, 0.0),
+            at(28.0, 4.0),
+            at(35.0, 14.0),
+            at(38.0, 28.0)
+        )
+        val (nextLat, nextLng) = at(39.0, 45.0)
+        assertFalse(
+            TrackSpikeGuard.isLateralCourseOutlier(recent, nextLat, nextLng, speedMps = 8.0)
+        )
+    }
 }
