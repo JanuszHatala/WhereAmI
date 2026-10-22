@@ -75,4 +75,30 @@ class SpatialCacheGridTest {
         org.junit.Assert.assertTrue("90 days is aging (60-365 days)", agingAge in sixtyDaysMs..oneYearMs)
         org.junit.Assert.assertTrue("400 days is obsolete (> 365 days)", obsoleteAge > oneYearMs)
     }
+
+    @Test
+    fun testBulkGridKeyDeficitIdentification() {
+        val cachedKeys = setOf(
+            "49.8223_19.2451",
+            "49.8225_19.2455"
+        )
+
+        // Trip points: 2 in first cell, 1 in second cell, 3 in third (missing) cell
+        val points = listOf(
+            49.82231 to 19.24512, // key 49.8223_19.2451 (cached)
+            49.82234 to 19.24514, // key 49.8223_19.2451 (cached, duplicate cell)
+            49.82250 to 19.24550, // key 49.8225_19.2455 (cached)
+            49.83000 to 19.25000, // key 49.8300_19.2500 (missing)
+            49.83002 to 19.25001  // key 49.8300_19.2500 (missing, duplicate cell)
+        )
+
+        val uniqueGridCells = points.map { (lat, lng) ->
+            SpatialCacheHelper.toGridKey(lat, lng)
+        }.toSet()
+
+        assertEquals(3, uniqueGridCells.size)
+
+        val missingCount = uniqueGridCells.count { it !in cachedKeys }
+        assertEquals(1, missingCount)
+    }
 }

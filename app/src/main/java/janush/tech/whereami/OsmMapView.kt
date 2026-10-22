@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1804,49 +1805,163 @@ fun OsmMapView(
                 }
             }
 
-            // Cache Deficit Alert Button (appears when missing offline routes/boundaries > 0)
+            // Cache Deficit Alert & Progress Button
             val cacheManager = remember { CacheManager.getInstance(context) }
             val cacheDeficit by cacheManager.cacheDeficit.collectAsState()
+            val prefetchState by cacheManager.prefetchState.collectAsState()
             val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
-            if (totalMissingCache > 0 && onOpenCacheManager != null) {
+
+            val isPrefetchRunning = prefetchState is CacheManager.PrefetchState.Running
+            val isPrefetchPaused = prefetchState is CacheManager.PrefetchState.Paused
+            val isPrefetchCompleted = prefetchState is CacheManager.PrefetchState.Completed
+
+            val showCacheControl = (totalMissingCache > 0 || isPrefetchRunning || isPrefetchPaused || isPrefetchCompleted) && onOpenCacheManager != null
+
+            if (showCacheControl) {
+                val runningProgress: Float? = when (val s = prefetchState) {
+                    is CacheManager.PrefetchState.Running -> if (s.total > 0) (s.current.toFloat() / s.total.toFloat()).coerceIn(0f, 1f) else null
+                    is CacheManager.PrefetchState.Paused -> if (s.total > 0) (s.current.toFloat() / s.total.toFloat()).coerceIn(0f, 1f) else null
+                    else -> null
+                }
+                val percentInt: Int? = when (val s = prefetchState) {
+                    is CacheManager.PrefetchState.Running -> if (s.total > 0) ((s.current.toFloat() / s.total.toFloat()) * 100).toInt() else null
+                    is CacheManager.PrefetchState.Paused -> if (s.total > 0) ((s.current.toFloat() / s.total.toFloat()) * 100).toInt() else null
+                    else -> null
+                }
+
                 Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
                             .background(ComposeColor(0xCC1E293B))
-                            .clickable { onOpenCacheManager.invoke() },
+                            .clickable {
+                                if (isPrefetchCompleted) {
+                                    cacheManager.calculateCacheDeficit()
+                                    val remaining = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
+                                    if (remaining > 0) {
+                                        cacheManager.resetPrefetchState()
+                                        onOpenCacheManager.invoke()
+                                    } else {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Offline data is up to date",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                        cacheManager.resetPrefetchState()
+                                    }
+                                } else {
+                                    onOpenCacheManager.invoke()
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
+                        if (isPrefetchRunning || isPrefetchPaused) {
+                            if (runningProgress != null) {
+                                CircularProgressIndicator(
+                                    progress = { runningProgress },
+                                    modifier = Modifier.size(42.dp),
+                                    color = ComposeColor(0xFF38BDF8),
+                                    trackColor = ComposeColor(0x3338BDF8),
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(42.dp),
+                                    color = ComposeColor(0xFF38BDF8),
+                                    trackColor = ComposeColor(0x3338BDF8),
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                        }
+
+                        val iconTint = when {
+                            isPrefetchCompleted -> ComposeColor(0xFF10B981)
+                            isPrefetchRunning || isPrefetchPaused -> ComposeColor(0xFF38BDF8)
+                            else -> ComposeColor(0xFFF59E0B)
+                        }
+
                         Icon(
                             imageVector = Icons.Default.Storage,
-                            contentDescription = "Missing Offline Cache Items ($totalMissingCache)",
-                            tint = ComposeColor(0xFFF59E0B),
-                            modifier = Modifier.size(22.dp)
+                            contentDescription = when {
+                                isPrefetchCompleted -> "Offline Cache Complete"
+                                isPrefetchRunning -> "Fetching Offline Cache..."
+                                else -> "Missing Offline Cache Items ($totalMissingCache)"
+                            },
+                            tint = iconTint,
+                            modifier = Modifier.size(21.dp)
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .offset(x = 4.dp, y = (-4).dp)
-                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
-                            .clip(CircleShape)
-                            .background(ComposeColor(0xFFF59E0B))
-                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
-                            .padding(horizontal = 4.dp, vertical = 1.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "!",
-                            color = ComposeColor.Black,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            style = androidx.compose.ui.text.TextStyle(
-                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
-                                    includeFontPadding = false
+
+                    // Badge top-right
+                    when {
+                        isPrefetchCompleted -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(ComposeColor(0xFF10B981))
+                                    .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Completed",
+                                    tint = ComposeColor.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
-                            )
-                        )
+                            }
+                        }
+                        isPrefetchRunning || isPrefetchPaused -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 6.dp, y = (-5).dp)
+                                    .sizeIn(minWidth = 18.dp, minHeight = 16.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(ComposeColor(0xFF0284C7))
+                                    .border(1.2.dp, ComposeColor(0xFF0F172A), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (percentInt != null) "$percentInt%" else "${(prefetchState as? CacheManager.PrefetchState.Running)?.pass ?: 1}/3",
+                                    color = ComposeColor.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                            includeFontPadding = false
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                        else -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                                    .clip(CircleShape)
+                                    .background(ComposeColor(0xFFF59E0B))
+                                    .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "!",
+                                    color = ComposeColor.Black,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                            includeFontPadding = false
+                                        )
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
