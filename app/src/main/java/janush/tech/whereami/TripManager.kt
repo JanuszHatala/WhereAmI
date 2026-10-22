@@ -31,6 +31,8 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_ACTIVITY_PROFILE = "pref_activity_profile"
         private const val KEY_AUTO_STOP_MINUTES = "pref_auto_stop_minutes"
         private const val KEY_AUTO_START_PREFIX = "pref_auto_start_sec_"
+        /** Hard cap for CAR/CYCLING/MTB auto-start confirmation (seconds). */
+        const val VEHICLE_AUTO_START_MAX_SEC = 15
         private const val KEY_AUTO_START_SPEED_PREFIX = "pref_auto_start_speed_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
@@ -177,7 +179,25 @@ class TripManager private constructor(private val context: Context) {
 
     fun getAutoStartSecondsForProfile(profile: ActivityProfile): Int {
         val defaultSec = (profile.autoStartDurationMs / 1000L).toInt()
-        return prefs.getInt(KEY_AUTO_START_PREFIX + profile.name, defaultSec)
+        migrateInflatedVehicleAutoStartIfNeeded(profile, defaultSec)
+        val stored = prefs.getInt(KEY_AUTO_START_PREFIX + profile.name, defaultSec)
+        // Vehicles: cap confirmation at 15 s so a 30 s user leftover does not miss ~500 m of the drive
+        // (field trips 243/246). Foot profiles keep the stored value.
+        return if (profile.isVehicleProfile) stored.coerceAtMost(VEHICLE_AUTO_START_MAX_SEC) else stored
+    }
+
+    private fun migrateInflatedVehicleAutoStartIfNeeded(profile: ActivityProfile, defaultSec: Int) {
+        if (!profile.isVehicleProfile) return
+        val key = KEY_AUTO_START_PREFIX + profile.name
+        val migKey = "pref_auto_start_sec_migrated_v15_" + profile.name
+        if (prefs.getBoolean(migKey, false)) return
+        val stored = if (prefs.contains(key)) prefs.getInt(key, defaultSec) else defaultSec
+        val editor = prefs.edit().putBoolean(migKey, true)
+        if (stored > VEHICLE_AUTO_START_MAX_SEC) {
+            editor.putInt(key, VEHICLE_AUTO_START_MAX_SEC)
+            TelemetryLogger.log("SETTINGS", "Migrated AutoStartSeconds for ${profile.name} from $stored → $VEHICLE_AUTO_START_MAX_SEC")
+        }
+        editor.apply()
     }
 
     fun setAutoStartSecondsForProfile(profile: ActivityProfile, seconds: Int) {

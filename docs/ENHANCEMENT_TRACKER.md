@@ -1381,7 +1381,19 @@ User feedback:
 | **UI106-06** | Dedicated map button for offline cache deficit alert with amber exclamation badge. | `OsmMapView.kt` | Implemented | Rendered 42dp slate button in right-side map column with `Icons.Default.Storage` + amber `!` badge whenever `cacheDeficit.missingRoutes + missingBoundaries > 0`, tapping opens `CacheManagerDialog` |
 | **VER-106** | versionCode 141 / 1.18.10 | `build.gradle.kts`, `LiveGuestTest.kt` | Implemented | Build and unit test gates pass (`BUILD SUCCESSFUL in 26s`) |
 
-## 110. Round 107: Live Web Viewer Info Panel Responsive Redesign & Unique Guest Names (2026-10-21, web-only)
+## 110. Round 108: Overnight Live GPS Drain + Late Driving Auto-Start (2026-10-22, v1.18.11)
+
+Evidence: trip 246 CAR 23.5 km auto-start ~520 m from home at 45 km/h; `pref_auto_start_sec_CAR=30`; Live Sharing active overnight (`interval=1`, `pause_live_share=false`); batterystats **gnss 10m 4s screen-off/doze via FGS**; alarm follow woke sleep before 06:30 end.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BAT108-01** | Standby GNSS/radio drain (2nd in Android battery, tool blamed GPS). | `LIVE_ONLY` stop GPS on screen-off; heartbeat ≥5 min screen-off; pause-live-on-sleep default+migrate true | Implemented | batterystats matched 10m FGS GNSS; code stops subscription when screen off |
+| **BAT108-02** | Not Sleeping at 06:25; alarm at 06:00. | `shouldAutoWake` alarm only within 5 min of bedtime end | Implemented | `AutoSleepManagerTest` early alarm stays asleep |
+| **ENG108-03** | Driving auto-start very late. | Vehicle auto-start cap 15 s + migrate CAR 30→15 | Implemented | trip 246 start 520 m ≈ 30 s @ 45 km/h |
+| **VAL108-04** | Trip accuracy / streets / screen-off recording. | trip 246 telemetry | OK | acc p50 2.5 m; Polna/Krakowska cache healthy; screen-off batch expected |
+| **VER-108** | versionCode 142 / 1.18.11 | build.gradle.kts | Done | - |
+
+## 111. Round 107: Live Web Viewer Info Panel Responsive Redesign & Unique Guest Names (2026-10-21, web-only)
 
 Evidence: narrow-window screenshots of the visitor `/live/:id` card (vertical title crush, stacked Driving/Maps, Guest 1 collisions). No Android `versionCode` bump (server/web only).
 

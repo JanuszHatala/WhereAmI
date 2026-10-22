@@ -458,11 +458,13 @@ class LiveSharingManager private constructor(private val context: Context) {
 
                 val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
                 val baseIntervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
-                // When in sleep mode (overnight hibernation), relax heartbeat to 60 minutes with ultra-low-frequency one-shot GNSS fix
-                val intervalMs = if (isCurrentlySleeping) {
-                    60 * 60_000L
-                } else {
-                    baseIntervalMs
+                val screenOff = !AppStateManager.getInstance(context).isAppInForegroundFlow.value
+                // Sleep: 60 min. Screen-off Live-Only: at least 5 min even if the session is set to 1 min
+                // (overnight visitors presence must not ping the radio every minute).
+                val intervalMs = when {
+                    isCurrentlySleeping -> 60 * 60_000L
+                    screenOff -> baseIntervalMs.coerceAtLeast(5 * 60_000L)
+                    else -> baseIntervalMs
                 }
                 delay(intervalMs)
 

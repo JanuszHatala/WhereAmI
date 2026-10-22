@@ -3880,7 +3880,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         )
                                     )
                                     Text(
-                                        text = "Wakes automatically when device morning alarm rings.",
+                                        text = "Wakes near sleep end when the device morning alarm rings (not a full hour early).",
                                         fontSize = 10.sp,
                                         color = Color(0xFF94A3B8),
                                         modifier = Modifier.padding(top = 1.dp),
