@@ -670,24 +670,29 @@ class AppStateManager private constructor(private val context: Context) {
                         LiveSharingManager.getInstance(context).startStationaryHeartbeat()
                         isStationaryCadenceApplied = true
 
-                        // Zero-idle drain in screen-off: on battery, continuous 60s GNSS requests hold GPS lock
-                        // and prevent sustained Doze state. Power down GPS completely; MotionWakeManager will
-                        // instantly wake and restore moving GPS cadence on locomotion.
-                        if (!_isCharging.value && !isAppInForeground) {
-                            TelemetryLogger.log("POWER", "LIVE_ONLY: Screen off and unplugged: Shutting down GPS updates to allow sustained Doze.")
+                        // Zero-idle drain: continuous GNSS (even at 30–60 s) holds the radio/GPS lock and
+                        // blocks Deep Doze (field 2026-10-22: ~10 min screen-off GNSS via FGS while Live
+                        // Sharing stayed up after an early alarm wake). Power down GPS whenever the
+                        // screen is off; MotionWakeManager restores cadence on locomotion. Presence
+                        // continues via HTTP heartbeat without a location subscription.
+                        if (!isAppInForeground) {
+                            TelemetryLogger.log(
+                                "POWER",
+                                "LIVE_ONLY: Screen off: Shutting down GPS updates to allow sustained Doze (charging=${_isCharging.value})."
+                            )
                             locManager.stopLocationUpdates(preserveStationaryState = true)
+                        } else if (_isCharging.value) {
+                            locManager.updateSamplingInterval(30_000L, 15_000L)
                         } else {
-                            val stationaryInterval = if (_isCharging.value) 30_000L else 60_000L
-                            val stationaryMinInterval = if (_isCharging.value) 15_000L else 30_000L
-                            locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
+                            locManager.updateSamplingInterval(60_000L, 30_000L)
                         }
 
                         // Immediately evaluate auto-sleep (bedtime schedule or DND)
                         AutoSleepManager.getInstance(context).evaluateAutoSleep()
                     }
                 } else {
-                    if (locManager.isGpsStopped && isStationaryCadenceApplied && !_isCharging.value && !isAppInForeground) {
-                        // GPS powered down on battery with screen off; keep resting until MotionWakeManager interrupt
+                    if (locManager.isGpsStopped && isStationaryCadenceApplied && !isAppInForeground) {
+                        // GPS powered down with screen off; keep resting until MotionWakeManager interrupt
                         delay(10_000L)
                         continue
                     }

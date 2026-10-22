@@ -35,19 +35,21 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
   - In `AppLifecycleMode.IDLE` (screen off, no active trip, no live sharing), **GPS hardware MUST be completely powered down** via `LocationManager.stopLocationUpdates()`.
   - **Never poll GPS continuously in background idle**.
 - **Live Sharing Stationary Low-Frequency Cadence & Motion Wake Arming (`LIVE_ONLY`)**:
-  - When Live Sharing is active in the background without an active trip recording (`LIVE_ONLY` mode), frequent GNSS polling while stationary is strictly forbidden.
-  - When stationary for $\ge 30\text{s}$ (accelerometer variance $< 0.045$ via `StationaryDetector` or speed $< 0.35\text{ m/s}$):
-    - **GPS sampling interval MUST be relaxed to 60s (30s when charging)** via `LocationManager.updateSamplingInterval(60_000L, 30_000L)`.
-    - Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW) MUST be armed via `MotionWakeManager.arm()`.
-    - A lightweight periodic presence heartbeat (every `syncIntervalMinutes`) transmits presence over HTTP (~50ms), keeping the companion web viewer "ONLINE".
-  - Significant physical locomotion triggers `MotionWakeManager.handleMotionWake()`, immediately restoring moving GPS cadence (15s / 6s) and evaluating trip auto-start.
+ - When Live Sharing is active in the background without an active trip recording (`LIVE_ONLY` mode), frequent GNSS polling while stationary is strictly forbidden.
+ - When stationary for $\ge 30\text{s}$ (accelerometer variance $< 0.045$ via `StationaryDetector` or speed $< 0.35\text{ m/s}$):
+ - **If the screen is off**: GPS MUST be powered down completely via `LocationManager.stopLocationUpdates()` (charging or battery). Continuous 30–60 s GNSS holds the modem out of Deep Doze (field 2026-10-22: ~10 min screen-off GNSS via FGS).
+ - **If the screen is on**: relax to 60s (30s when charging) via `updateSamplingInterval`.
+ - Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW) MUST be armed via `MotionWakeManager.arm()`.
+ - A lightweight periodic presence heartbeat transmits presence over HTTP (~50ms): every `syncIntervalMinutes` when screen on (floored to ≥5 min when screen off; 60 min while Sleep Mode). Companion web viewer stays "ONLINE" without a GNSS subscription.
+ - Significant physical locomotion triggers `MotionWakeManager.handleMotionWake()`, immediately restoring moving GPS cadence (15s / 6s) and evaluating trip auto-start.
+ - Overnight Sleep Mode should pause Live Sharing by default (`pref_auto_sleep_pause_live_share`). Follow-alarm may wake sleep only within 5 minutes of bedtime end (not a 06:00 alarm ending a 06:30 window).
 - **Notification Content Stability Invariant (Zero-Wakelock-Storm)**:
   - When a trip is NOT actively recording (e.g. `LIVE_ONLY` mode, `TripMode.AUTO` standby), the persistent notification text MUST NOT include dynamic ticking time strings (e.g. `⏱️ 7h 12m elapsed` or minutes/seconds counters).
   - Changing notification strings causes `contentChanged = true` on every minute tick, triggering `NotificationManager.notify()`, acquiring system wake locks (`NotificationManagerService:post`), firing wakeup alarms, and pulling the CPU out of Android Doze.
   - Standby and live-only notification text MUST remain strictly static (e.g. `"Live Sharing Active • Auto-record: Car (>10 km/h) • $place"` or `"WhereAmI • Auto-record Standby"`).
 - **Standby Location Stream Decoupling**:
   - In `LiveTrackingService`, when in pure standby without an active trip and without live sharing (`TripMode.AUTO` standby), `stopLocationTracking()` MUST be called to release `masterLocationFlow` subscribers.
-  - When Live Sharing is active (`LIVE_ONLY`), `startLocationTracking()` remains active to stream live fixes, while CPU wake locks remain released (`updateWakeLock(false)`).
+  - When Live Sharing is active (`LIVE_ONLY`) with the screen on, `startLocationTracking()` remains active to stream live fixes, while CPU wake locks remain released (`updateWakeLock(false)`). With the screen off and stationary, GPS updates MUST stop; presence continues via heartbeat only until `MotionWakeManager` or screen-on restores cadence.
 - **Hardware Motion Wake (`MotionWakeManager`)**:
   - In `TripMode.AUTO`, idle locomotion detection relies strictly on Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW draw in sensor hub).
   - Physical motion triggers a temporary, profile-adapted confirmation GPS burst (`(profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)`). If locomotion criteria are met, the trip auto-starts; otherwise GPS powers down and the hardware sensor re-arms.
