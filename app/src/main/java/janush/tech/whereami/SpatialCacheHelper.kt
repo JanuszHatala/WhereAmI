@@ -499,6 +499,33 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     }
 
     /**
+     * Bulk-loads all valid cached grid keys into a HashSet.
+     * Replaces thousands of individual point-by-point SQLite lookups with a single ~10ms scan.
+     */
+    fun getAllCachedGridKeys(): Set<String> {
+        val keys = HashSet<String>()
+        try {
+            val db = readableDatabase
+            val cursor = db.rawQuery(
+                "SELECT $COL_GRID_KEY FROM $TABLE_CACHE WHERE $COL_EN_JSON IS NOT NULL AND $COL_PL_JSON IS NOT NULL",
+                null
+            )
+            cursor.use {
+                val keyIdx = it.getColumnIndex(COL_GRID_KEY)
+                if (keyIdx >= 0) {
+                    while (it.moveToNext()) {
+                        val k = it.getString(keyIdx)
+                        if (!k.isNullOrEmpty()) {
+                            keys.add(k)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return keys
+    }
+
+    /**
      * Checks if any cached address exists within [radiusMeters] (default 50m) of this point.
      * Prevents redundant corridor network queries where spatial awareness data is already available.
      */

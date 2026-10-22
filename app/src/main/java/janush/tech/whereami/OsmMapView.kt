@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -427,6 +428,33 @@ private fun bringAltitudeOverlayToFront(map: MapView, altitudeOverlay: AltitudeC
 }
 
 /**
+ * Inserts a guest marker below the host's own position tracking marker and altitude overlay,
+ * ensuring the host marker and altitude badge are always stably positioned on top without z-fighting.
+ */
+private fun insertGuestMarkerBelowHostOverlays(
+    map: MapView,
+    gm: Marker,
+    marker: Marker?,
+    altitudeOverlay: AltitudeCursorBadgeOverlay
+) {
+    if (map.overlays.contains(gm)) {
+        map.overlays.remove(gm)
+    }
+    val mIdx = marker?.let { map.overlays.indexOf(it) } ?: -1
+    val altIdx = map.overlays.indexOf(altitudeOverlay)
+    val targetIdx = when {
+        mIdx >= 0 -> mIdx
+        altIdx >= 0 -> altIdx
+        else -> -1
+    }
+    if (targetIdx >= 0) {
+        map.overlays.add(targetIdx, gm)
+    } else {
+        map.overlays.add(gm)
+    }
+}
+
+/**
  * Composable OSM map panel with:
  * - Position dot / heading arrow.
  * - Red live trip polyline drawing (#EF4444).
@@ -542,7 +570,8 @@ fun OsmMapView(
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
-    var guestMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    val guestMarkersMap = remember { mutableMapOf<String, Marker>() }
+    val guestMarkerBadgeKeys = remember { mutableMapOf<String, String>() }
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
@@ -1208,16 +1237,30 @@ fun OsmMapView(
     // Render Guest Markers (Follow back guest positions)
     LaunchedEffect(visibleGuests, showGuestDistanceBadge, latLng) {
         val map = mapView ?: return@LaunchedEffect
-        guestMarkers.forEach { map.overlays.remove(it) }
 
         if (visibleGuests.isEmpty()) {
-            guestMarkers = emptyList()
-            map.invalidate()
+            if (guestMarkersMap.isNotEmpty()) {
+                guestMarkersMap.values.forEach { map.overlays.remove(it) }
+                guestMarkersMap.clear()
+                guestMarkerBadgeKeys.clear()
+                map.invalidate()
+            }
             return@LaunchedEffect
         }
 
+        val visibleIds = visibleGuests.map { it.id }.toSet()
+        val removedIds = guestMarkersMap.keys.filter { it !in visibleIds }
+        var mapChanged = false
+
+        if (removedIds.isNotEmpty()) {
+            removedIds.forEach { id ->
+                guestMarkersMap.remove(id)?.let { map.overlays.remove(it) }
+                guestMarkerBadgeKeys.remove(id)
+            }
+            mapChanged = true
+        }
+
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
-        val newGuestMarkers = mutableListOf<Marker>()
 
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
@@ -1226,36 +1269,65 @@ fun OsmMapView(
                 results[0]
             } else null
 
-            val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
-            val gm = Marker(map).apply {
-                position = guest.geoPoint
-                setAnchor(iconResult.anchorX, iconResult.anchorY)
-                icon = iconResult.drawable
-                title = guest.name
-                val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
-                val statusStr = if (guest.isInactive) " (inactive)" else ""
-                snippet = "Guest$statusStr$distStr"
-                infoWindow = null
-                setOnMarkerClickListener { _, _ ->
-                    if (currentOnGuestClick != null) {
-                        currentOnGuestClick?.invoke(guest)
-                    } else {
-                        val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
-                        val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
-                        android.widget.Toast.makeText(
-                            context,
-                            "👤 ${guest.name}$statusInfo$distInfo",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    true
+            val badgeText = GuestMarkerHelper.formatBadgeText(guest, distMeters, showGuestDistanceBadge)
+            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText"
+
+            val existingMarker = guestMarkersMap[guest.id]
+            val gm = if (existingMarker != null) {
+                if (existingMarker.position.latitude != guest.lat || existingMarker.position.longitude != guest.lng) {
+                    existingMarker.position = guest.geoPoint
+                    mapChanged = true
                 }
+                if (guestMarkerBadgeKeys[guest.id] != badgeKey) {
+                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                    existingMarker.icon = iconResult.drawable
+                    existingMarker.setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    guestMarkerBadgeKeys[guest.id] = badgeKey
+                    mapChanged = true
+                }
+                if (!map.overlays.contains(existingMarker)) {
+                    insertGuestMarkerBelowHostOverlays(map, existingMarker, marker, altitudeOverlay)
+                    mapChanged = true
+                }
+                existingMarker
+            } else {
+                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                val newMarker = Marker(map).apply {
+                    position = guest.geoPoint
+                    setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    icon = iconResult.drawable
+                }
+                guestMarkersMap[guest.id] = newMarker
+                guestMarkerBadgeKeys[guest.id] = badgeKey
+                insertGuestMarkerBelowHostOverlays(map, newMarker, marker, altitudeOverlay)
+                mapChanged = true
+                newMarker
             }
-            map.overlays.add(gm)
-            newGuestMarkers.add(gm)
+
+            gm.title = guest.name
+            val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
+            val statusStr = if (guest.isInactive) " (inactive)" else ""
+            gm.snippet = "Guest$statusStr$distStr"
+            gm.infoWindow = null
+            gm.setOnMarkerClickListener { _, _ ->
+                if (currentOnGuestClick != null) {
+                    currentOnGuestClick?.invoke(guest)
+                } else {
+                    val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
+                    val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
+                    android.widget.Toast.makeText(
+                        context,
+                        "👤 ${guest.name}$statusInfo$distInfo",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                true
+            }
         }
-        guestMarkers = newGuestMarkers
-        map.invalidate()
+
+        if (mapChanged) {
+            map.invalidate()
+        }
     }
 
     // Render Boundary Polygon (Phase 2)
@@ -1733,49 +1805,163 @@ fun OsmMapView(
                 }
             }
 
-            // Cache Deficit Alert Button (appears when missing offline routes/boundaries > 0)
+            // Cache Deficit Alert & Progress Button
             val cacheManager = remember { CacheManager.getInstance(context) }
             val cacheDeficit by cacheManager.cacheDeficit.collectAsState()
+            val prefetchState by cacheManager.prefetchState.collectAsState()
             val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
-            if (totalMissingCache > 0 && onOpenCacheManager != null) {
+
+            val isPrefetchRunning = prefetchState is CacheManager.PrefetchState.Running
+            val isPrefetchPaused = prefetchState is CacheManager.PrefetchState.Paused
+            val isPrefetchCompleted = prefetchState is CacheManager.PrefetchState.Completed
+
+            val showCacheControl = (totalMissingCache > 0 || isPrefetchRunning || isPrefetchPaused || isPrefetchCompleted) && onOpenCacheManager != null
+
+            if (showCacheControl) {
+                val runningProgress: Float? = when (val s = prefetchState) {
+                    is CacheManager.PrefetchState.Running -> if (s.total > 0) (s.current.toFloat() / s.total.toFloat()).coerceIn(0f, 1f) else null
+                    is CacheManager.PrefetchState.Paused -> if (s.total > 0) (s.current.toFloat() / s.total.toFloat()).coerceIn(0f, 1f) else null
+                    else -> null
+                }
+                val percentInt: Int? = when (val s = prefetchState) {
+                    is CacheManager.PrefetchState.Running -> if (s.total > 0) ((s.current.toFloat() / s.total.toFloat()) * 100).toInt() else null
+                    is CacheManager.PrefetchState.Paused -> if (s.total > 0) ((s.current.toFloat() / s.total.toFloat()) * 100).toInt() else null
+                    else -> null
+                }
+
                 Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
                             .background(ComposeColor(0xCC1E293B))
-                            .clickable { onOpenCacheManager.invoke() },
+                            .clickable {
+                                if (isPrefetchCompleted) {
+                                    cacheManager.calculateCacheDeficit()
+                                    val remaining = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
+                                    if (remaining > 0) {
+                                        cacheManager.resetPrefetchState()
+                                        onOpenCacheManager.invoke()
+                                    } else {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Offline data is up to date",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                        cacheManager.resetPrefetchState()
+                                    }
+                                } else {
+                                    onOpenCacheManager.invoke()
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
+                        if (isPrefetchRunning || isPrefetchPaused) {
+                            if (runningProgress != null) {
+                                CircularProgressIndicator(
+                                    progress = { runningProgress },
+                                    modifier = Modifier.size(42.dp),
+                                    color = ComposeColor(0xFF38BDF8),
+                                    trackColor = ComposeColor(0x3338BDF8),
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(42.dp),
+                                    color = ComposeColor(0xFF38BDF8),
+                                    trackColor = ComposeColor(0x3338BDF8),
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                        }
+
+                        val iconTint = when {
+                            isPrefetchCompleted -> ComposeColor(0xFF10B981)
+                            isPrefetchRunning || isPrefetchPaused -> ComposeColor(0xFF38BDF8)
+                            else -> ComposeColor(0xFFF59E0B)
+                        }
+
                         Icon(
                             imageVector = Icons.Default.Storage,
-                            contentDescription = "Missing Offline Cache Items ($totalMissingCache)",
-                            tint = ComposeColor(0xFFF59E0B),
-                            modifier = Modifier.size(22.dp)
+                            contentDescription = when {
+                                isPrefetchCompleted -> "Offline Cache Complete"
+                                isPrefetchRunning -> "Fetching Offline Cache..."
+                                else -> "Missing Offline Cache Items ($totalMissingCache)"
+                            },
+                            tint = iconTint,
+                            modifier = Modifier.size(21.dp)
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .offset(x = 4.dp, y = (-4).dp)
-                            .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
-                            .clip(CircleShape)
-                            .background(ComposeColor(0xFFF59E0B))
-                            .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
-                            .padding(horizontal = 4.dp, vertical = 1.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "!",
-                            color = ComposeColor.Black,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            style = androidx.compose.ui.text.TextStyle(
-                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(
-                                    includeFontPadding = false
+
+                    // Badge top-right
+                    when {
+                        isPrefetchCompleted -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(ComposeColor(0xFF10B981))
+                                    .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Completed",
+                                    tint = ComposeColor.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
-                            )
-                        )
+                            }
+                        }
+                        isPrefetchRunning || isPrefetchPaused -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 6.dp, y = (-5).dp)
+                                    .sizeIn(minWidth = 18.dp, minHeight = 16.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(ComposeColor(0xFF0284C7))
+                                    .border(1.2.dp, ComposeColor(0xFF0F172A), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (percentInt != null) "$percentInt%" else "${(prefetchState as? CacheManager.PrefetchState.Running)?.pass ?: 1}/3",
+                                    color = ComposeColor.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                            includeFontPadding = false
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                        else -> {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                                    .clip(CircleShape)
+                                    .background(ComposeColor(0xFFF59E0B))
+                                    .border(1.5.dp, ComposeColor(0xFF0F172A), CircleShape)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "!",
+                                    color = ComposeColor.Black,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                            includeFontPadding = false
+                                        )
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }

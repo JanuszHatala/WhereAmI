@@ -188,6 +188,12 @@ class CacheManager private constructor(private val context: Context) {
     val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
 
     data class CacheDeficit(val missingRoutes: Int, val missingBoundaries: Int)
+    fun resetPrefetchState() {
+        if (_prefetchState.value is PrefetchState.Completed || _prefetchState.value is PrefetchState.Error || _prefetchState.value is PrefetchState.Blocked) {
+            _prefetchState.value = PrefetchState.Idle
+        }
+    }
+
     private val _cacheDeficit = kotlinx.coroutines.flow.MutableStateFlow<CacheDeficit?>(null)
     val cacheDeficit: StateFlow<CacheDeficit?> = _cacheDeficit.asStateFlow()
 
@@ -416,6 +422,10 @@ class CacheManager private constructor(private val context: Context) {
         isPrefetchPaused = false
         prefetchJob?.cancel()
 
+        // Immediate UI feedback
+        _prefetchState.value = PrefetchState.Running(1, "Starting...", 0, 0, 0)
+        updateNotification("Starting prefetch...", 0, 0, false)
+
         prefetchJob = managerScope.launch {
             try {
                 val dbHelper = TripDatabaseHelper(context)
@@ -425,6 +435,9 @@ class CacheManager private constructor(private val context: Context) {
 
                 // 1. Ensure legacy 3-decimal cache keys are migrated so actual trip data is recognized
                 spatialHelper.migrateLegacyKeys()
+
+                // Bulk-load cached keys for fast in-memory lookups
+                val cachedKeys = spatialHelper.getAllCachedGridKeys().toMutableSet()
 
                 // Calculate total unique points in all trips for accurate reporting
                 val allUnique15mPoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
@@ -439,6 +452,8 @@ class CacheManager private constructor(private val context: Context) {
 
                 if (allUnique15mPoints.isEmpty()) {
                     _prefetchState.value = PrefetchState.Completed(0, 0)
+                    dismissNotification()
+                    calculateCacheDeficit()
                     return@launch
                 }
 
@@ -453,7 +468,8 @@ class CacheManager private constructor(private val context: Context) {
                     for (pt in trip.points) {
                         if (lastPt == null || lastPt.distanceToAsDouble(pt) >= 50.0) {
                             lastPt = pt
-                            if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                            val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                            if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
                                 pass1Candidates.add(pt)
                             }
                         }
@@ -477,11 +493,13 @@ class CacheManager private constructor(private val context: Context) {
                     }
 
                     // Skip if now cached by an adjacent query
-                    if (!spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
-                                  locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
-                                  addedRoutes++
-                                  kotlinx.coroutines.delay(500L)
-                              }
+                    val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                    if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                        cachedKeys.add(key)
+                        addedRoutes++
+                        kotlinx.coroutines.delay(500L)
+                    }
 
                     pass1Current++
                     _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, addedRoutes)
@@ -492,9 +510,9 @@ class CacheManager private constructor(private val context: Context) {
 
                 // ── PASS 2: Fine Precision Down to ~15m Grid Resolution ──────────────
                 // Fills in intermediate gaps and house numbers along the corridors
-                val pass2Candidates = allUnique15mPoints.values.filter { pt ->
-                    !spatialHelper.isCached(pt.latitude, pt.longitude)
-                }
+                val pass2Candidates = allUnique15mPoints.filter { (key, _) ->
+                    key !in cachedKeys
+                }.values.toList()
 
                 val pass2Total = pass2Candidates.size
                 var pass2Current = 0
@@ -512,11 +530,13 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    if (!spatialHelper.isCached(pt.latitude, pt.longitude)) {
-                          locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
-                          addedRoutes++
-                          kotlinx.coroutines.delay(500L)
-                      }
+                    val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                    if (key !in cachedKeys) {
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                        cachedKeys.add(key)
+                        addedRoutes++
+                        kotlinx.coroutines.delay(500L)
+                    }
 
                     pass2Current++
                     _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, addedRoutes)
@@ -558,9 +578,9 @@ class CacheManager private constructor(private val context: Context) {
                     kotlinx.coroutines.delay(300L)
                 }
 
-                val finalCached = allUnique15mPoints.values.count { pt -> spatialHelper.isCached(pt.latitude, pt.longitude) }
                 _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries)
                 dismissNotification()
+                calculateCacheDeficit()
             } catch (_: kotlinx.coroutines.CancellationException) {
                 dismissNotification()
             } catch (e: Exception) {
@@ -619,6 +639,10 @@ class CacheManager private constructor(private val context: Context) {
 
         isPrefetchPaused = false
         prefetchJob?.cancel()
+
+        // Immediate UI feedback
+        _prefetchState.value = PrefetchState.Running(3, "Starting...", 0, 0, 0)
+        updateNotification("Starting boundaries...", 0, 0, false)
 
         prefetchJob = managerScope.launch(Dispatchers.IO) {
             try {
@@ -714,8 +738,6 @@ class CacheManager private constructor(private val context: Context) {
 
     fun calculateCacheDeficit() {
         if (_prefetchState.value !is PrefetchState.Idle && _prefetchState.value !is PrefetchState.Completed) return
-        // Immediately transition to Idle so the UI shows the Pre-fetch button and deficit counter
-        _prefetchState.value = PrefetchState.Idle
         managerScope.launch {
             try {
                 val dbHelper = TripDatabaseHelper(context)
@@ -735,10 +757,9 @@ class CacheManager private constructor(private val context: Context) {
                     }
                 }
 
-                // A point is missing if it's NOT explicitly cached.
-                val missingRoutes = allUnique15mPoints.values.count { pt -> 
-                    !spatialHelper.isCached(pt.latitude, pt.longitude) 
-                }
+                // Bulk-load cached keys in a single SQLite query (~10ms) instead of tens of thousands of individual queries
+                val cachedKeys = spatialHelper.getAllCachedGridKeys()
+                val missingRoutes = allUnique15mPoints.keys.count { it !in cachedKeys }
                 
                 val boundaryTargets = getDistinctBoundaryTargets()
                 val missingBoundaries = boundaryTargets.count { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
