@@ -22,6 +22,12 @@ object CurvedPolyline {
     const val MAX_SUBDIVISIONS = 8
     /** Both corners of a segment straighter than this: draw it as a straight segment. */
     const val STRAIGHT_DEG = 4.0
+    /**
+     * Either corner sharper than this: draw the segment straight.
+     * Centripetal Catmull-Rom otherwise overshoots multipath kinks into visible Z/V zigzags
+     * (field trip 248 on Głęboka / Piłsudskiego) even when stored vertices are only metres off.
+     */
+    const val SHARP_CORNER_DEG = 100.0
 
     /**
      * Emits segments [fromSeg, toSeg) of the [n] vertices: for each segment its interior curve points and then
@@ -65,6 +71,7 @@ object CurvedPolyline {
         val a = turnDeg(-x0, -y0, x2, y2)
         val b = turnDeg(x2, y2, x3 - x2, y3 - y2)
         if (a < STRAIGHT_DEG && b < STRAIGHT_DEG) return 1
+        if (a >= SHARP_CORNER_DEG || b >= SHARP_CORNER_DEG) return 1
         return ceil(len / STEP_M).toInt().coerceIn(1, MAX_SUBDIVISIONS)
     }
 

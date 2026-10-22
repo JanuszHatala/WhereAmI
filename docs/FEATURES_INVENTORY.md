@@ -260,7 +260,9 @@ It tracks the workflow and architectural decisions across all development sessio
   - Named street over highway code (v1.17.7 / v1.18.2): OSRM bare `DW*`/`DK*` coalesced with OSM local name; cache upgrade bare→named at drive time; purge bare highway-only cache rows on open; refuse code-only overwrites of named streets.
   - Vehicle auto-start soften (v1.18.2): 35 m accuracy + one miss grace, 70% speed to open window, CAR displacement 25 m; foot gate unchanged.
   - Track spike guard (v1.17.9 / v1.18.6): reject slow impossible tips and cycling gap+course-reversal multipath chords near pause/stop.
-  - Overnight Live Sharing battery (v1.18.11 / v1.18.12): screen-off LIVE_ONLY powers GPS down; heartbeat ≥5 min; Sleep pauses live by default; Sync with Morning Alarm wakes Sleep when the alarm fires; vehicle auto-start ≤15 s.
+  - Overnight Live Sharing battery (v1.18.11 / v1.18.12): screen-off LIVE_ONLY powers GPS down; heartbeat ≥5 min; Sleep pauses live by default; Sync with Morning Alarm wakes Sleep when the alarm fires; vehicle auto-start ≤15 s (≤10 s from v1.18.14).
+  - Highway glue guard (v1.18.15): OSRM bare `DK*`/`DW*` attaches to a local name only when OSM confirms `roadRef`; commemorative names never inherit corridor codes; high-speed non-major street switches need 5 fixes / 7 s.
+  - Lateral polyline spike guard (v1.18.14): reject course-lateral outliers and V/Z tips on commit; sharp corners stay straight in display Catmull-Rom.
   - Driving display road snap (v1.17.1): live cursor/polyline may pull ≤18 m toward OSRM `/nearest` for road alignment (`DisplayRoadSnap`); recorded `track_points` stay GNSS/filter geometry.
   - Street card formatting (v1.17.1): `formatStreetDisplay` shows `Krakowska (DK52)` instead of `Krakowska • 52` when street name and road ref are both present.
   - Crash / hard-reset survival (v1.17.0): open trip (`end_time IS NULL`) with batched `track_points` flush (5 pts / 3 s + lifecycle/shutdown flush); `TripRecovery` resumes automatically (Option A) using last track-point time for zombie detection; `TripSurvivalReceiver` for SHUTDOWN/BATTERY_LOW.

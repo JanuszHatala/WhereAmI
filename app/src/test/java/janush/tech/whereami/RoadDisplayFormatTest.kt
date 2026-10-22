@@ -38,11 +38,11 @@ class RoadDisplayFormatTest {
     }
 
     @Test
-    fun `OSRM bare DW948 plus OSM Krakowska becomes Krakowska DW948`() {
+    fun `OSRM bare DW948 plus OSM Krakowska with osm ref becomes Krakowska DW948`() {
         val (street, ref) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
             osrmStreet = "DW948",
             osmStreet = "Krakowska",
-            osmRoadRef = null
+            osmRoadRef = "DW948"
         )
         assertEquals("Krakowska", street)
         assertEquals("DW948", ref)
@@ -53,6 +53,48 @@ class RoadDisplayFormatTest {
         assertEquals(
             "Krakowska (DW948)",
             RoadNameNormalizer.formatStreetDisplay(street, ref, "PL")
+        )
+    }
+
+    @Test
+    fun `OSRM bare DK52 without osm ref does not glue onto commemorative street`() {
+        // Trip 249 Czaniec: OSRM snapped to DK52 while Nominatim named Kardynała Karola Wojtyły.
+        val (street, ref) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DK52",
+            osmStreet = "Kardynała Karola Wojtyły",
+            osmRoadRef = null
+        )
+        assertEquals("Kardynała Karola Wojtyły", street)
+        assertEquals(null, ref)
+        assertEquals(
+            "Kardynała Karola Wojtyły",
+            RoadNameNormalizer.formatStreetDisplay(street, ref, "PL")
+        )
+    }
+
+    @Test
+    fun `OSRM bare code without osm ref leaves Krakowska unannotated`() {
+        val (street, ref) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DK52",
+            osmStreet = "Krakowska",
+            osmRoadRef = null
+        )
+        assertEquals("Krakowska", street)
+        assertEquals(null, ref)
+    }
+
+    @Test
+    fun `isLikelyCorridorLocalName accepts thoroughfare aliases not commemorative names`() {
+        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("Krakowska"))
+        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("Krakowska (DK52)"))
+        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("3 Maja"))
+        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Kardynała Karola Wojtyły"))
+        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Kardynała Karola Wojtyły (DK52)"))
+        assertEquals(
+            null,
+            RoadNameNormalizer.coalesceBareCodeWithCachedName(
+                "DK52", "DK52", "Kardynała Karola Wojtyły", "DK52"
+            )
         )
     }
 

@@ -842,16 +842,18 @@ class LocationManager private constructor(private val context: Context) {
             }
             speedKmh > 35f -> {
                 // High speed driving (viaduct / bridge / corridor inertia):
-                // Never abandon DK/DW/A/S or major thoroughfares for a parallel or side street unless sustained
+                // Never abandon DK/DW/A/S or major thoroughfares for a parallel or side street unless sustained.
+                // Non-major → non-major also needs inertia: trip 249 Kozy showed "Przecznia" (perpendicular)
+                // while driving Krakowska because the old 2 fixes / 2 s gate flipped on a brief OSRM snap.
                 rawRequiredCount = when {
                     isCommittedMajor && !isCandidateMajor -> 8
                     !isCommittedMajor && isCandidateMajor -> 2 // Snap onto highway corridor quickly
-                    else -> 2 // Fast switch between regular streets when driving
+                    else -> 5
                 }
                 rawRequiredDuration = when {
                     isCommittedMajor && !isCandidateMajor -> 12_000L
                     !isCommittedMajor && isCandidateMajor -> 2_000L
-                    else -> 2_000L
+                    else -> 7_000L
                 }
             }
             speedKmh > 15f -> {

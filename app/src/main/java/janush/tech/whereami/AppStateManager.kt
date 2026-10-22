@@ -77,6 +77,15 @@ class AppStateManager private constructor(private val context: Context) {
             }
         }
 
+        /**
+         * Modes that may keep evaluating vehicle/foot auto-start after a significant-motion wake.
+         * LIVE_ONLY must be included: with Live Sharing active the lifecycle is never IDLE, and
+         * aborting the confirmation burst there left only the sparse 15 s moving cadence (field
+         * trips 247/248: ~250 m lag with pref already at 15 s).
+         */
+        fun isMotionBurstEvaluationMode(mode: AppLifecycleMode): Boolean =
+            mode == AppLifecycleMode.IDLE || mode == AppLifecycleMode.LIVE_ONLY
+
         fun shouldEarlyAbortBurst(
             elapsedMs: Long,
             minDurationMs: Long = MOTION_BURST_MIN_DURATION_MS,
@@ -516,7 +525,9 @@ class AppStateManager private constructor(private val context: Context) {
                     delay(stepMs)
                     elapsedMs += stepMs
 
-                    if (tripManager.activeTrip.value != null || _currentMode.value != AppLifecycleMode.IDLE) {
+                    if (tripManager.activeTrip.value != null ||
+                        !isMotionBurstEvaluationMode(_currentMode.value)
+                    ) {
                         break
                     }
 
@@ -561,13 +572,23 @@ class AppStateManager private constructor(private val context: Context) {
                     } catch (_: Exception) {}
                 }
 
-                // Guaranteed cleanup on normal exit OR cancellation: power down GPS and apply progressive cooldown
-                if (tripManager.activeTrip.value == null && _currentMode.value == AppLifecycleMode.IDLE) {
-                    locManager.stopLocationUpdates()
-                    consecutiveFalseBursts++
-                    val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
-                    TelemetryLogger.log("POWER", "Motion burst terminated without trip auto-start. Powering down GPS and scheduling re-arm in ${cooldownMs / 1000}s (streak=$consecutiveFalseBursts).")
-                    scheduleMotionWakeRearm(cooldownMs)
+                // Guaranteed cleanup on normal exit OR cancellation when no trip started.
+                if (tripManager.activeTrip.value == null) {
+                    when (_currentMode.value) {
+                        AppLifecycleMode.IDLE -> {
+                            locManager.stopLocationUpdates()
+                            consecutiveFalseBursts++
+                            val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
+                            TelemetryLogger.log("POWER", "Motion burst terminated without trip auto-start. Powering down GPS and scheduling re-arm in ${cooldownMs / 1000}s (streak=$consecutiveFalseBursts).")
+                            scheduleMotionWakeRearm(cooldownMs)
+                        }
+                        AppLifecycleMode.LIVE_ONLY -> {
+                            // Restore Live Sharing cadence (watcher GPS-offs again when stationary + screen off).
+                            TelemetryLogger.log("POWER", "Motion burst ended in LIVE_ONLY without auto-start; restoring live cadence.")
+                            startLiveOnlyWatcher()
+                        }
+                        else -> Unit
+                    }
                 }
             }
         }
@@ -658,6 +679,13 @@ class AppStateManager private constructor(private val context: Context) {
                 val isSpeedStationary = currentSpeed < 0.35f // < ~1.2 km/h
 
                 val now = SystemClock.elapsedRealtime()
+                // While a motion-wake confirmation burst is running, do not re-apply stationary
+                // GPS-off: TTFF after cold start often looks "stationary" (speed≈0) for 10–25 s and
+                // would otherwise kill the burst mid-drive (trips 247/248 with Live Sharing).
+                if (motionBurstJob?.isActive == true) {
+                    stationarySinceMs = 0L
+                    continue
+                }
                 if (isPhysicalStationary || isSpeedStationary) {
                     if (stationarySinceMs == 0L) {
                         stationarySinceMs = now

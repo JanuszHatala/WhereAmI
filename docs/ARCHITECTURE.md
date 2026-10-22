@@ -221,6 +221,12 @@ Battery optimization is the highest engineering priority:
   - *Vehicle auto-start*: confirmation capped at 15 s (migrates leftover 30 s prefs).
 - **Amendment (v1.18.6, cycling tip spikes trip 244, 2026-10-21)**:
   - *TrackSpikeGuard*: rejects large gap teleports where displacement ≪ Doppler travel, and three-point course reversals (≥135° / ≥25 m / ≥5 s). `MIN_JUMP_M` lowered to 45 m for slow/impossible tips.
+- **Amendment (v1.18.15, Wojtyły DK52 glue + Przecznia hysteresis, trip 249, 2026-10-22)**:
+  - *Street coalesce*: OSRM-only highway codes attach to a local name only when OSM `roadRef` confirms the same way; commemorative names never inherit corridor codes (`isLikelyCorridorLocalName`); cache strips false `(DK*)` on open.
+  - *Street hysteresis*: >35 km/h non-major → non-major requires 5 fixes / 7 s (was 2 / 2 s).
+- **Amendment (v1.18.14, lateral urban zigzags trip 248, 2026-10-22)**:
+  - *TrackSpikeGuard*: online lateral course outlier vs recent mean heading; three-point lateral V (drop middle) for corridor multipath without requiring a long gap. Prefer suppressing outliers over rewriting geometry.
+  - *CurvedPolyline*: segments with a corner ≥100° stay straight so Catmull-Rom cannot overshoot near-reversal kinks into visible Z shapes.
 - **Amendment (v1.18.2, bare DK52 + late auto-start, 2026-10-21)**:
   - *Corridor name*: when committed display is a bare highway code and the spatial-cache cell has a local name without a house number, coalesce to `Krakowska (DK52)`. Viaduct shield only rejects residential addresses (house number). On open, purge bare `DK*`/`DW*`/`A*`/`S*` cache rows and dedupe doubled `(DK52) (DK52)` annotations.
   - *Vehicle auto-start*: softer gate (`35 m` accuracy, one forgiven miss, window starts at 70% of target speed); CAR displacement floor 25 m. Foot auto-start stays strict. User-configured duration still applies (`pref_auto_start_sec_*`).

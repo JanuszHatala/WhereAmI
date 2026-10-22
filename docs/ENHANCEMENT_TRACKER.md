@@ -1436,3 +1436,40 @@ Root Cause Analysis:
 | **ENG110-02** | Instant Fetch button reaction and candidate indexing. | `CacheManager.kt` | Implemented | Immediately set `_prefetchState.value = PrefetchState.Running` on invocation; candidate generation leverages cached key sets for zero-latency start; added `calculateCacheDeficit()` on prefetch finish |
 | **UI110-03** | Map Cache Control Live Progress Circle and Green Tick Completion. | `OsmMapView.kt`, `CacheManager.kt` | Implemented | Added `CircularProgressIndicator` ring around 42dp slate button with storage icon and percentage badge during prefetch; displayed green checkmark on completion; click re-verifies missing data, shows confirmation Toast, and dismisses button |
 | **VER-110** | versionCode 144 / 1.18.13 | `build.gradle.kts`, `SpatialCacheGridTest.kt` | Implemented | Build and unit test verification passing |
+
+## 114. Round 111: Late Driving Auto-Start with Live Sharing (2026-10-22, v1.18.14)
+
+User feedback:
+"I performed yet another Driving tests, look at last two trips - their auto-start is very late, I guess it was not improved or the APK is not installed? Check logs, telemetry and everything, make sure to merge changes with the latest GH sourcecodea"
+
+Evidence (device `63160DLCH000RZ`, pull `/tmp/wai_round_20261022_1300`):
+- Installed at analysis: **144 / 1.18.13** (`lastUpdateTime=12:53`); prefs migrated at **09:38** to `pref_auto_start_sec_CAR=15` (`migrated_v15_CAR=true`).
+- Live Sharing active across both drives (`active_session_is_active`, created 21 Oct 21:27).
+- **Trip 247** (10:32, CAR auto): first point **252 m** from Dworkowa home @ 20.6 km/h (15 s×speed ≈ 86 m) → still late after the v15 cap.
+- **Trip 248** (11:32, CAR auto): first point **17 m** from trip 247 end (parked ~1 km from home) → home distance is misleading; start-from-parking was timely.
+- Root cause: motion-wake confirmation burst aborted after ~2 s when `currentMode != IDLE`, so `LIVE_ONLY` never kept the high-frequency burst; watcher could also GPS-off during TTFF while speed≈0.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG111-01** | Late auto-start with Live Sharing / GPS-off. | `AppStateManager.kt` (`isMotionBurstEvaluationMode`, burst loop, LIVE_ONLY watcher skip while burst active) | Implemented | Burst continues in `LIVE_ONLY`; stationary GPS-off deferred during burst; unit test `testMotionBurstContinuesWhileLiveSharing` |
+| **ENG111-02** | Vehicle confirmation still 15 s after v15 migration. | `TripManager.kt` (`VEHICLE_AUTO_START_MAX_SEC=10`, `migrated_v10_*`) | Implemented | Cap matches CAR/CYCLING/MTB profile default 10 s; `testVehicleAutoStartCapMatchesProfileDefault` |
+| **ENG111-03** | Polyline zigzags on straight corridors (Głęboka / Piłsudskiego screenshots, trip 248). | `TrackSpikeGuard.kt`, `TripManager.onSmoothedPoints`, `CurvedPolyline.kt`, `TrackSpikeGuardTest.kt` | Implemented | Lateral course outlier + lateral V (drop middle); sharp-corner Catmull-Rom stays straight; see REPLAY before/after |
+| **VER-111** | versionCode 145 / 1.18.14 | `build.gradle.kts`, `BatteryOptimizationAndAutoStartTest.kt`, `TrackSpikeGuardTest.kt` | Implemented | Pre-completion build gate |
+
+REPLAY trip 248 CAR (`track_1792661544351_trip248.jsonl`) — filter/smoother unchanged (guard is commit-path); no metric regression:
+- Before: `REPLAY fixes=396 decisions={ACCEPTED_AFTER_RESET=3, REJECTED_ACCURACY=17, ACCEPTED=376} moving=240 headingConfident=82% headingErr p50=2.9 p90=15.0 p97=22.5 smoothed=379 stored=126 spacing p50=12.35` / `REPLAY position offRaw p50=1.5 p90=5.0 p99=10.4 episodes>10m=1` / `REPLAY render arrowVsLine p50=1.7 p90=17.5 arrowVsTruth p50=3.1 p90=22.9 reshape p50=0.48m p90=2.46m vertexTurn pencil p90=6 display p90=4 tailKink p90=66 arrowReverse=0.18%`
+- After: `REPLAY fixes=396 … headingConfident=82% headingErr p50=2.9 p90=15.0 p97=22.5 stored=126 spacing p50=12.35` / `REPLAY render arrowVsLine p50=1.7 p90=17.3 …` (equivalent within noise)
+
+## 115. Round 112: Trip 249 Street Glue + Corridor Hysteresis + Zigzag Confirmation (2026-10-22, v1.18.15)
+
+Device still on **1.18.13** for trip 249 (13:24–14:07, 20.9 km CAR). Screenshots: Stojałowskiego zigzags (~01:46), Krakowska curve/chord (~13:48), Krakowska lateral step (~20:00). Cache wrote **31×** `Kardynała Karola Wojtyły (DK52)` at 13:52 Czaniec.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GEO112-01** | `Karola Wojtyły (DK52)` false highway glue | `coalesceOsrmAndOsmStreet` requires `osmRoadRef`; `isLikelyCorridorLocalName`; cache sanitize | Implemented | Trip 249 cache rows; unit tests |
+| **GEO112-02** | `Przecznia` while on Krakowska (Kozy) | High-speed non-major→non-major hysteresis 5 / 7 s | Implemented | Prior gate was 2 / 2 s |
+| **ENG112-03** | Zigzag / back-forth / chord on curves | Confirm Round 111 `TrackSpikeGuard` lateral + `CurvedPolyline` (≥100°) on trip 249 geometry | Confirmed | REPLAY trip 249: headingConfident=93%; lateral xt≥5 present in stored verts on unfixed APK |
+| **DES112-04** | Inertia-sphere display idea | Keep single CTRA+RTS estimator; no second display mass | Design Choice | See field report |
+| **VER-112** | versionCode 146 / 1.18.15 | `build.gradle.kts` | Done | `BUILD SUCCESSFUL` |
+
+REPLAY trip 249 CAR (`track_1792668302629_trip249.jsonl`): `fixes=2212 … headingConfident=93% headingErr p50=1.1 p90=7.6 p97=21.0 stored=839 spacing p50=24.96` / `position offRaw p50=0.9 p90=2.7` / `render arrowVsLine p50=0.7 p90=6.1`
