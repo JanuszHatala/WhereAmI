@@ -213,9 +213,11 @@ Battery optimization is the highest engineering priority:
   - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
+- **Amendment (v1.18.12, restore follow-alarm wake, 2026-10-22)**:
+  - *Auto-sleep*: Sync with Morning Alarm wakes Sleep when the alarm fires during the sleep window (reverted the v1.18.11 5-minute-before-end gate). Overnight battery remains GPS-off screen-off + pause-live-on-sleep default.
 - **Amendment (v1.18.11, overnight Live GPS + late auto-start, 2026-10-22)**:
   - *LIVE_ONLY*: screen-off stops GPS entirely (charging or battery); presence via HTTP heartbeat (≥5 min screen-off, 60 min in Sleep).
-  - *Auto-sleep*: morning alarm wakes only within 5 min of bedtime end; pause-live-on-sleep defaults to true (one-time migrate).
+  - *Auto-sleep*: pause-live-on-sleep defaults to true (one-time migrate). (Alarm near-end-only wake from this release was reverted in v1.18.12.)
   - *Vehicle auto-start*: confirmation capped at 15 s (migrates leftover 30 s prefs).
 - **Amendment (v1.18.6, cycling tip spikes trip 244, 2026-10-21)**:
   - *TrackSpikeGuard*: rejects large gap teleports where displacement ≪ Doppler travel, and three-point course reversals (≥135° / ≥25 m / ≥5 s). `MIN_JUMP_M` lowered to 45 m for slow/impossible tips.

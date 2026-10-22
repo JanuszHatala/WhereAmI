@@ -42,7 +42,7 @@ The app runs for hours in pockets, bike mounts, and vehicle cradles. Excessive b
  - Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` trigger sensor (~0 mW) MUST be armed via `MotionWakeManager.arm()`.
  - A lightweight periodic presence heartbeat transmits presence over HTTP (~50ms): every `syncIntervalMinutes` when screen on (floored to ≥5 min when screen off; 60 min while Sleep Mode). Companion web viewer stays "ONLINE" without a GNSS subscription.
  - Significant physical locomotion triggers `MotionWakeManager.handleMotionWake()`, immediately restoring moving GPS cadence (15s / 6s) and evaluating trip auto-start.
- - Overnight Sleep Mode should pause Live Sharing by default (`pref_auto_sleep_pause_live_share`). Follow-alarm may wake sleep only within 5 minutes of bedtime end (not a 06:00 alarm ending a 06:30 window).
+ - Overnight Sleep Mode should pause Live Sharing by default (`pref_auto_sleep_pause_live_share`). When Sync with Morning Alarm (`pref_auto_sleep_follow_alarm`) is enabled, Sleep ends when the morning alarm fires during the sleep window (even if bedtime end is later). Overnight drain is addressed by GPS-off screen-off + pause-live-on-sleep, not by ignoring the alarm.
 - **Notification Content Stability Invariant (Zero-Wakelock-Storm)**:
   - When a trip is NOT actively recording (e.g. `LIVE_ONLY` mode, `TripMode.AUTO` standby), the persistent notification text MUST NOT include dynamic ticking time strings (e.g. `⏱️ 7h 12m elapsed` or minutes/seconds counters).
   - Changing notification strings causes `contentChanged = true` on every minute tick, triggering `NotificationManager.notify()`, acquiring system wake locks (`NotificationManagerService:post`), firing wakeup alarms, and pulling the CPU out of Android Doze.

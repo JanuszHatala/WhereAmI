@@ -159,26 +159,6 @@ class AutoSleepManager private constructor(private val context: Context) {
             return false
         }
 
-        /** Alarm may wake sleep only at/after bedtime end, or within this many minutes of it. */
-        const val ALARM_WAKE_GRACE_BEFORE_END_MIN = 5
-
-        /**
-         * Minutes from [nowTotalMin] until the bedtime window end (0 if already past end).
-         * Handles midnight-wrapping windows (e.g. 21:30 → 06:30).
-         */
-        fun minutesUntilWindowEnd(nowTotalMin: Int, endTotalMin: Int, startTotalMin: Int): Int {
-            if (startTotalMin <= endTotalMin) {
-                // Same-day window
-                return (endTotalMin - nowTotalMin).coerceAtLeast(0)
-            }
-            // Wraps midnight: end is next calendar morning
-            return if (nowTotalMin >= startTotalMin) {
-                (1440 - nowTotalMin) + endTotalMin
-            } else {
-                (endTotalMin - nowTotalMin).coerceAtLeast(0)
-            }
-        }
-
         fun shouldAutoWake(
             isAutoSleepEnabled: Boolean,
             isCurrentlySleeping: Boolean,
@@ -188,23 +168,19 @@ class AutoSleepManager private constructor(private val context: Context) {
             isMorning: Boolean,
             isAlarmFired: Boolean,
             isManualSleep: Boolean = false,
-            wasDndActiveInSession: Boolean = false,
-            minutesUntilWindowEnd: Int = Int.MAX_VALUE
+            wasDndActiveInSession: Boolean = false
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
 
-            val alarmEligible = isAlarmFired && isMorning &&
-                (!isTimeInWindow || minutesUntilWindowEnd <= ALARM_WAKE_GRACE_BEFORE_END_MIN)
-
-            // Manually entered sleep persists until explicit user wake or eligible morning alarm
+            // Manually entered sleep persists until explicit user wake or morning alarm
             if (isManualSleep) {
-                return alarmEligible
+                // If user set alarm and alarm fired in morning, wake even manual sleep
+                return isAlarmFired && isMorning
             }
 
-            // Morning alarm: honor only near/after bedtime end so a 06:00 alarm does not end a
-            // 06:30 sleep window and leave Live Sharing GPS hot for the remaining half hour
-            // (field 2026-10-22).
-            if (alarmEligible) return true
+            // Morning alarm fired (Sync with Morning Alarm): wake whenever the alarm rings
+            // during the sleep window, not only near bedtime end.
+            if (isAlarmFired && isMorning) return true
 
             // DND was active during sleep, and user turned it off in the morning
             if (followDnd && wasDndActiveInSession && !isDndActive && isMorning) return true
@@ -537,10 +513,6 @@ class AutoSleepManager private constructor(private val context: Context) {
             if (dndActive) {
                 wasDndActiveInSession = true
             }
-            val nowTotal = hour * 60 + minute
-            val endTotal = endH * 60 + endM
-            val startTotal = startH * 60 + startM
-            val minsToEnd = minutesUntilWindowEnd(nowTotal, endTotal, startTotal)
             val shouldWake = shouldAutoWake(
                 isAutoSleepEnabled = _autoSleepEnabled.value,
                 isCurrentlySleeping = true,
@@ -548,21 +520,19 @@ class AutoSleepManager private constructor(private val context: Context) {
                 isDndActive = dndActive,
                 followDnd = _followDnd.value,
                 isMorning = isMorning,
-                isAlarmFired = alarmFired && _followAlarm.value,
+                isAlarmFired = alarmFired,
                 isManualSleep = isManualSleep,
-                wasDndActiveInSession = wasDndActiveInSession,
-                minutesUntilWindowEnd = minsToEnd
+                wasDndActiveInSession = wasDndActiveInSession
             )
             if (shouldWake) {
                 val isEarlyWake = inWindow && (alarmFired || (!dndActive && wasDndActiveInSession))
-                // DND early wake: suppress re-sleep for the remainder of the window (user is up).
-                // Alarm early wake is no longer granted while deep inside the window (see shouldAutoWake).
-                if (isEarlyWake && !alarmFired) {
+                // Alarm or DND early wake: suppress re-sleep for the remainder of the window
+                if (isEarlyWake) {
                     wasManuallyWokenThisCycle = true
-                    TelemetryLogger.log("POWER", "AutoSleep early wake (DND): suppressed auto-sleep for remainder of bedtime window")
+                    TelemetryLogger.log("POWER", "AutoSleep early wake: suppressed auto-sleep for remainder of bedtime window")
                 }
                 val reason = when {
-                    alarmFired -> "Morning alarm fired (within ${minsToEnd}m of bedtime end)"
+                    alarmFired -> "Morning alarm fired"
                     !dndActive && isMorning && _followDnd.value && wasDndActiveInSession -> "DND turned off in morning"
                     else -> "Bedtime window ended"
                 }

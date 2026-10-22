@@ -222,59 +222,18 @@ class AutoSleepManagerTest {
     }
 
     @Test
-    fun testEarlyAlarmInsideBedtimeWindowDoesNotWake() {
-        // Alarm at 06:00 while sleep ends 06:30 (30 min remaining) must keep sleeping
-        // (field 2026-10-22: early alarm wake left Live Sharing GPS hot until the commute).
+    fun testAlarmFiredInMorningTriggersWake() {
+        // Morning alarm fired at 06:00 inside bedtime window (ends 06:30): Sync with Morning Alarm wakes
         val shouldWake = AutoSleepManager.shouldAutoWake(
             isAutoSleepEnabled = true,
             isCurrentlySleeping = true,
             isTimeInWindow = true,
-            isDndActive = true,
+            isDndActive = true, // DND still on
             followDnd = true,
             isMorning = true,
-            isAlarmFired = true,
-            minutesUntilWindowEnd = 30
+            isAlarmFired = true // Alarm fired!
         )
-        assertFalse("Alarm 30 minutes before bedtime end must not wake sleep", shouldWake)
-    }
-
-    @Test
-    fun testAlarmNearBedtimeEndTriggersWake() {
-        // Alarm at 06:26 with sleep end 06:30 (4 min remaining) may wake
-        val shouldWake = AutoSleepManager.shouldAutoWake(
-            isAutoSleepEnabled = true,
-            isCurrentlySleeping = true,
-            isTimeInWindow = true,
-            isDndActive = true,
-            followDnd = true,
-            isMorning = true,
-            isAlarmFired = true,
-            minutesUntilWindowEnd = 4
-        )
-        assertTrue("Alarm within 5 minutes of bedtime end must wake", shouldWake)
-    }
-
-    @Test
-    fun testAlarmAfterBedtimeEndTriggersWake() {
-        val shouldWake = AutoSleepManager.shouldAutoWake(
-            isAutoSleepEnabled = true,
-            isCurrentlySleeping = true,
-            isTimeInWindow = false,
-            isDndActive = true,
-            followDnd = true,
-            isMorning = true,
-            isAlarmFired = true,
-            minutesUntilWindowEnd = 0
-        )
-        assertTrue("Alarm after bedtime end must wake", shouldWake)
-    }
-
-    @Test
-    fun testMinutesUntilWindowEndMidnightWrap() {
-        // 06:00 with window 21:30–06:30 → 30 minutes to end
-        assertEquals(30, AutoSleepManager.minutesUntilWindowEnd(6 * 60, 6 * 60 + 30, 21 * 60 + 30))
-        // 21:30 start → full night ~540 min to 06:30
-        assertEquals(540, AutoSleepManager.minutesUntilWindowEnd(21 * 60 + 30, 6 * 60 + 30, 21 * 60 + 30))
+        assertTrue("Morning alarm fired must wake from sleep mode", shouldWake)
     }
 
     @Test
