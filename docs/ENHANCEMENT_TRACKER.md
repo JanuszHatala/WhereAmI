@@ -1403,6 +1403,14 @@ Evidence: narrow-window screenshots of the visitor `/live/:id` card (vertical ti
 | **LIV-R08** | Narrow follow-up: `Wh...`, mid-value wraps, orphaned Maps, lonely elapsed row. | `server/public/index.html` | **Completed** | Title 2-line clamp; dual-label LIVE badge; Maps short label <=400px; single-column stats + nowrap <=360px; `Elapsed: 1m` as normal grid cell. |
 | **LIV-R09** | Default guest nicknames collide as "Guest 1". | `server/guestNaming.js`, `server/server.js`, `server/guestNaming.test.js`, `server/Dockerfile` | **Completed** | Lowest-unused `Guest N`; `node --test guestNaming.test.js` (7 pass). |
 
+## 111. Round 108: Live Viewer Panel Density on Typical Phones (2026-10-22, web-only)
+
+Evidence: production screenshot on ~360px phone — LIVE alone, stats single-column, wasted right space. Root cause: viewport `@media (max-width: 360px)` treated typical Android CSS width as “narrow”.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **LIV-R10** | Pack LIVE + activity + Maps on one row; keep stats in two columns until truly tiny. | `server/public/index.html` | **Completed** | Badge moved into `.primary-row`; density via `@container topcard` (2-col until card ≤250px); compact LIVE/Maps labels by default. |
+
 ## 112. Round 109: Inactive Visitors Dynamic Filtering & Marker/Altitude Z-Fighting Fix (2026-10-21, v1.18.13)
 
 User feedback:
