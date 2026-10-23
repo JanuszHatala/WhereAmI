@@ -341,6 +341,8 @@ class AppStateManager private constructor(private val context: Context) {
             val isBedtimeOrDnd = autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()
             if (_isStandbySleeping.value && !autoSleepMgr.isManualSleepActive() && !isBedtimeOrDnd) {
                 wakeStandbySleep(isExplicitUserAction = false)
+            } else if (!_isStandbySleeping.value) {
+                autoSleepMgr.checkAndRecoverAutoPausedLiveShare()
             }
             ensureAutoStandbyServiceRunning()
         } else {

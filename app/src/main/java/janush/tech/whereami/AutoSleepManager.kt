@@ -35,6 +35,7 @@ class AutoSleepManager private constructor(private val context: Context) {
         const val KEY_AUTO_SLEEP_FOLLOW_DND = "pref_auto_sleep_follow_dnd"
         const val KEY_AUTO_SLEEP_FOLLOW_ALARM = "pref_auto_sleep_follow_alarm"
         const val KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE = "pref_auto_sleep_pause_live_share"
+        const val KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED = "auto_sleep_was_live_share_paused"
         private const val KEY_UPCOMING_ALARM_MS = "auto_sleep_upcoming_alarm_ms"
         private const val KEY_LAST_FIRED_ALARM_MS = "auto_sleep_last_fired_alarm_ms"
 
@@ -229,7 +230,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     private var lastEvaluatedCycleDate = -1
     private var isManualSleep = false
     private var wasDndActiveInSession = false
-    private var wasLiveShareAutoPaused = false
+    private var wasLiveShareAutoPaused = prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
     private val alarmTracker = AlarmFireTracker(
         upcomingTriggerMs = prefs.getLong(KEY_UPCOMING_ALARM_MS, 0L),
         lastFiredMs = prefs.getLong(KEY_LAST_FIRED_ALARM_MS, 0L)
@@ -239,6 +240,7 @@ class AutoSleepManager private constructor(private val context: Context) {
         INSTANCE = this
         registerSystemReceivers()
         checkAndRecordAlarmState()
+        checkAndRecoverAutoPausedLiveShare()
     }
 
     fun onManualSleepEntered() {
@@ -258,6 +260,7 @@ class AutoSleepManager private constructor(private val context: Context) {
             val session = liveMgr.currentSession.value
             if (session != null && session.isActive && !session.isPaused) {
                 wasLiveShareAutoPaused = true
+                prefs.edit().putBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, true).apply()
                 liveMgr.pauseSession()
                 TelemetryLogger.log("POWER", "AutoSleep: Paused Live Sharing session (${session.id}) during sleep.")
             }
@@ -267,8 +270,10 @@ class AutoSleepManager private constructor(private val context: Context) {
     fun onSleepWoken() {
         isManualSleep = false
         wasDndActiveInSession = false
-        if (wasLiveShareAutoPaused) {
+        val shouldResume = wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
+        if (shouldResume) {
             wasLiveShareAutoPaused = false
+            prefs.edit().putBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false).apply()
             val liveMgr = LiveSharingManager.getInstance(context)
             val session = liveMgr.currentSession.value
             if (session != null && session.isActive && session.isPaused) {
@@ -278,7 +283,19 @@ class AutoSleepManager private constructor(private val context: Context) {
         }
     }
 
-    fun isLiveShareAutoPaused(): Boolean = wasLiveShareAutoPaused
+    fun checkAndRecoverAutoPausedLiveShare() {
+        val isAutoPaused = wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
+        if (!isAutoPaused) return
+        val appStateMgr = AppStateManager.getInstance(context)
+        val isSleeping = appStateMgr.isStandbySleeping.value
+        val isBedtimeOrDnd = isCurrentTimeInBedtimeWindow() || isDndActive()
+        if (!isSleeping && !isBedtimeOrDnd) {
+            TelemetryLogger.log("POWER", "AutoSleep: Recovering auto-paused Live Sharing outside sleep window; resuming session.")
+            onSleepWoken()
+        }
+    }
+
+    fun isLiveShareAutoPaused(): Boolean = wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
 
     fun isManualSleepActive(): Boolean = isManualSleep
 
@@ -286,6 +303,16 @@ class AutoSleepManager private constructor(private val context: Context) {
         _pauseLiveShare.value = enabled
         prefs.edit().putBoolean(KEY_AUTO_SLEEP_PAUSE_LIVE_SHARE, enabled).apply()
         TelemetryLogger.log("SETTINGS", "AutoSleep pauseLiveShare set to $enabled")
+        if (!enabled && (wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false))) {
+            wasLiveShareAutoPaused = false
+            prefs.edit().putBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false).apply()
+            val liveMgr = LiveSharingManager.getInstance(context)
+            val session = liveMgr.currentSession.value
+            if (session != null && session.isActive && session.isPaused) {
+                liveMgr.resumeSession()
+                TelemetryLogger.log("POWER", "AutoSleep: Resumed Live Sharing session (${session.id}) after disabling overnight pause.")
+            }
+        }
     }
 
     fun setAutoSleepEnabled(enabled: Boolean) {
@@ -294,6 +321,9 @@ class AutoSleepManager private constructor(private val context: Context) {
         TelemetryLogger.log("SETTINGS", "AutoSleepEnabled set to $enabled")
         if (!enabled) {
             cancelBoundaryAlarm()
+            if (wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)) {
+                onSleepWoken()
+            }
         }
         evaluateAutoSleep()
     }
@@ -492,6 +522,7 @@ class AutoSleepManager private constructor(private val context: Context) {
         val alarmFired = isAlarmFiredRecently()
 
         if (!isCurrentlySleeping) {
+            checkAndRecoverAutoPausedLiveShare()
             val shouldSleep = shouldAutoSleep(
                 isAutoSleepEnabled = _autoSleepEnabled.value,
                 isScreenOff = isScreenOff,

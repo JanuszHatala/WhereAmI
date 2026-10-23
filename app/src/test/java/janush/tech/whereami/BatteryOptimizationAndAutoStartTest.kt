@@ -919,4 +919,67 @@ class BatteryOptimizationAndAutoStartTest {
         onSleepWoken(true)
         assertTrue("Manual pause before sleep must be preserved upon waking", isLiveSessionPaused)
     }
+
+    @Test
+    fun testAutoSleepLiveSharePausePersistenceAcrossProcessDeath() {
+        val simulatedPrefs = mutableMapOf<String, Any>()
+        var isLiveSessionPaused = false
+        var isSessionActive = true
+
+        val onSleepEntered = {
+            if (isSessionActive && !isLiveSessionPaused) {
+                simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] = true
+                isLiveSessionPaused = true
+            }
+        }
+
+        // Enter sleep overnight
+        onSleepEntered()
+        assertTrue(isLiveSessionPaused)
+        assertEquals(true, simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED])
+
+        // Process recreation / OS memory trim: in-memory state lost, manager created anew
+        var managerWasLiveShareAutoPaused = (simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] as? Boolean) ?: false
+        assertTrue("Manager recreation must restore auto-paused state from SharedPreferences", managerWasLiveShareAutoPaused)
+
+        // Morning wake: onSleepWoken executes
+        val onSleepWoken = {
+            val shouldResume = managerWasLiveShareAutoPaused || ((simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] as? Boolean) ?: false)
+            if (shouldResume) {
+                managerWasLiveShareAutoPaused = false
+                simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] = false
+                if (isSessionActive && isLiveSessionPaused) {
+                    isLiveSessionPaused = false
+                }
+            }
+        }
+
+        onSleepWoken()
+        assertFalse("Live sharing must be automatically resumed in the morning even after process recreation", isLiveSessionPaused)
+        assertFalse("Flag must be cleared in prefs", (simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] as? Boolean) ?: true)
+        assertFalse("In-memory flag must be cleared", managerWasLiveShareAutoPaused)
+    }
+
+    @Test
+    fun testDisablingOvernightLiveSharePauseUnpausesActiveSession() {
+        val simulatedPrefs = mutableMapOf<String, Any>(AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED to true)
+        var managerWasLiveShareAutoPaused = true
+        var isLiveSessionPaused = true
+        var isSessionActive = true
+
+        val setPauseLiveShare = { enabled: Boolean ->
+            if (!enabled && (managerWasLiveShareAutoPaused || ((simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] as? Boolean) ?: false))) {
+                managerWasLiveShareAutoPaused = false
+                simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED] = false
+                if (isSessionActive && isLiveSessionPaused) {
+                    isLiveSessionPaused = false
+                }
+            }
+        }
+
+        setPauseLiveShare(false)
+        assertFalse("Session must resume when user unchecks overnight pause option", isLiveSessionPaused)
+        assertFalse(managerWasLiveShareAutoPaused)
+        assertEquals(false, simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED])
+    }
 }
