@@ -29,13 +29,15 @@ class AdaptiveTrackSampler {
             return listOf(p)
         }
         if (p.isStationary) {
-            // Parked: nothing new to draw. Keep the last moving point so the departure joins cleanly.
+            // Parked: nothing new to draw. Keep the last moving point so the departure joins cleanly,
+            // and advance the anchor clock so departure dt does not include stationary dwell time.
             val last = window.lastOrNull()
             window.clear()
             if (last != null && distanceM(a, last) >= minSpacingM(last.speedMps)) {
-                anchor = last
+                anchor = last.copy(tElapsedMs = p.tElapsedMs, tUtcMs = p.tUtcMs)
                 return listOf(last)
             }
+            anchor = a.copy(tElapsedMs = p.tElapsedMs, tUtcMs = p.tUtcMs)
             return emptyList()
         }
 

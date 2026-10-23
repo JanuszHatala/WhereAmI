@@ -145,6 +145,7 @@ class TripManager private constructor(private val context: Context) {
     var lastCommittedElapsedMs: Long = -1L
         private set
     private var lastCommittedUtcMs: Long = -1L
+    private var lastRejectedSmoothedPoint: SmoothedPoint? = null
 
     fun isManualPauseStickyActive(): Boolean = isManualPauseSticky
 
@@ -585,6 +586,7 @@ class TripManager private constructor(private val context: Context) {
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
         lastCommittedUtcMs = -1L
+        lastRejectedSmoothedPoint = null
 
         val profile = _activityProfile.value
 
@@ -1053,11 +1055,21 @@ class TripManager private constructor(private val context: Context) {
         var committed = 0
         val res = FloatArray(1)
 
+        fun appendPoint(p: SmoothedPoint) {
+            val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
+            newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
+            val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
+            synchronized(rowLock) { pendingRows.add(row) }
+            lastCommittedElapsedMs = p.tElapsedMs
+            lastCommittedUtcMs = p.tUtcMs
+            committed++
+        }
+
         fun commit(p: SmoothedPoint) {
             val last = newPoints.lastOrNull()
             if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
             // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord;
-            // trip 244 cycling 59.6 m / 172° reverse after a GNSS gap near home).
+            // trip 244 cycling 59.6 m / 172 deg reverse after a GNSS gap near home).
             if (last != null) {
                 val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
                 val twoPoint = TrackSpikeGuard.isSpikeStep(
@@ -1072,6 +1084,20 @@ class TripManager private constructor(private val context: Context) {
                     p.lat, p.lng, p.tUtcMs
                 )
                 if (twoPoint || threePoint) {
+                    val prevRejected = lastRejectedSmoothedPoint
+                    if (prevRejected != null && !p.isStationary && p.tUtcMs > prevRejected.tUtcMs &&
+                        !TrackSpikeGuard.isSpikeStep(
+                            prevRejected.lat, prevRejected.lng, prevRejected.tUtcMs,
+                            p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary
+                        )
+                    ) {
+                        // Two mutually consistent moving points after a gap/turn: recover instead of deadlocking.
+                        lastRejectedSmoothedPoint = null
+                        appendPoint(prevRejected)
+                        appendPoint(p)
+                        return
+                    }
+                    lastRejectedSmoothedPoint = p
                     TelemetryLogger.logTrip(
                         "SPIKE_REJECTED",
                         current.id,
@@ -1079,20 +1105,8 @@ class TripManager private constructor(private val context: Context) {
                     )
                     return
                 }
-                // Lateral outlier vs stable recent course (trip 248 urban corridor zigzags).
-                if (newPoints.size >= TrackSpikeGuard.LATERAL_COURSE_WINDOW + 1) {
-                    val recent = newPoints.takeLast(TrackSpikeGuard.LATERAL_COURSE_WINDOW + 1)
-                        .map { it.latitude to it.longitude }
-                    if (TrackSpikeGuard.isLateralCourseOutlier(recent, p.lat, p.lng, p.speedMps)) {
-                        TelemetryLogger.logTrip(
-                            "SPIKE_REJECTED",
-                            current.id,
-                            "Skipped lateral course outlier ${TrackSpikeGuard.distanceM(last.latitude, last.longitude, p.lat, p.lng).toInt()}m at ${p.speedMps} m/s"
-                        )
-                        return
-                    }
-                }
-                // A→B→C lateral V: drop middle B (still in the in-memory batch) then continue to commit C.
+                lastRejectedSmoothedPoint = null
+                // A->B->C lateral V: drop middle B (in-memory or overwrite in DB) then continue to commit C.
                 if (prev2 != null &&
                     TrackSpikeGuard.isLateralVSpike(
                         prev2.latitude, prev2.longitude,
@@ -1102,7 +1116,11 @@ class TripManager private constructor(private val context: Context) {
                 ) {
                     newPoints.removeAt(newPoints.size - 1)
                     synchronized(rowLock) {
-                        if (pendingRows.isNotEmpty()) pendingRows.removeAt(pendingRows.lastIndex)
+                        if (pendingRows.isNotEmpty()) {
+                            pendingRows.removeAt(pendingRows.lastIndex)
+                        } else if (persistedPointCount > 0) {
+                            persistedPointCount--
+                        }
                     }
                     TelemetryLogger.logTrip(
                         "SPIKE_REJECTED",
@@ -1111,13 +1129,7 @@ class TripManager private constructor(private val context: Context) {
                     )
                 }
             }
-            val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
-            newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
-            val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
-            synchronized(rowLock) { pendingRows.add(row) }
-            lastCommittedElapsedMs = p.tElapsedMs
-            lastCommittedUtcMs = p.tUtcMs
-            committed++
+            appendPoint(p)
         }
 
         for (p in points) {
@@ -1132,7 +1144,12 @@ class TripManager private constructor(private val context: Context) {
             lastSmoothedForDistance = p
 
             // Polyline commit: speed-adaptive line simplification (see AdaptiveTrackSampler)
-            trackSampler.offer(p).forEach(::commit)
+            val sampled = trackSampler.offer(p)
+            sampled.forEach(::commit)
+            if (sampled.isEmpty() && p.isStationary && newPoints.isNotEmpty()) {
+                lastCommittedElapsedMs = maxOf(lastCommittedElapsedMs, p.tElapsedMs)
+                lastCommittedUtcMs = maxOf(lastCommittedUtcMs, p.tUtcMs)
+            }
         }
         if (drainSampler) trackSampler.drain().forEach(::commit)
 

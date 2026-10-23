@@ -130,10 +130,16 @@ class RenderPipeline(
             if (lastRenderT == null) lastRenderT = s.tElapsedMs.toDouble()
             return
         }
-        if (s.tElapsedMs <= history.last().tElapsedMs) return
-        val pre = rawAt(rt)
+        val prevLastMs = history.last().tElapsedMs
+        if (s.tElapsedMs <= prevLastMs) return
+        val gapBeforeState = s.tElapsedMs - prevLastMs > 2_500L || rt - prevLastMs > 2_500.0
+        val pre = if (gapBeforeState) null else rawAt(rt)
         history.add(s)
         prune(s.tElapsedMs)
+        if (gapBeforeState) {
+            clearOffsets()
+            return
+        }
         val post = rawAt(rt)
         if (pre != null && post != null) {
             val mLat = LocalFrame.METERS_PER_DEG_LAT
@@ -143,6 +149,11 @@ class RenderPipeline(
             oH += shortestDeltaDeg(post.headingDeg, pre.headingDeg)
             if (hypot(oE, oN) > MAX_BLEND_DISTANCE_M) clearOffsets()
         }
+    }
+
+    /** Clears spring correction offsets (used after screen-off / batch catch-up so pose aligns with pathBetween). */
+    fun clearCorrectionOffsets() {
+        clearOffsets()
     }
 
     private fun clearOffsets() {
@@ -467,7 +478,7 @@ class RenderPipeline(
     }
 
     companion object {
-        const val HISTORY_MS = 8_000L
+        const val HISTORY_MS = 35_000L
         const val MAX_LATENCY_MS = 1_800.0
         const val VEHICLE_LATENCY_MS = 1_000.0
         /** Profiles whose top speed is at most this are on foot (walking, hiking, running). */

@@ -254,4 +254,41 @@ class RenderPipelineTest {
         val p = pipe.frame(2000)!!
         assertEquals(49.90, p.lat, 1e-4)
     }
+
+    @Test
+    fun `gap before state and clearCorrectionOffsets align pose with pathBetween without backward zigzag`() {
+        val pipe = RenderPipeline(TrackingProfile.CAR)
+        fun st(t: Long, northM: Double) = TrackState(
+            tElapsedMs = t,
+            tUtcMs = t,
+            lat = 49.85 + northM / LocalFrame.METERS_PER_DEG_LAT,
+            lng = 19.28,
+            altitudeM = null,
+            speedMps = 14.0,
+            headingDeg = 0.0,
+            yawRateDegPerS = 0.0,
+            posStdM = 2.5,
+            headingStdDeg = 3.0,
+            headingConfident = true,
+            isStationary = false,
+            rejectStreak = 0,
+            isReset = false,
+            accuracyM = 5f
+        )
+        pipe.onState(st(1_000L, 0.0))
+        pipe.onState(st(2_000L, 14.0))
+        // Simulate screen turning on at t = 16_000L before batched fixes flush
+        pipe.frame(16_000L)
+        // Now flush delivers states from t = 3_000L .. 16_000L
+        for (sec in 3..16) {
+            pipe.onState(st(sec * 1_000L, (sec - 1) * 14.0))
+        }
+        pipe.clearCorrectionOffsets()
+        val pose = pipe.frame(16_000L)!!
+        val samples = pipe.pathBetween(2_000L, pose.renderTimeMs)
+        assertTrue("Expected pathBetween to cover multi-second screen-off batch", samples.size >= 50)
+        val lastSample = samples.last()
+        val stepM = abs(pose.lat - lastSample.lat) * LocalFrame.METERS_PER_DEG_LAT
+        assertTrue("Pose must join pathBetween without backward spike, got step=$stepM m", stepM < 4.0)
+    }
 }

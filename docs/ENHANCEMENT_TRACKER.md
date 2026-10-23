@@ -73,8 +73,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 5 | 5 | 0 | 0 |
 | **Round 97** | Pin Boundary Containment, Live-Border Mute & Outdoor POI Titles (2026-10-21) | 3 | 3 | 0 | 0 |
 | **Round 114** | Screen-Off GNSS Drain, Heartbeat Loop & Fast-Track Stationary Shutdown Overhaul (2026-10-23) | 9 | 9 | 0 | 0 |
+| **Round 115** | Trip 250 Polyline Chord Lock-Up Fix, Screen-Off Catch-Up Zigzag Elimination & Android Auto 1 Hz Real-Time Speed Updates (2026-10-23) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **321** | **313** | **0** | **8** |
+| **Total** | | **325** | **317** | **0** | **8** |
 
 
 ---
@@ -1499,3 +1500,17 @@ Evidence (`dumpsys batterystats`, window `2026-10-22 16:45:09` unplug at 100% to
 | **PWR114-08** | Option B1: Tighten `CAR` early-abort gate at `15s` for indoor/walking speeds ($< 2.0\text{ m/s}$ and displacement $< 15\text{m}$). | `AppStateManager.kt` | Implemented | Updated `shouldEarlyAbortBurst` to abort `CAR` walking bursts at 15s instead of 25s |
 | **PWR114-09** | Option C: Relax `standbyInactivityJob` polling interval from 1 min to 5 min (`STANDBY_INACTIVITY_CHECK_INTERVAL_MS`). | `AppStateManager.kt` | Implemented | Reduced background coroutine wake ticks by 80%; unit test `testStandbyInactivityCheckIntervalIsFiveMinutes` |
 | **VER-114** | versionCode 148 / 1.18.17 | `build.gradle.kts`, `BatteryOptimizationAndAutoStartTest.kt`, `AutoSleepManagerTest.kt` | Implemented | Build and unit test verification passing |
+
+## 117. Round 115: Trip 250 Polyline Chord Lock-Up Fix, Screen-Off Catch-Up Zigzag Elimination & Android Auto 1 Hz Real-Time Speed Updates (2026-10-23, v1.18.20)
+
+Evidence (Trip 250 `2026-10-23 15:35:48` to `16:02:59`, `track_1792762549506_trip250.jsonl`, screenshots `Screenshot_20261023-153834.png` through `154424.png`):
+- **Commit-path lock-up**: `TrackingEngine` accepted 1,223 fixes and `AdaptiveTrackSampler` emitted 502 road vertices, but `TripManager.onSmoothedPoints` committed only 23 vertices (`maxChord = 2,166.4m`) because the 1-point `TrackSpikeGuard.isLateralCourseOutlier` rejected the first vertex on the turn onto `Zagłębocze` (`seq 6`), freezing `recent = newPoints.takeLast(5)` on the pre-turn corridor and rejecting 683 consecutive vertices along the new road; additionally, stationary dwell at traffic lights did not advance `lastCommittedUtcMs` / sampler anchor timestamps.
+- **Screen-on catch-up zigzag**: On screen wake (`15:38:30`), `RenderPipeline.onState(s)` accumulated a `~45m` backward correction offset `(oE, oN) = pre - post` across the 20s screen-off gap; `OsmMapView` refilled `pencilTrail` with `pathBetween` (`rawAt(t) = post`) and immediately appended `pose` (`post + oE = pre`), drawing a backward zigzag hairpin.
+- **Android Auto screen-off speed freeze**: `AppStateManager.TRIP_RECORDING` set `maxDelay = SCREEN_OFF_BATCH_DELAY_MS` (`20_000L`) whenever `!isAppInForeground`, ignoring `isAutoMediaActive` / `UI_MODE_TYPE_CAR` and batching location delivery in 20s hardware bursts while driving with the phone screen off.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **ENG115-01** | Eliminate straight-line chord lock-up (`1,972m` / `2,166m` chords) after turns and traffic lights. | `TripManager.kt`, `TrackSpikeGuard.kt`, `AdaptiveTrackSampler.kt`, `TrackSpikeGuardTest.kt`, `FieldReplayTest.kt` | Implemented | Removed 1-point `isLateralCourseOutlier` from `onSmoothedPoints` (retaining 3-point `isLateralVSpike(A, B, C)` with SQLite index sync), added 2-strike moving-point recovery rule, and refreshed stationary anchor/commit timestamps. Trip 250 replay: `committed` increased from `23` (`maxChord=2166.4m`) to `500/502` (`maxChord=50.6m`) |
+| **ENG115-02** | Eliminate screen-on catch-up polyline zigzag behind cursor. | `RenderPipeline.kt`, `OsmMapView.kt`, `RenderPipelineTest.kt` | Implemented | Increased `RenderPipeline.HISTORY_MS` to `35_000L`, cleared correction offsets across multi-second state gaps (`> 2,500ms`) and before `catchUp` frames in `OsmMapView`, hoisted `lastFedStateMs` across foreground toggles |
+| **ENG115-03** | Real-time 1 Hz speed updates on Android Auto and during active trip recording when phone screen is off. | `AppStateManager.kt`, `AutoMediaService.kt`, `LocationManager.kt`, `BatteryOptimizationAndAutoStartTest.kt` | Implemented | Unbatched 1 Hz (`maxDelay = 0L`) in `TRIP_RECORDING` (batching reserved strictly for `BATTERY_SAVER` when not in car mode) and `ANDROID_AUTO` (`1000L, 1000L, 0L`); held refreshable `AutoMediaWakeLock` while `AutoMediaService` is active; processed all batched fixes chronologically in `LocationManager` |
+| **VER-115** | versionCode 151 / 1.18.20 | `build.gradle.kts` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |

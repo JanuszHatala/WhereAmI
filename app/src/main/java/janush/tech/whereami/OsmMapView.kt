@@ -671,6 +671,7 @@ fun OsmMapView(
     val pencilTrail = remember { PencilTrail() }
     val motionCourse = remember { MotionCourse() }
     var committedThroughMs by remember { mutableStateOf(-1L) }
+    var lastFedStateMs by remember { mutableStateOf(Long.MIN_VALUE) }
     val effectiveLatLng = remember(currentFix) {
         currentFix?.let { Triple(it.lat, it.lng, it.bearing) }
     }
@@ -830,7 +831,6 @@ fun OsmMapView(
         var lastRenderedFontScaleFactor: Float = fontScale.scaleFactor
         var lastFrameMs = 0L
         var lastActiveMs = 0L
-        var lastFedStateMs = Long.MIN_VALUE
 
         while (isActive) {
             val map = mapView
@@ -851,6 +851,10 @@ fun OsmMapView(
                 // Several states at once (a delivered batch): pencil points drawn after the previously known
                 // state were dead reckoning; they are redrawn from the real states below.
                 val redrawFromMs = if (newStates.size >= PencilTrail.BATCH_STATES) knownStateMs else null
+                if (framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES) {
+                    // Align pose with pathBetween after screen-off / batch catch-up so pose does not jump back to pre-batch offset.
+                    renderPipeline.clearCorrectionOffsets()
+                }
                 val pose = renderPipeline.frame(nowMs)
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
@@ -989,6 +993,7 @@ fun OsmMapView(
                             polyline = it
                         }
                         val before = pencilTrail.size
+                        committedThroughMs = maxOf(committedThroughMs, tripManagerRef.lastCommittedElapsedMs)
                         pencilTrail.pruneThrough(committedThroughMs)
                         // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
                         // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
@@ -1809,11 +1814,17 @@ fun OsmMapView(
             val cacheManager = remember { CacheManager.getInstance(context) }
             val cacheDeficit by cacheManager.cacheDeficit.collectAsState()
             val prefetchState by cacheManager.prefetchState.collectAsState()
+            LaunchedEffect(Unit) {
+                if (cacheDeficit == null) {
+                    cacheManager.calculateCacheDeficit()
+                }
+            }
             val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
 
             val isPrefetchRunning = prefetchState is CacheManager.PrefetchState.Running
             val isPrefetchPaused = prefetchState is CacheManager.PrefetchState.Paused
-            val isPrefetchCompleted = prefetchState is CacheManager.PrefetchState.Completed
+            // Only show green Completed tick when zero missing items remain; if new/remaining missing items exist, show the amber warning badge!
+            val isPrefetchCompleted = prefetchState is CacheManager.PrefetchState.Completed && totalMissingCache == 0
 
             val showCacheControl = (totalMissingCache > 0 || isPrefetchRunning || isPrefetchPaused || isPrefetchCompleted) && onOpenCacheManager != null
 

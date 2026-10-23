@@ -175,4 +175,114 @@ class TrackSpikeGuardTest {
             TrackSpikeGuard.isLateralCourseOutlier(recent, nextLat, nextLng, speedMps = 8.0)
         )
     }
+
+    @Test
+    fun `slow crawl over long interval is not falsely rejected as a spike`() {
+        // 48 m over 24 s (implied 2.0 m/s) at 2.0 m/s is valid slow traffic / walking movement
+        val (lat2, lng2) = at(48.0, 0.0)
+        assertFalse(
+            TrackSpikeGuard.isSpikeStep(
+                homeLat, homeLng, 1_000L,
+                lat2, lng2, 25_000L,
+                speedMps = 2.0,
+                isStationary = false
+            )
+        )
+        // But 48 m in 4 s (implied 12.0 m/s) while reporting 1.5 m/s is a slow teleport spike
+        assertTrue(
+            TrackSpikeGuard.isSpikeStep(
+                homeLat, homeLng, 1_000L,
+                lat2, lng2, 5_000L,
+                speedMps = 1.5,
+                isStationary = false
+            )
+        )
+    }
+
+    @Test
+    fun `road curve after straight segment commits all vertices without chord lockup`() {
+        // Simulate TripManager.onSmoothedPoints commit pipeline on a straight corridor followed by a 60 deg bend
+        val committed = ArrayList<SmoothedPoint>()
+        var lastCommittedUtcMs = -1L
+        var lastRejected: SmoothedPoint? = null
+
+        fun commit(p: SmoothedPoint) {
+            val last = committed.lastOrNull()
+            if (last != null) {
+                val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
+                val twoPoint = TrackSpikeGuard.isSpikeStep(
+                    last.lat, last.lng, prevUtc,
+                    p.lat, p.lng, p.tUtcMs,
+                    p.speedMps, p.isStationary
+                )
+                val prev2 = if (committed.size >= 2) committed[committed.size - 2] else null
+                val threePoint = prev2 != null && TrackSpikeGuard.isReversalSpike(
+                    prev2.lat, prev2.lng,
+                    last.lat, last.lng, prevUtc,
+                    p.lat, p.lng, p.tUtcMs
+                )
+                if (twoPoint || threePoint) {
+                    val prevRej = lastRejected
+                    if (prevRej != null && !p.isStationary && p.tUtcMs > prevRej.tUtcMs &&
+                        !TrackSpikeGuard.isSpikeStep(
+                            prevRej.lat, prevRej.lng, prevRej.tUtcMs,
+                            p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary
+                        )
+                    ) {
+                        lastRejected = null
+                        committed.add(prevRej)
+                        committed.add(p)
+                        lastCommittedUtcMs = p.tUtcMs
+                        return
+                    }
+                    lastRejected = p
+                    return
+                }
+                lastRejected = null
+                if (prev2 != null &&
+                    TrackSpikeGuard.isLateralVSpike(
+                        prev2.lat, prev2.lng,
+                        last.lat, last.lng,
+                        p.lat, p.lng
+                    )
+                ) {
+                    committed.removeAt(committed.lastIndex)
+                }
+            }
+            committed.add(p)
+            lastCommittedUtcMs = p.tUtcMs
+        }
+
+        // 5 straight steps north (25 m every 2 s at 12.5 m/s), then a 60 deg right curve for 6 steps
+        val coords = listOf(
+            at(0.0, 0.0),
+            at(25.0, 0.0),
+            at(50.0, 0.0),
+            at(75.0, 0.0),
+            at(100.0, 0.0),
+            at(118.0, 15.0),
+            at(130.0, 36.0),
+            at(142.0, 58.0),
+            at(154.0, 80.0),
+            at(166.0, 102.0),
+            at(178.0, 124.0)
+        )
+        coords.forEachIndexed { idx, (la, ln) ->
+            val t = (idx + 1) * 2_000L
+            commit(
+                SmoothedPoint(
+                    tElapsedMs = t,
+                    tUtcMs = t,
+                    lat = la,
+                    lng = ln,
+                    altitudeM = 350.0,
+                    speedMps = 12.5,
+                    headingDeg = if (idx < 5) 0.0 else 60.0,
+                    accuracyM = 5f,
+                    isStationary = false
+                )
+            )
+        }
+        assertEquals("Every curve vertex must be committed without chord lockup", coords.size, committed.size)
+    }
 }
