@@ -167,6 +167,32 @@ class AppStateManager private constructor(private val context: Context) {
             }
             return false
         }
+
+        /**
+         * Computes `(intervalMs, minIntervalMs, maxDelayMs)` for active `TRIP_RECORDING`.
+         * Ensures 1 Hz unbatched (`maxDelayMs = 0L`) delivery for fast profiles, foreground, or Android Auto
+         * so real-time speed on Android Auto and screen-on resume never stall in 20s hardware batches.
+         */
+        fun computeTripRecordingSampling(
+            profile: ActivityProfile,
+            policy: BatteryPowerPolicy,
+            isAppInForeground: Boolean,
+            carActive: Boolean
+        ): Triple<Long, Long, Long> {
+            val isFastMover = profile == ActivityProfile.CAR ||
+                profile == ActivityProfile.CYCLING ||
+                profile == ActivityProfile.MTB
+            var interval = if (isAppInForeground || carActive || isFastMover) 1000L else profile.gpsIntervalMs
+            var minInterval = if (isAppInForeground || carActive || isFastMover) 1000L else profile.minGpsIntervalMs
+            var maxDelay = 0L
+
+            if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground && !carActive) {
+                interval = (interval * 2).coerceAtLeast(2000L)
+                minInterval = (minInterval * 2).coerceAtLeast(1500L)
+                maxDelay = SCREEN_OFF_BATCH_DELAY_SAVER_MS
+            }
+            return Triple(interval, minInterval, maxDelay)
+        }
     }
 
     private val scope = CoroutineScope(Dispatchers.Main)
@@ -850,15 +876,25 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
+    fun isCarUiModeActive(): Boolean {
+        return try {
+            val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+            uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_CAR
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun recalculateState() {
         val tripActive = TripManager.getInstance(context).activeTrip.value != null
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val liveActive = liveSession != null && liveSession.isActive && !liveSession.isPaused
+        val carActive = isAutoMediaActive || isCarUiModeActive()
 
         val oldMode = _currentMode.value
         val newMode = when {
             tripActive -> AppLifecycleMode.TRIP_RECORDING
-            isAutoMediaActive -> AppLifecycleMode.ANDROID_AUTO
+            carActive -> AppLifecycleMode.ANDROID_AUTO
             _isStandbySleeping.value -> AppLifecycleMode.IDLE
             isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
             liveActive -> AppLifecycleMode.LIVE_ONLY
@@ -953,20 +989,14 @@ class AppStateManager private constructor(private val context: Context) {
                 motionManager.disarm()
                 val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
                     ?: TripManager.getInstance(context).activityProfile.value
-                
-                // Foreground: 1 Hz for silky-smooth tracking. Screen off: fast movers (car/bike) still sample at
-                // 1 Hz so turns are not cut into chords, but fixes are BATCHED (one CPU wake per ~20 s) and every
-                // fix is processed by the tracking engine. Slow profiles keep their profile cadence.
-                val isFastMover = profile == ActivityProfile.CAR || profile == ActivityProfile.CYCLING || profile == ActivityProfile.MTB
-                var interval = if (isAppInForeground || isFastMover) 1000L else profile.gpsIntervalMs
-                var minInterval = if (isAppInForeground || isFastMover) 1000L else profile.minGpsIntervalMs
-                var maxDelay = if (isAppInForeground) 0L else SCREEN_OFF_BATCH_DELAY_MS
+                val carActive = isAutoMediaActive || isCarUiModeActive()
 
-                if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground) {
-                    interval = (interval * 2).coerceAtLeast(2000L)
-                    minInterval = (minInterval * 2).coerceAtLeast(1500L)
-                    maxDelay = SCREEN_OFF_BATCH_DELAY_SAVER_MS
-                }
+                val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
+                    profile = profile,
+                    policy = policy,
+                    isAppInForeground = isAppInForeground,
+                    carActive = carActive
+                )
                 locManager.updateSamplingInterval(interval, minInterval, maxDelay)
             }
             AppLifecycleMode.LIVE_ONLY -> {
@@ -998,7 +1028,8 @@ class AppStateManager private constructor(private val context: Context) {
                 consecutiveFalseBursts = 0
                 motionRearmJob?.cancel()
                 motionManager.disarm()
-                locManager.updateSamplingInterval(3000L, 1000L)
+                // 1 Hz unbatched updates for real-time speed and road telemetry on the car head unit
+                locManager.updateSamplingInterval(1000L, 1000L, 0L)
             }
         }
     }

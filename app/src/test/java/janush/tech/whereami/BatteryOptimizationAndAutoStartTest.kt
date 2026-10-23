@@ -1190,4 +1190,34 @@ class BatteryOptimizationAndAutoStartTest {
         assertEquals(5 * 60 * 1000L, AppStateManager.STANDBY_INACTIVITY_CHECK_INTERVAL_MS)
         assertEquals(0L, AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS % AppStateManager.STANDBY_INACTIVITY_CHECK_INTERVAL_MS)
     }
+
+    @Test
+    fun testTripRecordingScreenOffUnbatchedForCarAndAndroidAuto() {
+        // 1. CAR profile with phone screen off (SMART_AUTO): 1 Hz unbatched (maxDelay = 0L) so Android Auto speed and screen-on resume are real-time
+        val carScreenOff = AppStateManager.computeTripRecordingSampling(
+            profile = ActivityProfile.CAR,
+            policy = BatteryPowerPolicy.SMART_AUTO,
+            isAppInForeground = false,
+            carActive = false
+        )
+        assertEquals(Triple(1000L, 1000L, 0L), carScreenOff)
+
+        // 2. Android Auto active with phone screen off even in BATTERY_SAVER: still 1 Hz unbatched (maxDelay = 0L)
+        val autoSaverScreenOff = AppStateManager.computeTripRecordingSampling(
+            profile = ActivityProfile.CAR,
+            policy = BatteryPowerPolicy.BATTERY_SAVER,
+            isAppInForeground = false,
+            carActive = true
+        )
+        assertEquals(Triple(1000L, 1000L, 0L), autoSaverScreenOff)
+
+        // 3. Screen-off WALKING in BATTERY_SAVER without Android Auto: batching enabled
+        val walkSaverScreenOff = AppStateManager.computeTripRecordingSampling(
+            profile = ActivityProfile.WALKING,
+            policy = BatteryPowerPolicy.BATTERY_SAVER,
+            isAppInForeground = false,
+            carActive = false
+        )
+        assertTrue("Battery saver screen-off non-car recording should use batch delay", walkSaverScreenOff.third > 0L)
+    }
 }

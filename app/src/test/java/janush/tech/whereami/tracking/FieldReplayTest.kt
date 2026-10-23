@@ -83,11 +83,29 @@ class FieldReplayTest {
         errs.sort()
         fun pct(p: Double) = if (errs.isEmpty()) Double.NaN else errs[((errs.size - 1) * p).toInt()]
         val spacing = stored.zipWithNext { a, b -> AdaptiveTrackSampler.distanceM(a, b) }.sorted()
+        val committed = ArrayList<SmoothedPoint>()
+        var lastUtc = -1L
+        for (p in stored) {
+            val last = committed.lastOrNull()
+            if (last != null) {
+                val prevUtc = lastUtc.takeIf { it > 0L } ?: p.tUtcMs
+                val twoPt = TrackSpikeGuard.isSpikeStep(last.lat, last.lng, prevUtc, p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary)
+                val prev2 = if (committed.size >= 2) committed[committed.size - 2] else null
+                val threePt = prev2 != null && TrackSpikeGuard.isReversalSpike(prev2.lat, prev2.lng, last.lat, last.lng, prevUtc, p.lat, p.lng, p.tUtcMs)
+                if (twoPt || threePt) continue
+                if (prev2 != null && TrackSpikeGuard.isLateralVSpike(prev2.lat, prev2.lng, last.lat, last.lng, p.lat, p.lng)) {
+                    committed.removeAt(committed.lastIndex)
+                }
+            }
+            committed.add(p)
+            lastUtc = p.tUtcMs
+        }
+        val maxCommittedChord = committed.zipWithNext { a, b -> AdaptiveTrackSampler.distanceM(a, b) }.maxOrNull() ?: 0.0
         println(
             "REPLAY fixes=${fixes.size} decisions=$decisions moving=$moving headingConfident=" +
                 "${"%.0f".format(100.0 * confident / moving.coerceAtLeast(1))}% " +
                 "headingErr p50=${"%.1f".format(pct(0.5))} p90=${"%.1f".format(pct(0.9))} p97=${"%.1f".format(pct(0.97))} " +
-                "smoothed=${smoothed.size} stored=${stored.size} spacing p50=${"%.2f".format(spacing.getOrNull(spacing.size / 2) ?: 0.0)}"
+                "smoothed=${smoothed.size} stored=${stored.size} committed=${committed.size} maxChord=${"%.1f".format(maxCommittedChord)}m spacing p50=${"%.2f".format(spacing.getOrNull(spacing.size / 2) ?: 0.0)}"
         )
         println("REPLAY position ${positionMetrics(fixes, profile)}")
         val delay = System.getenv("WAI_REPLAY_DELIVERY_MS")?.toLongOrNull() ?: 300L

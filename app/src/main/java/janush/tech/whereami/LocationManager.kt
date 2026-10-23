@@ -973,7 +973,7 @@ class LocationManager private constructor(private val context: Context) {
 
             val locationRequest = buildRequest(currentIntervalMs, currentMinIntervalMs, currentMaxUpdateDelayMs)
 
-            fun handleLocation(location: AndroidLocation) {
+            fun handleLocation(location: AndroidLocation, emitUiAndGeocode: Boolean = true): Boolean {
                 val tripManager = TripManager.getInstance(context)
                 val activeTrip = tripManager.activeTrip.value
                 val currentProfile = activeTrip?.activityProfile ?: tripManager.activityProfile.value
@@ -998,7 +998,7 @@ class LocationManager private constructor(private val context: Context) {
                     trackingEngine.ingest(rawFix, gyroRate, isPhysicallyStationary)
                 }
                 val state = result.state
-                if (!result.accepted || state == null) return
+                if (!result.accepted || state == null) return false
                 TrackingRuntime.states.add(state)
 
                 val lat = state.lat
@@ -1037,6 +1037,8 @@ class LocationManager private constructor(private val context: Context) {
                     alt
                 )
                 tripManager.onSmoothedPoints(result.finalized)
+
+                if (!emitUiAndGeocode) return true
 
                 // 2. Immediate LiveSharing telemetry notification
                 val immediatePlaceName = committedPlace?.let {
@@ -1119,17 +1121,22 @@ class LocationManager private constructor(private val context: Context) {
                         trySend(enrichedSnapshot)
                     }
                 }
+                return true
             }
 
             val locationCallback = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
-                    // Process every delivered fix in time order: when the screen is off, Fused batches
-                    // fixes and delivers several at once; the old code kept only lastLocation.
+                    // Process every delivered fix in time order: when the screen is off in Battery Saver, Fused
+                    // may batch fixes and deliver several at once; only the last fix triggers UI/HTTP geocoding.
                     val fixes = result.locations
                     if (fixes.size > 1) {
-                        fixes.sortedBy { it.elapsedRealtimeNanos }.forEach { handleLocation(it) }
+                        val sorted = fixes.sortedBy { it.elapsedRealtimeNanos }
+                        for (i in 0 until sorted.size - 1) {
+                            handleLocation(sorted[i], emitUiAndGeocode = false)
+                        }
+                        handleLocation(sorted.last(), emitUiAndGeocode = true)
                     } else {
-                        fixes.firstOrNull()?.let { handleLocation(it) }
+                        fixes.firstOrNull()?.let { handleLocation(it, emitUiAndGeocode = true) }
                     }
                 }
             }

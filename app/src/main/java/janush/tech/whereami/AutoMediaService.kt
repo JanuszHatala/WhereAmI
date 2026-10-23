@@ -37,8 +37,8 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WhereAmI:AutoMediaWakeLock")?.apply {
             setReferenceCounted(false)
         }
-        // Wake lock only while a trip is recording (never for Auto session alone).
-        updateAutoWakeLock(TripManager.getInstance(this).activeTrip.value != null)
+        // Hold scoped wake lock while Android Auto session is connected so screen-off speed updates never stall.
+        updateAutoWakeLock(true)
 
         mediaSession = MediaSessionCompat(this, "AutoMediaService").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -72,10 +72,9 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         locationManager = LocationManager.getInstance(this)
 
-        AppStateManager.getInstance(this).setAutoMediaActive(true)
-
         startForegroundService()
         startTracking()
+        AppStateManager.getInstance(this).setAutoMediaActive(true)
     }
 
     private fun startForegroundService() {
@@ -114,21 +113,21 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
     private var autoWakeLockAcquiredElapsedMs = 0L
 
-    private fun updateAutoWakeLock(hasActiveTrip: Boolean) {
+    private fun updateAutoWakeLock(shouldHold: Boolean) {
         try {
             val lock = wakeLock ?: return
-            if (WakeLockPolicy.shouldHoldTripWakeLock(hasActiveTrip)) {
+            if (shouldHold) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 val heldFor = if (lock.isHeld) now - autoWakeLockAcquiredElapsedMs else Long.MAX_VALUE
                 if (WakeLockPolicy.shouldRefreshHeldLock(lock.isHeld, heldFor)) {
                     lock.acquire(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS)
                     autoWakeLockAcquiredElapsedMs = now
-                    TelemetryLogger.log("POWER", "AutoMediaWakeLock acquired/refreshed (active trip)")
+                    TelemetryLogger.log("POWER", "AutoMediaWakeLock acquired/refreshed (Android Auto connected)")
                 }
             } else if (lock.isHeld) {
                 lock.release()
                 autoWakeLockAcquiredElapsedMs = 0L
-                TelemetryLogger.log("POWER", "AutoMediaWakeLock released (no active trip)")
+                TelemetryLogger.log("POWER", "AutoMediaWakeLock released")
             }
         } catch (e: Exception) {
             TelemetryLogger.log("ERROR", "AutoMediaWakeLock update failed: ${e.message}")
@@ -145,16 +144,9 @@ class AutoMediaService : MediaBrowserServiceCompat() {
             }
         }
         serviceScope.launch {
-            TripManager.getInstance(this@AutoMediaService).activeTrip.collectLatest { trip ->
-                updateAutoWakeLock(trip != null)
-            }
-        }
-        serviceScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 3)
-                if (TripManager.getInstance(this@AutoMediaService).activeTrip.value != null) {
-                    updateAutoWakeLock(true)
-                }
+                updateAutoWakeLock(true)
             }
         }
     }
@@ -303,6 +295,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         rootHints: Bundle?
     ): BrowserRoot {
         TelemetryLogger.log("AUTO", "onGetRoot called by $clientPackageName (uid=$clientUid)")
+        AppStateManager.getInstance(this).setAutoMediaActive(true)
         return BrowserRoot("root", null)
     }
 
@@ -310,6 +303,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         parentId: String,
         result: Result<MutableList<MediaBrowserCompat.MediaItem>>
     ) {
+        AppStateManager.getInstance(this).setAutoMediaActive(true)
         // Decouple Binder IPC from main thread immediately to prevent Android Auto IPC timeout/hang
         result.detach()
         serviceScope.launch(Dispatchers.IO) {

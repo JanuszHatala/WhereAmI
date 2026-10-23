@@ -68,10 +68,11 @@ object TrackSpikeGuard {
         if (d < MIN_JUMP_M) return false
         val dtSec = (utcMs - prevUtcMs) / 1000.0
         val implied = if (dtSec > 0.05) d / dtSec else Double.POSITIVE_INFINITY
-        if (isStationary || speedMps < SLOW_MPS || implied > MAX_IMPLIED_MPS) return true
+        val slowTeleport = speedMps < SLOW_MPS && implied > SLOW_MPS * 2.0
+        if (isStationary || slowTeleport || implied > MAX_IMPLIED_MPS) return true
         // Long gap with a large teleport that covers far less than Doppler travel: nest snap-back
-        // (trip 244: 59.6 m in 24 s at 7 m/s — expected ~168 m along-track).
-        if (dtSec >= 10.0 && speedMps > 0.5) {
+        // (trip 244: 59.6 m in 24 s at 7 m/s - expected ~168 m along-track).
+        if (dtSec in 10.0..30.0 && speedMps > 0.5) {
             val expected = speedMps * dtSec
             if (expected > 0.0 && d < expected * 0.40) return true
         }
