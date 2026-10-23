@@ -6,11 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class HeatMapFilterState(
     val activityProfiles: Set<ActivityProfile> = emptySet(), // empty = All Modes
@@ -434,6 +438,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _destinationPoint.value = item?.geoPoint
         _pinnedBoundaryPoints.value = null
         resolveDestinationAltitude(item?.geoPoint)
+        if (item != null) {
+            rememberRecentSearch(item)
+        }
     }
 
     fun setDestinationPoint(point: org.osmdroid.util.GeoPoint?) {
@@ -557,22 +564,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var searchJob: Job? = null
+    private val recentSearchPrefsKey = "recent_place_searches_v1"
+    private val maxRecentSearches = 12
+
     fun search(query: String) {
-        if (query.trim().length < 2) {
+        searchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
             _searchResults.value = emptyList()
+            _isSearching.value = false
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             _isSearching.value = true
+            delay(300)
+            if (!isActive) return@launch
             val currentCity = _locationData.value.primaryPlace?.city
-            _searchResults.value = SearchHelper.searchLocation(getApplication(), query, currentCity)
+            val countryCode = _locationData.value.primaryPlace?.countryCode
+                ?.takeIf { it.isNotBlank() }?.lowercase()
+            val coords = _currentLatLng.value
+            val results = SearchHelper.searchLocation(
+                context = getApplication(),
+                query = trimmed,
+                currentCity = currentCity,
+                originLat = coords?.first,
+                originLon = coords?.second,
+                countryCode = countryCode,
+                savedPlaces = _savedPlaces.value,
+                recentPlaces = loadRecentSearches()
+            )
+            if (!isActive) return@launch
+            _searchResults.value = results
             _isSearching.value = false
         }
     }
 
     fun clearSearch() {
+        searchJob?.cancel()
+        searchJob = null
         _searchResults.value = emptyList()
         _isSearching.value = false
+    }
+
+    private fun rememberRecentSearch(item: SearchResultItem) {
+        try {
+            val existing = loadRecentSearches().toMutableList()
+            existing.removeAll {
+                String.format(java.util.Locale.US, "%.5f,%.5f", it.geoPoint.latitude, it.geoPoint.longitude) ==
+                    String.format(java.util.Locale.US, "%.5f,%.5f", item.geoPoint.latitude, item.geoPoint.longitude)
+            }
+            existing.add(0, item.copy(source = item.source ?: "recent", placeType = item.placeType ?: "recent"))
+            val trimmed = existing.take(maxRecentSearches)
+            val arr = JSONArray()
+            for (r in trimmed) {
+                arr.put(
+                    JSONObject()
+                        .put("title", r.title)
+                        .put("subtitle", r.subtitle)
+                        .put("lat", r.geoPoint.latitude)
+                        .put("lon", r.geoPoint.longitude)
+                        .put("locality", r.localityName ?: "")
+                        .put("countryCode", r.countryCode ?: "")
+                        .put("placeType", r.placeType ?: "recent")
+                )
+            }
+            appPrefs.edit().putString(recentSearchPrefsKey, arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun loadRecentSearches(): List<SearchResultItem> {
+        return try {
+            val raw = appPrefs.getString(recentSearchPrefsKey, null) ?: return emptyList()
+            val arr = JSONArray(raw)
+            val out = mutableListOf<SearchResultItem>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val title = obj.optString("title", "").takeIf { it.isNotBlank() } ?: continue
+                val lat = obj.optDouble("lat", Double.NaN)
+                val lon = obj.optDouble("lon", Double.NaN)
+                if (lat.isNaN() || lon.isNaN()) continue
+                out.add(
+                    SearchResultItem(
+                        title = title,
+                        subtitle = obj.optString("subtitle", ""),
+                        geoPoint = org.osmdroid.util.GeoPoint(lat, lon),
+                        localityName = obj.optString("locality", "").takeIf { it.isNotBlank() },
+                        countryCode = obj.optString("countryCode", "").takeIf { it.isNotBlank() },
+                        placeType = obj.optString("placeType", "recent"),
+                        source = "recent"
+                    )
+                )
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     fun toggleKeepScreenOn() {

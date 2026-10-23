@@ -11,9 +11,13 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -4420,8 +4424,17 @@ fun LocationScreen(viewModel: MainViewModel) {
     if (showSearchDialog) {
         val searchFocusRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
+        // Restore prior query with caret at end; String-backed fields default selection to 0.
+        var searchField by remember {
+            mutableStateOf(TextFieldValue(searchQuery, selection = TextRange(searchQuery.length)))
+        }
 
         LaunchedEffect(Unit) {
+            val text = searchQuery
+            searchField = TextFieldValue(text, selection = TextRange(text.length))
+            if (text.trim().length >= 2) {
+                viewModel.search(text)
+            }
             kotlinx.coroutines.delay(200)
             searchFocusRequester.requestFocus()
             keyboardController?.show()
@@ -4447,13 +4460,20 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .padding(top = 8.dp)
                 ) {
                     OutlinedTextField(
-                        value = searchQuery,
+                        value = searchField,
                         onValueChange = {
-                            searchQuery = it
-                            viewModel.search(it)
+                            searchField = it
+                            searchQuery = it.text
+                            viewModel.search(it.text)
                         },
                         label = { Text("Search city, street or address") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                viewModel.search(searchField.text)
+                            }
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(searchFocusRequester),
@@ -4487,6 +4507,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 .heightIn(max = 240.dp)
                         ) {
                             items(searchResults) { item ->
+                                val distanceLabel = PlaceSearchRanker.formatDistance(item.distanceMeters)
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -4497,12 +4518,30 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         }
                                         .padding(vertical = 8.dp, horizontal = 4.dp)
                                 ) {
-                                    Text(
-                                        text = item.title,
-                                        color = Color(0xFF38BDF8),
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = item.title,
+                                            color = Color(0xFF38BDF8),
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        if (distanceLabel != null) {
+                                            Text(
+                                                text = distanceLabel,
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
                                     if (item.subtitle.isNotBlank()) {
                                         Text(
                                             text = item.subtitle,

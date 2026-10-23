@@ -18,7 +18,12 @@ data class SearchResultItem(
     val geoPoint: GeoPoint,
     val localityName: String? = null,
     val countryCode: String? = null,
-    val municipalityName: String? = null
+    val municipalityName: String? = null,
+    val distanceMeters: Float? = null,
+    val placeType: String? = null,
+    val source: String? = null,
+    val importance: Double = 0.0,
+    val rankScore: Double = 0.0
 )
 
 data class TouristicPoi(
@@ -31,151 +36,356 @@ data class TouristicPoi(
 
 object SearchHelper {
 
+    private const val USER_AGENT = "WhereAmIPersonalApp/1.1 (android; place-search)"
+    private const val PHOTON_BIAS_SCALE = 0.5
+    private const val VIEWBOX_RADIUS_DEG = 0.75 // ~80 km soft bias for Nominatim fallback
+
+    /**
+     * Near-me-first place search: Photon (location-biased) primary, Nominatim/Geocoder fallback,
+     * merged with saved/recent local hits and ranked by [PlaceSearchRanker].
+     */
     suspend fun searchLocation(
         context: Context,
         query: String,
-        currentCity: String? = null
+        currentCity: String? = null,
+        originLat: Double? = null,
+        originLon: Double? = null,
+        countryCode: String? = null,
+        savedPlaces: List<SavedPlace> = emptyList(),
+        recentPlaces: List<SearchResultItem> = emptyList()
     ): List<SearchResultItem> = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
 
-        val results = mutableListOf<SearchResultItem>()
-        val seenCoords = mutableSetOf<String>()
+        val candidates = mutableListOf<PlaceSearchRanker.Candidate>()
 
-        fun addUniqueResult(item: SearchResultItem) {
-            val key = String.format(Locale.US, "%.5f,%.5f", item.geoPoint.latitude, item.geoPoint.longitude)
-            if (seenCoords.add(key)) {
-                results.add(item)
+        fun addCandidate(c: PlaceSearchRanker.Candidate) {
+            candidates.add(c)
+        }
+
+        // Instant local hits (diacritic-insensitive via SearchNormalizer)
+        for (place in savedPlaces) {
+            if (SearchNormalizer.matchesSavedPlace(trimmed, place)) {
+                val subtitle = listOfNotNull(
+                    place.street.takeIf { it.isNotBlank() },
+                    place.locality.takeIf { it.isNotBlank() },
+                    place.category.displayName
+                ).joinToString(" · ")
+                addCandidate(
+                    PlaceSearchRanker.Candidate(
+                        item = SearchResultItem(
+                            title = place.name,
+                            subtitle = if (subtitle.isNotBlank()) subtitle else "Saved place",
+                            geoPoint = place.geoPoint,
+                            localityName = place.locality.takeIf { it.isNotBlank() },
+                            countryCode = countryCode,
+                            placeType = "saved",
+                            source = "saved"
+                        ),
+                        placeType = "saved",
+                        isSaved = true
+                    )
+                )
+            }
+        }
+        for (recent in recentPlaces) {
+            if (SearchNormalizer.matchesQuery(trimmed, recent.title, recent.subtitle, recent.localityName)) {
+                addCandidate(
+                    PlaceSearchRanker.Candidate(
+                        item = recent.copy(placeType = recent.placeType ?: "recent", source = "recent"),
+                        placeType = recent.placeType ?: "recent",
+                        isRecent = true
+                    )
+                )
             }
         }
 
-        // Helper function to query Android Geocoder
-        fun tryGeocoder(q: String) {
-            try {
-                val geocoder = Geocoder(context, Locale.getDefault())
-                @Suppress("DEPRECATION")
-                val addresses: List<Address>? = geocoder.getFromLocationName(q, 5)
-                if (!addresses.isNullOrEmpty()) {
-                    for (addr in addresses) {
-                        val street = addr.thoroughfare
-                        val feature = addr.featureName
-                        val subThoroughfare = addr.subThoroughfare // house number
-
-                        val title = when {
-                            !street.isNullOrBlank() && !subThoroughfare.isNullOrBlank() -> "$street $subThoroughfare"
-                            !street.isNullOrBlank() && !feature.isNullOrBlank() && feature != street -> "$street $feature"
-                            !street.isNullOrBlank() -> street
-                            !feature.isNullOrBlank() -> feature
-                            !addr.locality.isNullOrBlank() -> addr.locality
-                            else -> trimmed
-                        }
-
-                        val subtitle = listOfNotNull(
-                            addr.locality?.takeIf { it != title },
-                            addr.subAdminArea,
-                            addr.adminArea,
-                            addr.countryName
-                        ).distinct().joinToString(", ")
-
-                        addUniqueResult(
-                            SearchResultItem(
-                                title = title,
-                                subtitle = subtitle,
-                                geoPoint = GeoPoint(addr.latitude, addr.longitude)
-                            )
-                        )
-                    }
-                }
-            } catch (_: Exception) {}
+        val photonHits = tryPhoton(trimmed, originLat, originLon)
+        for (hit in photonHits) {
+            addCandidate(
+                PlaceSearchRanker.Candidate(
+                    item = hit,
+                    placeType = hit.placeType,
+                    importance = hit.importance
+                )
+            )
         }
 
-        // Helper function to query OpenStreetMap Nominatim
-        fun tryNominatim(q: String) {
-            try {
-                val encodedQuery = URLEncoder.encode(q.trim(), "UTF-8")
-                val urlStr = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&addressdetails=1&limit=5"
-                val conn = URL(urlStr).openConnection() as HttpURLConnection
-                conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
-                conn.connectTimeout = 6000
-                conn.readTimeout = 6000
-
-                if (conn.responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().readText()
-                    val array = JSONArray(body)
-                    for (i in 0 until array.length()) {
-                        val obj = array.getJSONObject(i)
-                        val displayName = obj.optString("display_name", "")
-                        val lat = obj.getDouble("lat")
-                        val lon = obj.getDouble("lon")
-
-                        val addressObj = obj.optJSONObject("address")
-                        val road = addressObj?.optString("road")?.takeIf { it.isNotBlank() }
-                        val houseNumber = addressObj?.optString("house_number")?.takeIf { it.isNotBlank() }
-                        val city = addressObj?.optString("city")
-                            ?: addressObj?.optString("town")
-                            ?: addressObj?.optString("village")
-                            ?: addressObj?.optString("municipality")
-
-                        val title = when {
-                            road != null && houseNumber != null -> "$road $houseNumber"
-                            road != null -> road
-                            else -> {
-                                val parts = displayName.split(", ")
-                                parts.firstOrNull() ?: displayName
-                            }
-                        }
-
-                        val subtitle = listOfNotNull(
-                            city?.takeIf { it != title },
-                            addressObj?.optString("county")?.takeIf { it.isNotBlank() },
-                            addressObj?.optString("state")?.takeIf { it.isNotBlank() },
-                            addressObj?.optString("country")?.takeIf { it.isNotBlank() }
-                        ).distinct().joinToString(", ")
-
-                        addUniqueResult(
-                            SearchResultItem(
-                                title = title,
-                                subtitle = if (subtitle.isNotBlank()) subtitle else displayName,
-                                geoPoint = GeoPoint(lat, lon)
-                            )
-                        )
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        val hasDigits = trimmed.any { it.isDigit() }
-        val isExplicitStreet = trimmed.startsWith("ul.", ignoreCase = true) ||
+        // Fallback when Photon is empty/unavailable
+        if (photonHits.isEmpty()) {
+            val fallback = mutableListOf<SearchResultItem>()
+            val hasDigits = trimmed.any { it.isDigit() }
+            val isExplicitStreet = trimmed.startsWith("ul.", ignoreCase = true) ||
                 trimmed.startsWith("ul ", ignoreCase = true) ||
                 trimmed.startsWith("ulica", ignoreCase = true) ||
                 trimmed.startsWith("aleja", ignoreCase = true) ||
                 trimmed.startsWith("al.", ignoreCase = true) ||
                 trimmed.startsWith("pl.", ignoreCase = true) ||
                 trimmed.startsWith("plac", ignoreCase = true)
+            val cityAvailable = !currentCity.isNullOrBlank() &&
+                !trimmed.contains(currentCity, ignoreCase = true)
 
-        val cityAvailable = !currentCity.isNullOrBlank() && !trimmed.contains(currentCity, ignoreCase = true)
+            if (cityAvailable && isExplicitStreet) {
+                val localAddress = "$trimmed, $currentCity"
+                fallback += tryGeocoder(context, localAddress)
+                fallback += tryNominatim(localAddress, originLat, originLon)
+            }
 
-        // 1. If user explicitly specified a street prefix and didn't mention a city, prioritize current locality
-        if (cityAvailable && isExplicitStreet) {
-            val localAddress = "$trimmed, $currentCity"
-            tryGeocoder(localAddress)
-            tryNominatim(localAddress)
+            fallback += tryGeocoder(context, trimmed)
+            if (fallback.size < 5) {
+                fallback += tryNominatim(trimmed, originLat, originLon)
+            }
+
+            if (fallback.isEmpty() && cityAvailable && hasDigits) {
+                val localAddress = "$trimmed, $currentCity"
+                fallback += tryGeocoder(context, localAddress)
+                fallback += tryNominatim(localAddress, originLat, originLon)
+            }
+
+            for (hit in fallback) {
+                addCandidate(
+                    PlaceSearchRanker.Candidate(
+                        item = hit,
+                        placeType = hit.placeType,
+                        importance = hit.importance
+                    )
+                )
+            }
         }
 
-        // 2. Search exact query globally (e.g. other cities "Kraków", "Bielsko-Biała", "Warszawa", or addresses with city)
-        tryGeocoder(trimmed)
-        if (results.size < 5) {
-            tryNominatim(trimmed)
-        }
+        return@withContext PlaceSearchRanker.rank(
+            query = trimmed,
+            candidates = candidates,
+            originLat = originLat,
+            originLon = originLon,
+            countryCode = countryCode
+        )
+    }
 
-        // 3. If query contains street digits (e.g. "Zielona 92") and was not found globally, try in current locality
-        if (results.isEmpty() && cityAvailable && hasDigits) {
-            val localAddress = "$trimmed, $currentCity"
-            tryGeocoder(localAddress)
-            tryNominatim(localAddress)
+    internal fun tryPhoton(
+        q: String,
+        lat: Double?,
+        lon: Double?,
+        limit: Int = 10
+    ): List<SearchResultItem> {
+        return try {
+            val encoded = URLEncoder.encode(q.trim(), "UTF-8")
+            val lang = Locale.getDefault().language.takeIf { it.length == 2 } ?: "en"
+            val sb = StringBuilder("https://photon.komoot.io/api/?q=$encoded&limit=$limit&lang=$lang")
+            sb.append("&location_bias_scale=$PHOTON_BIAS_SCALE")
+            if (lat != null && lon != null) {
+                sb.append("&lat=").append(String.format(Locale.US, "%.5f", lat))
+                sb.append("&lon=").append(String.format(Locale.US, "%.5f", lon))
+            }
+            val conn = URL(sb.toString()).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parsePhotonResponse(body)
+        } catch (_: Exception) {
+            emptyList()
         }
+    }
 
-        return@withContext results
+    /** Pure Photon GeoJSON parser (unit-testable). */
+    fun parsePhotonResponse(jsonStr: String): List<SearchResultItem> {
+        val root = org.json.JSONObject(jsonStr)
+        val features = root.optJSONArray("features") ?: return emptyList()
+        val out = mutableListOf<SearchResultItem>()
+        for (i in 0 until features.length()) {
+            val feature = features.optJSONObject(i) ?: continue
+            val geometry = feature.optJSONObject("geometry") ?: continue
+            val coords = geometry.optJSONArray("coordinates") ?: continue
+            if (coords.length() < 2) continue
+            val lon = coords.getDouble(0)
+            val lat = coords.getDouble(1)
+            val props = feature.optJSONObject("properties") ?: continue
+
+            val name = props.optString("name", "").takeIf { it.isNotBlank() }
+            val street = props.optString("street", "").takeIf { it.isNotBlank() }
+            val house = props.optString("housenumber", "").takeIf { it.isNotBlank() }
+            val city = props.optString("city", "").takeIf { it.isNotBlank() }
+                ?: props.optString("town", "").takeIf { it.isNotBlank() }
+                ?: props.optString("village", "").takeIf { it.isNotBlank() }
+                ?: props.optString("municipality", "").takeIf { it.isNotBlank() }
+            val district = props.optString("district", "").takeIf { it.isNotBlank() }
+            val state = props.optString("state", "").takeIf { it.isNotBlank() }
+            val country = props.optString("country", "").takeIf { it.isNotBlank() }
+            val countryCode = props.optString("countrycode", "")
+                .takeIf { it.isNotBlank() }?.lowercase(Locale.ROOT)
+            val osmKey = props.optString("osm_key", "")
+            val osmValue = props.optString("osm_value", "")
+            val type = props.optString("type", "").takeIf { it.isNotBlank() }
+                ?: osmValue.takeIf { it.isNotBlank() }
+                ?: osmKey.takeIf { it.isNotBlank() }
+            val importance = props.optDouble("importance", 0.0)
+
+            val title = when {
+                street != null && house != null -> "$street $house"
+                name != null -> name
+                street != null -> street
+                city != null -> city
+                else -> continue
+            }
+
+            val subtitle = listOfNotNull(
+                city?.takeIf { it != title },
+                district?.takeIf { it != title && it != city },
+                state?.takeIf { it != title },
+                country
+            ).distinct().joinToString(", ")
+
+            out.add(
+                SearchResultItem(
+                    title = title,
+                    subtitle = subtitle,
+                    geoPoint = GeoPoint(lat, lon),
+                    localityName = city,
+                    countryCode = countryCode,
+                    placeType = type,
+                    source = "photon",
+                    importance = importance
+                )
+            )
+        }
+        return out
+    }
+
+    private fun tryGeocoder(context: Context, q: String): List<SearchResultItem> {
+        return try {
+            val geocoder = Geocoder(context, Locale.getDefault())
+            @Suppress("DEPRECATION")
+            val addresses: List<Address>? = geocoder.getFromLocationName(q, 5)
+            if (addresses.isNullOrEmpty()) return emptyList()
+            addresses.mapNotNull { addr ->
+                if (!addr.hasLatitude() || !addr.hasLongitude()) return@mapNotNull null
+                val street = addr.thoroughfare
+                val feature = addr.featureName
+                val subThoroughfare = addr.subThoroughfare
+                val title = when {
+                    !street.isNullOrBlank() && !subThoroughfare.isNullOrBlank() -> "$street $subThoroughfare"
+                    !street.isNullOrBlank() && !feature.isNullOrBlank() && feature != street -> "$street $feature"
+                    !street.isNullOrBlank() -> street
+                    !feature.isNullOrBlank() -> feature
+                    !addr.locality.isNullOrBlank() -> addr.locality
+                    else -> q
+                }
+                val subtitle = listOfNotNull(
+                    addr.locality?.takeIf { it != title },
+                    addr.subAdminArea,
+                    addr.adminArea,
+                    addr.countryName
+                ).distinct().joinToString(", ")
+                val placeType = when {
+                    !street.isNullOrBlank() -> "street"
+                    !addr.locality.isNullOrBlank() -> "city"
+                    else -> null
+                }
+                SearchResultItem(
+                    title = title,
+                    subtitle = subtitle,
+                    geoPoint = GeoPoint(addr.latitude, addr.longitude),
+                    localityName = addr.locality,
+                    countryCode = addr.countryCode?.lowercase(Locale.ROOT),
+                    placeType = placeType,
+                    source = "geocoder"
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun tryNominatim(
+        q: String,
+        originLat: Double?,
+        originLon: Double?
+    ): List<SearchResultItem> {
+        return try {
+            val encodedQuery = URLEncoder.encode(q.trim(), "UTF-8")
+            val sb = StringBuilder(
+                "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&addressdetails=1&limit=8"
+            )
+            // Soft viewbox bias (no bounded=1): near results preferred, far still allowed
+            if (originLat != null && originLon != null) {
+                val dLat = VIEWBOX_RADIUS_DEG
+                val dLon = VIEWBOX_RADIUS_DEG / kotlin.math.cos(Math.toRadians(originLat)).coerceAtLeast(0.2)
+                val minLon = originLon - dLon
+                val maxLon = originLon + dLon
+                val minLat = originLat - dLat
+                val maxLat = originLat + dLat
+                sb.append("&viewbox=")
+                    .append(String.format(Locale.US, "%.5f,%.5f,%.5f,%.5f", minLon, maxLat, maxLon, minLat))
+            }
+            val conn = URL(sb.toString()).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseNominatimSearch(body)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun parseNominatimSearch(jsonStr: String): List<SearchResultItem> {
+        val array = JSONArray(jsonStr)
+        val out = mutableListOf<SearchResultItem>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val displayName = obj.optString("display_name", "")
+            val lat = obj.getDouble("lat")
+            val lon = obj.getDouble("lon")
+            val osmClass = obj.optString("class", "")
+            val osmType = obj.optString("type", "")
+            val importance = obj.optDouble("importance", 0.0)
+
+            val addressObj = obj.optJSONObject("address")
+            val road = addressObj?.optString("road")?.takeIf { it.isNotBlank() }
+            val houseNumber = addressObj?.optString("house_number")?.takeIf { it.isNotBlank() }
+            val city = addressObj?.optString("city")?.takeIf { it.isNotBlank() }
+                ?: addressObj?.optString("town")?.takeIf { it.isNotBlank() }
+                ?: addressObj?.optString("village")?.takeIf { it.isNotBlank() }
+                ?: addressObj?.optString("municipality")?.takeIf { it.isNotBlank() }
+            val countryCode = addressObj?.optString("country_code")?.takeIf { it.isNotBlank() }
+                ?.lowercase(Locale.ROOT)
+
+            val title = when {
+                road != null && houseNumber != null -> "$road $houseNumber"
+                road != null -> road
+                else -> displayName.split(", ").firstOrNull() ?: displayName
+            }
+            val subtitle = listOfNotNull(
+                city?.takeIf { it != title },
+                addressObj?.optString("county")?.takeIf { it.isNotBlank() },
+                addressObj?.optString("state")?.takeIf { it.isNotBlank() },
+                addressObj?.optString("country")?.takeIf { it.isNotBlank() }
+            ).distinct().joinToString(", ")
+
+            val placeType = when {
+                osmClass == "highway" -> "street"
+                osmType.isNotBlank() -> osmType
+                osmClass.isNotBlank() -> osmClass
+                else -> null
+            }
+
+            out.add(
+                SearchResultItem(
+                    title = title,
+                    subtitle = if (subtitle.isNotBlank()) subtitle else displayName,
+                    geoPoint = GeoPoint(lat, lon),
+                    localityName = city,
+                    countryCode = countryCode,
+                    placeType = placeType,
+                    source = "nominatim",
+                    importance = importance
+                )
+            )
+        }
+        return out
     }
 
     suspend fun reverseGeocode(
