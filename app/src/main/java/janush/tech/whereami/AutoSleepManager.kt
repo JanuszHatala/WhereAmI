@@ -169,7 +169,8 @@ class AutoSleepManager private constructor(private val context: Context) {
             isMorning: Boolean,
             isAlarmFired: Boolean,
             isManualSleep: Boolean = false,
-            wasDndActiveInSession: Boolean = false
+            wasDndActiveInSession: Boolean = false,
+            wasInBedtimeWindowDuringSleep: Boolean = true
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
 
@@ -186,8 +187,10 @@ class AutoSleepManager private constructor(private val context: Context) {
             // DND was active during sleep, and user turned it off in the morning
             if (followDnd && wasDndActiveInSession && !isDndActive && isMorning) return true
 
-            // Bedtime window completely ended and DND is not holding it
-            if (!isTimeInWindow && (!followDnd || !isDndActive)) return true
+            // Bedtime window completely ended and DND is not holding it.
+            // Guard with wasInBedtimeWindowDuringSleep so daytime 90-minute inactivity hibernation
+            // (entered outside the bedtime window) does not falsely auto-wake on background broadcasts.
+            if (wasInBedtimeWindowDuringSleep && !isTimeInWindow && (!followDnd || !isDndActive)) return true
 
             return false
         }
@@ -230,6 +233,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     private var lastEvaluatedCycleDate = -1
     private var isManualSleep = false
     private var wasDndActiveInSession = false
+    private var wasInBedtimeWindowDuringSleep = false
     private var wasLiveShareAutoPaused = prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
     private val alarmTracker = AlarmFireTracker(
         upcomingTriggerMs = prefs.getLong(KEY_UPCOMING_ALARM_MS, 0L),
@@ -246,11 +250,13 @@ class AutoSleepManager private constructor(private val context: Context) {
     fun onManualSleepEntered() {
         isManualSleep = true
         wasDndActiveInSession = isDndActive()
+        wasInBedtimeWindowDuringSleep = isCurrentTimeInBedtimeWindow()
         handleSleepEnteredLiveSharePause()
         TelemetryLogger.log("POWER", "AutoSleepManager: Manual sleep registered (will not auto-wake on bedtime window end)")
     }
 
     fun onSleepEntered() {
+        wasInBedtimeWindowDuringSleep = isCurrentTimeInBedtimeWindow()
         handleSleepEnteredLiveSharePause()
     }
 
@@ -270,6 +276,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     fun onSleepWoken() {
         isManualSleep = false
         wasDndActiveInSession = false
+        wasInBedtimeWindowDuringSleep = false
         val shouldResume = wasLiveShareAutoPaused || prefs.getBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, false)
         if (shouldResume) {
             wasLiveShareAutoPaused = false
@@ -544,6 +551,9 @@ class AutoSleepManager private constructor(private val context: Context) {
             if (dndActive) {
                 wasDndActiveInSession = true
             }
+            if (inWindow) {
+                wasInBedtimeWindowDuringSleep = true
+            }
             val shouldWake = shouldAutoWake(
                 isAutoSleepEnabled = _autoSleepEnabled.value,
                 isCurrentlySleeping = true,
@@ -553,7 +563,8 @@ class AutoSleepManager private constructor(private val context: Context) {
                 isMorning = isMorning,
                 isAlarmFired = alarmFired,
                 isManualSleep = isManualSleep,
-                wasDndActiveInSession = wasDndActiveInSession
+                wasDndActiveInSession = wasDndActiveInSession,
+                wasInBedtimeWindowDuringSleep = wasInBedtimeWindowDuringSleep
             )
             if (shouldWake) {
                 val isEarlyWake = inWindow && (alarmFired || (!dndActive && wasDndActiveInSession))

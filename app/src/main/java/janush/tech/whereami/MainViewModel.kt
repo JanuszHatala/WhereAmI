@@ -874,15 +874,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var oneShotLocationJob: Job? = null
+
     fun stopTracking() {
         trackingJob?.cancel()
         trackingJob = null
         rawTrackingJob?.cancel()
         rawTrackingJob = null
+        oneShotLocationJob?.cancel()
+        oneShotLocationJob = null
     }
 
     fun requestOneShotLocation() {
-        viewModelScope.launch(Dispatchers.IO) {
+        val lastSnap = locationManager.lastLocationSnapshot
+        if (lastSnap != null && lastSnap.lat != 0.0 && lastSnap.lng != 0.0 &&
+            (System.currentTimeMillis() - lastSnap.timestamp) < 15_000L
+        ) {
+            return
+        }
+        oneShotLocationJob?.cancel()
+        oneShotLocationJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 locationManager.getCurrentLocationSingle(_displayLanguage.value)
             } catch (_: Exception) {}

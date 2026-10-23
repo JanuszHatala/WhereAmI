@@ -167,6 +167,15 @@ class LiveSharingManager private constructor(private val context: Context) {
             }
             return true
         }
+
+        fun computePausedStatusRetryDelayMs(attempt: Int): Long {
+            return when {
+                attempt <= 1 -> 30_000L
+                attempt == 2 -> 60_000L
+                attempt == 3 -> 120_000L
+                else -> 300_000L
+            }
+        }
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -428,12 +437,17 @@ class LiveSharingManager private constructor(private val context: Context) {
     private fun startPausedHeartbeat(session: LiveSession) {
         pausedHeartbeatJob?.cancel()
         pausedHeartbeatJob = scope.launch {
-            postStatusUpdate(session, "paused")
+            var attempt = 0
             while (_currentSession.value?.isPaused == true && _currentSession.value?.isActive == true) {
-                kotlinx.coroutines.delay(30_000L)
                 val current = _currentSession.value
                 if (current == null || !current.isPaused || !current.isActive) break
-                postStatusUpdate(current, "paused")
+                val delivered = postStatusUpdate(current, "paused")
+                if (delivered) {
+                    TelemetryLogger.log("LIVE_SHARE", "Paused status confirmed by server for session ${current.id}; stopping paused retry loop.")
+                    break
+                }
+                attempt++
+                kotlinx.coroutines.delay(computePausedStatusRetryDelayMs(attempt))
             }
         }
     }

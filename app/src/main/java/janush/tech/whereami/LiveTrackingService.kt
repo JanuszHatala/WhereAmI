@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class LiveTrackingService : Service() {
@@ -616,6 +617,7 @@ class LiveTrackingService : Service() {
         val trip = TripManager.getInstance(this).activeTrip.value
         val liveSession = LiveSharingManager.getInstance(this).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
+        val hasUnpausedLive = liveSession != null && liveSession.isActive && !liveSession.isPaused
         val isAuto = TripManager.getInstance(this).tripMode.value == TripMode.AUTO
         val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value
 
@@ -629,14 +631,18 @@ class LiveTrackingService : Service() {
             stopLocationTracking()
             updateWakeLock(false)
             locationManager.stopLocationUpdates()
-            if (hasLive) {
+            if (hasUnpausedLive) {
                 LiveSharingManager.getInstance(this).startStationaryHeartbeat()
             }
             updateNotification(force = true)
         } else if (hasLive) {
             // Live sharing active without active trip recording:
-            // Keep location stream active so fixes are delivered at adaptive cadence (15s moving / 60s stationary)
-            startLocationTracking()
+            // Keep location stream active only when unpaused; detach when muted/paused to prevent idle subscriber leaks.
+            if (hasUnpausedLive) {
+                startLocationTracking()
+            } else {
+                stopLocationTracking()
+            }
             // Release CPU wake lock (no partial wake lock held during LIVE_ONLY)
             updateWakeLock(false)
             updateNotification(force = true)
@@ -661,14 +667,32 @@ class LiveTrackingService : Service() {
         // Observe trip, live share, tripMode, and sleep changes to dynamically switch between
         // Active Tracking, Zero-CPU Standby FGS, Sleep Hibernation, and Complete Stop (MANUAL mode)
         serviceScope.launch {
-            TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest {
+            TripManager.getInstance(this@LiveTrackingService).activeTrip.collectLatest { trip ->
                 evaluateServiceState()
+                // Refresh the trip wake-lock slice ONLY while an active trip is recording
+                if (trip != null) {
+                    while (true) {
+                        kotlinx.coroutines.delay(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 3)
+                        if (TripManager.getInstance(this@LiveTrackingService).activeTrip.value != null) {
+                            updateWakeLock(true)
+                        } else {
+                            break
+                        }
+                    }
+                }
             }
         }
         serviceScope.launch {
-            LiveSharingManager.getInstance(this@LiveTrackingService).currentSession.collectLatest {
-                evaluateServiceState()
-            }
+            LiveSharingManager.getInstance(this@LiveTrackingService).currentSession
+                .distinctUntilChanged { old, new ->
+                    old?.id == new?.id &&
+                        old?.isActive == new?.isActive &&
+                        old?.isPaused == new?.isPaused &&
+                        old?.title == new?.title
+                }
+                .collectLatest {
+                    evaluateServiceState()
+                }
         }
         serviceScope.launch {
             TripManager.getInstance(this@LiveTrackingService).tripMode.collectLatest {
@@ -683,15 +707,6 @@ class LiveTrackingService : Service() {
         serviceScope.launch {
             TripManager.getInstance(this@LiveTrackingService).isPaused.collectLatest {
                 updateNotification(force = true)
-            }
-        }
-        // Refresh the trip wake-lock slice so multi-hour recordings never hit a hard timeout.
-        serviceScope.launch {
-            while (true) {
-                kotlinx.coroutines.delay(WakeLockPolicy.TRIP_WAKE_LOCK_SLICE_MS / 3)
-                if (TripManager.getInstance(this@LiveTrackingService).activeTrip.value != null) {
-                    updateWakeLock(true)
-                }
             }
         }
     }
