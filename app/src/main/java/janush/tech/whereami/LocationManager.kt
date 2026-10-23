@@ -1134,7 +1134,9 @@ class LocationManager private constructor(private val context: Context) {
                 }
             }
 
-            activeCallbacks.add(locationCallback)
+            synchronized(activeCallbacks) {
+                activeCallbacks.add(locationCallback)
+            }
             if (!isGpsStopped) {
                 fusedLocationClient.requestLocationUpdates(
                     locationRequest,
@@ -1159,7 +1161,9 @@ class LocationManager private constructor(private val context: Context) {
             }
 
             awaitClose {
-                activeCallbacks.remove(locationCallback)
+                synchronized(activeCallbacks) {
+                    activeCallbacks.remove(locationCallback)
+                }
                 fusedLocationClient.removeLocationUpdates(locationCallback)
             }
         }.shareIn(

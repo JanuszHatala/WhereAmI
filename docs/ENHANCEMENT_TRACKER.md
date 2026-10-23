@@ -72,8 +72,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 76** | Field Testing (2026-10-16) Altitude Speed Gating, Frozen Altitude Fix, Map Pins Dem-Decoupling & Post-Trip DEM Supplementation | 4 | 4 | 0 | 0 |
 | **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 5 | 5 | 0 | 0 |
 | **Round 97** | Pin Boundary Containment, Live-Border Mute & Outdoor POI Titles (2026-10-21) | 3 | 3 | 0 | 0 |
+| **Round 114** | Screen-Off GNSS Drain, Heartbeat Loop & Fast-Track Stationary Shutdown Overhaul (2026-10-23) | 9 | 9 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **312** | **304** | **0** | **8** |
+| **Total** | | **321** | **313** | **0** | **8** |
 
 
 ---
@@ -1481,3 +1482,20 @@ Device still on **1.18.13** for trip 249 (13:24–14:07, 20.9 km CAR). Screensho
 | **VER-112** | versionCode 146 / 1.18.15 | `build.gradle.kts` | Done | `BUILD SUCCESSFUL` |
 
 REPLAY trip 249 CAR (`track_1792668302629_trip249.jsonl`): `fixes=2212 … headingConfident=93% headingErr p50=1.1 p90=7.6 p97=21.0 stored=839 spacing p50=24.96` / `position offRaw p50=0.9 p90=2.7` / `render arrowVsLine p50=0.7 p90=6.1`
+
+## 116. Round 114: Screen-Off GNSS Drain, Heartbeat Loop & Fast-Track Stationary Shutdown Overhaul (2026-10-23, v1.18.17)
+
+Evidence (`dumpsys batterystats`, window `2026-10-22 16:45:09` unplug at 100% to `2026-10-23 07:52:30` plug-in; 0 trips recorded, `gnss:fgs=9.72 mAh`, `gnss:bg=5.10 mAh`, total `20m 12s` screen-off GNSS):
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **PWR114-01** | `LiveSharingManager.currentSession` telemetry updates (`lastSyncTime`, `pendingPointsCount`, `viewCount`) from 5-min stationary heartbeats triggered `AppStateManager.recalculateState()`, restarting `startLiveOnlyWatcher()` and turning GPS back on for 30s every 5 min in screen-off. | `AppStateManager.kt`, `LiveTrackingService.kt` | Implemented | Added `isLiveSessionLifecycleChanged` and `.distinctUntilChanged` on `currentSession`; unit test `testLiveSessionTelemetryUpdatesDoNotTriggerLifecycleRecalculation` |
+| **PWR114-02** | `LIVE_ONLY` false/indoor motion bursts ran `startLiveOnlyWatcher()` on exit instead of powering down GPS immediately, adding 30s extra GNSS per false burst and skipping the 60s-180s progressive cooldown. | `AppStateManager.kt` | Implemented | Added `shouldPowerDownGpsAfterLiveOnlyFalseBurst` and extended `scheduleMotionWakeRearm` to `LIVE_ONLY`; unit test `testLiveOnlyFalseBurstPowersDownGpsImmediatelyWhenScreenOff` |
+| **PWR114-03** | `LiveSharingManager.startPausedHeartbeat()` ran an infinite 30s HTTP loop while paused, and `LiveTrackingService` kept `locationUpdatesJob` active when paused. | `LiveSharingManager.kt`, `LiveTrackingService.kt` | Implemented | Stop loop once `postStatusUpdate(..., "paused")` returns HTTP 200..299 with exponential backoff on network errors (`computePausedStatusRetryDelayMs`); detach `locationUpdatesJob` when paused |
+| **PWR114-04** | At 100% battery while plugged in, PMIC trickle-charge `CHARGING <-> NOT_CHARGING` toggles flipped `_isCharging` and woke GPS in screen-off. | `AppStateManager.kt` | Implemented | Added `isBatteryChargingOrPlugged` checking `EXTRA_PLUGGED > 0` and guarded in-place `LIVE_ONLY` recalculation when `locManager.isGpsStopped && !isAppInForeground` |
+| **PWR114-05** | Daytime 90-minute inactivity hibernation entered outside bedtime auto-woke prematurely on background broadcasts (`!isTimeInWindow`). | `AutoSleepManager.kt`, `AutoSleepManagerTest.kt` | Implemented | Added `wasInBedtimeWindowDuringSleep` parameter to `shouldAutoWake` |
+| **PWR114-06** | Uncancelled `requestOneShotLocation` `CancellationTokenSource` on screen-off (`gnss:bg`) and unconditional wake-lock refresh timer in `LiveTrackingService`. | `MainViewModel.kt`, `LocationManager.kt`, `LiveTrackingService.kt` | Implemented | Cancel `oneShotLocationJob` on `stopTracking()` (`cts.cancel()`), skip one-shot if snapshot `< 15s` old, synchronize `activeCallbacks`, and scope wake-lock refresh coroutine strictly to `activeTrip != null` |
+| **PWR114-07** | Option A: Immediate screen-off GPS shutdown on `FOREGROUND_VIEW -> LIVE_ONLY` when already verified stationary ($\ge 20\text{s}$) in foreground. | `AppStateManager.kt` | Implemented | Added `shouldFastTrackLiveOnlyStationaryShutdown` and `isForegroundStationaryVerified`; eliminates 30s screen-off GNSS tail on screen lock |
+| **PWR114-08** | Option B1: Tighten `CAR` early-abort gate at `15s` for indoor/walking speeds ($< 2.0\text{ m/s}$ and displacement $< 15\text{m}$). | `AppStateManager.kt` | Implemented | Updated `shouldEarlyAbortBurst` to abort `CAR` walking bursts at 15s instead of 25s |
+| **PWR114-09** | Option C: Relax `standbyInactivityJob` polling interval from 1 min to 5 min (`STANDBY_INACTIVITY_CHECK_INTERVAL_MS`). | `AppStateManager.kt` | Implemented | Reduced background coroutine wake ticks by 80%; unit test `testStandbyInactivityCheckIntervalIsFiveMinutes` |
+| **VER-114** | versionCode 148 / 1.18.17 | `build.gradle.kts`, `BatteryOptimizationAndAutoStartTest.kt`, `AutoSleepManagerTest.kt` | Implemented | Build and unit test verification passing |
