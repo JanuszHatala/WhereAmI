@@ -54,10 +54,65 @@ class AppStateManager private constructor(private val context: Context) {
         const val MOTION_BURST_MIN_DURATION_MS = 15_000L
         const val MOTION_BURST_COOLDOWN_BASE_MS = 60_000L
         const val STANDBY_HIBERNATION_TIMEOUT_MS = 90 * 60 * 1000L // 90 minutes stationary inactivity
+        const val STANDBY_INACTIVITY_CHECK_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes polling cadence for 90m hibernation
         const val SLEEP_STATE_TRANSITION_DEBOUNCE_MS = 3_000L
 
         fun shouldRecalculateOnChargingChange(previousCharging: Boolean, newCharging: Boolean): Boolean {
             return previousCharging != newCharging
+        }
+
+        /**
+         * Determines whether the device is connected to external power / charging.
+         * At 100% battery while still plugged in, Android PMIC trickle regulation frequently reports
+         * EXTRA_STATUS = BATTERY_STATUS_NOT_CHARGING while EXTRA_PLUGGED != 0. Using EXTRA_PLUGGED
+         * prevents false charging <-> discharging state oscillations that would wake GPS in screen-off.
+         */
+        fun isBatteryChargingOrPlugged(status: Int, plugged: Int, fallback: Boolean): Boolean {
+            if (plugged > 0) return true
+            if (plugged == 0) return false
+            if (status == -1) return fallback
+            return status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+        }
+
+        /**
+         * Filters LiveSession emissions so telemetry-only updates (lastSyncTime, pendingPointsCount, viewCount)
+         * from periodic heartbeats or HTTP syncs do NOT trigger recalculateState() and wake GPS in screen-off.
+         */
+        fun isLiveSessionLifecycleChanged(prev: LiveSession?, next: LiveSession?): Boolean {
+            val prevEffective = prev != null && prev.isActive && !prev.isPaused && !prev.isExpired
+            val nextEffective = next != null && next.isActive && !next.isPaused && !next.isExpired
+            val prevId = prev?.id
+            val nextId = next?.id
+            return prevEffective != nextEffective || (nextEffective && prevId != nextId)
+        }
+
+        fun shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+            isAppInForeground: Boolean,
+            earlyAborted: Boolean,
+            isPhysicallyStationary: Boolean,
+            currentSpeedMs: Float
+        ): Boolean {
+            if (isAppInForeground) return false
+            return earlyAborted || isPhysicallyStationary || currentSpeedMs < 0.35f
+        }
+
+        /**
+         * When transitioning from FOREGROUND_VIEW to LIVE_ONLY (user locks screen while Live Sharing is active),
+         * if the device was already verified stationary for >= 20s in foreground and remains stationary at lock time,
+         * immediately power down GPS and start the stationary presence heartbeat without an extra 30s screen-off GNSS window.
+         */
+        fun shouldFastTrackLiveOnlyStationaryShutdown(
+            isAppInForeground: Boolean,
+            oldMode: AppLifecycleMode,
+            wasForegroundStationaryVerified: Boolean,
+            isPhysicallyStationary: Boolean,
+            currentSpeedMs: Float
+        ): Boolean {
+            if (isAppInForeground) return false
+            if (oldMode != AppLifecycleMode.FOREGROUND_VIEW) return false
+            if (!wasForegroundStationaryVerified) return false
+            return isPhysicallyStationary || currentSpeedMs < 0.35f
         }
 
         fun shouldKeepSleepHeartbeatAlive(
@@ -102,8 +157,13 @@ class AppStateManager private constructor(private val context: Context) {
             if (isPhysicallyStationary || (isSpeedStationary && isNoDisplacement)) {
                 return true
             }
-            if (isCarProfile && elapsedMs >= 25_000L && currentSpeedMs < 2.0f && displacementMeters < 25.0) {
-                return true
+            if (isCarProfile && currentSpeedMs < 2.0f) {
+                if (displacementMeters < 15.0) {
+                    return true
+                }
+                if (elapsedMs >= 25_000L && displacementMeters < 25.0) {
+                    return true
+                }
             }
             return false
         }
@@ -167,9 +227,8 @@ class AppStateManager private constructor(private val context: Context) {
                     Intent.ACTION_POWER_DISCONNECTED -> false
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                        if (status == -1) prevCharging
-                        else (status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                status == BatteryManager.BATTERY_STATUS_FULL)
+                        val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+                        isBatteryChargingOrPlugged(status, plugged, prevCharging)
                     }
                     else -> prevCharging
                 }
@@ -182,10 +241,8 @@ class AppStateManager private constructor(private val context: Context) {
         val stickyIntent = context.registerReceiver(receiver, filter)
         if (stickyIntent != null) {
             val status = stickyIntent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-            if (status != -1) {
-                _isCharging.value = (status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                        status == BatteryManager.BATTERY_STATUS_FULL)
-            }
+            val plugged = stickyIntent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+            _isCharging.value = isBatteryChargingOrPlugged(status, plugged, _isCharging.value)
         }
         recalculateState()
     }
@@ -289,7 +346,7 @@ class AppStateManager private constructor(private val context: Context) {
         standbyInactivityJob = scope.launch {
             var stationarySinceMs = 0L
             while (isActive) {
-                delay(60_000L) // Check every minute
+                delay(STANDBY_INACTIVITY_CHECK_INTERVAL_MS) // Check every 5 minutes
                 AutoSleepManager.getInstance(context).evaluateAutoSleep()
                 val tripManager = TripManager.getInstance(context)
                 val liveSession = LiveSharingManager.getInstance(context).currentSession.value
@@ -407,8 +464,15 @@ class AppStateManager private constructor(private val context: Context) {
             }
         }
         scope.launch {
+            var prevSession: LiveSession? = null
+            var isFirstEmission = true
             LiveSharingManager.getInstance(context).currentSession.collect { session ->
-                if (session != null && session.isActive) {
+                val lifecycleChanged = isFirstEmission || isLiveSessionLifecycleChanged(prevSession, session)
+                isFirstEmission = false
+                prevSession = session
+                if (!lifecycleChanged) return@collect
+
+                if (session != null && session.isActive && !session.isPaused) {
                     consecutiveFalseBursts = 0
                     motionRearmJob?.cancel()
                 }
@@ -443,12 +507,18 @@ class AppStateManager private constructor(private val context: Context) {
             try {
                 TelemetryLogger.log("POWER", "Motion wake re-arm delayed by ${cooldownMs / 1000}s cooldown (streak=$consecutiveFalseBursts)")
                 delay(cooldownMs)
-                if (_currentMode.value == AppLifecycleMode.IDLE &&
+                val mode = _currentMode.value
+                val liveSession = LiveSharingManager.getInstance(context).currentSession.value
+                val hasActiveUnpausedLive = liveSession != null && liveSession.isActive && !liveSession.isPaused
+                val canRearmIdle = mode == AppLifecycleMode.IDLE &&
                     tripManager.tripMode.value == TripMode.AUTO &&
                     tripManager.activeTrip.value == null
-                ) {
+                val canRearmLiveOnly = mode == AppLifecycleMode.LIVE_ONLY &&
+                    hasActiveUnpausedLive &&
+                    tripManager.activeTrip.value == null
+                if (canRearmIdle || canRearmLiveOnly) {
                     motionManager.arm()
-                    TelemetryLogger.log("POWER", "MotionWakeManager re-armed successfully after ${cooldownMs / 1000}s cooldown")
+                    TelemetryLogger.log("POWER", "MotionWakeManager re-armed successfully after ${cooldownMs / 1000}s cooldown (mode=$mode)")
                 }
             } catch (_: Exception) {}
         }
@@ -466,13 +536,14 @@ class AppStateManager private constructor(private val context: Context) {
     fun handleMotionWake() {
         val tripManager = TripManager.getInstance(context)
         val currentMode = _currentMode.value
+        isForegroundStationaryVerified = false
         StationaryDetector.getInstance(context).unlatchStationary()
 
         if (currentMode == AppLifecycleMode.LIVE_ONLY) {
             TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
             LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
-            startLiveOnlyWatcher()
             if (tripManager.tripMode.value != TripMode.AUTO || tripManager.activeTrip.value != null) {
+                startLiveOnlyWatcher()
                 return
             }
         }
@@ -509,6 +580,7 @@ class AppStateManager private constructor(private val context: Context) {
         motionBurstJob?.cancel()
         motionBurstJob = scope.launch {
             var anchorFix: LocationFix? = null
+            var earlyAborted = false
             // Actively collect raw location stream during burst to ensure fused provider remains engaged
             val collectorJob = launch {
                 locManager.getLocationRaw().collect { fix ->
@@ -558,6 +630,7 @@ class AppStateManager private constructor(private val context: Context) {
                             isCarProfile = isCarProfile
                         )
                     ) {
+                        earlyAborted = true
                         TelemetryLogger.log(
                             "POWER",
                             "Motion burst early abort at ${elapsedMs / 1000}s: verified stationary/indoor (speed=${String.format(java.util.Locale.US, "%.1f", currentSpeed * 3.6f)} km/h, disp=${String.format(java.util.Locale.US, "%.1f", displacementMeters)}m, stationary=$isPhysicalStationary). Powering down GPS."
@@ -585,9 +658,26 @@ class AppStateManager private constructor(private val context: Context) {
                             scheduleMotionWakeRearm(cooldownMs)
                         }
                         AppLifecycleMode.LIVE_ONLY -> {
-                            // Restore Live Sharing cadence (watcher GPS-offs again when stationary + screen off).
-                            TelemetryLogger.log("POWER", "Motion burst ended in LIVE_ONLY without auto-start; restoring live cadence.")
-                            startLiveOnlyWatcher()
+                            val isPhysStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                            val currentSpeed = locManager.getLastValidSpeedMs()
+                            if (shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+                                    isAppInForeground = isAppInForeground,
+                                    earlyAborted = earlyAborted,
+                                    isPhysicallyStationary = isPhysStationary,
+                                    currentSpeedMs = currentSpeed
+                                )
+                            ) {
+                                locManager.stopLocationUpdates(preserveStationaryState = true)
+                                LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+                                consecutiveFalseBursts++
+                                val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
+                                TelemetryLogger.log("POWER", "Motion burst ended in LIVE_ONLY (stationary/indoor): powering down GPS immediately and scheduling re-arm in ${cooldownMs / 1000}s (streak=$consecutiveFalseBursts).")
+                                scheduleMotionWakeRearm(cooldownMs)
+                            } else {
+                                // Restore Live Sharing cadence when moving below trip auto-start threshold.
+                                TelemetryLogger.log("POWER", "Motion burst ended in LIVE_ONLY without auto-start; restoring live cadence.")
+                                startLiveOnlyWatcher()
+                            }
                         }
                         else -> Unit
                     }
@@ -598,9 +688,11 @@ class AppStateManager private constructor(private val context: Context) {
 
     private var liveOnlyWatcherJob: Job? = null
     private var foregroundWatcherJob: Job? = null
+    private var isForegroundStationaryVerified: Boolean = false
 
     private fun startForegroundCadenceWatcher() {
         foregroundWatcherJob?.cancel()
+        isForegroundStationaryVerified = false
         val locManager = LocationManager.getInstance(context)
         val tripManager = TripManager.getInstance(context)
         val isAuto = tripManager.tripMode.value == TripMode.AUTO
@@ -643,9 +735,11 @@ class AppStateManager private constructor(private val context: Context) {
                         TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Stationary for ${stationaryDuration / 1000}s. Relaxing cadence (isAuto=$isAuto, interval=${stationaryInterval}ms).")
                         locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
                         isStationaryCadenceApplied = true
+                        isForegroundStationaryVerified = true
                     }
                 } else {
                     stationarySinceMs = 0L
+                    isForegroundStationaryVerified = false
                     if (isStationaryCadenceApplied) {
                         TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Motion detected. Restoring moving cadence (isAuto=$isAuto, interval=${movingInterval}ms).")
                         locManager.updateSamplingInterval(movingInterval, movingMinInterval)
@@ -656,7 +750,7 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
-    private fun startLiveOnlyWatcher() {
+    private fun startLiveOnlyWatcher(fastTrackStationaryShutdown: Boolean = false) {
         liveOnlyWatcherJob?.cancel()
         val locManager = LocationManager.getInstance(context)
         val motionManager = MotionWakeManager.getInstance(context)
@@ -665,11 +759,26 @@ class AppStateManager private constructor(private val context: Context) {
         // When moving, sample at conservative interval
         val interval = if (charging) 6_000L else 15_000L
         val minInterval = if (charging) 3_000L else 8_000L
-        locManager.updateSamplingInterval(interval, minInterval)
+        if (fastTrackStationaryShutdown && !isAppInForeground) {
+            TelemetryLogger.log(
+                "POWER",
+                "LIVE_ONLY: Screen locked while already verified stationary in foreground: immediately powering down GPS, arming MotionWakeManager, and starting stationary heartbeat."
+            )
+            motionManager.arm()
+            LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+            locManager.stopLocationUpdates(preserveStationaryState = true)
+            AutoSleepManager.getInstance(context).evaluateAutoSleep()
+        } else {
+            locManager.updateSamplingInterval(interval, minInterval)
+        }
 
         liveOnlyWatcherJob = scope.launch {
-            var stationarySinceMs = 0L
-            var isStationaryCadenceApplied = false
+            var stationarySinceMs = if (fastTrackStationaryShutdown && !isAppInForeground) {
+                (SystemClock.elapsedRealtime() - 30_000L).coerceAtLeast(1L)
+            } else {
+                0L
+            }
+            var isStationaryCadenceApplied = fastTrackStationaryShutdown && !isAppInForeground
             while (isActive) {
                 delay(5_000L)
                 if (_currentMode.value != AppLifecycleMode.LIVE_ONLY) break
@@ -767,10 +876,11 @@ class AppStateManager private constructor(private val context: Context) {
         val charging = _isCharging.value
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
         val hasLive = liveSession != null && liveSession.isActive
+        val hasUnpausedLive = liveSession != null && liveSession.isActive && !liveSession.isPaused
 
         if (mode != AppLifecycleMode.LIVE_ONLY) {
             liveOnlyWatcherJob?.cancel()
-            if (!shouldKeepSleepHeartbeatAlive(mode, _isStandbySleeping.value, hasLive)) {
+            if (!shouldKeepSleepHeartbeatAlive(mode, _isStandbySleeping.value, hasUnpausedLive)) {
                 LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
             } else {
                 LiveSharingManager.getInstance(context).startStationaryHeartbeat()
@@ -778,6 +888,9 @@ class AppStateManager private constructor(private val context: Context) {
         }
         if (mode != AppLifecycleMode.FOREGROUND_VIEW) {
             foregroundWatcherJob?.cancel()
+            if (mode != AppLifecycleMode.LIVE_ONLY) {
+                isForegroundStationaryVerified = false
+            }
         }
 
         when (mode) {
@@ -857,10 +970,28 @@ class AppStateManager private constructor(private val context: Context) {
                 locManager.updateSamplingInterval(interval, minInterval, maxDelay)
             }
             AppLifecycleMode.LIVE_ONLY -> {
-                motionBurstJob?.cancel()
-                consecutiveFalseBursts = 0
-                motionRearmJob?.cancel()
-                startLiveOnlyWatcher()
+                if (oldMode != AppLifecycleMode.LIVE_ONLY) {
+                    motionBurstJob?.cancel()
+                    consecutiveFalseBursts = 0
+                    motionRearmJob?.cancel()
+                    val isPhysStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                    val currentSpeed = locManager.getLastValidSpeedMs()
+                    val fastTrack = shouldFastTrackLiveOnlyStationaryShutdown(
+                        isAppInForeground = isAppInForeground,
+                        oldMode = oldMode,
+                        wasForegroundStationaryVerified = isForegroundStationaryVerified,
+                        isPhysicallyStationary = isPhysStationary,
+                        currentSpeedMs = currentSpeed
+                    )
+                    isForegroundStationaryVerified = false
+                    startLiveOnlyWatcher(fastTrackStationaryShutdown = fastTrack)
+                } else if (motionBurstJob?.isActive != true) {
+                    // Already in LIVE_ONLY (e.g. charging state changed):
+                    // If screen is off and GPS is already powered down in stationary state, do NOT wake GPS!
+                    if (!locManager.isGpsStopped || isAppInForeground) {
+                        startLiveOnlyWatcher(fastTrackStationaryShutdown = false)
+                    }
+                }
             }
             AppLifecycleMode.ANDROID_AUTO -> {
                 motionBurstJob?.cancel()

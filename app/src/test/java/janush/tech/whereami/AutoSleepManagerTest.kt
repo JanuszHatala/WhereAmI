@@ -388,4 +388,45 @@ class AutoSleepManagerTest {
         // 5. Already sleeping: watcher must NOT run
         assertFalse("Watcher must not run when already sleeping", shouldWatch(false, false, true, true, true))
     }
+
+    @Test
+    fun testDaytimeInactivityHibernationDoesNotAutoWakeOnBroadcastOutsideBedtime() {
+        // At 18:03 (outside 21:30-06:30 bedtime window), 90m inactivity hibernation enters sleep
+        // (wasInBedtimeWindowDuringSleep = false, isManualSleep = false).
+        // At 18:45, ACTION_NEXT_ALARM_CLOCK_CHANGED triggers evaluateAutoSleep().
+        val shouldWakeAt1845 = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = false,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = false
+        )
+        assertFalse(
+            "Daytime 90m inactivity hibernation must NOT auto-wake on background broadcasts outside bedtime window",
+            shouldWakeAt1845
+        )
+
+        // If hibernation spans into the night (wasInBedtimeWindowDuringSleep becomes true) and bedtime ends at 06:30:
+        val shouldWakeNextMorning = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true
+        )
+        assertTrue(
+            "Hibernation that spanned the bedtime window must wake when bedtime ends",
+            shouldWakeNextMorning
+        )
+    }
 }

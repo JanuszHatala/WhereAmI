@@ -417,7 +417,33 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 5. At 25s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 20m): abort
+        // 5. At 15s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 12.5m < 15m): abort immediately at 15s (Option B1)
+        assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 1.4f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 12.5,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+
+        // 6. At 15s for CAR profile with slow pull-out (1.8 m/s = 6.5 km/h, disp 18m >= 15m): DO NOT abort at 15s
+        assertFalse(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 1.8f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 18.0,
+                isPhysicallyStationary = false,
+                isCarProfile = true
+            )
+        )
+
+        // 7. At 25s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 20m < 25m): abort
         assertTrue(
             AppStateManager.shouldEarlyAbortBurst(
                 elapsedMs = 25_000L,
@@ -430,7 +456,7 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 6. At 25s for CAR profile with fast driving (12 m/s = 43 km/h): DO NOT ABORT
+        // 8. At 25s for CAR profile with fast driving (12 m/s = 43 km/h): DO NOT ABORT
         assertFalse(
             AppStateManager.shouldEarlyAbortBurst(
                 elapsedMs = 25_000L,
@@ -981,5 +1007,187 @@ class BatteryOptimizationAndAutoStartTest {
         assertFalse("Session must resume when user unchecks overnight pause option", isLiveSessionPaused)
         assertFalse(managerWasLiveShareAutoPaused)
         assertEquals(false, simulatedPrefs[AutoSleepManager.KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED])
+    }
+
+    @Test
+    fun testLiveSessionLifecycleFilterIgnoresHeartbeatSyncMutations() {
+        val baseSession = LiveSession(
+            id = "sess-123",
+            title = "My Live Track",
+            createdAt = 1_000_000L,
+            expiresAt = 0L,
+            isActive = true,
+            isPaused = false,
+            serverUrl = "https://whereami.janush.tech",
+            provider = LiveShareProvider.SYNOLOGY,
+            syncIntervalMinutes = 5,
+            lastSyncTime = 1_000_000L,
+            pendingPointsCount = 0,
+            viewCount = 1
+        )
+
+        // 1. Periodic stationary heartbeat or HTTP sync updates lastSyncTime, pendingPointsCount, or viewCount
+        val afterHeartbeat = baseSession.copy(
+            lastSyncTime = 1_300_000L,
+            pendingPointsCount = 2,
+            viewCount = 4
+        )
+        assertFalse(
+            "Heartbeat sync metadata updates must NOT be treated as lifecycle changes (must not wake GPS)",
+            AppStateManager.isLiveSessionLifecycleChanged(baseSession, afterHeartbeat)
+        )
+
+        // 2. Pausing or resuming the session IS a lifecycle change
+        val pausedSession = afterHeartbeat.copy(isPaused = true)
+        assertTrue(
+            "Pausing LiveSession must trigger lifecycle recalculation",
+            AppStateManager.isLiveSessionLifecycleChanged(afterHeartbeat, pausedSession)
+        )
+        assertTrue(
+            "Resuming LiveSession must trigger lifecycle recalculation",
+            AppStateManager.isLiveSessionLifecycleChanged(pausedSession, afterHeartbeat)
+        )
+
+        // 3. Stopping or starting a session IS a lifecycle change
+        val stoppedSession = afterHeartbeat.copy(isActive = false)
+        assertTrue(
+            "Stopping LiveSession must trigger lifecycle recalculation",
+            AppStateManager.isLiveSessionLifecycleChanged(afterHeartbeat, stoppedSession)
+        )
+        assertTrue(
+            "Starting LiveSession from null must trigger lifecycle recalculation",
+            AppStateManager.isLiveSessionLifecycleChanged(null, baseSession)
+        )
+    }
+
+    @Test
+    fun testBatteryTrickleChargeAt100PercentDoesNotFlipChargingState() {
+        // When plugged in at 100%, Android PMIC cycles EXTRA_STATUS between CHARGING (2) and NOT_CHARGING (4)
+        // while EXTRA_PLUGGED remains non-zero (e.g. BATTERY_PLUGGED_AC = 1 or BATTERY_PLUGGED_USB = 2).
+        assertTrue(
+            "Plugged AC with NOT_CHARGING status at 100% must remain charging=true",
+            AppStateManager.isBatteryChargingOrPlugged(
+                status = android.os.BatteryManager.BATTERY_STATUS_NOT_CHARGING,
+                plugged = android.os.BatteryManager.BATTERY_PLUGGED_AC,
+                fallback = true
+            )
+        )
+        assertTrue(
+            "Plugged USB with FULL status must remain charging=true",
+            AppStateManager.isBatteryChargingOrPlugged(
+                status = android.os.BatteryManager.BATTERY_STATUS_FULL,
+                plugged = android.os.BatteryManager.BATTERY_PLUGGED_USB,
+                fallback = false
+            )
+        )
+        assertFalse(
+            "Unplugged (plugged=0) with DISCHARGING status must be charging=false",
+            AppStateManager.isBatteryChargingOrPlugged(
+                status = android.os.BatteryManager.BATTERY_STATUS_DISCHARGING,
+                plugged = 0,
+                fallback = true
+            )
+        )
+    }
+
+    @Test
+    fun testLiveOnlyFalseBurstPowersDownGpsImmediatelyWhenScreenOff() {
+        // 1. Screen off, early-aborted indoor burst -> must power down GPS immediately without 30s watcher tail
+        assertTrue(
+            AppStateManager.shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+                isAppInForeground = false,
+                earlyAborted = true,
+                isPhysicallyStationary = false,
+                currentSpeedMs = 0.8f
+            )
+        )
+        // 2. Screen off, full burst ended with stationary detector or zero speed -> power down GPS immediately
+        assertTrue(
+            AppStateManager.shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+                isAppInForeground = false,
+                earlyAborted = false,
+                isPhysicallyStationary = true,
+                currentSpeedMs = 0.5f
+            )
+        )
+        // 3. Screen off, user is genuinely walking outdoors (1.4 m/s) below CAR auto-start threshold -> keep live cadence
+        assertFalse(
+            AppStateManager.shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+                isAppInForeground = false,
+                earlyAborted = false,
+                isPhysicallyStationary = false,
+                currentSpeedMs = 1.4f
+            )
+        )
+        // 4. App in foreground -> never power down GPS via screen-off rule
+        assertFalse(
+            AppStateManager.shouldPowerDownGpsAfterLiveOnlyFalseBurst(
+                isAppInForeground = true,
+                earlyAborted = true,
+                isPhysicallyStationary = true,
+                currentSpeedMs = 0.0f
+            )
+        )
+    }
+
+    @Test
+    fun testPausedStatusRetryBackoffSchedule() {
+        assertEquals(30_000L, LiveSharingManager.computePausedStatusRetryDelayMs(1))
+        assertEquals(60_000L, LiveSharingManager.computePausedStatusRetryDelayMs(2))
+        assertEquals(120_000L, LiveSharingManager.computePausedStatusRetryDelayMs(3))
+        assertEquals(300_000L, LiveSharingManager.computePausedStatusRetryDelayMs(4))
+        assertEquals(300_000L, LiveSharingManager.computePausedStatusRetryDelayMs(10))
+    }
+
+    @Test
+    fun testFastTrackLiveOnlyStationaryShutdownFromForeground() {
+        // Option A: When screen locks (isAppInForeground = false) transitioning from FOREGROUND_VIEW -> LIVE_ONLY,
+        // if foreground already verified >= 20s stationary dwell and device is still stationary, fast-track GPS off immediately.
+        assertTrue(
+            AppStateManager.shouldFastTrackLiveOnlyStationaryShutdown(
+                isAppInForeground = false,
+                oldMode = AppLifecycleMode.FOREGROUND_VIEW,
+                wasForegroundStationaryVerified = true,
+                isPhysicallyStationary = true,
+                currentSpeedMs = 0.0f
+            )
+        )
+        // If user was NOT yet verified stationary in foreground (e.g. just unlocked/locked while walking), do not fast-track
+        assertFalse(
+            AppStateManager.shouldFastTrackLiveOnlyStationaryShutdown(
+                isAppInForeground = false,
+                oldMode = AppLifecycleMode.FOREGROUND_VIEW,
+                wasForegroundStationaryVerified = false,
+                isPhysicallyStationary = true,
+                currentSpeedMs = 0.0f
+            )
+        )
+        // If user is moving at lock time, do not fast-track
+        assertFalse(
+            AppStateManager.shouldFastTrackLiveOnlyStationaryShutdown(
+                isAppInForeground = false,
+                oldMode = AppLifecycleMode.FOREGROUND_VIEW,
+                wasForegroundStationaryVerified = true,
+                isPhysicallyStationary = false,
+                currentSpeedMs = 2.5f
+            )
+        )
+        // If app is still in foreground, never fast-track screen-off shutdown
+        assertFalse(
+            AppStateManager.shouldFastTrackLiveOnlyStationaryShutdown(
+                isAppInForeground = true,
+                oldMode = AppLifecycleMode.FOREGROUND_VIEW,
+                wasForegroundStationaryVerified = true,
+                isPhysicallyStationary = true,
+                currentSpeedMs = 0.0f
+            )
+        )
+    }
+
+    @Test
+    fun testStandbyInactivityCheckIntervalIsFiveMinutes() {
+        // Option C: Polling for 90-minute standby hibernation runs every 5 minutes (300_000 ms), reducing background ticks by 80%.
+        assertEquals(5 * 60 * 1000L, AppStateManager.STANDBY_INACTIVITY_CHECK_INTERVAL_MS)
+        assertEquals(0L, AppStateManager.STANDBY_HIBERNATION_TIMEOUT_MS % AppStateManager.STANDBY_INACTIVITY_CHECK_INTERVAL_MS)
     }
 }
