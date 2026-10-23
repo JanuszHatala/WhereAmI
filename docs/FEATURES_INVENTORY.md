@@ -417,13 +417,17 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Status**: **Implemented & Verified**
 
 ### PLC-03: Global & Local Destination Search
-- **Core Value**: Search any place, city, or address worldwide via Nominatim with pin drop and navigation options.
-- **Status**: **Implemented & Verified**
+- **Core Value**: Near-me-first place/street search with soft worldwide recall; pin drop and navigation options.
+- **Status**: **Implemented & Verified** (v1.18.16 Smart Place Search)
 - **Architecture & Implementation**:
-  - `SearchHelper.kt`.
+  - `SearchHelper.kt`: Photon (`photon.komoot.io`) primary typeahead with `lat`/`lon` + `location_bias_scale`; Nominatim soft `viewbox` (no `bounded=1`) + Android Geocoder fallback.
+  - `PlaceSearchRanker.kt`: client score = distance (stronger for short prefixes) + `SearchNormalizer` name match (case/diacritic insensitive) + type/country/saved/recent boosts; far hits reordered, never hard-filtered.
+  - `MainViewModel.search`: 300 ms debounce, cancel in-flight job, merge saved places + recent searches (SharedPreferences).
 - **Decision History & Evolution**:
   - *Issue*: Searching for distant cities like "Kraków" failed because the app automatically appended the current locality ("Kraków Czaniec").
-  - *Fix*: Removed character length restriction; now queries verbatim globally first, falling back to local search only for street addresses.
+  - *Fix (FT2-20)*: Removed character length restriction; global verbatim query with street/digit local fallbacks.
+  - *Issue*: Short prefixes (`an`) returned Norway/Sweden/India hits instead of nearby Andrychów.
+  - *Fix (BKL-05)*: Photon location bias + near-me ranking; `a`/`ą`/`lodz`/`Łódź` match via `SearchNormalizer`.
 
 ### PLC-04: One-Tap Google Maps Navigation Handoff
 - **Core Value**: Instantly launches Google Maps turn-by-turn navigation for current location, saved place, or searched pin.
@@ -638,7 +642,7 @@ This section documents features that were requested, prototyped, or previously d
 | **BKL-02** | Root URL Landing Page (`/` or `/live/` without ID) with browser cookie/localStorage remembered past sessions | Web Platform | Future Sprint |
 | **BKL-03** | Server data retention policy and TTL cleanup job for expired session breadcrumbs | Server Architecture | Future Sprint |
 | **BKL-04** | Visitor on-demand location refresh request from web page to mobile app | Live Protocol | Future Sprint |
-| **BKL-05** | Historical shared routes catalog portal | Web Platform | Future Sprint |
+| **BKL-05** | ~~Search Place overhaul (Photon near-me + ranker)~~ → **Completed** in PLC-03 / v1.18.16 | Search / Geocoding | Done |
 | **BKL-06** | Manual offline Map Tiles mass-downloader (bulk fetch tiles via bounding box grid at specific zoom levels for full offline terrain viewing) | Cache / Map | Future Sprint |
 | **BKL-07** | **Nearest Known Address Lookup** (on-demand button when current fix lacks house number; performs ~100m targeted Overpass/Nominatim query displaying closest numbered address chip, e.g. "Klonowa 5 — 47m away") | Geocoding / UI | Future Sprint |
 | **BKL-08** | **Directional Track Polyline Arrows / Chevrons** (render periodic directional chevrons along active and historical trip polylines to indicate travel direction) | Map / Visualization | Future Sprint |
