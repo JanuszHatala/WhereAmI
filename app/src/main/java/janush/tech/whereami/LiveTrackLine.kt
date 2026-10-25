@@ -48,10 +48,10 @@ class LiveTrackLine {
 
     /**
      * The pencil changed (point added or pruned): rebuild the curved committed tail, then append the
-     * pencil as straight segments and end at [tip].
+     * pencil (curved when >= 2 points) and end at [tip].
      *
-     * Catmull-Rom through the pencil turns walking multipath into visible coils that later disappear when
-     * the smoother commits; the pencil stays piecewise-linear so only real committed geometry is curved.
+     * Catmull-Rom through the pencil prevents squary/zigzag line appearances behind the moving cursor
+     * before vertices are committed to track points.
      */
     fun rebuildTail(pencil: PencilTrail, tip: GeoPoint, committedThroughMs: Long = -1L) {
         points.clear()
@@ -74,10 +74,33 @@ class LiveTrackLine {
         val blended = if (c.isNotEmpty() && committedThroughMs >= 0L) {
             pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude)
         } else null
-        for (i in 0 until pencil.size) {
-            val la = blended?.first?.get(i) ?: pencil.latAt(i)
-            val ln = blended?.second?.get(i) ?: pencil.lngAt(i)
-            points.add(GeoPoint(la, ln))
+        val pSize = pencil.size
+        if (pSize >= 2) {
+            val hasAnchor = c.isNotEmpty()
+            val totalTail = if (hasAnchor) pSize + 1 else pSize
+            fun tailLat(idx: Int): Double = if (hasAnchor) {
+                if (idx == 0) c.last().latitude else (blended?.first?.get(idx - 1) ?: pencil.latAt(idx - 1))
+            } else {
+                blended?.first?.get(idx) ?: pencil.latAt(idx)
+            }
+            fun tailLng(idx: Int): Double = if (hasAnchor) {
+                if (idx == 0) c.last().longitude else (blended?.second?.get(idx - 1) ?: pencil.lngAt(idx - 1))
+            } else {
+                blended?.second?.get(idx) ?: pencil.lngAt(idx)
+            }
+            if (!hasAnchor) {
+                points.add(GeoPoint(tailLat(0), tailLng(0)))
+            }
+            CurvedPolyline.densify(
+                totalTail, 0, totalTail - 1,
+                { tailLat(it) }, { tailLng(it) }
+            ) { la, ln -> points.add(GeoPoint(la, ln)) }
+        } else {
+            for (i in 0 until pSize) {
+                val la = blended?.first?.get(i) ?: pencil.latAt(i)
+                val ln = blended?.second?.get(i) ?: pencil.lngAt(i)
+                points.add(GeoPoint(la, ln))
+            }
         }
         points.add(tip)
         tailValid = true

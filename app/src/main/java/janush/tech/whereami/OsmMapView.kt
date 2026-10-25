@@ -596,6 +596,13 @@ fun OsmMapView(
         mutableStateOf(initialProfileConfig.fontScale)
     }
 
+    var trackColorHex by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.trackColorHex)
+    }
+
+    var prePinZoom by remember { mutableStateOf<Double?>(null) }
+    var prePinCenter by remember { mutableStateOf<GeoPoint?>(null) }
+
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
@@ -982,8 +989,9 @@ fun OsmMapView(
                     // rendered path since the newest committed vertex) + cursor tip. The line therefore always
                     // ends under the cursor and never re-shapes ahead of it.
                     if (latestRecording) {
+                        val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
                         val line = polyline ?: Polyline(map).also {
-                            it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
+                            it.outlinePaint.color = trackColor
                             it.outlinePaint.strokeWidth = 12f
                             it.outlinePaint.strokeCap = Paint.Cap.ROUND
                             it.outlinePaint.strokeJoin = Paint.Join.ROUND
@@ -1167,8 +1175,9 @@ fun OsmMapView(
                 return@LaunchedEffect
             }
 
+            val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
             val line = polyline ?: Polyline(map).also {
-                it.outlinePaint.color = Color.parseColor("#EF4444") // Vivid Red
+                it.outlinePaint.color = trackColor
                 it.outlinePaint.strokeWidth = 12f
                 it.outlinePaint.strokeCap = Paint.Cap.ROUND
                 it.outlinePaint.strokeJoin = Paint.Join.ROUND
@@ -1267,6 +1276,8 @@ fun OsmMapView(
 
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
 
+        val spiderfyPositions = computeSpiderfyOffsets(visibleGuests)
+
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
                 val results = FloatArray(1)
@@ -1275,16 +1286,18 @@ fun OsmMapView(
             } else null
 
             val badgeText = GuestMarkerHelper.formatBadgeText(guest, distMeters, showGuestDistanceBadge)
-            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText"
+            val fontScaleFactor = latestFontScale.scaleFactor
+            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText|$fontScaleFactor"
+            val displayPos = spiderfyPositions[guest.id] ?: guest.geoPoint
 
             val existingMarker = guestMarkersMap[guest.id]
             val gm = if (existingMarker != null) {
-                if (existingMarker.position.latitude != guest.lat || existingMarker.position.longitude != guest.lng) {
-                    existingMarker.position = guest.geoPoint
+                if (existingMarker.position.latitude != displayPos.latitude || existingMarker.position.longitude != displayPos.longitude) {
+                    existingMarker.position = displayPos
                     mapChanged = true
                 }
                 if (guestMarkerBadgeKeys[guest.id] != badgeKey) {
-                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
                     existingMarker.icon = iconResult.drawable
                     existingMarker.setAnchor(iconResult.anchorX, iconResult.anchorY)
                     guestMarkerBadgeKeys[guest.id] = badgeKey
@@ -1296,9 +1309,9 @@ fun OsmMapView(
                 }
                 existingMarker
             } else {
-                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge)
+                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
                 val newMarker = Marker(map).apply {
-                    position = guest.geoPoint
+                    position = displayPos
                     setAnchor(iconResult.anchorX, iconResult.anchorY)
                     icon = iconResult.drawable
                 }
@@ -1363,6 +1376,10 @@ fun OsmMapView(
         pinnedBoundaryPolygon = null
 
         if (pinnedBoundaryPoints != null && pinnedBoundaryPoints.size >= 3) {
+            if (prePinZoom == null) {
+                prePinZoom = map.zoomLevelDouble
+                prePinCenter = GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
+            }
             val poly = org.osmdroid.views.overlay.Polygon(map).apply {
                 outlinePaint.color = Color.parseColor("#EF4444") // Coral/Crimson Red border
                 outlinePaint.strokeWidth = 6f
@@ -1498,8 +1515,11 @@ fun OsmMapView(
                 pts.addAll(trip.points)
             }
         } else if (isRecording || trackPoints.isNotEmpty()) {
-            // Active trip recording
+            // Active trip recording: include recorded track AND live cursor position
             pts.addAll(trackPoints)
+            if (latLng != null) {
+                pts.add(GeoPoint(latLng.first, latLng.second))
+            }
         } else if (visibleGuests.isNotEmpty()) {
             // Live sharing group (only when no trip is recording or selected)
             visibleGuests.forEach { guest ->
@@ -1514,21 +1534,28 @@ fun OsmMapView(
 
     // Fit-to-track trigger (fits all shown trips: active and/or selected)
     LaunchedEffect(fitTrackTrigger) {
-        if (fitTrackTrigger > 0L && allShownPoints.isNotEmpty()) {
+        if (fitTrackTrigger > 0L) {
             val map = mapView ?: return@LaunchedEffect
-            isFollowing = false
-            fitPointsToUnobstructedViewport(
-                map = map,
-                points = allShownPoints,
-                density = density,
-                isLandscape = isLandscape,
-                isCompact = isCompact,
-                measuredTopInsetPx = measuredTopInsetPx,
-                measuredBottomInsetPx = measuredBottomInsetPx,
-                isRecording = isRecording,
-                isAutoStandby = isAutoStandby,
-                onZoomCalculated = { currentZoom = it }
-            )
+            val pointsToFit = if (allShownPoints.isNotEmpty()) {
+                allShownPoints
+            } else if (latLng != null) {
+                listOf(GeoPoint(latLng.first, latLng.second))
+            } else emptyList()
+            if (pointsToFit.isNotEmpty()) {
+                isFollowing = false
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = pointsToFit,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = { currentZoom = it }
+                )
+            }
         }
     }
 
@@ -2054,6 +2081,34 @@ fun OsmMapView(
                     }
                 }
             }
+
+            // Restore Zoom after inspecting dropped-pin or saved-place boundary
+            if (pinnedBoundaryPoints != null && prePinZoom != null) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xEE1E293B))
+                        .clickable {
+                            val map = mapView ?: return@clickable
+                            val zoom = prePinZoom ?: return@clickable
+                            val center = prePinCenter ?: return@clickable
+                            map.controller.stopAnimation(false)
+                            map.controller.setZoom(zoom)
+                            map.controller.setCenter(center)
+                            prePinZoom = null
+                            prePinCenter = null
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Restore Zoom",
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
         }
 
         // Floating "📍 Recenter" Pill when user has panned away (Option B)
@@ -2279,6 +2334,34 @@ fun OsmMapView(
                             }
                         }
                     }
+                }
+            }
+
+            // Restore Zoom after inspecting dropped-pin or saved-place boundary
+            if (pinnedBoundaryPoints != null && prePinZoom != null) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(ComposeColor(0xEE1E293B))
+                        .clickable {
+                            val map = mapView ?: return@clickable
+                            val zoom = prePinZoom ?: return@clickable
+                            val center = prePinCenter ?: return@clickable
+                            map.controller.stopAnimation(false)
+                            map.controller.setZoom(zoom)
+                            map.controller.setCenter(center)
+                            prePinZoom = null
+                            prePinCenter = null
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Restore Zoom",
+                        tint = ComposeColor(0xFF38BDF8),
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }
@@ -3482,7 +3565,8 @@ internal fun makeGuestMarkerIcon(
     context: Context,
     guest: LiveGuest,
     distanceMeters: Float?,
-    showDistance: Boolean
+    showDistance: Boolean,
+    fontScale: Float = 1.0f
 ): GuestMarkerIconResult {
     val density = context.resources.displayMetrics.density
     val avatarDiameter = (32f * density).toInt()
@@ -3490,18 +3574,18 @@ internal fun makeGuestMarkerIcon(
     val hasCustomName = GuestMarkerHelper.hasCustomName(guest.name)
     val badgeText = GuestMarkerHelper.formatBadgeText(guest, distanceMeters, showDistance)
 
-    val badgeHeight = if (badgeText.isNotEmpty()) (18f * density).toInt() else 0
+    val badgeHeight = if (badgeText.isNotEmpty()) (18f * density * fontScale).toInt() else 0
     val badgeSpacing = (3f * density).toInt()
 
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 10f * density
+        textSize = 10f * density * fontScale
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
 
     val textWidth = if (badgeText.isNotEmpty()) textPaint.measureText(badgeText) else 0f
-    val badgeWidth = if (badgeText.isNotEmpty()) (textWidth + 14f * density).toInt() else 0
+    val badgeWidth = if (badgeText.isNotEmpty()) (textWidth + 14f * density * fontScale).toInt() else 0
 
     val totalWidth = maxOf(avatarDiameter, badgeWidth) + (8f * density).toInt()
     val totalHeight = avatarDiameter + (if (badgeHeight > 0) badgeHeight + badgeSpacing else 0) + (4f * density).toInt()
@@ -3590,20 +3674,21 @@ internal fun makeGuestMarkerIcon(
         val badgeRect = RectF(badgeLeft, badgeTop, badgeRight, badgeBottom)
 
         val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((alpha * 0.92f).toInt(), 15, 23, 42)
+            color = Color.argb(235, 15, 23, 42) // Full contrast slate #0F172A
             style = Paint.Style.FILL
         }
         canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBgPaint)
 
         val badgeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (guest.isInactive) Color.argb(alpha, 100, 116, 139) else baseColor
+            color = if (guest.isInactive) Color.argb(200, 100, 116, 139) else baseColor
             style = Paint.Style.STROKE
             strokeWidth = 1f * density
         }
         canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBorderPaint)
 
         val textY = badgeTop + (badgeHeight / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
-        textPaint.alpha = alpha
+        textPaint.color = Color.WHITE // Inactive guest label remains 100% white and readable
+        textPaint.alpha = 255
         canvas.drawText(badgeText, cx, textY, textPaint)
     }
 
@@ -3615,6 +3700,57 @@ internal fun makeGuestMarkerIcon(
         anchorX = anchorX,
         anchorY = anchorY
     )
+}
+
+fun computeSpiderfyOffsets(guests: List<LiveGuest>): Map<String, GeoPoint> {
+    if (guests.size <= 1) return guests.associate { it.id to it.geoPoint }
+    val result = mutableMapOf<String, GeoPoint>()
+    val visited = BooleanArray(guests.size)
+    val clusterThresholdM = 25.0
+
+    fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLng = Math.toRadians(lng2 - lng1)
+        val a = Math.sin(dLat / 2.0) * Math.sin(dLat / 2.0) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLng / 2.0) * Math.sin(dLng / 2.0)
+        return 6371000.0 * 2.0 * Math.atan2(Math.sqrt(a), Math.sqrt(1.0 - a))
+    }
+
+    for (i in guests.indices) {
+        if (visited[i]) continue
+        val cluster = mutableListOf<LiveGuest>()
+        cluster.add(guests[i])
+        visited[i] = true
+
+        for (j in (i + 1) until guests.size) {
+            if (!visited[j]) {
+                if (distanceM(guests[i].lat, guests[i].lng, guests[j].lat, guests[j].lng) < clusterThresholdM) {
+                    cluster.add(guests[j])
+                    visited[j] = true
+                }
+            }
+        }
+
+        if (cluster.size == 1) {
+            result[cluster[0].id] = cluster[0].geoPoint
+        } else {
+            val centerLat = cluster.map { it.lat }.average()
+            val centerLng = cluster.map { it.lng }.average()
+            val k = cluster.size
+            val radiusM = 18.0
+            val mLat = 111132.0
+            val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(0.01)
+
+            for (idx in 0 until k) {
+                val angle = (2.0 * Math.PI * idx / k) - (Math.PI / 2.0)
+                val offsetLat = (radiusM * kotlin.math.cos(angle)) / mLat
+                val offsetLng = (radiusM * kotlin.math.sin(angle)) / mLng
+                result[cluster[idx].id] = GeoPoint(centerLat + offsetLat, centerLng + offsetLng)
+            }
+        }
+    }
+    return result
 }
 
 /**

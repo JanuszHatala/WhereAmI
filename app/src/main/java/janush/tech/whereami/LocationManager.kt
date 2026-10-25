@@ -8,9 +8,11 @@ import android.location.Geocoder
 import android.location.Location as AndroidLocation
 import android.os.Build
 import android.os.Looper
+import android.os.PowerManager
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -70,7 +72,8 @@ data class LocationData(
     val speedMs: Float?, // Speed in meters per second (smoothed, non-null during active tracking)
     val error: String? = null,
     val isLoading: Boolean = false,
-    val altitude: Double? = null
+    val altitude: Double? = null,
+    val accuracy: Float? = null
 )
 
 /** Unified location snapshot broadcast to all consumers (Single Source of Truth). */
@@ -106,6 +109,7 @@ data class MultiLocationSnapshot(
             secondaryPlace = secPlace,
             speedMs = speedMs,
             altitude = altitude,
+            accuracy = accuracy,
             error = error,
             isLoading = isLoading
         )
@@ -335,6 +339,11 @@ class LocationManager private constructor(private val context: Context) {
     private var lastPrefsWriteMs = 0L
     private var lastPrefsLat = 0.0
     private var lastPrefsLng = 0.0
+
+    private var inFlightGeocodeJob: Job? = null
+    private val geocodeFlightLock = Any()
+    private var lastScreenOffGeocodeMs = 0L
+    private var lastScreenOffGeocodedPoint: Pair<Double, Double>? = null
 
     private fun persistLastFix(force: Boolean) {
         val snap = lastLocationSnapshot ?: return
@@ -1075,23 +1084,25 @@ class LocationManager private constructor(private val context: Context) {
                 trySend(fastSnapshot)
                 persistLastFix(force = false)
 
-                // 4. Asynchronous geocoding enrichment on IO pool (never freezes kinematics or UI)
+                // 4. Asynchronous geocoding enrichment on IO pool (single-flight conflation)
                 val capturedBearing = currentBearing
-                ioScope.launch {
-                    val rawMultiData = resolveMultiLanguageData(
-                        lat = lat,
-                        lng = lng,
-                        bearing = capturedBearing,
-                        speedKmh = speedKmh,
-                        accuracyMeters = fixAccuracy
-                    )
-                    synchronized(geocodeLock) {
-                        // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
-                        if (fixTimestamp < latestEnrichedTimestamp) {
-                            TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
-                            return@launch
-                        }
-                        latestEnrichedTimestamp = fixTimestamp
+                synchronized(geocodeFlightLock) {
+                    inFlightGeocodeJob?.cancel()
+                    inFlightGeocodeJob = ioScope.launch {
+                        val rawMultiData = resolveMultiLanguageData(
+                            lat = lat,
+                            lng = lng,
+                            bearing = capturedBearing,
+                            speedKmh = speedKmh,
+                            accuracyMeters = fixAccuracy
+                        )
+                        synchronized(geocodeLock) {
+                            // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
+                            if (fixTimestamp < latestEnrichedTimestamp) {
+                                TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
+                                return@launch
+                            }
+                            latestEnrichedTimestamp = fixTimestamp
 
                         val borderStabilized = applyBorderHysteresis(lat, lng, rawMultiData)
                         val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, capturedBearing)
@@ -1120,6 +1131,7 @@ class LocationManager private constructor(private val context: Context) {
                         lastLocationSnapshot = enrichedSnapshot
                         trySend(enrichedSnapshot)
                     }
+                }
                 }
                 return true
             }
@@ -1462,12 +1474,34 @@ class LocationManager private constructor(private val context: Context) {
 
         val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
 
+        val isScreenOff = run {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
+            pm?.isInteractive == false && !isAuto
+        }
+
+        var effectiveAllowNetwork = allowNetwork
+        if (isScreenOff && allowNetwork) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val distFromLast = lastScreenOffGeocodedPoint?.let {
+                val res = FloatArray(1)
+                AndroidLocation.distanceBetween(lat, lng, it.first, it.second, res)
+                res[0]
+            } ?: Float.MAX_VALUE
+            if (now - lastScreenOffGeocodeMs < 60_000L && distFromLast < 250f) {
+                effectiveAllowNetwork = false
+            } else {
+                lastScreenOffGeocodeMs = now
+                lastScreenOffGeocodedPoint = Pair(lat, lng)
+            }
+        }
+
         // Strict Main Thread and allowNetwork Guard:
         // NEVER perform blocking network Geocoder, Nominatim HTTP, OSRM HTTP, or Thread.sleep on the Android Main (UI) thread!
         val isMainThread = try { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() } catch (_: Exception) { false }
-        if (!allowNetwork || isMainThread) {
+        if (!effectiveAllowNetwork || isMainThread) {
             val fallback = committedPlace ?: getLastGoodMultiPlace(prefs)
-            if (isMainThread && allowNetwork) {
+            if (isMainThread && effectiveAllowNetwork) {
                 // Trigger asynchronous background geocoding so cache gets populated without blocking main thread Looper
                 ioScope.launch {
                     resolveMultiLanguageData(lat, lng, bearing, speedKmh, accuracyMeters, forceCache, allowNetwork = true)
@@ -1488,8 +1522,9 @@ class LocationManager private constructor(private val context: Context) {
         val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
         
         // OSRM /nearest: street name for the locality card AND snapped coordinates for display-only road pull.
+        // Screen-off bypass: Skip OSRM network requests when screen is off to eliminate cellular modem drain.
         val effectiveBearing = bearing ?: lastValidBearing
-        val nearest = OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
+        val nearest = if (isScreenOff) null else OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
         if (nearest != null) {
             janush.tech.whereami.tracking.TrackingRuntime.displaySnap.observeNearest(
                 rawLat = lat,

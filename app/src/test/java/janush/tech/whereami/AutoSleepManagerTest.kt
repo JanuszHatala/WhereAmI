@@ -428,5 +428,23 @@ class AutoSleepManagerTest {
             "Hibernation that spanned the bedtime window must wake when bedtime ends",
             shouldWakeNextMorning
         )
+
+        // Morning alarm firing wakes sleep immediately during morning window
+        val shouldWakeOnAlarm = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = true,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = true,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true
+        )
+        assertTrue(
+            "Morning alarm firing must wake sleep immediately during morning window",
+            shouldWakeOnAlarm
+        )
     }
 }

@@ -387,5 +387,28 @@ class LiveGuestTest {
         assertFalse(deserialized!!.rawIsInactive)
         assertTrue(deserialized.isInactive) // Client evaluates as inactive!
     }
+
+    @Test
+    fun `test computeSpiderfyOffsets separates overlapping guests radially`() {
+        // Two guests at the exact same location
+        val g1 = LiveGuest(id = "g1", name = "Alice", lat = 49.8000, lng = 19.5000, lastUpdated = 1000L)
+        val g2 = LiveGuest(id = "g2", name = "Bob", lat = 49.8000, lng = 19.5000, lastUpdated = 1000L)
+
+        val offsets = computeSpiderfyOffsets(listOf(g1, g2))
+        assertEquals(2, offsets.size)
+        val p1 = offsets["g1"]!!
+        val p2 = offsets["g2"]!!
+
+        // They must no longer be at identical coordinates
+        val dLat = Math.abs(p1.latitude - p2.latitude)
+        val dLng = Math.abs(p1.longitude - p2.longitude)
+        assertTrue("Overlapping guests must be separated radially by spiderfy", dLat > 0.00001 || dLng > 0.00001)
+
+        // Single isolated guest should not be offset
+        val g3 = LiveGuest(id = "g3", name = "Charlie", lat = 50.0000, lng = 20.0000, lastUpdated = 1000L)
+        val singleOffset = computeSpiderfyOffsets(listOf(g3))
+        assertEquals(g3.geoPoint.latitude, singleOffset["g3"]!!.latitude, 0.000001)
+        assertEquals(g3.geoPoint.longitude, singleOffset["g3"]!!.longitude, 0.000001)
+    }
 }
 
