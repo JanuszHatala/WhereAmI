@@ -269,6 +269,10 @@ class TripManager private constructor(private val context: Context) {
             .apply()
         val eventTag = if (isManual) "PAUSE_MANUAL" else "PAUSE_STICKY_RESTORED"
         TelemetryLogger.logTrip(eventTag, current.id, "Trip paused (manual=$isManual, sticky=$isManualPauseSticky) at point ${current.points.size}")
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "TRIP_PAUSE",
+            mapOf("tripId" to current.id, "isManual" to isManual, "pointIndex" to current.points.size)
+        )
     }
 
     fun resumeTrip(isManual: Boolean = true) {
@@ -282,6 +286,10 @@ class TripManager private constructor(private val context: Context) {
             autoResumeStartDistance = current.distanceMeters
             autoResumeStartTime = System.currentTimeMillis()
         }
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "TRIP_RESUME",
+            mapOf("tripId" to current.id, "isManual" to isManual)
+        )
         val now = System.currentTimeMillis()
         if (activePause != null) {
             val finalized = activePause!!.copy(
@@ -548,6 +556,7 @@ class TripManager private constructor(private val context: Context) {
         _autoStopMinutes.value = getAutoStopMinutesForProfile(profile)
         val profileTripMode = getTripModeForProfile(profile)
         setTripMode(profileTripMode)
+        AppStateManager.getInstance(context).onProfileChanged(profile)
         val current = _activeTrip.value
         if (current != null) {
             val updated = current.copy(activityProfile = profile)
@@ -598,6 +607,10 @@ class TripManager private constructor(private val context: Context) {
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
         _activeTrip.value = started
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "TRIP_START",
+            mapOf("tripId" to id, "isAuto" to isAuto, "profile" to profile.name)
+        )
         resetAutoStartGates()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
@@ -706,6 +719,17 @@ class TripManager private constructor(private val context: Context) {
             }
         }
         _activeTrip.value = null
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "TRIP_STOP",
+            mapOf(
+                "tripId" to current.id,
+                "isManualStop" to isManualStop,
+                "durationMs" to durationMs,
+                "distanceM" to current.distanceMeters,
+                "isTrivial" to isTrivialTrip,
+                "isScribble" to isScribbleTrip
+            )
+        )
         if (!isTrivialTrip && !isScribbleTrip) {
             // Road-snapped alternate geometry (CAR, online, not while recording); retried later when offline.
             janush.tech.whereami.tracking.PostTripMatcher.schedule(context, force = true)

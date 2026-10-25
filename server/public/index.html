@@ -652,12 +652,13 @@
     function createHostIcon(isOnline, isPaused, statusClass, bearing) {
       const b = (bearing !== null && bearing !== undefined) ? bearing : 0;
       const dotColor = isOnline ? '#22c55e' : (isPaused ? '#f59e0b' : '#94a3b8');
+      const hasArrow = isOnline && bearing !== null && bearing !== undefined;
 
       const html = `
         <div class="live-host-marker ${statusClass || (isOnline ? 'online' : 'offline')}">
           ${isOnline ? '<div class="host-pulse-ring"></div>' : ''}
           <div class="host-rotator" style="transform: rotate(${b}deg);">
-            ${isOnline ? `
+            ${hasArrow ? `
               <div class="host-arrow-wrap">
                 <svg viewBox="0 0 24 24" width="24" height="24" class="host-arrow-svg">
                   <polygon points="12,1 18,10 6,10" fill="#22c55e" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
@@ -1319,22 +1320,9 @@
           }
 
 
-          // MAP-R04: Compass Rose Heading Update
-          const bearing = data.current.bearing;
-          const compassRose = document.getElementById('compassRose');
-          const compassText = document.getElementById('compassHeadingText');
-          if (compassRose && compassText) {
-            if (bearing !== null && bearing !== undefined) {
-              const b = Math.round(bearing);
-              const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-              const dir = dirs[Math.round(b / 45) % 8];
-              compassRose.style.transform = `rotate(${b}deg)`;
-              compassText.textContent = `${b}° ${dir}`;
-            } else {
-              compassRose.style.transform = 'rotate(0deg)';
-              compassText.textContent = 'N';
-            }
-          }
+          // Compass Rose: reflects Map North (not host movement bearing)
+          const mapBearing = (map.getBearing ? map.getBearing() : 0) || 0;
+          updateCompassHeading(mapBearing);
 
           const isHighFrequency = Boolean(isCharging || (syncIntervalMs && syncIntervalMs <= 10000));
           const animDuration = isHighFrequency ? Math.min(2500, Math.max(1000, (syncIntervalMs || 2000) * 0.9)) : 1500;

@@ -1514,3 +1514,23 @@ Evidence (Trip 250 `2026-10-23 15:35:48` to `16:02:59`, `track_1792762549506_tri
 | **ENG115-02** | Eliminate screen-on catch-up polyline zigzag behind cursor. | `RenderPipeline.kt`, `OsmMapView.kt`, `RenderPipelineTest.kt` | Implemented | Increased `RenderPipeline.HISTORY_MS` to `35_000L`, cleared correction offsets across multi-second state gaps (`> 2,500ms`) and before `catchUp` frames in `OsmMapView`, hoisted `lastFedStateMs` across foreground toggles |
 | **ENG115-03** | Real-time 1 Hz speed updates on Android Auto and during active trip recording when phone screen is off. | `AppStateManager.kt`, `AutoMediaService.kt`, `LocationManager.kt`, `BatteryOptimizationAndAutoStartTest.kt` | Implemented | Unbatched 1 Hz (`maxDelay = 0L`) in `TRIP_RECORDING` (batching reserved strictly for `BATTERY_SAVER` when not in car mode) and `ANDROID_AUTO` (`1000L, 1000L, 0L`); held refreshable `AutoMediaWakeLock` while `AutoMediaService` is active; processed all batched fixes chronologically in `LocationManager` |
 | **VER-115** | versionCode 151 / 1.18.20 | `build.gradle.kts` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |
+
+## 118. Round 116: Battery & Modem Optimization, Car Auto-Start Duration, Live Share Resilience & UI Polish (2026-10-25, v1.18.21)
+
+Evidence & Root Cause Diagnostics:
+- **Modem & Wakelock Drain**: 500 mAh drain, 359 mAh modem state transitions, 32m 25s screen-off partial wakelocks. Screen-off 1 Hz geocoding (OSRM `/nearest` and Nominatim queries) and 10s ticking speed updates (`NotificationManager.notify()`) kept cellular radio awake and acquired CPU wakelocks.
+- **Offline Sync Payloads**: In mountain valleys, failed Live Sharing requests accumulated multi-thousand-point JSON payloads uploaded repeatedly without backoff.
+- **Car Auto-Start Failure**: 15s early abort killed car confirmation bursts while user was starting engine, triggering progressive cooldown backoff.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **PWR116-01** | Screen-off recording geocoding gate & single-flight request conflation. | `LocationManager.kt` | Implemented | Bypass OSRM `/nearest` on screen-off, throttle reverse geocode ($\ge 250$m or 60s), cancel in-flight geocode jobs |
+| **PWR116-02** | Screen-off notification wakelock throttling. | `LiveTrackingService.kt` | Implemented | Omit fluctuating speed strings, throttle notification posts to 60s when screen is off |
+| **PWR116-03** | Offline-resilient chunked Live Sharing & backoff. | `LiveSharingManager.kt` | Implemented | Capped queue batching to 40 points, added 10s-120s exponential backoff on HTTP failure |
+| **AUTO116-04** | Car auto-start burst extension & profile-switch cooldown reset. | `AppStateManager.kt`, `TripManager.kt` | Implemented | Extended car burst min duration to 35s; reset consecutive false bursts on profile change |
+| **DIAG116-05** | Persistent lifecycle diagnostics log. | `LifecycleDiagnosticsRecorder.kt` | Implemented | Appends JSONL events for bursts, trip transitions, and sleep modes |
+| **MAP116-06** | Densify live vehicle pencil & custom track colors per activity profile. | `LiveTrackLine.kt`, `OsmMapView.kt`, `MapProfileConfigHelper.kt` | Implemented | Catmull-Rom densification for live vehicle pencil; customizable `trackColorHex` per profile |
+| **MAP116-07** | Fit active recording track to screen & restore zoom button. | `OsmMapView.kt` | Implemented | Included committed track points + live cursor in `allShownPoints`; added restore zoom button for pinned borders |
+| **UI116-08** | House numbers, elevation chip wrapping, spiderfy guest markers & web viewer bearing. | `RoadNameNormalizer.kt`, `MainActivity.kt`, `OsmMapView.kt`, `server/public/index.html` | Implemented | Preserved house numbers on residential streets; 2x2 responsive elevation grid; 18m spiderfy fan-out; compass button reflects Map North |
+| **VER-116** | versionCode 152 / 1.18.21 | `build.gradle.kts`, `BatteryOptimizationAndAutoStartTest.kt`, `LiveGuestTest.kt`, `RoadNameNormalizerTest.kt`, `AutoSleepManagerTest.kt` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |
+

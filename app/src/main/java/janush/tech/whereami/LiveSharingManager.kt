@@ -127,6 +127,7 @@ class LiveSharingManager private constructor(private val context: Context) {
         private const val KEY_SESSION_FOLLOW_GUESTS = "active_session_follow_guests"
         private const val KEY_SESSION_SHOW_GUEST_DISTANCE = "active_session_show_guest_distance"
         private const val KEY_STATIC_LIVE_ID = "personal_static_live_id"
+        const val MAX_POINTS_PER_SYNC = 40
         // Dialog UI preference persistence
         const val KEY_PREF_LINK_MODE_STATIC = "pref_link_mode_static"   // Boolean
         const val KEY_PREF_PROVIDER = "pref_default_provider"           // String (enum name)
@@ -203,6 +204,8 @@ class LiveSharingManager private constructor(private val context: Context) {
     private val dismissedGuestIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private val memoryPointsQueue = mutableListOf<LivePoint>()
+    private var syncFailureCount = 0
+    private var nextAllowedSyncTimeMs = 0L
     private var lastRecordedLat: Double = 0.0
     private var lastRecordedLng: Double = 0.0
     private var lastRecordedBearing: Float? = null
@@ -1061,6 +1064,11 @@ class LiveSharingManager private constructor(private val context: Context) {
         val session = _currentSession.value ?: return
         if (!session.isActive) return
 
+        val nowMs = System.currentTimeMillis()
+        if (nowMs < nextAllowedSyncTimeMs) {
+            return
+        }
+
         if (isSyncInFlight) {
             // Drop overlapping dispatch to prevent concurrent HTTPS requests over cellular and NAS thread pool exhaustion
             return
@@ -1068,7 +1076,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         val pointsToPost: List<LivePoint>
         synchronized(memoryPointsQueue) {
-            pointsToPost = memoryPointsQueue.toList()
+            pointsToPost = memoryPointsQueue.take(MAX_POINTS_PER_SYNC)
         }
 
         val charging = isChargingOverride ?: isDeviceCharging()
@@ -1082,16 +1090,32 @@ class LiveSharingManager private constructor(private val context: Context) {
                 val battery = getBatteryPercentage()
                 val ok = postSyncPayload(session, pointsToPost, lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, battery, accuracy, charging, syncIntervalMs)
                 if (ok) {
+                    syncFailureCount = 0
+                    nextAllowedSyncTimeMs = 0L
                     val now = System.currentTimeMillis()
                     val postedTimestamps = pointsToPost.map { it.timestamp }.toSet()
+                    val remainingCount: Int
                     synchronized(memoryPointsQueue) {
                         memoryPointsQueue.removeAll { it.timestamp in postedTimestamps }
+                        remainingCount = memoryPointsQueue.size
                     }
                     prefs.edit().putLong(KEY_SESSION_LAST_SYNC, now).apply()
                     _currentSession.value = _currentSession.value?.copy(
                         lastSyncTime = now, 
-                        pendingPointsCount = memoryPointsQueue.size
+                        pendingPointsCount = remainingCount
                     )
+                    // If queue backlog remains, schedule follow-up chunk after 3s delay
+                    if (remainingCount > 0) {
+                        scope.launch {
+                            delay(3000L)
+                            flushPointsToServer(lat, lng, speedKmh, altitude, bearing, placeName, trekkingBadge, accuracy, isChargingOverride, syncIntervalMsOverride)
+                        }
+                    }
+                } else {
+                    syncFailureCount++
+                    val backoffMs = minOf(120_000L, 10_000L * (1L shl minOf(syncFailureCount, 4)))
+                    nextAllowedSyncTimeMs = System.currentTimeMillis() + backoffMs
+                    TelemetryLogger.log("LIVE_SHARE", "Live sync failed ($syncFailureCount consecutive). Backing off for ${backoffMs / 1000}s")
                 }
             } finally {
                 isSyncInFlight = false

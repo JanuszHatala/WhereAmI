@@ -7123,6 +7123,16 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                val liveViewEvents by liveSharingManager.viewEvents.collectAsState()
+                val allUniqueVisitorsCount = remember(activeGuests, liveViewEvents) {
+                    val ids = activeGuests.map { it.id }.toMutableSet()
+                    liveViewEvents.forEach { ev ->
+                        val vid = ev.guestId.ifBlank { ev.guestName }
+                        if (vid.isNotBlank()) ids.add(vid)
+                    }
+                    maxOf(activeGuests.size, ids.size)
+                }
+
                 // Telemetry stats summary card (Unique Guests & Total Views) - Clickable to open Views & Visitors modal
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -7152,7 +7162,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 EmojiText(emoji = "👥", fontSize = 14.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "${activeGuests.size} Guests",
+                                    text = "$allUniqueVisitorsCount Guests",
                                     color = Color.White,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
@@ -9587,10 +9597,15 @@ private fun LocalityCard(
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
 
+                val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
+                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(currentSpeedKmh, locationData.accuracy, isMajor)
+
                 val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
                     effectiveStreet,
                     primaryPlace?.roadRef,
-                    primaryPlace?.countryCode
+                    primaryPlace?.countryCode,
+                    allowHouseNumber = allowHouseNum
                 ).orEmpty()
 
                 // Check if current location matches any saved place
@@ -10274,10 +10289,15 @@ private fun LocalityCard(
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
 
+                val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
+                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(currentSpeedKmh, locationData.accuracy, isMajor)
+
                 val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
                     effectiveStreet,
                     primaryPlace?.roadRef,
-                    primaryPlace?.countryCode
+                    primaryPlace?.countryCode,
+                    allowHouseNumber = allowHouseNum
                 ).orEmpty()
 
                 if (streetOrRoad.isNotEmpty()) {
@@ -12177,29 +12197,43 @@ fun TripDetailDialog(
                                         )
                                     } else {
                                         if (elevationStats != null) {
-                                            Row(
+                                            Column(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                ElevationStatChip(
-                                                    label = "↑ Gain: ${elevationStats.totalAscentM.toInt()} m",
-                                                    color = Color(0xFF34D399)
-                                                )
-                                                ElevationStatChip(
-                                                    label = "↓ Loss: ${elevationStats.totalDescentM.toInt()} m",
-                                                    color = Color(0xFFF87171)
-                                                )
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    ElevationStatChip(
+                                                        label = "↑ Gain: ${elevationStats.totalAscentM.toInt()} m",
+                                                        color = Color(0xFF34D399),
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    ElevationStatChip(
+                                                        label = "↓ Loss: ${elevationStats.totalDescentM.toInt()} m",
+                                                        color = Color(0xFFF87171),
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
                                                 val minA = elevationStats.minAltitudeM?.toInt() ?: 0
                                                 val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
-                                                ElevationStatChip(
-                                                    label = "⛰️ Alt: $minA–$maxA m",
-                                                    color = Color(0xFFFBBF24)
-                                                )
-                                                if (elevationStats.peakVerticalSpeedMpm > 0.1) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
                                                     ElevationStatChip(
-                                                        label = String.format(Locale.getDefault(), "▲ %.1f m/min", elevationStats.peakVerticalSpeedMpm),
-                                                        color = Color(0xFF38BDF8)
+                                                        label = "⛰️ Alt: $minA–$maxA m",
+                                                        color = Color(0xFFFBBF24),
+                                                        modifier = Modifier.weight(1f)
                                                     )
+                                                    if (elevationStats.peakVerticalSpeedMpm > 0.1) {
+                                                        ElevationStatChip(
+                                                            label = String.format(Locale.getDefault(), "▲ %.1f m/min", elevationStats.peakVerticalSpeedMpm),
+                                                            color = Color(0xFF38BDF8),
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -12429,7 +12463,7 @@ fun TripDetailDialog(
                                                             )
                                                         )
                                                     }
-                                                    if (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L) {
+                                                    if (!isFirstPlace && (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L)) {
                                                         val legKm = item.legDistanceMeters / 1000.0
                                                         val legTimeStr = formatDurationShort(item.legDurationMs)
                                                         Text(
@@ -12903,27 +12937,37 @@ private fun TimePickerSimpleDialog(
 }
 
 @Composable
-private fun ElevationStatChip(label: String, color: Color) {
+private fun ElevationStatChip(label: String, color: Color, modifier: Modifier = Modifier) {
     Surface(
+        modifier = modifier,
         shape = RoundedCornerShape(6.dp),
         color = Color(0xFF0F172A),
         border = BorderStroke(1.dp, Color(0xFF334155))
     ) {
-        Text(
-            text = label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-            style = TextStyle(
-                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                lineHeightStyle = LineHeightStyle(
-                    alignment = LineHeightStyle.Alignment.Center,
-                    trim = LineHeightStyle.Trim.Both
-                ),
-                lineHeight = 11.sp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    ),
+                    lineHeight = 11.sp
+                )
             )
-        )
+        }
     }
 }
 
@@ -13227,6 +13271,39 @@ private fun LiveViewsDetailsDialog(
                 .padding(horizontal = 16.dp, vertical = 24.dp)
                 .heightIn(max = 660.dp)
         ) {
+            val allVisitors = remember(guests, viewEvents) {
+                val list = guests.toMutableList()
+                val existingIds = list.map { it.id }.toMutableSet()
+                val existingNames = list.map { it.name.lowercase(Locale.ROOT) }.toMutableSet()
+
+                val grouped = viewEvents.groupBy { it.guestId.ifBlank { it.guestName } }
+                grouped.forEach { (key, events) ->
+                    if (key.isNotBlank()) {
+                        val sample = events.first()
+                        val name = sample.guestName.ifBlank { "Guest ${list.size + 1}" }
+                        if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
+                            val maxTime = events.maxOfOrNull { it.timestamp } ?: sample.timestamp
+                            val synth = LiveGuest(
+                                id = key,
+                                name = name,
+                                lat = sample.lat ?: 0.0,
+                                lng = sample.lng ?: 0.0,
+                                accuracy = sample.accuracy,
+                                lastUpdated = maxTime,
+                                colorIndex = kotlin.math.abs(key.hashCode()) % 8,
+                                rawIsInactive = true,
+                                firstSeen = events.minOfOrNull { it.timestamp } ?: sample.timestamp,
+                                viewCount = events.size
+                            )
+                            list.add(synth)
+                            existingIds.add(key)
+                            existingNames.add(name.lowercase(Locale.ROOT))
+                        }
+                    }
+                }
+                list
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -13251,7 +13328,7 @@ private fun LiveViewsDetailsDialog(
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${session.viewCount} total views • ${guests.size} visitors",
+                            text = "${session.viewCount} total views • ${allVisitors.size} visitors",
                             fontSize = 12.sp,
                             color = Color(0xFF94A3B8)
                         )
@@ -13321,7 +13398,7 @@ private fun LiveViewsDetailsDialog(
                         ) {
                             Text("VISITORS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, softWrap = false)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("${guests.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), maxLines = 1, softWrap = false)
+                            Text("${allVisitors.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), maxLines = 1, softWrap = false)
                         }
                         Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
                         // Last Activity
@@ -13372,7 +13449,7 @@ private fun LiveViewsDetailsDialog(
                             EmojiText(emoji = "👥", fontSize = 12.sp, yOffsetDp = 0.dp)
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Visitors (${guests.size})",
+                                text = "Visitors (${allVisitors.size})",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
@@ -13414,7 +13491,7 @@ private fun LiveViewsDetailsDialog(
 
                 if (selectedTab == 0) {
                     // ── Tab 0: Grouped Unique Visitors ───────────────────────
-                    if (guests.isEmpty()) {
+                    if (allVisitors.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -13441,7 +13518,7 @@ private fun LiveViewsDetailsDialog(
                             }
                         }
                     } else {
-                        val sortedGuests = remember(guests) { guests.sortedByDescending { it.lastUpdated } }
+                        val sortedGuests = remember(allVisitors) { allVisitors.sortedByDescending { it.lastUpdated } }
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()

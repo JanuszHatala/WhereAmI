@@ -378,8 +378,34 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 2. At 15s with physical stationary surface detected: abort immediately
+        // 2. For non-car profile at 15s with physical stationary surface detected: abort immediately
         assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 0.0,
+                isPhysicallyStationary = true,
+                isCarProfile = false
+            )
+        )
+
+        // 3. For non-car profile at 15s with slow walking / drift (0.4 m/s, displacement 4m) without accelerometer stationary: abort
+        assertTrue(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.4f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 4.0,
+                isPhysicallyStationary = false,
+                isCarProfile = false
+            )
+        )
+
+        // 4. For CAR profile at 15s stationary (buckling seatbelt / starting engine): DO NOT abort early before 35s
+        assertFalse(
             AppStateManager.shouldEarlyAbortBurst(
                 elapsedMs = 15_000L,
                 minDurationMs = minDuration,
@@ -391,20 +417,7 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 3. At 15s with slow walking / drift (0.4 m/s, displacement 4m) without accelerometer stationary: abort
-        assertTrue(
-            AppStateManager.shouldEarlyAbortBurst(
-                elapsedMs = 15_000L,
-                minDurationMs = minDuration,
-                currentSpeedMs = 0.4f,
-                targetCandidateSpeedMs = targetCandidateSpeedMs,
-                displacementMeters = 4.0,
-                isPhysicallyStationary = false,
-                isCarProfile = true
-            )
-        )
-
-        // 4. At 15s with true vehicle movement (speed 8 m/s = 28.8 km/h): DO NOT ABORT
+        // 5. At 15s with true vehicle movement (speed 8 m/s = 28.8 km/h): DO NOT ABORT
         assertFalse(
             AppStateManager.shouldEarlyAbortBurst(
                 elapsedMs = 15_000L,
@@ -417,10 +430,10 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 5. At 15s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 12.5m < 15m): abort immediately at 15s (Option B1)
+        // 6. At 35s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 12.5m < 25m): abort
         assertTrue(
             AppStateManager.shouldEarlyAbortBurst(
-                elapsedMs = 15_000L,
+                elapsedMs = 35_000L,
                 minDurationMs = minDuration,
                 currentSpeedMs = 1.4f,
                 targetCandidateSpeedMs = targetCandidateSpeedMs,
@@ -430,36 +443,23 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 6. At 15s for CAR profile with slow pull-out (1.8 m/s = 6.5 km/h, disp 18m >= 15m): DO NOT abort at 15s
-        assertFalse(
-            AppStateManager.shouldEarlyAbortBurst(
-                elapsedMs = 15_000L,
-                minDurationMs = minDuration,
-                currentSpeedMs = 1.8f,
-                targetCandidateSpeedMs = targetCandidateSpeedMs,
-                displacementMeters = 18.0,
-                isPhysicallyStationary = false,
-                isCarProfile = true
-            )
-        )
-
-        // 7. At 25s for CAR profile with human walking speed (1.4 m/s = 5 km/h, disp 20m < 25m): abort
+        // 7. At 35s for CAR profile with slow pull-out but stationary: abort
         assertTrue(
             AppStateManager.shouldEarlyAbortBurst(
-                elapsedMs = 25_000L,
+                elapsedMs = 35_000L,
                 minDurationMs = minDuration,
-                currentSpeedMs = 1.4f,
+                currentSpeedMs = 0.0f,
                 targetCandidateSpeedMs = targetCandidateSpeedMs,
-                displacementMeters = 20.0,
-                isPhysicallyStationary = false,
+                displacementMeters = 5.0,
+                isPhysicallyStationary = true,
                 isCarProfile = true
             )
         )
 
-        // 8. At 25s for CAR profile with fast driving (12 m/s = 43 km/h): DO NOT ABORT
+        // 8. At 35s for CAR profile with fast driving (12 m/s = 43 km/h): DO NOT ABORT
         assertFalse(
             AppStateManager.shouldEarlyAbortBurst(
-                elapsedMs = 25_000L,
+                elapsedMs = 35_000L,
                 minDurationMs = minDuration,
                 currentSpeedMs = 12.0f,
                 targetCandidateSpeedMs = targetCandidateSpeedMs,

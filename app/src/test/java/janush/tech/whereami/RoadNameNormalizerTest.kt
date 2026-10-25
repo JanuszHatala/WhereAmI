@@ -170,5 +170,13 @@ class RoadNameNormalizerTest {
         assertEquals(null, RoadNameNormalizer.wayRef(null, "Bielska" to "52"))
         assertEquals(null, RoadNameNormalizer.wayRef("Bielska", null))
     }
+
+    @Test
+    fun testFormatStreetDisplayWithHouseNumber() {
+        assertEquals("ul. Zielona 92", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = true))
+        assertEquals("ul. Zielona", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = false))
+        assertEquals("DK52", RoadNameNormalizer.formatStreetDisplay("DK52", "52", "PL", allowHouseNumber = true))
+        assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska (DK52)", null, "PL", allowHouseNumber = true))
+    }
 }
 

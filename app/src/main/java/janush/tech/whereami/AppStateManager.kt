@@ -150,18 +150,19 @@ class AppStateManager private constructor(private val context: Context) {
             isPhysicallyStationary: Boolean,
             isCarProfile: Boolean = false
         ): Boolean {
-            if (elapsedMs < minDurationMs) return false
+            val effectiveMinDuration = if (isCarProfile) 35_000L else minDurationMs
+            if (elapsedMs < effectiveMinDuration) return false
             if (currentSpeedMs >= targetCandidateSpeedMs) return false
             val isSpeedStationary = currentSpeedMs < 1.0f // < 3.6 km/h
             val isNoDisplacement = displacementMeters < 12.0
-            if (isPhysicallyStationary || (isSpeedStationary && isNoDisplacement)) {
+            if (!isCarProfile && (isPhysicallyStationary || (isSpeedStationary && isNoDisplacement))) {
                 return true
             }
             if (isCarProfile && currentSpeedMs < 2.0f) {
                 if (displacementMeters < 15.0) {
                     return true
                 }
-                if (elapsedMs >= 25_000L && displacementMeters < 25.0) {
+                if (elapsedMs >= 45_000L && displacementMeters < 25.0) {
                     return true
                 }
             }
@@ -278,6 +279,16 @@ class AppStateManager private constructor(private val context: Context) {
         prefs.edit().putString(KEY_POWER_POLICY, policy.name).apply()
         TelemetryLogger.log("POWER", "Battery power policy set to: ${policy.name}")
         recalculateState()
+    }
+
+    fun onProfileChanged(profile: ActivityProfile) {
+        consecutiveFalseBursts = 0
+        motionRearmJob?.cancel()
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "PROFILE_CHANGED",
+            mapOf("newProfile" to profile.name)
+        )
+        TelemetryLogger.log("POWER", "ActivityProfile changed to ${profile.displayName}: cleared burst backoff streak")
     }
 
     fun enterStandbySleep(isManual: Boolean = false) {
@@ -418,11 +429,10 @@ class AppStateManager private constructor(private val context: Context) {
             janush.tech.whereami.tracking.PostTripMatcher.schedule(context)
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
-            // AGENTS.md: standby sleep wakes on app resume (MainActivity.onStart) for 90m inactivity hibernation.
-            // Do NOT wake if the user manually entered sleep, or if currently inside the Bedtime/DND sleep window.
+            // Standby sleep wakes on app resume (MainActivity.onStart) if outside Bedtime/DND sleep window
             val autoSleepMgr = AutoSleepManager.getInstance(context)
             val isBedtimeOrDnd = autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()
-            if (_isStandbySleeping.value && !autoSleepMgr.isManualSleepActive() && !isBedtimeOrDnd) {
+            if (_isStandbySleeping.value && !isBedtimeOrDnd) {
                 wakeStandbySleep(isExplicitUserAction = false)
             } else if (!_isStandbySleeping.value) {
                 autoSleepMgr.checkAndRecoverAutoPausedLiveShare()
@@ -581,6 +591,10 @@ class AppStateManager private constructor(private val context: Context) {
         val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
 
         TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "MOTION_BURST_START",
+            mapOf("profile" to profile.name, "durationMs" to burstDurationMs)
+        )
 
         // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
         LocationManager.getInstance(context).resetTracking()

@@ -11,8 +11,8 @@ android {
         applicationId = "janush.tech.whereami"
         minSdk = 24
         targetSdk = 36
-        versionCode = 151
-        versionName = "1.18.20"
+        versionCode = 152
+        versionName = "1.18.21"
     }
 
     buildTypes {

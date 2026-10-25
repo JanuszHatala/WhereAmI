@@ -174,10 +174,13 @@ class AutoSleepManager private constructor(private val context: Context) {
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
 
-            // Manually entered sleep persists until explicit user wake or morning alarm
+            // Manually entered sleep persists until explicit user wake, morning alarm, or morning window exit
             if (isManualSleep) {
                 // If user set alarm and alarm fired in morning, wake even manual sleep
-                return isAlarmFired && isMorning
+                if (isAlarmFired && isMorning) return true
+                // Disjunctive morning wake: outside sleep window in morning exits manual sleep too
+                if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive)) return true
+                return false
             }
 
             // Morning alarm fired (Sync with Morning Alarm): wake whenever the alarm rings
@@ -188,9 +191,8 @@ class AutoSleepManager private constructor(private val context: Context) {
             if (followDnd && wasDndActiveInSession && !isDndActive && isMorning) return true
 
             // Bedtime window completely ended and DND is not holding it.
-            // Guard with wasInBedtimeWindowDuringSleep so daytime 90-minute inactivity hibernation
-            // (entered outside the bedtime window) does not falsely auto-wake on background broadcasts.
             if (wasInBedtimeWindowDuringSleep && !isTimeInWindow && (!followDnd || !isDndActive)) return true
+            if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive)) return true
 
             return false
         }

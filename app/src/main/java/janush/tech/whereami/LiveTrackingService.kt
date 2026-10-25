@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -62,6 +63,7 @@ class LiveTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.init(applicationContext)
         locationManager = LocationManager.getInstance(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
@@ -487,6 +489,9 @@ class LiveTrackingService : Service() {
             else -> "WhereAmI Tracking"
         }
 
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val isScreenOff = pm?.isInteractive == false
+
         val text = when {
             !overrideText.isNullOrBlank() -> overrideText
             isSleeping && isLiveActive && isAuto -> {
@@ -507,15 +512,27 @@ class LiveTrackingService : Service() {
                     else -> ""
                 }
                 val timeTag = if (isLiveActive) " • ${liveSession.getFormattedRemaining()}" else ""
-                String.format(
-                    java.util.Locale.getDefault(),
-                    "%s • %.1f km (%.1f km/h)%s%s",
-                    lastPlaceName,
-                    distKm,
-                    lastSpeedKmh,
-                    statusTag,
-                    timeTag
-                )
+                if (isScreenOff) {
+                    // Omit fluctuating speed when screen is off to prevent NotificationManagerService:post wakelocks
+                    String.format(
+                        java.util.Locale.getDefault(),
+                        "%s • %.1f km%s%s",
+                        lastPlaceName,
+                        distKm,
+                        statusTag,
+                        timeTag
+                    )
+                } else {
+                    String.format(
+                        java.util.Locale.getDefault(),
+                        "%s • %.1f km (%.1f km/h)%s%s",
+                        lastPlaceName,
+                        distKm,
+                        lastSpeedKmh,
+                        statusTag,
+                        timeTag
+                    )
+                }
             }
             isLiveActive -> {
                 val pauseTag = if (liveSession.isPaused) " [PAUSED]" else ""
@@ -553,8 +570,9 @@ class LiveTrackingService : Service() {
 
         val now = SystemClock.elapsedRealtime()
         val contentChanged = title != lastNotificationTitle || text != lastNotificationText
-        val timeElapsed = (now - lastNotificationPostTime) >= 10_000L
-        val minForceElapsed = (now - lastNotificationPostTime) >= 3_000L
+        val notificationThrottleMs = if (isScreenOff) 60_000L else 10_000L
+        val timeElapsed = (now - lastNotificationPostTime) >= notificationThrottleMs
+        val minForceElapsed = (now - lastNotificationPostTime) >= (if (isScreenOff) 15_000L else 3_000L)
 
         if ((force && minForceElapsed) || (contentChanged && timeElapsed)) {
             val notification = buildNotification(title, text)

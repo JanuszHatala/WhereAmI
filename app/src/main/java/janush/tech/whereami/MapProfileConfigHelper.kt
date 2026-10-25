@@ -6,7 +6,8 @@ data class ProfileMapConfig(
     val baseLayer: MapBaseLayer,
     val orientationMode: MapOrientationMode,
     val showHikingOverlay: Boolean,
-    val fontScale: MapFontScale
+    val fontScale: MapFontScale,
+    val trackColorHex: String = "#EF4444"
 )
 
 object MapProfileConfigHelper {
@@ -17,37 +18,43 @@ object MapProfileConfigHelper {
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = false,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#38BDF8"
         )
         ActivityProfile.CYCLING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = false,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#06B6D4"
         )
         ActivityProfile.MTB -> ProfileMapConfig(
             baseLayer = MapBaseLayer.FREEMAP_OUTDOOR,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = true,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#10B981"
         )
         ActivityProfile.HIKING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.FREEMAP_OUTDOOR,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = true,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#F59E0B"
         )
         ActivityProfile.RUNNING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.NORTH,
             showHikingOverlay = false,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#EC4899"
         )
         ActivityProfile.WALKING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.NORTH,
             showHikingOverlay = false,
-            fontScale = MapFontScale.NORMAL
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#8B5CF6"
         )
     }
 
@@ -61,6 +68,7 @@ object MapProfileConfigHelper {
             prefs.getBoolean("profile_${profile.name}_hiking_overlay", default.showHikingOverlay)
         } else default.showHikingOverlay
         val fontScaleName = prefs.getString("profile_${profile.name}_font_scale", null)
+        val trackColorHex = prefs.getString("profile_${profile.name}_track_color", null) ?: default.trackColorHex
 
         val baseLayer = baseLayerName?.let {
             try { MapBaseLayer.valueOf(it) } catch (_: Exception) { null }
@@ -74,7 +82,7 @@ object MapProfileConfigHelper {
             try { MapFontScale.valueOf(it) } catch (_: Exception) { null }
         } ?: default.fontScale
 
-        return ProfileMapConfig(baseLayer, orientation, hikingOverlay, fontScale)
+        return ProfileMapConfig(baseLayer, orientation, hikingOverlay, fontScale, trackColorHex)
     }
 
     fun setBaseLayer(context: Context, profile: ActivityProfile, layer: MapBaseLayer) {
@@ -97,6 +105,11 @@ object MapProfileConfigHelper {
         prefs.edit().putString("profile_${profile.name}_font_scale", scale.name).apply()
     }
 
+    fun setTrackColor(context: Context, profile: ActivityProfile, colorHex: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_${profile.name}_track_color", colorHex).apply()
+    }
+
     fun resetProfileDefaults(context: Context, profile: ActivityProfile) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
@@ -104,6 +117,7 @@ object MapProfileConfigHelper {
             .remove("profile_${profile.name}_orientation_mode")
             .remove("profile_${profile.name}_hiking_overlay")
             .remove("profile_${profile.name}_font_scale")
+            .remove("profile_${profile.name}_track_color")
             .apply()
     }
 

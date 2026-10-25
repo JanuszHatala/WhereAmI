@@ -78,14 +78,19 @@ object RoadNameNormalizer {
      * Single line for the locality card / Auto. Never joins a local name with a bare ref via " • "
      * (that produced "Krakowska • 52" instead of "Krakowska (DK52)" or "DK52").
      */
-    fun formatStreetDisplay(street: String?, roadRef: String?, countryCode: String? = "PL"): String? {
+    fun formatStreetDisplay(
+        street: String?,
+        roadRef: String?,
+        countryCode: String? = "PL",
+        allowHouseNumber: Boolean = false
+    ): String? {
         val s = street?.trim()?.takeIf { it.isNotEmpty() }
         val r = roadRef?.trim()?.takeIf { it.isNotEmpty() }
         if (s != null && PAREN_HIGHWAY_REF.containsMatchIn(s)) return s
         if (s != null && isHighwayCodeOnly(s)) {
             return normalize(null, r ?: s, null, includeHouseNumber = false, countryCode = countryCode) ?: s
         }
-        return normalize(s, r, null, includeHouseNumber = false, countryCode = countryCode)
+        return normalize(s, r, null, includeHouseNumber = allowHouseNumber, countryCode = countryCode)
             ?: s
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
@@ -271,7 +276,7 @@ object RoadNameNormalizer {
     ): Boolean {
         if (isMajorRoad) return false
         val speed = speedKmh ?: 0f
-        val accuracy = accuracyMeters ?: Float.MAX_VALUE
+        val accuracy = accuracyMeters ?: 999.0f
         return speed < 15.0f && accuracy <= 20.0f
     }
 
