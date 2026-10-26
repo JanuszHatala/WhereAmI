@@ -12,7 +12,49 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  test:
+    name: Run Server Tests Before Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_DB: whereami_test
+          POSTGRES_USER: whereami
+          POSTGRES_PASSWORD: whereami_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        working-directory: ./server
+        run: npm ci
+
+      - name: Run server test suite
+        working-directory: ./server
+        env:
+          TEST_DATABASE_URL: postgres://whereami:whereami_test_password@localhost:5432/whereami_test
+        run: npm test
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

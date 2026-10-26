@@ -1,12 +1,36 @@
-version: "3.8"
 services:
-  whereami-live:
+  app:
     build: .
     container_name: whereami-live
     restart: unless-stopped
     ports:
       - "3003:3003"
-    volumes:
-      - ./data:/app/data
     environment:
       - PORT=3003
+      - DATABASE_URL=postgres://whereami:whereami@db:5432/whereami
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgis/postgis:17-3.5
+    platform: linux/amd64
+    container_name: whereami-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=whereami
+      - POSTGRES_USER=whereami
+      - POSTGRES_PASSWORD=whereami
+      - TZ=Europe/Warsaw
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whereami -d whereami"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

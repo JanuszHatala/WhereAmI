@@ -1,115 +1,84 @@
 # WhereAmI - Live Location Sharing Server
 
-Lightweight, self-hosted Node.js / Alpine live location tracking server with interactive OpenStreetMap (Leaflet) web viewer.
+Self-hosted Node.js live location tracking server backed by PostgreSQL 17 + PostGIS with Leaflet web viewer.
 
-Designed to run seamlessly as a Docker container on **Synology NAS (Container Manager)**, Linux VPS, or local developer workstations.
+Runs on **Synology NAS (Container Manager)**, Linux VPS, or developer machines.
 
 ---
 
 ## Features
 
 - **Port 3003**: Runs on port 3003 by default.
+- **PostgreSQL 17 + PostGIS**: Normalized storage for sessions, segmented points (with geography Point), guest viewers, and view events.
 - **Clean URLs**: Clean viewer endpoint at `/live/:id` (e.g. `https://my-nas.synology.me:3003/live/hike-7k9x2p`).
 - **REST Telemetry API**:
-  - `POST /api/sessions/:id/update`: Upload GPS fix, speed, altitude, battery, places visited, and mountain peaks.
-  - `GET /api/sessions/:id`: Retrieve live session metadata and full telemetry history.
-  - `POST /api/sessions/:id/status`: Toggle `isPaused` state.
+  - `POST /api/sessions/:id`: Initialize/update session metadata; returns `writeToken`.
+  - `POST /api/sessions/:id/points`: Append GPS fix, speed, altitude, battery, places visited.
+  - `GET /api/sessions/:id`: Retrieve live session metadata and telemetry history.
+  - `POST /api/sessions/:id/status`: Toggle pause states.
   - `POST /api/sessions/:id/extend`: Extend session expiration by `+N` hours.
-  - `POST /api/sessions/:id/end`: Terminate sharing and mark session as ended.
-- **Disk Persistence**: Session records are persisted to `./sessions.json` so active sessions survive container restarts.
-- **Informative Status States**:
-  - `LIVE`: Green live tracking badge with pulsing marker, auto-centering, and remaining duration countdown (`⏳ 5h 22m left`).
-  - `PAUSED`: Amber banner explaining the host has paused sharing.
-  - `ENDED`: Red banner displaying final hike summary (distance, places visited, mountain peaks) rather than a 404 error page.
+  - `POST /api/sessions/:id/end`: Terminate sharing.
+- **Nightly Logical Backups**: Automated dump sidecar via `prodrigestivill/postgres-backup-local:17` with 7 daily, 4 weekly, and 6 monthly rotations.
 
 ---
 
 ## 1. Quick Start (Local Development)
 
 ```bash
-# Enter server directory
 cd server
-
-# Install dependencies
 npm install
-
-# Run locally on port 3003
+docker compose up -d db
+npm test
 npm start
 ```
 
 Viewer is available at: `http://localhost:3003/live/<session-id>`  
 Health check: `http://localhost:3003/health`
 
-> **Note**: For step-by-step instructions on connecting a physical Android device via USB and testing live sharing end-to-end with this Docker server, see [`../docs/LOCAL_TESTING_GUIDE.md`](../docs/LOCAL_TESTING_GUIDE.md).
-
 ---
 
-## 2. Docker & Docker Compose
+## 2. Docker Compose (Local Stack)
 
-### Using Docker Compose (Recommended)
-
-Run from the `server` directory:
+Run from `server/`:
 
 ```bash
 docker compose up -d --build
 ```
 
-`docker-compose.yml`:
-```yaml
-version: "3.8"
-services:
-  whereami-live:
-    build: .
-    container_name: whereami-live
-    restart: unless-stopped
-    ports:
-      - "3003:3003"
-    environment:
-      - PORT=3003
-    volumes:
-      - ./sessions.json:/app/sessions.json
-```
-
-### Manual Docker Build
-
-```bash
-docker build -t whereami-live:latest .
-docker run -d --name whereami-live -p 3003:3003 --restart unless-stopped whereami-live:latest
-```
-
 ---
 
-## 3. Synology NAS Deployment (Container Manager)
+## 3. Production Deployment (Synology NAS)
 
-1. **Open Container Manager** on DSM (DSM 7.2+).
-2. **Create Project**:
-   - Go to **Project** -> **Create**.
-   - Project Name: `whereami-live`
-   - Path: Choose a folder in `/docker/whereami-live` (upload `server/` files or use `docker-compose.yml`).
-   - Source: Upload `docker-compose.yml`.
-3. **Port Settings**:
-   - Local Port: `3003` -> Container Port: `3003`.
-4. **Reverse Proxy (HTTPS & Custom Domain)**:
-   - Go to Synology **Control Panel** -> **Login Portal** -> **Advanced** -> **Reverse Proxy**.
-   - Click **Create**:
-     - Source: Protocol `HTTPS`, Hostname: `live.yourdomain.com` (or `your-nas.synology.me`), Port: `443`
-     - Destination: Protocol `HTTP`, Hostname: `localhost`, Port: `3003`
-   - Under **Custom Header**, ensure WebSocket support is enabled if needed.
-   - Assign your Let's Encrypt SSL certificate in **Security** -> **Certificate**.
-5. **Phone Configuration**:
-   - In WhereAmI mobile app: Settings -> **Live Location Sharing**.
-   - Provider: **Synology NAS**.
-   - Server URL: `https://live.yourdomain.com` (or `http://<nas-ip>:3003`).
+### Architecture
+- `app`: Node.js 20 service on port 3003 (updated automatically by Watchtower).
+- `db`: PostgreSQL 17 + PostGIS (`postgis/postgis:17-3.5`), pinned, internal network only.
+- `db-backup`: Logical backups container writing to `/volume1/docker/whereami/backups`.
+- `watchtower`: Auto-updates only `app`.
 
----
-
-## 4. Local Testing with Phone via USB (ADB Reverse)
-
-When testing locally without deploying to a public server:
-1. Connect your Android phone to your PC via USB with USB Debugging enabled.
-2. Run port forwarding:
+### Pre-Deployment Steps on Synology NAS
+1. SSH into Synology NAS:
    ```bash
-   adb reverse tcp:3003 tcp:3003
+   sudo mkdir -p /volume1/docker/whereami/postgres /volume1/docker/whereami/backups
+   sudo chown -R 999:999 /volume1/docker/whereami/backups
    ```
-3. In WhereAmI mobile app, select **Local Test Server** provider. The app will communicate with `http://127.0.0.1:3003`, which forwards directly to port 3003 on your PC.
-4. On your PC browser, open `http://localhost:3003/live/<session-slug>`.
+2. Generate secure password for PostgreSQL:
+   ```bash
+   openssl rand -base64 32 | tr -d '/+='
+   ```
+3. Update `.env` in the Container Manager project folder:
+   ```env
+   POSTGRES_PASSWORD=<generated_password>
+   ```
+4. Configure Synology Hyper Backup:
+   - Select `/volume1/docker/whereami/backups` as source folder.
+   - Do NOT backup active `/volume1/docker/whereami/postgres` directory directly to avoid database inconsistency.
+
+### Backup & Restore Runbook
+- **Create manual backup now**:
+  ```bash
+  docker exec -it whereami-db-backup /backup.sh
+  ```
+- **Restore database from dump**:
+  ```bash
+  gunzip -c /volume1/docker/whereami/backups/daily/whereami-YYYY-MM-DD.sql.gz | docker exec -i whereami-db psql -U whereami -d whereami
+  ```
