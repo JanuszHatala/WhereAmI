@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-concurrency=1 'test/**/*.test.js' guestNaming.test.js",
+    "test": "node --test --test-concurrency=1 test/liveSessionRepository.test.js test/api.test.js guestNaming.test.js",
     "migrate": "node-pg-migrate -m migrations"
   },
   "dependencies": {
