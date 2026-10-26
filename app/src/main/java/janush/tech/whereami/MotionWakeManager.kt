@@ -51,12 +51,6 @@ class MotionWakeManager private constructor(private val context: Context) {
             _motionEvents.tryEmit(Unit)
 
             try {
-                AppStateManager.getInstance(context).handleMotionWake()
-            } catch (e: Exception) {
-                TelemetryLogger.log("ERROR", "handleMotionWake error: ${e.message}")
-            }
-
-            try {
                 onMotionTriggeredCallback?.invoke()
             } catch (e: Exception) {
                 TelemetryLogger.log("ERROR", "MotionWakeManager callback error: ${e.message}")

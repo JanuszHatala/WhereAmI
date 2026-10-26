@@ -446,5 +446,65 @@ class AutoSleepManagerTest {
             "Morning alarm firing must wake sleep immediately during morning window",
             shouldWakeOnAlarm
         )
+
+        // Upcoming morning alarm holds sleep even after bedtime window ended
+        val shouldHoldSleepUntilAlarm = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = true
+        )
+        assertFalse(
+            "Upcoming morning alarm must hold sleep mode even if bedtime window ended",
+            shouldHoldSleepUntilAlarm
+        )
+    }
+
+    @Test
+    fun testHasUpcomingMorningAlarm() {
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 6)
+            set(java.util.Calendar.MINUTE, 30)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val nowMs = cal.timeInMillis
+
+        // Alarm 1 hour later at 07:30 today
+        val alarmCal = (cal.clone() as java.util.Calendar).apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 7)
+            set(java.util.Calendar.MINUTE, 30)
+        }
+        assertTrue(
+            "Alarm at 07:30 must qualify as upcoming morning alarm",
+            AutoSleepManager.hasUpcomingMorningAlarm(nowMs, alarmCal.timeInMillis)
+        )
+
+        // Alarm at 14:00 (afternoon) does not qualify
+        val afternoonAlarm = (cal.clone() as java.util.Calendar).apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 14)
+            set(java.util.Calendar.MINUTE, 0)
+        }
+        assertFalse(
+            "Alarm at 14:00 afternoon must not qualify as morning alarm",
+            AutoSleepManager.hasUpcomingMorningAlarm(nowMs, afternoonAlarm.timeInMillis)
+        )
+
+        // Alarm tomorrow morning (+24h) does not qualify
+        val tomorrowAlarm = (cal.clone() as java.util.Calendar).apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 7)
+        }
+        assertFalse(
+            "Alarm tomorrow must not qualify for today's morning wake",
+            AutoSleepManager.hasUpcomingMorningAlarm(nowMs, tomorrowAlarm.timeInMillis)
+        )
     }
 }
