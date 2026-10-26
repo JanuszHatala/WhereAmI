@@ -1534,3 +1534,18 @@ Evidence & Root Cause Diagnostics:
 | **UI116-08** | House numbers, elevation chip wrapping, spiderfy guest markers & web viewer bearing. | `RoadNameNormalizer.kt`, `MainActivity.kt`, `OsmMapView.kt`, `server/public/index.html` | Implemented | Preserved house numbers on residential streets; 2x2 responsive elevation grid; 18m spiderfy fan-out; compass button reflects Map North |
 | **VER-116** | versionCode 152 / 1.18.21 | `build.gradle.kts`, `BatteryOptimizationAndAutoStartTest.kt`, `LiveGuestTest.kt`, `RoadNameNormalizerTest.kt`, `AutoSleepManagerTest.kt` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |
 
+## 119. Round 117: Overnight Sleep Extension to Morning Alarm & Motion Wake Deduplication (2026-10-26, v1.18.22)
+
+Evidence & Field Diagnostics:
+- **Overnight Oct 25-26 Drain**: App drain dropped 99.25% from 500 mAh to 3.74 mAh (0.4% of total device discharge). Zero GPS/wakelocks during 21:30-06:30 sleep window.
+- **Morning Standby Burst**: Bedtime window ended at 06:30 while morning alarm was set to 07:30. At 06:43, phone movement on the nightstand triggered a false CAR confirmation burst (1m 42s GNSS, 21s wakelock, 1.20 mAh drain).
+- **Duplicate Motion Wake Trigger**: `MotionWakeManager.onTrigger` called both `_motionEvents.tryEmit(Unit)` and `AppStateManager.handleMotionWake()` directly, executing redundant duplicate bursts 107ms apart.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **PWR117-01** | Eliminate duplicate motion burst dispatch. | `MotionWakeManager.kt` | Implemented | Removed redundant direct `handleMotionWake()` call in trigger listener; rely strictly on `_motionEvents` StateFlow |
+| **PWR117-02** | Extend Auto-Sleep to morning alarm when scheduled. | `AutoSleepManager.kt`, `AutoSleepManagerTest.kt` | Implemented | Added `hasUpcomingMorningAlarm`; holds sleep mode between bedtime window end and morning alarm ring |
+| **DIAG117-03** | Structured lifecycle logging for burst abort and termination. | `AppStateManager.kt` | Implemented | Added `MOTION_BURST_ABORT` and `MOTION_BURST_END` structured events |
+| **VER-117** | versionCode 153 / 1.18.22 | `build.gradle.kts`, `AutoSleepManagerTest.kt` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |
+
+

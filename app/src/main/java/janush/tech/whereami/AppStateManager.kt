@@ -671,6 +671,15 @@ class AppStateManager private constructor(private val context: Context) {
                         )
                     ) {
                         earlyAborted = true
+                        janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+                            "MOTION_BURST_ABORT",
+                            mapOf(
+                                "elapsedMs" to elapsedMs,
+                                "speedKmh" to (currentSpeed * 3.6f),
+                                "displacementM" to displacementMeters,
+                                "stationary" to isPhysicalStationary
+                            )
+                        )
                         TelemetryLogger.log(
                             "POWER",
                             "Motion burst early abort at ${elapsedMs / 1000}s: verified stationary/indoor (speed=${String.format(java.util.Locale.US, "%.1f", currentSpeed * 3.6f)} km/h, disp=${String.format(java.util.Locale.US, "%.1f", displacementMeters)}m, stationary=$isPhysicalStationary). Powering down GPS."
@@ -680,6 +689,14 @@ class AppStateManager private constructor(private val context: Context) {
                 }
             } finally {
                 collectorJob.cancel()
+                janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+                    "MOTION_BURST_END",
+                    mapOf(
+                        "earlyAborted" to earlyAborted,
+                        "tripActive" to (tripManager.activeTrip.value != null),
+                        "streak" to consecutiveFalseBursts
+                    )
+                )
                 if (motionBurstWakeLock?.isHeld == true) {
                     try {
                         motionBurstWakeLock?.release()
