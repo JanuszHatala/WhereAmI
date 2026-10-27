@@ -639,7 +639,8 @@ fun OsmMapView(
             currentSpeedKmh = currentSpeed,
             isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
             savedPlaces = savedPlaces,
-            destinationPoint = destinationPoint
+            destinationPoint = destinationPoint,
+            guestPoints = visibleGuests.map { it.geoPoint }
         )
         map.invalidate()
     }
@@ -674,6 +675,7 @@ fun OsmMapView(
     val latestSavedPlaces by rememberUpdatedState(savedPlaces)
     val latestShowAltitudeOnMap by rememberUpdatedState(showAltitudeOnMap)
     val latestFontScale by rememberUpdatedState(fontScale)
+    val latestVisibleGuests by rememberUpdatedState(visibleGuests)
     val tripManagerRef = remember(context) { TripManager.getInstance(context) }
     val pencilTrail = remember { PencilTrail() }
     val motionCourse = remember { MotionCourse() }
@@ -705,9 +707,17 @@ fun OsmMapView(
         baseLayer = config.baseLayer
         showHikingOverlay = config.showHikingOverlay
         fontScale = config.fontScale
+        trackColorHex = config.trackColorHex
         if (orientationMode != config.orientationMode) {
             onOrientationModeChange?.invoke(config.orientationMode)
         }
+    }
+
+    LaunchedEffect(trackColorHex, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+        polyline?.outlinePaint?.color = trackColor
+        map.invalidate()
     }
 
     // Dynamic Label / Font Scale
@@ -956,7 +966,8 @@ fun OsmMapView(
                         currentSpeedKmh = frameSpeed,
                         isGpsMode = (latestAltitudeSourceMode == AltitudeSourceMode.GPS),
                         savedPlaces = latestSavedPlaces,
-                        destinationPoint = latestDestinationPoint
+                        destinationPoint = latestDestinationPoint,
+                        guestPoints = latestVisibleGuests.map { it.geoPoint }
                     )
 
                     // Course-up: filter / motion course only (see CourseUpHeading). Never compass or path tangent.
@@ -1275,8 +1286,10 @@ fun OsmMapView(
         }
 
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
+        val hostGp = marker?.position ?: latLng?.let { GeoPoint(it.first, it.second) }
+        val obstacleGps = savedPlaces.map { it.geoPoint }
 
-        val spiderfyPositions = computeSpiderfyOffsets(visibleGuests)
+        val spiderfyPositions = computeSpiderfyOffsets(visibleGuests, hostGp, obstacleGps)
 
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
@@ -1423,7 +1436,12 @@ fun OsmMapView(
         val newLines = mutableListOf<Polyline>()
         selectedTrips.forEachIndexed { index, trip ->
             if (trip.points.size >= 2) {
-                val colorHex = colors[index % colors.size]
+                val colorHex = if (selectedTrips.size == 1) {
+                    MapProfileConfigHelper.getConfig(context, trip.activityProfile).trackColorHex
+                } else {
+                    colors[index % colors.size]
+                }
+                val curvedPoints = LiveTrackLine.curved(trip.points)
                 val line = Polyline(map).apply {
                     outlinePaint.color = Color.parseColor(colorHex)
                     outlinePaint.strokeWidth = 8f
@@ -1431,7 +1449,7 @@ fun OsmMapView(
                     outlinePaint.strokeJoin = Paint.Join.ROUND
                     infoWindow = null
                     setOnClickListener { _, _, _ -> true }
-                    setPoints(trip.points)
+                    setPoints(curvedPoints)
                 }
                 addOverlayAboveTiles(map, line)
                 newLines.add(line)
@@ -2442,6 +2460,7 @@ fun OsmMapView(
                 baseLayer = cfg.baseLayer
                 showHikingOverlay = cfg.showHikingOverlay
                 fontScale = cfg.fontScale
+                trackColorHex = cfg.trackColorHex
                 currentOnOrientationChange?.invoke(cfg.orientationMode)
                 Toast.makeText(context, "Reset defaults for ${activityProfile.displayName}", Toast.LENGTH_SHORT).show()
             },
@@ -2451,8 +2470,14 @@ fun OsmMapView(
                 baseLayer = cfg.baseLayer
                 showHikingOverlay = cfg.showHikingOverlay
                 fontScale = cfg.fontScale
+                trackColorHex = cfg.trackColorHex
                 currentOnOrientationChange?.invoke(cfg.orientationMode)
                 Toast.makeText(context, "Reset all profile defaults", Toast.LENGTH_SHORT).show()
+            },
+            currentTrackColorHex = trackColorHex,
+            onTrackColorChange = { newColor ->
+                MapProfileConfigHelper.setTrackColor(context, activityProfile, newColor)
+                trackColorHex = newColor
             },
             onDismiss = {
                 showSettingsDialog = false
@@ -2490,6 +2515,8 @@ private fun MapSettingsDialog(
     onShowAltitudeToggle: (Boolean) -> Unit = {},
     currentAltitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
     onAltitudeSourceModeChange: (AltitudeSourceMode) -> Unit = {},
+    currentTrackColorHex: String = "#EF4444",
+    onTrackColorChange: (String) -> Unit = {},
     currentFontScale: MapFontScale,
     onFontScaleChange: (MapFontScale) -> Unit,
     currentOrientationMode: MapOrientationMode,
@@ -3099,6 +3126,59 @@ private fun MapSettingsDialog(
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
 
+            // Recording Track Color (per activity profile)
+            Text(
+                text = "Track Color (${activityProfile.displayName})",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+            val availableColors = listOf(
+                "#EF4444" to "Red",
+                "#F59E0B" to "Amber",
+                "#10B981" to "Emerald",
+                "#38BDF8" to "Sky Blue",
+                "#8B5CF6" to "Purple",
+                "#EC4899" to "Pink",
+                "#06B6D4" to "Cyan",
+                "#F97316" to "Orange"
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                availableColors.forEach { (colorHex, _) ->
+                    val isSelected = currentTrackColorHex.equals(colorHex, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(android.graphics.Color.parseColor(colorHex)))
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) ComposeColor.White else ComposeColor(0x55FFFFFF),
+                                shape = CircleShape
+                            )
+                            .clickable { onTrackColorChange(colorHex) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Selected",
+                                tint = ComposeColor.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
             // Profile Map Defaults & Reset Section
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3702,8 +3782,12 @@ internal fun makeGuestMarkerIcon(
     )
 }
 
-fun computeSpiderfyOffsets(guests: List<LiveGuest>): Map<String, GeoPoint> {
-    if (guests.size <= 1) return guests.associate { it.id to it.geoPoint }
+fun computeSpiderfyOffsets(
+    guests: List<LiveGuest>,
+    hostPos: GeoPoint? = null,
+    obstaclePoints: List<GeoPoint> = emptyList()
+): Map<String, GeoPoint> {
+    if (guests.isEmpty()) return emptyMap()
     val result = mutableMapOf<String, GeoPoint>()
     val visited = BooleanArray(guests.size)
     val clusterThresholdM = 25.0
@@ -3716,6 +3800,10 @@ fun computeSpiderfyOffsets(guests: List<LiveGuest>): Map<String, GeoPoint> {
                 Math.sin(dLng / 2.0) * Math.sin(dLng / 2.0)
         return 6371000.0 * 2.0 * Math.atan2(Math.sqrt(a), Math.sqrt(1.0 - a))
     }
+
+    val obstacles = mutableListOf<GeoPoint>()
+    hostPos?.let { obstacles.add(it) }
+    obstacles.addAll(obstaclePoints)
 
     for (i in guests.indices) {
         if (visited[i]) continue
@@ -3732,18 +3820,32 @@ fun computeSpiderfyOffsets(guests: List<LiveGuest>): Map<String, GeoPoint> {
             }
         }
 
-        if (cluster.size == 1) {
+        val centerLat = cluster.map { it.lat }.average()
+        val centerLng = cluster.map { it.lng }.average()
+        val mLat = 111132.0
+        val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(0.01)
+
+        val collidingObstacle = obstacles.firstOrNull { obs ->
+            distanceM(centerLat, centerLng, obs.latitude, obs.longitude) < clusterThresholdM
+        }
+
+        if (cluster.size == 1 && collidingObstacle == null) {
             result[cluster[0].id] = cluster[0].geoPoint
         } else {
-            val centerLat = cluster.map { it.lat }.average()
-            val centerLng = cluster.map { it.lng }.average()
             val k = cluster.size
-            val radiusM = 18.0
-            val mLat = 111132.0
-            val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(0.01)
+            val radiusM = 20.0
+            val baseAngle = if (collidingObstacle != null) {
+                val dLat = centerLat - collidingObstacle.latitude
+                val dLng = centerLng - collidingObstacle.longitude
+                if (kotlin.math.hypot(dLat, dLng) > 1e-7) {
+                    kotlin.math.atan2(dLat, dLng)
+                } else Math.PI / 4.0
+            } else {
+                -Math.PI / 2.0
+            }
 
             for (idx in 0 until k) {
-                val angle = (2.0 * Math.PI * idx / k) - (Math.PI / 2.0)
+                val angle = baseAngle + (2.0 * Math.PI * idx / k)
                 val offsetLat = (radiusM * kotlin.math.cos(angle)) / mLat
                 val offsetLng = (radiusM * kotlin.math.sin(angle)) / mLng
                 result[cluster[idx].id] = GeoPoint(centerLat + offsetLat, centerLng + offsetLng)

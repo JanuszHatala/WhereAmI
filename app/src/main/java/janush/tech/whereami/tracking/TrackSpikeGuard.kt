@@ -54,6 +54,16 @@ object TrackSpikeGuard {
     /** How many recent steps (before the candidate) establish the mean course. */
     const val LATERAL_COURSE_WINDOW = 4
 
+    fun gatesForProfile(profileName: String?): Pair<Double, Double> {
+        val upper = profileName?.uppercase(java.util.Locale.ROOT) ?: ""
+        return when {
+            upper.contains("WALK") || upper.contains("HIKE") -> Pair(15.0, 5.0)
+            upper.contains("RUN") -> Pair(20.0, 8.5)
+            upper.contains("CYCLE") || upper.contains("BIKE") || upper.contains("MTB") -> Pair(30.0, 20.0)
+            else -> Pair(MIN_JUMP_M, MAX_IMPLIED_MPS)
+        }
+    }
+
     fun isSpikeStep(
         prevLat: Double,
         prevLng: Double,
@@ -62,14 +72,16 @@ object TrackSpikeGuard {
         lng: Double,
         utcMs: Long,
         speedMps: Double,
-        isStationary: Boolean
+        isStationary: Boolean,
+        minJumpM: Double = MIN_JUMP_M,
+        maxImpliedMps: Double = MAX_IMPLIED_MPS
     ): Boolean {
         val d = distanceM(prevLat, prevLng, lat, lng)
-        if (d < MIN_JUMP_M) return false
+        if (d < minJumpM) return false
         val dtSec = (utcMs - prevUtcMs) / 1000.0
         val implied = if (dtSec > 0.05) d / dtSec else Double.POSITIVE_INFINITY
         val slowTeleport = speedMps < SLOW_MPS && implied > SLOW_MPS * 2.0
-        if (isStationary || slowTeleport || implied > MAX_IMPLIED_MPS) return true
+        if (isStationary || slowTeleport || implied > maxImpliedMps) return true
         // Long gap with a large teleport that covers far less than Doppler travel: nest snap-back
         // (trip 244: 59.6 m in 24 s at 7 m/s - expected ~168 m along-track).
         if (dtSec in 10.0..30.0 && speedMps > 0.5) {

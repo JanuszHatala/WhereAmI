@@ -331,9 +331,9 @@ class BatteryOptimizationAndAutoStartTest {
     fun testMotionBurstProgressiveCooldown() {
         assertEquals(0L, AppStateManager.computeBurstCooldownMs(0))
         assertEquals(60_000L, AppStateManager.computeBurstCooldownMs(1))
-        assertEquals(120_000L, AppStateManager.computeBurstCooldownMs(2))
-        assertEquals(180_000L, AppStateManager.computeBurstCooldownMs(3))
-        assertEquals(180_000L, AppStateManager.computeBurstCooldownMs(10))
+        assertEquals(180_000L, AppStateManager.computeBurstCooldownMs(2))
+        assertEquals(600_000L, AppStateManager.computeBurstCooldownMs(3))
+        assertEquals(1_800_000L, AppStateManager.computeBurstCooldownMs(10))
     }
 
     @Test

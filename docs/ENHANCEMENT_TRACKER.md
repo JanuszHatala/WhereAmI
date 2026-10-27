@@ -74,8 +74,11 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 97** | Pin Boundary Containment, Live-Border Mute & Outdoor POI Titles (2026-10-21) | 3 | 3 | 0 | 0 |
 | **Round 114** | Screen-Off GNSS Drain, Heartbeat Loop & Fast-Track Stationary Shutdown Overhaul (2026-10-23) | 9 | 9 | 0 | 0 |
 | **Round 115** | Trip 250 Polyline Chord Lock-Up Fix, Screen-Off Catch-Up Zigzag Elimination & Android Auto 1 Hz Real-Time Speed Updates (2026-10-23) | 4 | 4 | 0 | 0 |
+| **Round 116** | Battery & Modem Optimization, Car Auto-Start Duration, Live Share Resilience & UI Polish (2026-10-25) | 9 | 9 | 0 | 0 |
+| **Round 117** | Overnight Sleep Extension to Morning Alarm & Motion Wake Deduplication (2026-10-26) | 4 | 4 | 0 | 0 |
+| **Round 118** | Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27) | 12 | 12 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **325** | **317** | **0** | **8** |
+| **Total** | | **350** | **342** | **0** | **8** |
 
 
 ---
@@ -1547,5 +1550,37 @@ Evidence & Field Diagnostics:
 | **PWR117-02** | Extend Auto-Sleep to morning alarm when scheduled. | `AutoSleepManager.kt`, `AutoSleepManagerTest.kt` | Implemented | Added `hasUpcomingMorningAlarm`; holds sleep mode between bedtime window end and morning alarm ring |
 | **DIAG117-03** | Structured lifecycle logging for burst abort and termination. | `AppStateManager.kt` | Implemented | Added `MOTION_BURST_ABORT` and `MOTION_BURST_END` structured events |
 | **VER-117** | versionCode 153 / 1.18.22 | `build.gradle.kts`, `AutoSleepManagerTest.kt` | Implemented | `testDebugUnitTest` and `assembleDebug` passing |
+
+## 120. Round 118: Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27, v1.18.24)
+
+Evidence & Field Diagnostics:
+- **Overnight Drain Diagnostics**: 48m GNSS active time overnight caused by rapid successive motion bursts when phone moved slightly during night; `computeBurstCooldownMs` remained flat (0s/60s). Screen-off stationary `LIVE_ONLY` mode kept GNSS active in certain states; `AutoSleepManager` kept `wasManuallyWokenThisCycle = true` indefinitely across days if not explicitly cleared.
+- **Field Feedback Items (Oct 27)**:
+  1. Guest avatar conflicted with altitude badge and saved place icons on map.
+  2. Stationary at Home on Zielona street resolved falsely as Górska street due to corrupted spatial cache cells.
+  3. House numbers failed to show while stationary at saved place with house number.
+  4. Cache manager showed missing boundary cache data after download.
+  5. Multipath drift indoors showed non-zero speed while cursor stayed still.
+  6. Track color showed blueish instead of standard red for driving/walking and lacked activity profile color configuration.
+  7. Curved polyline drawn with square corners / zigzags behind cursor tip.
+  8. Side street `Graniczna` overrode main road `Krakowska (DK52)`.
+  9. Walking trip polyline accuracy degraded from spike guard rejection deadlock.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **PWR118-01** | False motion burst progressive exponential backoff (0s -> 60s -> 180s -> 600s -> 1800s). | `AppStateManager.kt`, `BatteryOptimizationAndAutoStartTest.kt` | Implemented | Multi-step cooldown prevents overnight GNSS loops from repeated bed/desk micro-movements |
+| **PWR118-02** | Screen-off stationary GNSS cut & stream detach in LIVE_ONLY mode. | `LocationManager.kt`, `LiveTrackingService.kt`, `AppStateManager.kt` | Implemented | Powers down GNSS and detaches `locationUpdatesJob` when stationary and screen is off |
+| **PWR118-03** | Auto-sleep manual wake flag reset on daytime / day transition. | `AutoSleepManager.kt` | Implemented | Resets `wasManuallyWokenThisCycle` on calendar day change and outside sleep window |
+| **UI118-04** | Live guest avatar spiderfy fan-out & altitude badge collision deconfliction. | `OsmMapView.kt`, `AltitudeCursorBadgeOverlay.kt` | Implemented | Fans out guest avatars 20m from host cursor and saved places; shifts altitude badge |
+| **GEO118-05** | Spatial cache sanitization & cache validation tool. | `SpatialCacheHelper.kt`, `CacheManager.kt`, `CacheManagerDialog.kt` | Implemented | Purges corrupted Górska cells near Home and false Graniczna (DK52); adds Validate & Clean Cache button |
+| **GEO118-06** | House number resolution enhancement & saved place fallback. | `RoadNameNormalizer.kt`, `MainActivity.kt`, `RoadNameNormalizerTest.kt` | Implemented | Allows stationary house number resolution up to 40m accuracy; leverages nearby saved place |
+| **GEO118-07** | Boundary cache download write-verification & rate-limit spacing. | `CacheManager.kt` | Implemented | Verifies disk write before caching in memory; enforces 1500ms delay between requests |
+| **KIN118-08** | Stationary multipath speed clamping to zero. | `LocationManager.kt` | Implemented | Clamps speed to 0.0 m/s when stationary within jitter bounds (displacement $\le 4.0$m) |
+| **MAP118-09** | Profile-specific track color restoration & palette picker. | `MapProfileConfigHelper.kt`, `MapSettingsDialog.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt` | Implemented | Restored #EF4444 default for Car/Cycling/Running/Walking; added 8-swatch color picker |
+| **MAP118-10** | Polyline curvature smoothing & cursor tip integration. | `CurvedPolyline.kt`, `LiveTrackLine.kt`, `OsmMapView.kt` | Implemented | Set sharp corner threshold to 135 deg; integrated tip into Catmull-Rom spline; curved saved trips |
+| **GEO118-11** | Side street shielding on arterial corridors. | `RoadNameNormalizer.kt`, `RoadNameNormalizerTest.kt` | Implemented | Blocks side streets without directional suffix/arterial keywords when replacing bare highway codes |
+| **KIN118-12** | Walking low-speed spike guard & recovery. | `TrackSpikeGuard.kt`, `TrackingEngine.kt`, `TrackSpikeGuardTest.kt` | Implemented | Profile-adapted jump gates (15m / 5 m/s for Walking); 5-strike rejection tolerance before reset |
+| **VER-118** | versionCode 155 / 1.18.24 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (560 tests) & `assembleDebug` passed cleanly |
+
 
 

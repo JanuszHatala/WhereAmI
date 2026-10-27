@@ -15,36 +15,42 @@ class MapProfileConfigTest {
         assertEquals(MapOrientationMode.COURSE_UP, carConfig.orientationMode)
         assertFalse(carConfig.showHikingOverlay)
         assertEquals(MapFontScale.NORMAL, carConfig.fontScale)
+        assertEquals("#EF4444", carConfig.trackColorHex)
 
         // Cycling defaults
         val cyclingConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.CYCLING)
         assertEquals(MapBaseLayer.STANDARD, cyclingConfig.baseLayer)
         assertEquals(MapOrientationMode.COURSE_UP, cyclingConfig.orientationMode)
         assertFalse(cyclingConfig.showHikingOverlay)
+        assertEquals("#EF4444", cyclingConfig.trackColorHex)
 
         // MTB defaults
         val mtbConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.MTB)
         assertEquals(MapBaseLayer.FREEMAP_OUTDOOR, mtbConfig.baseLayer)
         assertEquals(MapOrientationMode.COURSE_UP, mtbConfig.orientationMode)
         assertTrue(mtbConfig.showHikingOverlay)
+        assertEquals("#10B981", mtbConfig.trackColorHex)
 
         // Hiking defaults
         val hikingConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.HIKING)
         assertEquals(MapBaseLayer.FREEMAP_OUTDOOR, hikingConfig.baseLayer)
         assertEquals(MapOrientationMode.COURSE_UP, hikingConfig.orientationMode)
         assertTrue(hikingConfig.showHikingOverlay)
+        assertEquals("#F59E0B", hikingConfig.trackColorHex)
 
         // Running defaults
         val runningConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.RUNNING)
         assertEquals(MapBaseLayer.STANDARD, runningConfig.baseLayer)
         assertEquals(MapOrientationMode.NORTH, runningConfig.orientationMode)
         assertFalse(runningConfig.showHikingOverlay)
+        assertEquals("#EF4444", runningConfig.trackColorHex)
 
         // Walking defaults
         val walkingConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.WALKING)
         assertEquals(MapBaseLayer.STANDARD, walkingConfig.baseLayer)
         assertEquals(MapOrientationMode.NORTH, walkingConfig.orientationMode)
         assertFalse(walkingConfig.showHikingOverlay)
+        assertEquals("#EF4444", walkingConfig.trackColorHex)
     }
 
     @Test

@@ -19,14 +19,14 @@ object MapProfileConfigHelper {
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = false,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#38BDF8"
+            trackColorHex = "#EF4444"
         )
         ActivityProfile.CYCLING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = false,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#06B6D4"
+            trackColorHex = "#EF4444"
         )
         ActivityProfile.MTB -> ProfileMapConfig(
             baseLayer = MapBaseLayer.FREEMAP_OUTDOOR,
@@ -47,14 +47,14 @@ object MapProfileConfigHelper {
             orientationMode = MapOrientationMode.NORTH,
             showHikingOverlay = false,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#EC4899"
+            trackColorHex = "#EF4444"
         )
         ActivityProfile.WALKING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
             orientationMode = MapOrientationMode.NORTH,
             showHikingOverlay = false,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#8B5CF6"
+            trackColorHex = "#EF4444"
         )
     }
 

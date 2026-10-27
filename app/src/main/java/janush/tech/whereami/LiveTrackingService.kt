@@ -655,8 +655,10 @@ class LiveTrackingService : Service() {
             updateNotification(force = true)
         } else if (hasLive) {
             // Live sharing active without active trip recording:
-            // Keep location stream active only when unpaused; detach when muted/paused to prevent idle subscriber leaks.
-            if (hasUnpausedLive) {
+            // Keep location stream active only when unpaused and moving/GPS active;
+            // Detach when muted/paused OR stationary screen-off (GPS stopped) to prevent idle subscriber leaks and Wi-Fi scan wakeups.
+            val isGpsStopped = locationManager.isGpsStopped
+            if (hasUnpausedLive && !isGpsStopped) {
                 startLocationTracking()
             } else {
                 stopLocationTracking()
@@ -714,6 +716,11 @@ class LiveTrackingService : Service() {
         }
         serviceScope.launch {
             TripManager.getInstance(this@LiveTrackingService).tripMode.collectLatest {
+                evaluateServiceState()
+            }
+        }
+        serviceScope.launch {
+            AppStateManager.getInstance(this@LiveTrackingService).currentMode.collectLatest {
                 evaluateServiceState()
             }
         }

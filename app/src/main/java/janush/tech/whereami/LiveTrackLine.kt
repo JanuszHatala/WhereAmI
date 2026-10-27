@@ -75,19 +75,25 @@ class LiveTrackLine {
             pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude)
         } else null
         val pSize = pencil.size
-        if (pSize >= 2) {
-            val hasAnchor = c.isNotEmpty()
-            val totalTail = if (hasAnchor) pSize + 1 else pSize
-            fun tailLat(idx: Int): Double = if (hasAnchor) {
-                if (idx == 0) c.last().latitude else (blended?.first?.get(idx - 1) ?: pencil.latAt(idx - 1))
-            } else {
-                blended?.first?.get(idx) ?: pencil.latAt(idx)
+        val hasAnchor = c.isNotEmpty()
+        val totalTail = (if (hasAnchor) 1 else 0) + pSize + 1
+        fun tailLat(idx: Int): Double = when {
+            hasAnchor && idx == 0 -> c.last().latitude
+            idx == totalTail - 1 -> tip.latitude
+            else -> {
+                val pIdx = if (hasAnchor) idx - 1 else idx
+                blended?.first?.get(pIdx) ?: pencil.latAt(pIdx)
             }
-            fun tailLng(idx: Int): Double = if (hasAnchor) {
-                if (idx == 0) c.last().longitude else (blended?.second?.get(idx - 1) ?: pencil.lngAt(idx - 1))
-            } else {
-                blended?.second?.get(idx) ?: pencil.lngAt(idx)
+        }
+        fun tailLng(idx: Int): Double = when {
+            hasAnchor && idx == 0 -> c.last().longitude
+            idx == totalTail - 1 -> tip.longitude
+            else -> {
+                val pIdx = if (hasAnchor) idx - 1 else idx
+                blended?.second?.get(pIdx) ?: pencil.lngAt(pIdx)
             }
+        }
+        if (totalTail >= 3) {
             if (!hasAnchor) {
                 points.add(GeoPoint(tailLat(0), tailLng(0)))
             }
@@ -96,13 +102,10 @@ class LiveTrackLine {
                 { tailLat(it) }, { tailLng(it) }
             ) { la, ln -> points.add(GeoPoint(la, ln)) }
         } else {
-            for (i in 0 until pSize) {
-                val la = blended?.first?.get(i) ?: pencil.latAt(i)
-                val ln = blended?.second?.get(i) ?: pencil.lngAt(i)
-                points.add(GeoPoint(la, ln))
+            for (i in (if (hasAnchor) 1 else 0) until totalTail) {
+                points.add(GeoPoint(tailLat(i), tailLng(i)))
             }
         }
-        points.add(tip)
         tailValid = true
     }
 

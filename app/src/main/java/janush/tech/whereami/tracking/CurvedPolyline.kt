@@ -26,8 +26,9 @@ object CurvedPolyline {
      * Either corner sharper than this: draw the segment straight.
      * Centripetal Catmull-Rom otherwise overshoots multipath kinks into visible Z/V zigzags
      * (field trip 248 on Głęboka / Piłsudskiego) even when stored vertices are only metres off.
+     * 135 deg allows standard 90-120 deg street corners to curve smoothly without looping.
      */
-    const val SHARP_CORNER_DEG = 100.0
+    const val SHARP_CORNER_DEG = 135.0
 
     /**
      * Emits segments [fromSeg, toSeg) of the [n] vertices: for each segment its interior curve points and then

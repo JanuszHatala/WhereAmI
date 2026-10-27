@@ -9526,6 +9526,7 @@ private fun LocalityCard(
 ) {
     val context = LocalContext.current
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
+    val isStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
 
     Card(
         modifier = modifier,
@@ -9597,17 +9598,6 @@ private fun LocalityCard(
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
 
-                val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
-                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(currentSpeedKmh, locationData.accuracy, isMajor)
-
-                val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
-                    effectiveStreet,
-                    primaryPlace?.roadRef,
-                    primaryPlace?.countryCode,
-                    allowHouseNumber = allowHouseNum
-                ).orEmpty()
-
                 // Check if current location matches any saved place
                 val nearbySavedPlace = remember(currentLatLng, savedPlaces) {
                     val lat = currentLatLng?.first ?: return@remember null
@@ -9618,6 +9608,28 @@ private fun LocalityCard(
                         results[0] <= sp.radiusMeters
                     }
                 }
+
+                val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
+                val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
+                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(
+                    currentSpeedKmh,
+                    locationData.accuracy,
+                    isMajor,
+                    isStationary
+                )
+
+                val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
+                    val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
+                    val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
+                    if (savedNum != null) "$effectiveStreet $savedNum" else effectiveStreet
+                } else effectiveStreet
+
+                val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
+                    augmentedStreet,
+                    primaryPlace?.roadRef,
+                    primaryPlace?.countryCode,
+                    allowHouseNumber = allowHouseNum
+                ).orEmpty()
 
                 val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
@@ -10291,10 +10303,21 @@ private fun LocalityCard(
 
                 val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
-                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(currentSpeedKmh, locationData.accuracy, isMajor)
+                val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(
+                    currentSpeedKmh,
+                    locationData.accuracy,
+                    isMajor,
+                    isStationary
+                )
+
+                val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
+                    val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
+                    val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
+                    if (savedNum != null) "$effectiveStreet $savedNum" else effectiveStreet
+                } else effectiveStreet
 
                 val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
-                    effectiveStreet,
+                    augmentedStreet,
                     primaryPlace?.roadRef,
                     primaryPlace?.countryCode,
                     allowHouseNumber = allowHouseNum

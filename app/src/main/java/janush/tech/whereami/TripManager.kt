@@ -1096,10 +1096,13 @@ class TripManager private constructor(private val context: Context) {
             // trip 244 cycling 59.6 m / 172 deg reverse after a GNSS gap near home).
             if (last != null) {
                 val prevUtc = lastCommittedUtcMs.takeIf { it > 0L } ?: p.tUtcMs
+                val curProfile = _activeTrip.value?.activityProfile ?: activityProfile.value
+                val (profMinJump, profMaxImplied) = TrackSpikeGuard.gatesForProfile(curProfile.name)
                 val twoPoint = TrackSpikeGuard.isSpikeStep(
                     last.latitude, last.longitude, prevUtc,
                     p.lat, p.lng, p.tUtcMs,
-                    p.speedMps, p.isStationary
+                    p.speedMps, p.isStationary,
+                    profMinJump, profMaxImplied
                 )
                 val prev2 = if (newPoints.size >= 2) newPoints[newPoints.size - 2] else null
                 val threePoint = prev2 != null && TrackSpikeGuard.isReversalSpike(
@@ -1112,7 +1115,8 @@ class TripManager private constructor(private val context: Context) {
                     if (prevRejected != null && !p.isStationary && p.tUtcMs > prevRejected.tUtcMs &&
                         !TrackSpikeGuard.isSpikeStep(
                             prevRejected.lat, prevRejected.lng, prevRejected.tUtcMs,
-                            p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary
+                            p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary,
+                            profMinJump, profMaxImplied
                         )
                     ) {
                         // Two mutually consistent moving points after a gap/turn: recover instead of deadlocking.

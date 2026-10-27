@@ -1161,6 +1161,32 @@ fun CacheManagerDialog(
                                             )
                                         }
                                     }
+
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            cacheManager.validateAndCleanCache { count ->
+                                                android.widget.Toast.makeText(context, "Cache validated. Cleaned $count stale entries.", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = Color.White
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFF334155)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "Validate & Clean Cache",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 14.sp
+                                            )
+                                        )
+                                    }
                                 }
                             }
                             is CacheManager.PrefetchState.Blocked -> {

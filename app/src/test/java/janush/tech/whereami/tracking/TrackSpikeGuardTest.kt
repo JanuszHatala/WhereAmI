@@ -48,6 +48,25 @@ class TrackSpikeGuardTest {
     }
 
     @Test
+    fun `walking jump of 43m at implied 12 mps is a spike with walking gates`() {
+        val (wMinJump, wMaxImplied) = TrackSpikeGuard.gatesForProfile("WALKING")
+        assertEquals(15.0, wMinJump, 0.001)
+        assertEquals(5.0, wMaxImplied, 0.001)
+
+        val lat2 = homeLat + 43.2 / 111_320.0
+        // 43.2m in 3.6s -> implied speed 12.0 m/s (43.2 km/h)
+        val isWalkingSpike = TrackSpikeGuard.isSpikeStep(
+            homeLat, homeLng, 1_000L,
+            lat2, homeLng, 4_600L,
+            speedMps = 1.2,
+            isStationary = false,
+            minJumpM = wMinJump,
+            maxImpliedMps = wMaxImplied
+        )
+        assertTrue("Trip 262 point 83 jump must be rejected for walking", isWalkingSpike)
+    }
+
+    @Test
     fun `trip 244 cycling tip gap teleport is a spike`() {
         // Stored seq 250→252→253: 59.6 m snap toward home after 24 s at 7 m/s (expected ~168 m), Δcourse ≈ 172°.
         val aLat = 49.85098; val aLng = 19.28555

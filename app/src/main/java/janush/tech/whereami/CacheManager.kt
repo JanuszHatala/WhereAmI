@@ -496,8 +496,10 @@ class CacheManager private constructor(private val context: Context) {
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
                         locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
-                        cachedKeys.add(key)
-                        addedRoutes++
+                        if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
+                            cachedKeys.add(key)
+                            addedRoutes++
+                        }
                         kotlinx.coroutines.delay(500L)
                     }
 
@@ -533,8 +535,10 @@ class CacheManager private constructor(private val context: Context) {
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys) {
                         locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
-                        cachedKeys.add(key)
-                        addedRoutes++
+                        if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
+                            cachedKeys.add(key)
+                            addedRoutes++
+                        }
                         kotlinx.coroutines.delay(500L)
                     }
 
@@ -575,7 +579,7 @@ class CacheManager private constructor(private val context: Context) {
                     pass3Current++
                     _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
                     updateNotification("Pass 3: Boundaries", pass3Current, pass3Total, false)
-                    kotlinx.coroutines.delay(300L)
+                    kotlinx.coroutines.delay(1500L)
                 }
 
                 _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries)
@@ -614,6 +618,31 @@ class CacheManager private constructor(private val context: Context) {
         prefetchJob = null
         _prefetchState.value = PrefetchState.Idle
         dismissNotification()
+    }
+
+    fun validateAndCleanCache(onDone: ((Int) -> Unit)? = null) {
+        managerScope.launch {
+            val spatialHelper = SpatialCacheHelper.getInstance(context)
+            val db = spatialHelper.writableDatabase
+            var cleaned = 0
+            try {
+                spatialHelper.sanitizeKnownMismatches(db)
+                spatialHelper.sanitizePolishHighwayCodesOutsidePoland(db)
+                spatialHelper.sanitizeBareHighwayAndDupeParenStreets(db)
+                spatialHelper.sanitizeFalseHighwayOnLocalNames(db)
+                // Clean orphan/unknown entries
+                val cursor = db.rawQuery("SELECT count(*) FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'", null)
+                if (cursor.moveToFirst()) {
+                    cleaned = cursor.getInt(0)
+                }
+                cursor.close()
+                db.execSQL("DELETE FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'")
+            } catch (_: Exception) {}
+            calculateCacheDeficit()
+            withContext(Dispatchers.Main) {
+                onDone?.invoke(cleaned)
+            }
+        }
     }
 
     fun fetchMissingBoundaries(isUserInitiated: Boolean = true) {

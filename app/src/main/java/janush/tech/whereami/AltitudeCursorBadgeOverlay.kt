@@ -51,6 +51,9 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
     private var savedPlacesList: List<SavedPlace> = emptyList()
 
     @Volatile
+    private var guestPointsList: List<GeoPoint> = emptyList()
+
+    @Volatile
     private var destGeoPoint: GeoPoint? = null
 
     private var lastRenderedIntAlt: Long? = null
@@ -105,7 +108,8 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         currentSpeedKmh: Float = 0f,
         isGpsMode: Boolean = false,
         savedPlaces: List<SavedPlace> = emptyList(),
-        destinationPoint: GeoPoint? = null
+        destinationPoint: GeoPoint? = null,
+        guestPoints: List<GeoPoint> = emptyList()
     ) {
         centerGeoPoint = geoPoint
         altitudeM = altitude
@@ -115,6 +119,7 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         this.fontScaleFactor = fontScaleFactor.coerceIn(0.75f, 2.0f)
         savedPlacesList = savedPlaces
         destGeoPoint = destinationPoint
+        guestPointsList = guestPoints
     }
 
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
@@ -148,11 +153,12 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
             val cursorCanvasX = screenPoint.x.toFloat()
             val cursorCanvasY = screenPoint.y.toFloat()
 
-            // Gather collision threat points in screen space: all saved places + destination pin
-            val threatPoints = ArrayList<GeoPoint>(savedPlacesList.size + 1)
+            // Gather collision threat points in screen space: all saved places + active guests + destination pin
+            val threatPoints = ArrayList<GeoPoint>(savedPlacesList.size + guestPointsList.size + 1)
             for (sp in savedPlacesList) {
                 threatPoints.add(sp.geoPoint)
             }
+            threatPoints.addAll(guestPointsList)
             destGeoPoint?.let { threatPoints.add(it) }
 
             val threatScreenPoints = ArrayList<Pair<Float, Float>>(threatPoints.size)
