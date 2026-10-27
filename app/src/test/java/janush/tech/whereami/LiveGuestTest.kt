@@ -410,5 +410,29 @@ class LiveGuestTest {
         assertEquals(g3.geoPoint.latitude, singleOffset["g3"]!!.latitude, 0.000001)
         assertEquals(g3.geoPoint.longitude, singleOffset["g3"]!!.longitude, 0.000001)
     }
+
+    @Test
+    fun `test computeSpiderfyOffsets separates single guest co-located with saved place obstacle`() {
+        val g = LiveGuest(id = "ja", name = "ja", lat = 49.8512, lng = 19.2852, lastUpdated = 1000L)
+        val homePin = org.osmdroid.util.GeoPoint(49.8512, 19.2852)
+
+        val offsets = computeSpiderfyOffsets(
+            guests = listOf(g),
+            hostPos = homePin,
+            obstaclePoints = listOf(homePin),
+            zoomLevel = 17.5,
+            density = 2.75f
+        )
+        assertEquals(1, offsets.size)
+        val p = offsets["ja"]!!
+
+        // Must be offset from the homePin
+        val dLat = Math.abs(p.latitude - homePin.latitude)
+        val dLng = Math.abs(p.longitude - homePin.longitude)
+        assertTrue("Guest co-located with obstacle must be separated by spiderfy: dLat=$dLat, dLng=$dLng", dLat > 0.0001 || dLng > 0.0001)
+
+        // Must be shifted toward the West (longitude strictly less than obstacle longitude)
+        assertTrue("Guest must be shifted West away from right-side controls and altitude badge: pLng=${p.longitude}, homeLng=${homePin.longitude}", p.longitude < homePin.longitude)
+    }
 }
 

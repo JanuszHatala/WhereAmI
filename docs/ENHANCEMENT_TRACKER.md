@@ -77,8 +77,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 116** | Battery & Modem Optimization, Car Auto-Start Duration, Live Share Resilience & UI Polish (2026-10-25) | 9 | 9 | 0 | 0 |
 | **Round 117** | Overnight Sleep Extension to Morning Alarm & Motion Wake Deduplication (2026-10-26) | 4 | 4 | 0 | 0 |
 | **Round 118** | Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27) | 12 | 12 | 0 | 0 |
+| **Round 119** | Trip Details End Tile Leg Line Elimination, Screen-Adaptive Avatar Spiderfy & Outer Altitude Collision Clearance (2026-10-27) | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **350** | **342** | **0** | **8** |
+| **Total** | | **353** | **345** | **0** | **8** |
 
 
 ---
@@ -1581,6 +1582,25 @@ Evidence & Field Diagnostics:
 | **GEO118-11** | Side street shielding on arterial corridors. | `RoadNameNormalizer.kt`, `RoadNameNormalizerTest.kt` | Implemented | Blocks side streets without directional suffix/arterial keywords when replacing bare highway codes |
 | **KIN118-12** | Walking low-speed spike guard & recovery. | `TrackSpikeGuard.kt`, `TrackingEngine.kt`, `TrackSpikeGuardTest.kt` | Implemented | Profile-adapted jump gates (15m / 5 m/s for Walking); 5-strike rejection tolerance before reset |
 | **VER-118** | versionCode 155 / 1.18.24 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (560 tests) & `assembleDebug` passed cleanly |
+
+## 121. Round 119: Trip Details End Tile Leg Line Elimination, Screen-Adaptive Avatar Spiderfy & Outer Altitude Collision Clearance (2026-10-27, v1.18.25)
+
+Evidence & Field Diagnostics:
+- **Screenshot `media_1793125720702_a7e9db26.png`**:
+  - User at Home (Czaniec, Zielona 92). Saved Place pin `Dom`, guest avatar `ja`, and altitude badge `▲ 358 m` were all drawn overlapping at the exact same screen coordinates.
+  - Previous `computeSpiderfyOffsets` hardcoded a fixed 20m geographic radius ($< 26$ pixels at zoom 17-18), which failed to separate the 150px-wide guest marker from the 48dp pin.
+  - Trigonometric angle in `computeSpiderfyOffsets` used `atan2(dLat, dLng)` with reversed lat/lng axes, shifting the guest South/South-East instead of into open West space.
+  - `AltitudeBadgePositionEvaluator` only had 4 compact offsets (distance $\le 30$dp from cursor), which mathematically guaranteed overlap with any 48dp pin or guest marker at the cursor.
+  - `AltitudeCursorBadgeOverlay` passed raw guest locations instead of spiderfied display positions to collision evaluation.
+  - `MainActivity.kt` line 12489 checked `!isFirstPlace` but omitted `!isLastPlace`, leaving the duplicate `Leg:` line on the Trip End tile.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI119-01** | Suppress duplicate `Leg:` line on Trip End tile. | `MainActivity.kt`, `TripTimelineChronologyTest.kt` | Implemented | Added `!isLastPlace` to `if (!isFirstPlace && !isLastPlace && ...)`. Unit test verifies `shouldShowLeg` is false on both Start and End tiles. |
+| **MAP119-02** | Screen-adaptive zoom-proportional avatar spiderfy with West bias. | `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Spiderfy radius scales by zoom level to guarantee 65dp visual screen separation; bearing uses `atan2(dLng, dLat)` with West fallback away from right controls and altitude badge. |
+| **MAP119-03** | Extended altitude badge clearance offsets & spiderfied threat tracking. | `AltitudeBadgePositionEvaluator.kt`, `OsmMapView.kt`, `AltitudeBadgePlacementTest.kt` | Implemented | Added extended clearance offsets (52dp/44dp); skips compact offsets when threats are co-located at cursor; passes spiderfied guest positions into collision evaluator. Unit tests verify `minDist >= 40dp` and East quadrant selection. |
+| **VER-119** | versionCode 156 / 1.18.25 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (562 tests) & `assembleDebug` passed cleanly. |
+
 
 
 

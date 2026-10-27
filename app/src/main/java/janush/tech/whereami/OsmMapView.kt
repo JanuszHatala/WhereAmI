@@ -609,6 +609,7 @@ fun OsmMapView(
     val visibleGuests = remember(activeGuests, showInactiveGuests) {
         if (showInactiveGuests) activeGuests else activeGuests.filter { !it.isInactive }
     }
+    var currentSpiderfyPositions by remember { mutableStateOf<Map<String, GeoPoint>>(emptyMap()) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(
@@ -640,7 +641,7 @@ fun OsmMapView(
             isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
             savedPlaces = savedPlaces,
             destinationPoint = destinationPoint,
-            guestPoints = visibleGuests.map { it.geoPoint }
+            guestPoints = visibleGuests.map { currentSpiderfyPositions[it.id] ?: it.geoPoint }
         )
         map.invalidate()
     }
@@ -676,6 +677,7 @@ fun OsmMapView(
     val latestShowAltitudeOnMap by rememberUpdatedState(showAltitudeOnMap)
     val latestFontScale by rememberUpdatedState(fontScale)
     val latestVisibleGuests by rememberUpdatedState(visibleGuests)
+    val latestSpiderfyPositions by rememberUpdatedState(currentSpiderfyPositions)
     val tripManagerRef = remember(context) { TripManager.getInstance(context) }
     val pencilTrail = remember { PencilTrail() }
     val motionCourse = remember { MotionCourse() }
@@ -967,7 +969,7 @@ fun OsmMapView(
                         isGpsMode = (latestAltitudeSourceMode == AltitudeSourceMode.GPS),
                         savedPlaces = latestSavedPlaces,
                         destinationPoint = latestDestinationPoint,
-                        guestPoints = latestVisibleGuests.map { it.geoPoint }
+                        guestPoints = latestVisibleGuests.map { latestSpiderfyPositions[it.id] ?: it.geoPoint }
                     )
 
                     // Course-up: filter / motion course only (see CourseUpHeading). Never compass or path tangent.
@@ -1289,7 +1291,14 @@ fun OsmMapView(
         val hostGp = marker?.position ?: latLng?.let { GeoPoint(it.first, it.second) }
         val obstacleGps = savedPlaces.map { it.geoPoint }
 
-        val spiderfyPositions = computeSpiderfyOffsets(visibleGuests, hostGp, obstacleGps)
+        val spiderfyPositions = computeSpiderfyOffsets(
+            guests = visibleGuests,
+            hostPos = hostGp,
+            obstaclePoints = obstacleGps,
+            zoomLevel = map.zoomLevelDouble,
+            density = density
+        )
+        currentSpiderfyPositions = spiderfyPositions
 
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
@@ -3785,12 +3794,16 @@ internal fun makeGuestMarkerIcon(
 fun computeSpiderfyOffsets(
     guests: List<LiveGuest>,
     hostPos: GeoPoint? = null,
-    obstaclePoints: List<GeoPoint> = emptyList()
+    obstaclePoints: List<GeoPoint> = emptyList(),
+    zoomLevel: Double = 17.0,
+    density: Float = 2.5f
 ): Map<String, GeoPoint> {
     if (guests.isEmpty()) return emptyMap()
     val result = mutableMapOf<String, GeoPoint>()
     val visited = BooleanArray(guests.size)
-    val clusterThresholdM = 25.0
+
+    val desiredOffsetDp = 65f
+    val desiredOffsetPx = desiredOffsetDp * density
 
     fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
         val dLat = Math.toRadians(lat2 - lat1)
@@ -3811,6 +3824,11 @@ fun computeSpiderfyOffsets(
         cluster.add(guests[i])
         visited[i] = true
 
+        val centerLat = guests[i].lat
+        val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(centerLat)) / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
+        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(35.0, 250.0)
+        val clusterThresholdM = radiusM * 1.05
+
         for (j in (i + 1) until guests.size) {
             if (!visited[j]) {
                 if (distanceM(guests[i].lat, guests[i].lng, guests[j].lat, guests[j].lng) < clusterThresholdM) {
@@ -3820,35 +3838,40 @@ fun computeSpiderfyOffsets(
             }
         }
 
-        val centerLat = cluster.map { it.lat }.average()
-        val centerLng = cluster.map { it.lng }.average()
+        val clusterLat = cluster.map { it.lat }.average()
+        val clusterLng = cluster.map { it.lng }.average()
         val mLat = 111132.0
-        val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(0.01)
+        val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(clusterLat)).coerceAtLeast(0.01)
 
         val collidingObstacle = obstacles.firstOrNull { obs ->
-            distanceM(centerLat, centerLng, obs.latitude, obs.longitude) < clusterThresholdM
+            distanceM(clusterLat, clusterLng, obs.latitude, obs.longitude) < clusterThresholdM
         }
 
         if (cluster.size == 1 && collidingObstacle == null) {
             result[cluster[0].id] = cluster[0].geoPoint
         } else {
             val k = cluster.size
-            val radiusM = 20.0
+            // Navigation bearing: 0 = North, PI/2 = East, PI = South, -PI/2 = West.
+            // When colliding with host or saved place at exact same location, fan out toward West (-PI/2)
+            // away from top-right altitude badge and right-hand map toolbars.
             val baseAngle = if (collidingObstacle != null) {
-                val dLat = centerLat - collidingObstacle.latitude
-                val dLng = centerLng - collidingObstacle.longitude
+                val dLat = clusterLat - collidingObstacle.latitude
+                val dLng = clusterLng - collidingObstacle.longitude
                 if (kotlin.math.hypot(dLat, dLng) > 1e-7) {
-                    kotlin.math.atan2(dLat, dLng)
-                } else Math.PI / 4.0
+                    kotlin.math.atan2(dLng, dLat)
+                } else {
+                    -Math.PI / 2.0 // Due West
+                }
             } else {
                 -Math.PI / 2.0
             }
 
             for (idx in 0 until k) {
                 val angle = baseAngle + (2.0 * Math.PI * idx / k)
+                // True bearing: Lat = cos(angle), Lng = sin(angle)
                 val offsetLat = (radiusM * kotlin.math.cos(angle)) / mLat
                 val offsetLng = (radiusM * kotlin.math.sin(angle)) / mLng
-                result[cluster[idx].id] = GeoPoint(centerLat + offsetLat, centerLng + offsetLng)
+                result[cluster[idx].id] = GeoPoint(clusterLat + offsetLat, clusterLng + offsetLng)
             }
         }
     }

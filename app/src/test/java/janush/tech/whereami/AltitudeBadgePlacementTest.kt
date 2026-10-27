@@ -188,4 +188,36 @@ class AltitudeBadgePlacementTest {
         )
         assertEquals(0, returnedIdx)
     }
+
+    @Test
+    fun testAvoidsCollisionWhenSavedPlaceAndGuestClusterAtCursor() {
+        val cursorX = 500f
+        val cursorY = 800f
+        // Saved Place is at the cursor (0, 0), and a guest avatar is spiderfied to the West (-65dp, 0dp)
+        val threats = listOf(
+            Pair(cursorX, cursorY), // Saved Place Pin
+            Pair(cursorX - (65f * density), cursorY) // Guest avatar to the West
+        )
+
+        val chosen = AltitudeBadgePositionEvaluator.selectBestOffset(
+            cursorX = cursorX,
+            cursorY = cursorY,
+            savedPlaceScreenPoints = threats,
+            density = density,
+            collisionRadiusDp = 50f
+        )
+
+        // Must NOT pick compact offsets (indices 0..3) which would collide with the pin
+        val chosenIdx = AltitudeBadgePositionEvaluator.CANDIDATE_OFFSETS.indexOf(chosen)
+        assertTrue("Must pick an outer clearance offset when pin is at cursor: chosen=$chosen (idx=$chosenIdx)", chosenIdx >= 4)
+
+        // Must be on the East / North-East side to stay clear of the guest on the West
+        assertTrue("Must be on East side (dxDp > 0) away from West guest", chosen.dxDp > 0f)
+
+        // Distance from chosen badge to any threat must be >= 40dp
+        val badgeX = cursorX + (chosen.dxDp * density)
+        val badgeY = cursorY + (chosen.dyDp * density)
+        val minDist = threats.minOf { (tX, tY) -> hypot(tX - badgeX, tY - badgeY) }
+        assertTrue("Distance to nearest threat must be >= 40dp: $minDist", minDist >= 40f * density)
+    }
 }
