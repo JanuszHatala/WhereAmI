@@ -604,6 +604,7 @@ fun OsmMapView(
     var prePinCenter by remember { mutableStateOf<GeoPoint?>(null) }
 
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
+    val guestLeaderLinesOverlay = remember(context) { GuestLeaderLinesOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
     val visibleGuests = remember(activeGuests, showInactiveGuests) {
@@ -1270,6 +1271,8 @@ fun OsmMapView(
                 guestMarkersMap.values.forEach { map.overlays.remove(it) }
                 guestMarkersMap.clear()
                 guestMarkerBadgeKeys.clear()
+                guestLeaderLinesOverlay.updateLines(emptyList())
+                map.overlays.remove(guestLeaderLinesOverlay)
                 map.invalidate()
             }
             return@LaunchedEffect
@@ -1299,6 +1302,37 @@ fun OsmMapView(
             density = density
         )
         currentSpiderfyPositions = spiderfyPositions
+
+        val spiderfyLines = visibleGuests.mapNotNull { guest ->
+            val disp = spiderfyPositions[guest.id]
+            if (disp != null && (disp.latitude != guest.lat || disp.longitude != guest.lng)) {
+                GuestSpiderfyLine(
+                    realPos = guest.geoPoint,
+                    displayPos = disp,
+                    colorArgb = LiveGuest.getColor(guest.colorIndex),
+                    isInactive = guest.isInactive
+                )
+            } else null
+        }
+        guestLeaderLinesOverlay.updateLines(spiderfyLines)
+        if (spiderfyLines.isNotEmpty()) {
+            if (!map.overlays.contains(guestLeaderLinesOverlay)) {
+                val firstGuestIdx = guestMarkersMap.values.firstOrNull()?.let { map.overlays.indexOf(it) } ?: -1
+                if (firstGuestIdx >= 0) {
+                    map.overlays.add(firstGuestIdx, guestLeaderLinesOverlay)
+                } else {
+                    val altIdx = map.overlays.indexOf(altitudeOverlay)
+                    val insertIdx = if (altIdx >= 0) altIdx else map.overlays.size
+                    map.overlays.add(insertIdx, guestLeaderLinesOverlay)
+                }
+                mapChanged = true
+            }
+        } else {
+            if (map.overlays.contains(guestLeaderLinesOverlay)) {
+                map.overlays.remove(guestLeaderLinesOverlay)
+                mapChanged = true
+            }
+        }
 
         visibleGuests.forEach { guest ->
             val distMeters = if (hostLoc != null) {
@@ -3802,7 +3836,7 @@ fun computeSpiderfyOffsets(
     val result = mutableMapOf<String, GeoPoint>()
     val visited = BooleanArray(guests.size)
 
-    val desiredOffsetDp = 65f
+    val desiredOffsetDp = 36f
     val desiredOffsetPx = desiredOffsetDp * density
 
     fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
@@ -3826,8 +3860,8 @@ fun computeSpiderfyOffsets(
 
         val centerLat = guests[i].lat
         val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(centerLat)) / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
-        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(35.0, 250.0)
-        val clusterThresholdM = radiusM * 1.05
+        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(16.0, 45.0)
+        val clusterThresholdM = 22.0
 
         for (j in (i + 1) until guests.size) {
             if (!visited[j]) {
@@ -3852,12 +3886,13 @@ fun computeSpiderfyOffsets(
         } else {
             val k = cluster.size
             // Navigation bearing: 0 = North, PI/2 = East, PI = South, -PI/2 = West.
-            // When colliding with host or saved place at exact same location, fan out toward West (-PI/2)
-            // away from top-right altitude badge and right-hand map toolbars.
+            // When within 10m of obstacle (co-located at home/desk), fan out toward West (-PI/2)
+            // to stay clear of top-right altitude badge and right-side controls.
             val baseAngle = if (collidingObstacle != null) {
                 val dLat = clusterLat - collidingObstacle.latitude
                 val dLng = clusterLng - collidingObstacle.longitude
-                if (kotlin.math.hypot(dLat, dLng) > 1e-7) {
+                val obsDist = kotlin.math.hypot(dLat * mLat, dLng * mLng)
+                if (obsDist > 10.0) {
                     kotlin.math.atan2(dLng, dLat)
                 } else {
                     -Math.PI / 2.0 // Due West

@@ -1601,6 +1601,24 @@ Evidence & Field Diagnostics:
 | **MAP119-03** | Extended altitude badge clearance offsets & spiderfied threat tracking. | `AltitudeBadgePositionEvaluator.kt`, `OsmMapView.kt`, `AltitudeBadgePlacementTest.kt` | Implemented | Added extended clearance offsets (52dp/44dp); skips compact offsets when threats are co-located at cursor; passes spiderfied guest positions into collision evaluator. Unit tests verify `minDist >= 40dp` and East quadrant selection. |
 | **VER-119** | versionCode 156 / 1.18.25 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (562 tests) & `assembleDebug` passed cleanly. |
 
+## 122. Round 120: Guest Avatar Spatial Accuracy, Minimal Offset Clamp & True Position Leader Line Overlay (2026-10-27, v1.18.26)
+
+Evidence & Field Diagnostics:
+- **Screenshot `media_1793126652330_c4b4d28e.png`**:
+  - In v1.18.25, `desiredOffsetDp = 65f` with radius clamped up to 250m resulted in the guest avatar `ja` displacing ~140m down the road past the Górska intersection, confusing the user as to whether the guest was actually at Home or down the street.
+  - User requested: keep the avatar as close to real coordinates as possible, while adding a subtle connecting leader line / stem from the real coordinate to the displaced badge so the true location is never ambiguous.
+- **Solution Implementation**:
+  - Clamped spiderfy radius to `16.0..45.0` meters (`desiredOffsetDp = 36f`), keeping the offset tight (within the yard/immediate property boundary).
+  - Enforced a West bias when within 10m of an obstacle, avoiding the road intersection to the East.
+  - Implemented `GuestLeaderLinesOverlay` drawing a high-contrast anchor junction dot at the true coordinates and a leader line to the offset badge.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **MAP120-01** | Tighten spiderfy displacement radius to 16m-45m (36dp). | `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Clamped `radiusM.coerceIn(16.0, 45.0)` and `desiredOffsetDp = 36f`. Verified in `LiveGuestTest`. |
+| **MAP120-02** | Leader line and anchor junction dot overlay for offset guest avatars. | `GuestLeaderLinesOverlay.kt`, `OsmMapView.kt` | Implemented | Renders anchor dot at `realPos` and high-contrast leader line to `displayPos` when displaced $\ge 8$dp. |
+| **VER-120** | versionCode 157 / 1.18.26 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` & `assembleDebug` verified cleanly. |
+
+
 
 
 
