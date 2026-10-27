@@ -15,10 +15,16 @@ data class BadgeOffset(val dxDp: Float, val dyDp: Float)
 object AltitudeBadgePositionEvaluator {
 
     val CANDIDATE_OFFSETS = listOf(
-        BadgeOffset(18f, -24f),  // Top-Right (Default)
-        BadgeOffset(18f, 24f),   // Bottom-Right
-        BadgeOffset(-18f, 24f),  // Bottom-Left
-        BadgeOffset(-18f, -24f)  // Top-Left
+        BadgeOffset(18f, -24f),  // 0: Top-Right (Default compact)
+        BadgeOffset(18f, 24f),   // 1: Bottom-Right (Compact)
+        BadgeOffset(-18f, 24f),  // 2: Bottom-Left (Compact)
+        BadgeOffset(-18f, -24f), // 3: Top-Left (Compact)
+        BadgeOffset(52f, -24f),  // 4: Far Top-Right (clears co-located saved place pin & guest avatars)
+        BadgeOffset(12f, -44f),  // 5: Far Top (clears horizontal badge spreads)
+        BadgeOffset(52f, 24f),   // 6: Far Bottom-Right
+        BadgeOffset(-52f, -24f), // 7: Far Top-Left
+        BadgeOffset(-52f, 24f),  // 8: Far Bottom-Left
+        BadgeOffset(12f, 44f)    // 9: Far Bottom
     )
 
     /**
@@ -55,18 +61,32 @@ object AltitudeBadgePositionEvaluator {
             hypot(spX - currentBadgeX, spY - currentBadgeY)
         }
 
-        // If the current candidate is safely away from threats (>= 32dp), keep it to avoid jitter
+        // Check if cursor is co-located with an obstacle (threat within 35dp of cursor)
+        val isThreatCoLocatedWithCursor = threats.any { (spX, spY) ->
+            hypot(spX - cursorX, spY - cursorY) < 35f * density
+        }
+
+        // If current candidate is safely away from threats (>= 32dp), and if co-located threat then candidate must be an outer offset (>= 4), keep it
         val minSafeDistancePx = 32f * density
-        if (currentDistToThreat >= minSafeDistancePx) {
+        if (currentDistToThreat >= minSafeDistancePx && (!isThreatCoLocatedWithCursor || safeCurrentIdx >= 4)) {
             return safeCurrentIdx
         }
 
         // Find candidate that maximizes threat distance, requiring a significant margin to switch away
-        var bestIdx = safeCurrentIdx
-        var maxDist = currentDistToThreat
+        var bestIdx = if (isThreatCoLocatedWithCursor && safeCurrentIdx < 4) 4 else safeCurrentIdx
+        var maxDist = if (isThreatCoLocatedWithCursor && safeCurrentIdx < 4) {
+            val off = CANDIDATE_OFFSETS[bestIdx]
+            val bX = cursorX + (off.dxDp * density)
+            val bY = cursorY + (off.dyDp * density)
+            threats.minOf { (spX, spY) -> hypot(spX - bX, spY - bY) }
+        } else {
+            currentDistToThreat
+        }
 
         for (i in CANDIDATE_OFFSETS.indices) {
             if (i == safeCurrentIdx) continue
+            // If threat is co-located at cursor, do not pick compact offsets (0..3) as they collide with pin
+            if (isThreatCoLocatedWithCursor && i < 4) continue
             val off = CANDIDATE_OFFSETS[i]
             val bX = cursorX + (off.dxDp * density)
             val bY = cursorY + (off.dyDp * density)

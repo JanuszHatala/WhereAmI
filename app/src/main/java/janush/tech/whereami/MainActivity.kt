@@ -12486,7 +12486,7 @@ fun TripDetailDialog(
                                                             )
                                                         )
                                                     }
-                                                    if (!isFirstPlace && (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L)) {
+                                                    if (!isFirstPlace && !isLastPlace && (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L)) {
                                                         val legKm = item.legDistanceMeters / 1000.0
                                                         val legTimeStr = formatDurationShort(item.legDurationMs)
                                                         Text(

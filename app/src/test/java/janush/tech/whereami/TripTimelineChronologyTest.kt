@@ -253,5 +253,15 @@ class TripTimelineChronologyTest {
         assertEquals(23200.0, lastItem.place.distanceAtEntryMeters, 0.001)
         assertEquals(23200.0, lastItem.legDistanceMeters, 0.001)
         assertEquals(3600 * 1000L, lastItem.legDurationMs)
+
+        val allPlacesInTimeline = items.filterIsInstance<RouteTimelineItem.Place>()
+        val isFirstPlace = { item: RouteTimelineItem.Place -> item == allPlacesInTimeline.firstOrNull() }
+        val isLastPlace = { item: RouteTimelineItem.Place -> item == allPlacesInTimeline.lastOrNull() && allPlacesInTimeline.size > 1 }
+        val shouldShowLeg = { item: RouteTimelineItem.Place ->
+            !isFirstPlace(item) && !isLastPlace(item) && (item.legDistanceMeters > 0.0 || item.legDurationMs > 0L)
+        }
+
+        org.junit.Assert.assertFalse("Trip Start tile must NOT display Leg line", shouldShowLeg(firstItem))
+        org.junit.Assert.assertFalse("Trip End tile must NOT display Leg line", shouldShowLeg(lastItem))
     }
 }
