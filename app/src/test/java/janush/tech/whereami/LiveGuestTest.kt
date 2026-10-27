@@ -433,6 +433,12 @@ class LiveGuestTest {
 
         // Must be shifted toward the West (longitude strictly less than obstacle longitude)
         assertTrue("Guest must be shifted West away from right-side controls and altitude badge: pLng=${p.longitude}, homeLng=${homePin.longitude}", p.longitude < homePin.longitude)
+
+        // Must be tightly clamped (16m - 45m), never jumping 100m+ away
+        val mLat = 111_132.92
+        val mLng = 111_412.84 * Math.cos(Math.toRadians(homePin.latitude))
+        val distM = Math.hypot((p.latitude - homePin.latitude) * mLat, (p.longitude - homePin.longitude) * mLng)
+        assertTrue("Displacement distance should be tightly bounded (16m..45m), was $distM m", distM in 15.0..46.0)
     }
 }
 
