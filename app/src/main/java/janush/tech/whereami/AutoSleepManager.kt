@@ -538,8 +538,9 @@ class AutoSleepManager private constructor(private val context: Context) {
         val minute = cal.get(Calendar.MINUTE)
         val dayOfYear = cal.get(Calendar.DAY_OF_YEAR)
 
-        // Reset manual wake override when moving into daytime (after 12:00 PM)
-        if (hour in 12..18 && wasManuallyWokenThisCycle) {
+        // Reset manual wake override when a new calendar day starts
+        if (lastEvaluatedCycleDate != dayOfYear) {
+            lastEvaluatedCycleDate = dayOfYear
             wasManuallyWokenThisCycle = false
         }
 
@@ -548,6 +549,9 @@ class AutoSleepManager private constructor(private val context: Context) {
 
         val inWindow = isTimeInWindow(hour, minute, startH, startM, endH, endM)
         val isNightOrBedtime = isNightOrBedtimeTime(hour, minute, startH, startM, endH, endM)
+        if (!isNightOrBedtime && !inWindow && wasManuallyWokenThisCycle) {
+            wasManuallyWokenThisCycle = false
+        }
         val dndActive = isDndActive()
         val isMorning = isMorningTime(hour)
         val alarmFired = isAlarmFiredRecently()

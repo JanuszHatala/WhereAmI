@@ -296,6 +296,8 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 DELETE FROM $TABLE_CACHE 
                 WHERE (street LIKE '%Krzemionki%' AND latitude BETWEEN 49.8415 AND 49.8445)
                    OR (street LIKE '%Klonowa%' AND latitude BETWEEN 49.8510 AND 49.8525 AND longitude BETWEEN 19.1420 AND 19.1435)
+                   OR (street LIKE '%Górska%' AND latitude BETWEEN 49.8490 AND 49.8530 AND longitude BETWEEN 19.2830 AND 19.2880)
+                   OR (street LIKE '%Graniczna%DK%' OR street LIKE '%Graniczna (DK%')
                    OR ((latitude BETWEEN 49.8350 AND 49.8550 AND longitude BETWEEN 19.0450 AND 19.0750)
                        AND (street LIKE '%Braterska%' 
                          OR street LIKE '%Chłopickiego%' 
@@ -303,7 +305,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                          OR street LIKE '%Kryształowa%' 
                          OR street LIKE '%Czerwona%' 
                          OR street LIKE '%Bukietowa%'))
-                   OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło')
+                   OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło', 'Unknown City', '--')
             """.trimIndent())
         } catch (_: Exception) {}
     }

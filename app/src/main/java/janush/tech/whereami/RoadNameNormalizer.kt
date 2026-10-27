@@ -140,8 +140,19 @@ object RoadNameNormalizer {
         ) {
             return false
         }
+        val sideStreetNames = setOf(
+            "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
+            "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
+            "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
+            "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola"
+        )
+        if (sideStreetNames.contains(lower)) return false
+
+        val isDirectional = lower.endsWith("ska") || lower.endsWith("cka") || lower.endsWith("dzka")
+        val isArterialKeyword = lower.contains("obwodnica") || lower.contains("główna") || lower.contains("glowna") ||
+                lower.contains("trasa") || lower.contains("trakt") || lower.contains("aleja") || lower.contains("3 maja")
         val words = base.split(Regex("\\s+")).filter { it.isNotBlank() }
-        return words.size <= 2
+        return (isDirectional || isArterialKeyword) && words.size <= 2
     }
 
     /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
@@ -179,9 +190,25 @@ object RoadNameNormalizer {
         } ?: return null
         val cached = cachedStreet?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         if (isHighwayCodeOnly(cached) || isResidentialSideStreet(cached)) return null
+
+        // Verification: The cached entry MUST confirm connection to this highway corridor.
+        // It must have a matching roadRef, already contain the parenthesized highway code,
+        // or be an unmistakable arterial corridor local name (e.g. Krakowska).
+        val normalizedCommitted = committedCode.replace(" ", "").uppercase(Locale.ROOT)
+        val cachedRefNormalized = cachedRoadRef?.trim()?.replace(" ", "")?.uppercase(Locale.ROOT)
+        val hasMatchingRef = cachedRefNormalized != null && (
+            cachedRefNormalized == normalizedCommitted ||
+            cachedRefNormalized == extractHighwayCode(normalizedCommitted)?.uppercase(Locale.ROOT) ||
+            normalizedCommitted.endsWith(cachedRefNormalized) ||
+            cachedRefNormalized.endsWith(normalizedCommitted)
+        )
+        val hasParenRef = cached.contains("($committedCode)", ignoreCase = true) ||
+            (extractHighwayCode(committedCode)?.let { cached.contains("($it)", ignoreCase = true) } == true)
+
         val local = stripParenHighwayRef(extractBaseStreet(cached))?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
         if (!isLikelyCorridorLocalName(local)) return null
+
         val ref = cachedRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: committedCode
         return local to ref
     }
@@ -272,12 +299,19 @@ object RoadNameNormalizer {
     fun shouldShowHouseNumber(
         speedKmh: Float?,
         accuracyMeters: Float?,
-        isMajorRoad: Boolean
+        isMajorRoad: Boolean,
+        isStationary: Boolean = false
     ): Boolean {
         if (isMajorRoad) return false
         val speed = speedKmh ?: 0f
         val accuracy = accuracyMeters ?: 999.0f
-        return speed < 15.0f && accuracy <= 20.0f
+        val maxAcc = when {
+            isStationary || speed < 1.0f -> 40.0f
+            speed < 5.0f -> 35.0f
+            speed < 15.0f -> 25.0f
+            else -> 0.0f
+        }
+        return speed < 15.0f && accuracy <= maxAcc
     }
 
     /**

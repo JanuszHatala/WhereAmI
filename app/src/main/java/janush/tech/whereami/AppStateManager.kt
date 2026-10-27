@@ -127,8 +127,9 @@ class AppStateManager private constructor(private val context: Context) {
             return when {
                 falseBursts <= 0 -> 0L
                 falseBursts == 1 -> 60_000L
-                falseBursts == 2 -> 120_000L
-                else -> 180_000L
+                falseBursts == 2 -> 180_000L
+                falseBursts == 3 -> 600_000L
+                else -> 1_800_000L
             }
         }
 
@@ -441,6 +442,15 @@ class AppStateManager private constructor(private val context: Context) {
         } else {
             // Best-effort durability: flush pending track points when the UI goes background.
             TripManager.getInstance(context).flushPendingForSurvival()
+            val isPhysStationary = try {
+                StationaryDetector.getInstance(context).isPhysicallyStationary.value
+            } catch (_: Exception) { false }
+            val speedMs = LocationManager.getInstance(context).getLastValidSpeedMs()
+            if (_currentMode.value == AppLifecycleMode.LIVE_ONLY && (isPhysStationary || speedMs < 0.35f)) {
+                LocationManager.getInstance(context).stopLocationUpdates(preserveStationaryState = true)
+                LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+                MotionWakeManager.getInstance(context).arm()
+            }
             AutoSleepManager.getInstance(context).evaluateAutoSleep()
         }
         updateStandbyInactivityWatcherState()
@@ -732,6 +742,7 @@ class AppStateManager private constructor(private val context: Context) {
                                 scheduleMotionWakeRearm(cooldownMs)
                             } else {
                                 // Restore Live Sharing cadence when moving below trip auto-start threshold.
+                                consecutiveFalseBursts = 0
                                 TelemetryLogger.log("POWER", "Motion burst ended in LIVE_ONLY without auto-start; restoring live cadence.")
                                 startLiveOnlyWatcher()
                             }
@@ -860,11 +871,13 @@ class AppStateManager private constructor(private val context: Context) {
                     }
                     val stationaryDuration = now - stationarySinceMs
                     // After 30 seconds of verified stationary dwell, relax GPS sampling to stationary cadence
-                    if (stationaryDuration >= 30_000L && !isStationaryCadenceApplied) {
-                        TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Arming MotionWakeManager.")
-                        motionManager.arm()
-                        LiveSharingManager.getInstance(context).startStationaryHeartbeat()
-                        isStationaryCadenceApplied = true
+                    if (stationaryDuration >= 30_000L) {
+                        if (!isStationaryCadenceApplied) {
+                            TelemetryLogger.log("POWER", "LIVE_ONLY: Verified stationary for ${stationaryDuration / 1000}s. Arming MotionWakeManager.")
+                            motionManager.arm()
+                            LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+                            isStationaryCadenceApplied = true
+                        }
 
                         // Zero-idle drain: continuous GNSS (even at 30–60 s) holds the radio/GPS lock and
                         // blocks Deep Doze (field 2026-10-22: ~10 min screen-off GNSS via FGS while Live
@@ -872,11 +885,13 @@ class AppStateManager private constructor(private val context: Context) {
                         // screen is off; MotionWakeManager restores cadence on locomotion. Presence
                         // continues via HTTP heartbeat without a location subscription.
                         if (!isAppInForeground) {
-                            TelemetryLogger.log(
-                                "POWER",
-                                "LIVE_ONLY: Screen off: Shutting down GPS updates to allow sustained Doze (charging=${_isCharging.value})."
-                            )
-                            locManager.stopLocationUpdates(preserveStationaryState = true)
+                            if (!locManager.isGpsStopped) {
+                                TelemetryLogger.log(
+                                    "POWER",
+                                    "LIVE_ONLY: Screen off: Shutting down GPS updates to allow sustained Doze (charging=${_isCharging.value})."
+                                )
+                                locManager.stopLocationUpdates(preserveStationaryState = true)
+                            }
                         } else if (_isCharging.value) {
                             locManager.updateSamplingInterval(30_000L, 15_000L)
                         } else {

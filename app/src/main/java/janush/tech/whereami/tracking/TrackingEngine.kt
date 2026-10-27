@@ -390,7 +390,8 @@ class TrackingEngine(
         }
         rejectedChain.add(fix)
         if (rejectedChain.size > 8) rejectedChain.removeAt(0)
-        return rejectedChain.size >= REJECTS_FOR_RESET
+        val threshold = if (activeProfile.maxSpeedMps < 5.0) 5 else REJECTS_FOR_RESET
+        return rejectedChain.size >= threshold
     }
 
     private fun reject(fix: RawFix, decision: FixDecision, finalized: List<SmoothedPoint>): EngineResult {

@@ -536,20 +536,18 @@ class LocationManager private constructor(private val context: Context) {
 
         // Accelerometer-based physical motion check:
         // Strictly for indoor desk / resting clamp.
-        // NEVER clamp if raw GPS reports positive velocity (> 1.2 m/s), single fix moved > 3.0m,
-        // or cumulative displacement > 6.0m (unblocks slow driving and starting from stop).
-        // Newton's 1st Law: uniform highway cruising has zero acceleration variance by physical definition.
-        val isMoving = (rawSpeed != null && rawSpeed > 1.2f) || distMoved > 3.0f || cumulativeDistMoved > 6.0f
-        if (!isMoving) {
-            val isPhysicallyStationary = try {
-                StationaryDetector.getInstance(context).isPhysicallyStationary.value
-            } catch (_: Exception) { false }
+        // Clamps speed to 0.0 m/s when accelerometer variance confirms device is at rest
+        // and displacement is within GPS multipath jitter bounds (single fix <= 4.0m and cumulative <= 8.0m).
+        // This eliminates false indoor speeds (1.2 - 2.5 m/s) sitting on a desk or couch.
+        // Smooth highway cruising is not clamped because vehicle travel produces continuous displacement (> 4.0m).
+        val isPhysicallyStationary = try {
+            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+        } catch (_: Exception) { false }
 
-            if (isPhysicallyStationary) {
-                kalmanSpeed = 0f
-                lastValidSpeedMs = 0f
-                return 0f
-            }
+        if (isPhysicallyStationary && distMoved <= 4.0f && cumulativeDistMoved <= 8.0f) {
+            kalmanSpeed = 0f
+            lastValidSpeedMs = 0f
+            return 0f
         }
 
         // If rawSpeed is null (GPS chip Doppler cold start), use cumulative displacement speed if available
@@ -1336,8 +1334,11 @@ class LocationManager private constructor(private val context: Context) {
         speedKmh: Float?,
         accuracyMeters: Float?
     ): MultiLanguagePlaceInfo {
+        val isPhysStationary = try {
+            StationaryDetector.getInstance(context).isPhysicallyStationary.value
+        } catch (_: Exception) { false }
         val isMajor = RoadNameNormalizer.isMajorRoad(data.pl.street) || !data.pl.roadRef.isNullOrBlank()
-        val allowHouse = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMajor)
+        val allowHouse = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMajor, isPhysStationary)
         if (allowHouse) return data
         return data.copy(
             en = data.en.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.en.street, false)),

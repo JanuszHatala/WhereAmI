@@ -102,13 +102,45 @@ class RoadNameNormalizerTest {
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 15.0f, accuracyMeters = 8.0f, isMajorRoad = false))
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 45.0f, accuracyMeters = 5.0f, isMajorRoad = false))
 
-        // Degraded accuracy > 20m -> stripped
-        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 5.0f, accuracyMeters = 21.0f, isMajorRoad = false))
-        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 25.0f, isMajorRoad = false))
+        // Stationary / indoor dwell (speed < 1 km/h): allowed up to 40m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 25.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 35.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 42.0f, isMajorRoad = false))
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = null, isMajorRoad = false))
+
+        // Slow walking (speed < 5 km/h): allowed up to 35m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 3.5f, accuracyMeters = 30.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 3.5f, accuracyMeters = 36.0f, isMajorRoad = false))
+
+        // Moving (5 - 15 km/h): allowed up to 25m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 20.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 28.0f, isMajorRoad = false))
 
         // Major road / corridor -> strictly stripped regardless of speed/accuracy
         assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 3.0f, isMajorRoad = true))
+    }
+
+    @Test
+    fun testCoalesceBareCodeSideStreetShielding() {
+        // Graniczna is a side street without matching roadRef - must NOT coalesce with DK52
+        val resultGraniczna = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "DK52",
+            cachedStreet = "Graniczna",
+            cachedRoadRef = null
+        )
+        org.junit.Assert.assertNull(resultGraniczna)
+
+        // Krakowska with matching roadRef DK52 - coalesces cleanly
+        val resultKrakowska = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "DK52",
+            cachedStreet = "Krakowska",
+            cachedRoadRef = "DK52"
+        )
+        org.junit.Assert.assertNotNull(resultKrakowska)
+        org.junit.Assert.assertEquals("Krakowska", resultKrakowska?.first)
+        org.junit.Assert.assertEquals("DK52", resultKrakowska?.second)
     }
 
     @Test
