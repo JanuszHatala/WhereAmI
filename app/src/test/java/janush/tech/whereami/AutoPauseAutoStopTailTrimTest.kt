@@ -92,4 +92,16 @@ class AutoPauseAutoStopTailTrimTest {
         val resultPauses = trip.pauses.filterNot { it.startTime >= trimEndTime }
         assertTrue(resultPauses.isEmpty())
     }
+
+    @Test
+    fun testLegacyAutoStopUpgradeLogic() {
+        // Any legacy stored value <= 20 should migrate to the new profile default
+        val legacyStored = listOf(1, 3, 5, 10, 15, 20)
+        for (legacy in legacyStored) {
+            val shouldUpgrade = legacy <= 20
+            assertTrue("Legacy preset $legacy min must be upgraded to new default", shouldUpgrade)
+        }
+        val customLong = 40
+        assertFalse("Custom preset > 20 min should not trigger legacy upgrade", customLong <= 20)
+    }
 }

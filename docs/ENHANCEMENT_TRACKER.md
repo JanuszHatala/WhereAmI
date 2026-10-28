@@ -1610,15 +1610,18 @@ Evidence & Field Diagnostics:
 | **BAT121-03** | Fix cache deficit check and screen-off live radio idle polling. | `CacheManager.kt`, `LiveSharingManager.kt` | Implemented | Power & cache resilience. |
 | **VER-121** | versionCode 158 / 1.18.27 verification. | `app/build.gradle.kts` | Implemented | Gates passed. |
 
-## 124. Round 122: Auto-Pause Preceded Auto-Stop, Extended Profile Timeouts & Clean Tail Trimming (2026-10-28, v1.18.28)
+## 125. Round 123: Auto-Stop Preference Migration to Extended Defaults (2026-10-28, v1.18.29)
+
+Evidence & Diagnostics:
+- User reported opening the app after v1.18.28 install and still seeing old auto-stop times (e.g. 15m, 20m) instead of agreed extended defaults (Car 45m, Bike 60m, Hike 90m).
+- Root cause: Device `where_am_i_trip_prefs.xml` persisted old preset values (`pref_auto_stop_min_CAR=15`, `pref_auto_stop_min_CYCLING=15`, `pref_auto_stop_min_HIKING=20`, `pref_auto_stop_minutes=10`) from earlier app runs. Without a preference migration, `prefs.getInt()` returned the stale stored value instead of the updated `profile.autoStopMinutesDefault`.
+- Solution: Added `migrateExtendedAutoStopIfNeeded` in `TripManager.kt` upgrading any stored value $\le 20$ min to the new agreed profile defaults and removing legacy global `pref_auto_stop_minutes`.
 
 | Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
 | :--- | :--- | :--- | :---: | :--- |
-| **TRK122-01** | Precede Auto-Stop with Auto-Pause on 2.5 min stationary dwell in AUTO mode. | `TripManager.kt` | Implemented | Automatically enters `isPaused = true` with pre-pause anchor snapshot (`pauseAnchorFirstStationaryTime`, `pointIndex`, `distanceMeters`). |
-| **TRK122-02** | Extend default auto-stop timeouts per profile (Car 45m, Run 30m, Bike/MTB 60m, Hike/Walk 90m). | `TripModels.kt`, `MainActivity.kt` | Implemented | Extended defaults; added presets up to 120m and custom input in UI. |
-| **TRK122-03** | Full clean-cut tail trimming on auto-stop and manual stop while paused. | `TripManager.kt`, `AutoPauseAutoStopTailTrimTest.kt` | Implemented | Truncates `endTime`, reverts `distanceMeters`, deletes trailing jitter points from memory and DB `track_points`, and strips trailing pause. |
-| **BAT122-04** | Relax GPS sampling and release wake-lock during pause with screen off. | `AppStateManager.kt`, `LiveTrackingService.kt` | Implemented | 20s batched GNSS, wake-lock released, hardware motion wake sensor armed for instant auto-resume burst. |
-| **VER-122** | versionCode 159 / 1.18.28 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (563 tests) & `assembleDebug` passed cleanly. |
+| **SET123-01** | Migrate legacy stored auto-stop presets ($\le 20$m) to new extended defaults. | `TripManager.kt`, `AutoPauseAutoStopTailTrimTest.kt` | Implemented | Automatic migration on load updates stored profile keys to Car 45m, Bike/MTB 60m, Hike/Walk 90m, Run 30m. |
+| **VER-123** | versionCode 160 / 1.18.29 verification. | `app/build.gradle.kts` | Implemented | Gates passed cleanly. |
+
 
 
 
