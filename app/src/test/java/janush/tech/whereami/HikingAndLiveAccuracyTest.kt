@@ -18,7 +18,7 @@ class HikingAndLiveAccuracyTest {
         assertEquals(2.5f, hiking.autoStartSpeedKmh, 0.01f)
         assertEquals(15_000L, hiking.autoStartDurationMs)
         assertEquals(1.0f, hiking.autoStopSpeedKmh, 0.01f)
-        assertEquals(10, hiking.autoStopMinutesDefault)
+        assertEquals(90, hiking.autoStopMinutesDefault)
         assertEquals(3_000L, hiking.gpsIntervalMs)
         assertEquals(1_500L, hiking.minGpsIntervalMs)
         assertEquals(30.0, hiking.minValidDistanceMeters, 0.01)
