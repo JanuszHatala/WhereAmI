@@ -143,7 +143,7 @@ class BatteryOptimizationAndAutoStartTest {
         for (profile in allProfiles) {
             assertTrue("Profile displayName cannot be blank", profile.displayName.isNotBlank())
             assertTrue("Profile emoji cannot be blank", profile.iconEmoji.isNotBlank())
-            assertTrue("Default auto-stop minutes must be between 1 and 60", profile.autoStopMinutesDefault in 1..60)
+            assertTrue("Default auto-stop minutes must be between 1 and 120", profile.autoStopMinutesDefault in 1..120)
         }
     }
 

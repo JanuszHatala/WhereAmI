@@ -1601,22 +1601,25 @@ Evidence & Field Diagnostics:
 | **MAP119-03** | Extended altitude badge clearance offsets & spiderfied threat tracking. | `AltitudeBadgePositionEvaluator.kt`, `OsmMapView.kt`, `AltitudeBadgePlacementTest.kt` | Implemented | Added extended clearance offsets (52dp/44dp); skips compact offsets when threats are co-located at cursor; passes spiderfied guest positions into collision evaluator. Unit tests verify `minDist >= 40dp` and East quadrant selection. |
 | **VER-119** | versionCode 156 / 1.18.25 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (562 tests) & `assembleDebug` passed cleanly. |
 
-## 122. Round 120: Guest Avatar Spatial Accuracy, Minimal Offset Clamp & True Position Leader Line Overlay (2026-10-27, v1.18.26)
-
-Evidence & Field Diagnostics:
-- **Screenshot `media_1793126652330_c4b4d28e.png`**:
-  - In v1.18.25, `desiredOffsetDp = 65f` with radius clamped up to 250m resulted in the guest avatar `ja` displacing ~140m down the road past the Górska intersection, confusing the user as to whether the guest was actually at Home or down the street.
-  - User requested: keep the avatar as close to real coordinates as possible, while adding a subtle connecting leader line / stem from the real coordinate to the displaced badge so the true location is never ambiguous.
-- **Solution Implementation**:
-  - Clamped spiderfy radius to `16.0..45.0` meters (`desiredOffsetDp = 36f`), keeping the offset tight (within the yard/immediate property boundary).
-  - Enforced a West bias when within 10m of an obstacle, avoiding the road intersection to the East.
-  - Implemented `GuestLeaderLinesOverlay` drawing a high-contrast anchor junction dot at the true coordinates and a leader line to the offset badge.
+## 123. Round 121: Field Test Kinematics, Display Snap Shift, Apex Preservation, Corridor House Numbers & Cache Deficit (2026-10-28, v1.18.27)
 
 | Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
 | :--- | :--- | :--- | :---: | :--- |
-| **MAP120-01** | Tighten spiderfy displacement radius to 16m-45m (36dp). | `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Clamped `radiusM.coerceIn(16.0, 45.0)` and `desiredOffsetDp = 36f`. Verified in `LiveGuestTest`. |
-| **MAP120-02** | Leader line and anchor junction dot overlay for offset guest avatars. | `GuestLeaderLinesOverlay.kt`, `OsmMapView.kt` | Implemented | Renders anchor dot at `realPos` and high-contrast leader line to `displayPos` when displaced $\ge 8$dp. |
-| **VER-120** | versionCode 157 / 1.18.26 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` & `assembleDebug` verified cleanly. |
+| **TRK121-01** | Eliminate display snap shift and preserve sharp turn apexes. | `AdaptiveTrackSampler.kt`, `OsmMapView.kt`, `AdaptiveTrackSamplerTest.kt` | Implemented | Preserved geometric apexes while eliminating residual display pull shifts. |
+| **GEO121-02** | Format corridor house numbers without redundant highway code prefixes. | `RoadNameNormalizer.kt`, `RoadNameNormalizerTest.kt` | Implemented | Clean corridor address resolution. |
+| **BAT121-03** | Fix cache deficit check and screen-off live radio idle polling. | `CacheManager.kt`, `LiveSharingManager.kt` | Implemented | Power & cache resilience. |
+| **VER-121** | versionCode 158 / 1.18.27 verification. | `app/build.gradle.kts` | Implemented | Gates passed. |
+
+## 124. Round 122: Auto-Pause Preceded Auto-Stop, Extended Profile Timeouts & Clean Tail Trimming (2026-10-28, v1.18.28)
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **TRK122-01** | Precede Auto-Stop with Auto-Pause on 2.5 min stationary dwell in AUTO mode. | `TripManager.kt` | Implemented | Automatically enters `isPaused = true` with pre-pause anchor snapshot (`pauseAnchorFirstStationaryTime`, `pointIndex`, `distanceMeters`). |
+| **TRK122-02** | Extend default auto-stop timeouts per profile (Car 45m, Run 30m, Bike/MTB 60m, Hike/Walk 90m). | `TripModels.kt`, `MainActivity.kt` | Implemented | Extended defaults; added presets up to 120m and custom input in UI. |
+| **TRK122-03** | Full clean-cut tail trimming on auto-stop and manual stop while paused. | `TripManager.kt`, `AutoPauseAutoStopTailTrimTest.kt` | Implemented | Truncates `endTime`, reverts `distanceMeters`, deletes trailing jitter points from memory and DB `track_points`, and strips trailing pause. |
+| **BAT122-04** | Relax GPS sampling and release wake-lock during pause with screen off. | `AppStateManager.kt`, `LiveTrackingService.kt` | Implemented | 20s batched GNSS, wake-lock released, hardware motion wake sensor armed for instant auto-resume burst. |
+| **VER-122** | versionCode 159 / 1.18.28 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (563 tests) & `assembleDebug` passed cleanly. |
+
 
 
 

@@ -179,8 +179,16 @@ class AppStateManager private constructor(private val context: Context) {
             profile: ActivityProfile,
             policy: BatteryPowerPolicy,
             isAppInForeground: Boolean,
-            carActive: Boolean
+            carActive: Boolean,
+            isPaused: Boolean = false
         ): Triple<Long, Long, Long> {
+            if (isPaused) {
+                return if (isAppInForeground) {
+                    Triple(1000L, 1000L, 0L)
+                } else {
+                    Triple(20_000L, 10_000L, SCREEN_OFF_BATCH_DELAY_MS)
+                }
+            }
             val isFastMover = profile == ActivityProfile.CAR ||
                 profile == ActivityProfile.CYCLING ||
                 profile == ActivityProfile.MTB
@@ -542,6 +550,13 @@ class AppStateManager private constructor(private val context: Context) {
                 recalculateState()
             }
         }
+        scope.launch {
+            TripManager.getInstance(context).isPaused.collect {
+                if (_currentMode.value == AppLifecycleMode.TRIP_RECORDING) {
+                    recalculateState()
+                }
+            }
+        }
     }
 
     fun scheduleMotionWakeRearm(cooldownMs: Long) {
@@ -594,8 +609,11 @@ class AppStateManager private constructor(private val context: Context) {
             }
         }
 
+        val hasActiveTrip = tripManager.activeTrip.value != null
+        val isTripPaused = tripManager.isPaused.value
+
         if (tripManager.tripMode.value != TripMode.AUTO) return
-        if (tripManager.activeTrip.value != null) return
+        if (hasActiveTrip && !isTripPaused) return
 
         val profile = tripManager.activityProfile.value
         val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
@@ -748,6 +766,20 @@ class AppStateManager private constructor(private val context: Context) {
                             }
                         }
                         else -> Unit
+                    }
+                } else if (tripManager.isPaused.value) {
+                    val profile = tripManager.activeTrip.value?.activityProfile ?: tripManager.activityProfile.value
+                    val carActive = isAutoMediaActive || isCarUiModeActive()
+                    val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
+                        profile = profile,
+                        policy = _powerPolicy.value,
+                        isAppInForeground = isAppInForeground,
+                        carActive = carActive,
+                        isPaused = true
+                    )
+                    locManager.updateSamplingInterval(interval, minInterval, maxDelay)
+                    if (!isAppInForeground) {
+                        MotionWakeManager.getInstance(context).arm()
                     }
                 }
             }
@@ -1032,7 +1064,12 @@ class AppStateManager private constructor(private val context: Context) {
                 motionBurstJob?.cancel()
                 consecutiveFalseBursts = 0
                 motionRearmJob?.cancel()
-                motionManager.disarm()
+                val isPaused = TripManager.getInstance(context).isPaused.value
+                if (isPaused && !isAppInForeground) {
+                    MotionWakeManager.getInstance(context).arm()
+                } else {
+                    MotionWakeManager.getInstance(context).disarm()
+                }
                 val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
                     ?: TripManager.getInstance(context).activityProfile.value
                 val carActive = isAutoMediaActive || isCarUiModeActive()
@@ -1041,7 +1078,8 @@ class AppStateManager private constructor(private val context: Context) {
                     profile = profile,
                     policy = policy,
                     isAppInForeground = isAppInForeground,
-                    carActive = carActive
+                    carActive = carActive,
+                    isPaused = isPaused
                 )
                 locManager.updateSamplingInterval(interval, minInterval, maxDelay)
             }

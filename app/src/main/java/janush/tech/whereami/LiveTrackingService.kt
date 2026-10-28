@@ -640,9 +640,10 @@ class LiveTrackingService : Service() {
         val isSleeping = AppStateManager.getInstance(this).isStandbySleeping.value
 
         if (trip != null) {
+            val isTripPaused = TripManager.getInstance(this).isPaused.value
             startLocationTracking()
-            // Strict WakeLock scoping: ONLY hold CPU wake lock during active trip recording.
-            updateWakeLock(true)
+            // Strict WakeLock scoping: ONLY hold CPU wake lock during active unpaused trip recording.
+            updateWakeLock(!isTripPaused)
             updateNotification(force = true)
         } else if (isSleeping) {
             // Standby / Live Sharing Sleep engaged: shutdown location tracking and GPS, release wake lock, update notification in-place

@@ -8125,7 +8125,17 @@ private fun ProfileConfigSheet(
     var autoStopMin by remember(profile) { mutableStateOf(initialAutoStopMin) }
     var showCustomAutoStopDialog by remember { mutableStateOf(false) }
     var customAutoStopInput by remember { mutableStateOf("") }
-    val autoStopPresetOptions = listOf(1 to "1m", 3 to "3m", 5 to "5m", 10 to "10m", 15 to "15m", 20 to "20m")
+    val autoStopPresetOptions = listOf(
+        10 to "10m",
+        15 to "15m",
+        20 to "20m",
+        30 to "30m",
+        45 to "45m",
+        60 to "60m (1h)",
+        75 to "75m (1h 15m)",
+        90 to "90m (1h 30m)",
+        120 to "120m (2h)"
+    )
     val isCustomAutoStop = autoStopPresetOptions.none { it.first == autoStopMin }
     var autoStopDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -8296,7 +8306,7 @@ private fun ProfileConfigSheet(
                         Text("⚡", fontSize = 14.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Auto-start: starts recording when speed exceeds $speedDisplay for $durDisplay (or moves >25m). Rest pauses detected after 45s stationary, auto-stops after ${autoStopMin}m.",
+                            text = "Auto-start: starts recording when speed exceeds $speedDisplay for $durDisplay (or moves >25m). Auto-pauses after 2.5m stationary, auto-stops after ${autoStopMin}m.",
                             fontSize = 12.sp,
                             color = Color(0xFF94A3B8),
                             lineHeight = 16.sp
