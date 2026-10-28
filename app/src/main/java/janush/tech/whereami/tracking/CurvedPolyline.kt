@@ -19,9 +19,9 @@ import kotlin.math.sqrt
 object CurvedPolyline {
     /** Target spacing of the inserted points along a bend. */
     const val STEP_M = 0.6
-    const val MAX_SUBDIVISIONS = 8
+    const val MAX_SUBDIVISIONS = 16
     /** Both corners of a segment straighter than this: draw it as a straight segment. */
-    const val STRAIGHT_DEG = 4.0
+    const val STRAIGHT_DEG = 0.5
     /**
      * Either corner sharper than this: draw the segment straight.
      * Centripetal Catmull-Rom otherwise overshoots multipath kinks into visible Z/V zigzags

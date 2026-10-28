@@ -1338,7 +1338,10 @@ class LocationManager private constructor(private val context: Context) {
             StationaryDetector.getInstance(context).isPhysicallyStationary.value
         } catch (_: Exception) { false }
         val isMajor = RoadNameNormalizer.isMajorRoad(data.pl.street) || !data.pl.roadRef.isNullOrBlank()
-        val allowHouse = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMajor, isPhysStationary)
+        val hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(data.pl.street)
+        val allowHouse = RoadNameNormalizer.shouldShowHouseNumber(
+            speedKmh, accuracyMeters, isMajor, isPhysStationary, hasNamedLocalStreet
+        )
         if (allowHouse) return data
         return data.copy(
             en = data.en.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.en.street, false)),
@@ -1599,10 +1602,13 @@ class LocationManager private constructor(private val context: Context) {
         val osmMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
         val thoroughfareMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
 
+        val effectiveRoadCandidate = osrmStreet ?: osm?.street ?: address?.thoroughfare
         val shouldShowHouse = RoadNameNormalizer.shouldShowHouseNumber(
             speedKmh,
             accuracyMeters,
-            isMajorRoad = RoadNameNormalizer.isMajorRoad(osrmStreet ?: osm?.street ?: address?.thoroughfare)
+            isMajorRoad = RoadNameNormalizer.isMajorRoad(effectiveRoadCandidate),
+            isStationary = speedKmh == null || speedKmh < 0.35f,
+            hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(effectiveRoadCandidate)
         )
 
         // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
@@ -1716,14 +1722,19 @@ class LocationManager private constructor(private val context: Context) {
 
                 val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
                 val cc = osm.countryCode?.uppercase() ?: countryCode
+                val isStat = speedKmh == null || speedKmh < 0.35f
                 val osmNorm = osm.street?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
-                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
+                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(
+                        speedKmh, accuracyMeters, isMaj, isStationary = isStat, hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(it)
+                    )
                     RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = allowH, countryCode = cc)
                 }
                 val addrNorm = address?.thoroughfare?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it)
-                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(speedKmh, accuracyMeters, isMaj)
+                    val allowH = RoadNameNormalizer.shouldShowHouseNumber(
+                        speedKmh, accuracyMeters, isMaj, isStationary = isStat, hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(it)
+                    )
                     RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = allowH, countryCode = cc)
                 }
                 val resolvedCountry = when (cacheKey) {

@@ -292,17 +292,19 @@ object RoadNameNormalizer {
 
     /**
      * Determines whether house numbers should be displayed on the main UI.
-     * Allowed only when moving at slow speed (< 15 km/h) or stationary,
-     * with acceptable GPS horizontal accuracy (<= 20m),
-     * on non-major roads.
+     * Allowed when moving at slow speed (< 15 km/h) or stationary,
+     * with acceptable GPS horizontal accuracy (<= 40m stationary, <= 25m moving).
+     * Bare highways (e.g. A4, S7, DK52 without a named street) are suppressed,
+     * but named urban corridors (e.g. Bielska, Krakowska carrying DK52) DO show house numbers when stopped/slow.
      */
     fun shouldShowHouseNumber(
         speedKmh: Float?,
         accuracyMeters: Float?,
         isMajorRoad: Boolean,
-        isStationary: Boolean = false
+        isStationary: Boolean = false,
+        hasNamedLocalStreet: Boolean = false
     ): Boolean {
-        if (isMajorRoad) return false
+        if (isMajorRoad && !hasNamedLocalStreet) return false
         val speed = speedKmh ?: 0f
         val accuracy = accuracyMeters ?: 999.0f
         val maxAcc = when {

@@ -204,6 +204,51 @@ class RoadNameNormalizerTest {
     }
 
     @Test
+    fun testShouldShowHouseNumberOnMajorCorridorWithLocalName() {
+        // Stationary or slow speed on a major road WITH a local street name: ALLOW house numbers
+        assertTrue(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 0f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = true,
+                hasNamedLocalStreet = true
+            )
+        )
+        assertTrue(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 4f,
+                accuracyMeters = 8f,
+                isMajorRoad = true,
+                isStationary = false,
+                hasNamedLocalStreet = true
+            )
+        )
+
+        // Bare highway (e.g. A4, S7, DK52 without a local street name): DO NOT allow house numbers
+        assertFalse(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 0f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = true,
+                hasNamedLocalStreet = false
+            )
+        )
+
+        // Driving fast (> 15 km/h) on major corridor: DO NOT allow house numbers
+        assertFalse(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 45f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = false,
+                hasNamedLocalStreet = true
+            )
+        )
+    }
+
+    @Test
     fun testFormatStreetDisplayWithHouseNumber() {
         assertEquals("ul. Zielona 92", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = true))
         assertEquals("ul. Zielona", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = false))
