@@ -9621,11 +9621,13 @@ private fun LocalityCard(
 
                 val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
+                val hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(effectiveStreet)
                 val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(
                     currentSpeedKmh,
                     locationData.accuracy,
                     isMajor,
-                    isStationary
+                    isStationary,
+                    hasNamedLocalStreet
                 )
 
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
@@ -10313,11 +10315,13 @@ private fun LocalityCard(
 
                 val currentSpeedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 val isMajor = RoadNameNormalizer.isMajorRoad(effectiveStreet, primaryPlace?.roadRef)
+                val hasNamedLocalStreet = !RoadNameNormalizer.isHighwayCodeOnly(effectiveStreet)
                 val allowHouseNum = RoadNameNormalizer.shouldShowHouseNumber(
                     currentSpeedKmh,
                     locationData.accuracy,
                     isMajor,
-                    isStationary
+                    isStationary,
+                    hasNamedLocalStreet
                 )
 
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
