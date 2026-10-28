@@ -208,6 +208,8 @@ class RoadNameNormalizerTest {
         assertEquals("ul. Zielona 92", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = true))
         assertEquals("ul. Zielona", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = false))
         assertEquals("DK52", RoadNameNormalizer.formatStreetDisplay("DK52", "52", "PL", allowHouseNumber = true))
+        assertEquals("Krakowska 5 (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska 5", "52", "PL", allowHouseNumber = true))
+        assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska 5", "52", "PL", allowHouseNumber = false))
         assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska (DK52)", null, "PL", allowHouseNumber = true))
     }
 }

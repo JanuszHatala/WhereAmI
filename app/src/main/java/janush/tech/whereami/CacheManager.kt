@@ -427,6 +427,15 @@ class CacheManager private constructor(private val context: Context) {
         updateNotification("Starting prefetch...", 0, 0, false)
 
         prefetchJob = managerScope.launch {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val wakeLock = powerManager?.newWakeLock(
+                android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                "WhereAmI:CachePrefetchWakeLock"
+            )?.apply {
+                setReferenceCounted(false)
+                acquire(45 * 60 * 1000L) // 45 minutes max timeout
+            }
+
             try {
                 val dbHelper = TripDatabaseHelper(context)
                 val allTrips = dbHelper.getAllTrips()
@@ -511,10 +520,11 @@ class CacheManager private constructor(private val context: Context) {
                 }
 
                 // ── PASS 2: Fine Precision Down to ~15m Grid Resolution ──────────────
-                // Fills in intermediate gaps and house numbers along the corridors
-                val pass2Candidates = allUnique15mPoints.filter { (key, _) ->
-                    key !in cachedKeys
-                }.values.toList()
+                // Fills in intermediate gaps along corridors that lack spatial coverage within 30m
+                val pass2Candidates = allUnique15mPoints.values.filter { pt ->
+                    val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                    key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)
+                }
 
                 val pass2Total = pass2Candidates.size
                 var pass2Current = 0
@@ -533,7 +543,7 @@ class CacheManager private constructor(private val context: Context) {
                     }
 
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
-                    if (key !in cachedKeys) {
+                    if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
                         locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
@@ -590,6 +600,12 @@ class CacheManager private constructor(private val context: Context) {
             } catch (e: Exception) {
                 _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
                 dismissNotification()
+            } finally {
+                try {
+                    if (wakeLock?.isHeld == true) {
+                        wakeLock.release()
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -788,7 +804,11 @@ class CacheManager private constructor(private val context: Context) {
 
                 // Bulk-load cached keys in a single SQLite query (~10ms) instead of tens of thousands of individual queries
                 val cachedKeys = spatialHelper.getAllCachedGridKeys()
-                val missingRoutes = allUnique15mPoints.keys.count { it !in cachedKeys }
+                // True route deficit: a point is missing only if it has NO cached data within 30 meters
+                val missingRoutes = allUnique15mPoints.values.count { pt ->
+                    val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
+                    key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)
+                }
                 
                 val boundaryTargets = getDistinctBoundaryTargets()
                 val missingBoundaries = boundaryTargets.count { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }

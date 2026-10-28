@@ -878,9 +878,7 @@ fun OsmMapView(
                 val pose = renderPipeline.frame(nowMs)
 
                 if (pose != null && pose.lat != 0.0 && pose.lng != 0.0) {
-                    // Display-only road pull (OSRM nearest via LocationManager); recorded track stays unsapped.
-                    val (dispLat, dispLng) = TrackingRuntime.displaySnap.apply(pose.lat, pose.lng)
-                    val gp = GeoPoint(dispLat, dispLng)
+                    val gp = GeoPoint(pose.lat, pose.lng)
                     // Arrow direction: at slow speed the direction of the curve the cursor is drawing; otherwise
                     // the filter's heading while it observes one; otherwise, when visibly moving, the direction
                     // of the cursor's own rendered motion (never a stale held value).
@@ -945,7 +943,7 @@ fun OsmMapView(
                         }
                     }
                     val effectiveAccuracy = pose.accuracyM ?: fix.accuracy
-                    accuracyOverlay.updatePosition(dispLat, dispLng, effectiveAccuracy)
+                    accuracyOverlay.updatePosition(pose.lat, pose.lng, effectiveAccuracy)
 
                     val m = marker ?: Marker(map).also {
                         it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -1031,11 +1029,10 @@ fun OsmMapView(
                         val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
                             renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
                                 .count {
-                                    val (la, ln) = TrackingRuntime.displaySnap.apply(it.lat, it.lng)
-                                    pencilTrail.add(it.tMs, la, ln, it.speedMps, vehicle = vehiclePencil)
+                                    pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
                                 } > 0
                         val added = !pose.isStationary &&
-                            pencilTrail.add(pose.renderTimeMs, dispLat, dispLng, pose.speedMps, vehicle = vehiclePencil)
+                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
                         if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                             liveLine.rebuildTail(pencilTrail, gp, committedThroughMs)
                             line.setPoints(liveLine.points)
@@ -1208,12 +1205,8 @@ fun OsmMapView(
             // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
             // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
             // loop appends the dynamic tail. This is the single source of the live polyline.
-            // Display-only road snap (same offset as the cursor) so the red line does not sit in buildings.
-            val snappedCommitted = trackPoints.map { p ->
-                val (la, ln) = TrackingRuntime.displaySnap.apply(p.latitude, p.longitude)
-                GeoPoint(la, ln)
-            }
-            liveLine.setCommitted(snappedCommitted)
+            val committedGeoPoints = trackPoints.map { p -> GeoPoint(p.latitude, p.longitude) }
+            liveLine.setCommitted(committedGeoPoints)
             committedThroughMs = tripManagerRef.lastCommittedElapsedMs
             if (trackPoints.isEmpty()) pencilTrail.clear()
             pencilTrail.pruneThrough(committedThroughMs)
