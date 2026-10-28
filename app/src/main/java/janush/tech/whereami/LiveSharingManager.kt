@@ -921,15 +921,17 @@ class LiveSharingManager private constructor(private val context: Context) {
     ): Pair<Long, Float> {
         val speedMs = speedKmh / 3.6f
         val isStationary = speedMs < 0.35f || (distanceMeters >= 0f && distanceMeters < 4.0f)
+        val screenOff = !AppStateManager.getInstance(context).isAppInForegroundFlow.value
 
         val intervalMs = if (isCharging) {
-            if (isStationary) {
-                15_000L
-            } else {
-                profile.chargingLiveSyncIntervalMs
+            when {
+                isStationary -> 15_000L
+                screenOff -> profile.chargingLiveSyncIntervalMs.coerceAtLeast(15_000L)
+                else -> profile.chargingLiveSyncIntervalMs
             }
         } else {
-            (batteryIntervalMinutes * 60_000L).coerceAtLeast(10_000L)
+            val base = (batteryIntervalMinutes * 60_000L).coerceAtLeast(10_000L)
+            if (screenOff) base.coerceAtLeast(15_000L) else base
         }
 
         val breadcrumbGate = if (isCharging) {

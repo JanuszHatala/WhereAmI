@@ -53,14 +53,23 @@ class AdaptiveTrackSampler {
         }
 
         val tol = toleranceM(p.speedMps)
-        if (window.isNotEmpty() && maxDeviationM(a, p, window) > tol) {
-            // The path bent somewhere inside the window: commit the previous point (the vertex of the
-            // bend), then restart the window from it with the current point.
-            val vertex = window.last()
+        val worstPoint = if (window.isNotEmpty()) findMaxDeviationPoint(a, p, window) else null
+        if (worstPoint != null && worstPoint.second > tol) {
+            // The path bent somewhere inside the window: commit the true apex (vertex of maximum deviation),
+            // not window.last() which cuts corners and flattens apexes.
+            val vertex = worstPoint.first
+            val vertexIdx = window.indexOf(vertex)
+            val remainingInWindow = if (vertexIdx >= 0 && vertexIdx < window.size - 1) {
+                window.subList(vertexIdx + 1, window.size).toMutableList()
+            } else {
+                mutableListOf()
+            }
             window.clear()
+            window.addAll(remainingInWindow)
             anchor = vertex
             val out = arrayListOf(vertex)
             if (distanceM(vertex, p) >= maxSpacingM(p.speedMps)) {
+                window.clear()
                 anchor = p
                 out.add(p)
             } else {
@@ -115,21 +124,31 @@ class AdaptiveTrackSampler {
             return hypot(x, y) * R
         }
 
-        /** Max perpendicular distance of [pts] from segment a-b (local planar approximation). */
-        fun maxDeviationM(a: SmoothedPoint, b: SmoothedPoint, pts: List<SmoothedPoint>): Double {
+        /** Finds point with max perpendicular distance from segment a-b, returning Pair(point, deviation). */
+        fun findMaxDeviationPoint(a: SmoothedPoint, b: SmoothedPoint, pts: List<SmoothedPoint>): Pair<SmoothedPoint, Double>? {
+            if (pts.isEmpty()) return null
             val k = cos(Math.toRadians(a.lat))
             fun ex(p: SmoothedPoint) = Math.toRadians(p.lng - a.lng) * k * R
             fun ny(p: SmoothedPoint) = Math.toRadians(p.lat - a.lat) * R
             val bx = ex(b); val by = ny(b)
             val len = hypot(bx, by)
-            var worst = 0.0
+            var worstDist = -1.0
+            var worstPoint: SmoothedPoint? = null
             for (p in pts) {
                 val px = ex(p); val py = ny(p)
                 val t = if (len < 1e-6) 0.0 else ((px * bx + py * by) / (len * len)).coerceIn(0.0, 1.0)
                 val d = hypot(px - t * bx, py - t * by)
-                if (d > worst) worst = d
+                if (d > worstDist) {
+                    worstDist = d
+                    worstPoint = p
+                }
             }
-            return worst
+            return if (worstPoint != null) Pair(worstPoint, worstDist) else null
+        }
+
+        /** Max perpendicular distance of [pts] from segment a-b (local planar approximation). */
+        fun maxDeviationM(a: SmoothedPoint, b: SmoothedPoint, pts: List<SmoothedPoint>): Double {
+            return findMaxDeviationPoint(a, b, pts)?.second ?: 0.0
         }
     }
 }

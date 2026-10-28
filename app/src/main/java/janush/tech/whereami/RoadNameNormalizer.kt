@@ -507,12 +507,20 @@ object RoadNameNormalizer {
             }
         }
 
+        // Extract house number if available
+        val effectiveHouseNumber = houseNumber?.trim()?.takeIf { it.isNotEmpty() }
+            ?: extractHouseNumber(road)
+
         // If it's a major highway:
         if (normalizedHighway != null) {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
             val combined = if (!isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
-                "$cleanLocal ($normalizedHighway)"
+                if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
+                    "$cleanLocal $effectiveHouseNumber ($normalizedHighway)"
+                } else {
+                    "$cleanLocal ($normalizedHighway)"
+                }
             } else {
                 normalizedHighway
             }
@@ -522,8 +530,6 @@ object RoadNameNormalizer {
         // It's a residential or local street (may still carry a Polish DK/DW token outside PL):
         val baseStreet = extractBaseStreet(road)
         val cleanStreet = cleanStreetPrefix(baseStreet)
-        val effectiveHouseNumber = houseNumber?.trim()?.takeIf { it.isNotEmpty() }
-            ?: extractHouseNumber(road)
 
         val local = if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
             "$cleanStreet $effectiveHouseNumber"
