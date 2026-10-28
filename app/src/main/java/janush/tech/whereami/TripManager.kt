@@ -95,8 +95,7 @@ class TripManager private constructor(private val context: Context) {
     val tripMode: StateFlow<TripMode> = _tripMode.asStateFlow()
 
     private val _autoStopMinutes = MutableStateFlow(
-        prefs.getInt(KEY_AUTO_STOP_PREFIX + _activityProfile.value.name, 
-            prefs.getInt(KEY_AUTO_STOP_MINUTES, _activityProfile.value.autoStopMinutesDefault))
+        getAutoStopMinutesForProfile(_activityProfile.value)
     )
     val autoStopMinutes: StateFlow<Int> = _autoStopMinutes.asStateFlow()
 
@@ -221,7 +220,25 @@ class TripManager private constructor(private val context: Context) {
 
     fun getAutoStopMinutesForProfile(profile: ActivityProfile): Int {
         val defaultMin = profile.autoStopMinutesDefault
+        migrateExtendedAutoStopIfNeeded(profile, defaultMin)
         return prefs.getInt(KEY_AUTO_STOP_PREFIX + profile.name, defaultMin)
+    }
+
+    private fun migrateExtendedAutoStopIfNeeded(profile: ActivityProfile, defaultMin: Int) {
+        val migKey = "pref_auto_stop_migrated_v122_" + profile.name
+        if (prefs.getBoolean(migKey, false)) return
+        val key = KEY_AUTO_STOP_PREFIX + profile.name
+        val stored = if (prefs.contains(key)) prefs.getInt(key, defaultMin) else defaultMin
+        val editor = prefs.edit().putBoolean(migKey, true)
+        if (prefs.contains(KEY_AUTO_STOP_MINUTES)) {
+            editor.remove(KEY_AUTO_STOP_MINUTES)
+        }
+        // If stored value is from the old legacy short presets (<= 20 min) or missing, upgrade to new profile default
+        if (stored <= 20 || !prefs.contains(key)) {
+            editor.putInt(key, defaultMin)
+            TelemetryLogger.log("SETTINGS", "Migrated AutoStopMinutes for ${profile.name} from $stored → $defaultMin")
+        }
+        editor.apply()
     }
 
     fun setAutoStopMinutesForProfile(profile: ActivityProfile, minutes: Int) {
