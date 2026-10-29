@@ -1034,7 +1034,7 @@ fun OsmMapView(
                         val added = !pose.isStationary &&
                             pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
                         if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
-                            liveLine.rebuildTail(pencilTrail, gp, committedThroughMs)
+                            liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
                             line.setPoints(liveLine.points)
                         } else if (liveLine.moveTip(gp)) {
                             line.setPoints(liveLine.points)

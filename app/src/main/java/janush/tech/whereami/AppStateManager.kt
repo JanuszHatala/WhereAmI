@@ -139,8 +139,8 @@ class AppStateManager private constructor(private val context: Context) {
          * aborting the confirmation burst there left only the sparse 15 s moving cadence (field
          * trips 247/248: ~250 m lag with pref already at 15 s).
          */
-        fun isMotionBurstEvaluationMode(mode: AppLifecycleMode): Boolean =
-            mode == AppLifecycleMode.IDLE || mode == AppLifecycleMode.LIVE_ONLY
+        fun isMotionBurstEvaluationMode(mode: AppLifecycleMode, isTripPaused: Boolean = false): Boolean =
+            mode == AppLifecycleMode.IDLE || mode == AppLifecycleMode.LIVE_ONLY || (mode == AppLifecycleMode.TRIP_RECORDING && isTripPaused)
 
         fun shouldEarlyAbortBurst(
             elapsedMs: Long,
@@ -180,23 +180,29 @@ class AppStateManager private constructor(private val context: Context) {
             policy: BatteryPowerPolicy,
             isAppInForeground: Boolean,
             carActive: Boolean,
-            isPaused: Boolean = false
+            isPaused: Boolean = false,
+            isPhysicallyStationary: Boolean = false
         ): Triple<Long, Long, Long> {
             if (isPaused) {
                 return if (isAppInForeground) {
                     Triple(1000L, 1000L, 0L)
                 } else {
-                    Triple(20_000L, 10_000L, SCREEN_OFF_BATCH_DELAY_MS)
+                    Triple(0L, 0L, 0L)
                 }
             }
-            val isFastMover = profile == ActivityProfile.CAR ||
+            val isFastMover = (profile == ActivityProfile.CAR ||
                 profile == ActivityProfile.CYCLING ||
-                profile == ActivityProfile.MTB
+                profile == ActivityProfile.MTB) && !isPhysicallyStationary
             var interval = if (isAppInForeground || carActive || isFastMover) 1000L else profile.gpsIntervalMs
             var minInterval = if (isAppInForeground || carActive || isFastMover) 1000L else profile.minGpsIntervalMs
             var maxDelay = 0L
 
-            if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground && !carActive) {
+            if (isPhysicallyStationary && !isAppInForeground && !carActive) {
+                // Stationary dwell before auto-pause: relax from 1 Hz to 10s-15s to save battery while confirming rest
+                interval = profile.gpsIntervalMs.coerceAtLeast(10_000L)
+                minInterval = profile.minGpsIntervalMs.coerceAtLeast(5_000L)
+                maxDelay = SCREEN_OFF_BATCH_DELAY_MS
+            } else if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground && !carActive) {
                 interval = (interval * 2).coerceAtLeast(2000L)
                 minInterval = (minInterval * 2).coerceAtLeast(1500L)
                 maxDelay = SCREEN_OFF_BATCH_DELAY_SAVER_MS
@@ -577,9 +583,12 @@ class AppStateManager private constructor(private val context: Context) {
                 val canRearmLiveOnly = mode == AppLifecycleMode.LIVE_ONLY &&
                     hasActiveUnpausedLive &&
                     tripManager.activeTrip.value == null
-                if (canRearmIdle || canRearmLiveOnly) {
+                val canRearmPaused = mode == AppLifecycleMode.TRIP_RECORDING &&
+                    tripManager.isPaused.value &&
+                    !isAppInForeground
+                if (canRearmIdle || canRearmLiveOnly || canRearmPaused) {
                     motionManager.arm()
-                    TelemetryLogger.log("POWER", "MotionWakeManager re-armed successfully after ${cooldownMs / 1000}s cooldown (mode=$mode)")
+                    TelemetryLogger.log("POWER", "MotionWakeManager re-armed successfully after ${cooldownMs / 1000}s cooldown (mode=$mode, paused=${tripManager.isPaused.value})")
                 }
             } catch (_: Exception) {}
         }
@@ -667,8 +676,9 @@ class AppStateManager private constructor(private val context: Context) {
                     delay(stepMs)
                     elapsedMs += stepMs
 
-                    if (tripManager.activeTrip.value != null ||
-                        !isMotionBurstEvaluationMode(_currentMode.value)
+                    val isPausedNow = tripManager.isPaused.value
+                    if ((tripManager.activeTrip.value != null && !isPausedNow) ||
+                        !isMotionBurstEvaluationMode(_currentMode.value, isPausedNow)
                     ) {
                         break
                     }
@@ -768,18 +778,25 @@ class AppStateManager private constructor(private val context: Context) {
                         else -> Unit
                     }
                 } else if (tripManager.isPaused.value) {
-                    val profile = tripManager.activeTrip.value?.activityProfile ?: tripManager.activityProfile.value
-                    val carActive = isAutoMediaActive || isCarUiModeActive()
-                    val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
-                        profile = profile,
-                        policy = _powerPolicy.value,
-                        isAppInForeground = isAppInForeground,
-                        carActive = carActive,
-                        isPaused = true
-                    )
-                    locManager.updateSamplingInterval(interval, minInterval, maxDelay)
-                    if (!isAppInForeground) {
-                        MotionWakeManager.getInstance(context).arm()
+                    val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                    val isScreenOff = pm?.isInteractive == false || !isAppInForeground
+                    if (isScreenOff) {
+                        locManager.stopLocationUpdates(preserveStationaryState = true)
+                        consecutiveFalseBursts++
+                        val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
+                        TelemetryLogger.log("POWER", "Motion burst ended while paused with screen off: powering down GPS immediately and scheduling re-arm in ${cooldownMs / 1000}s (streak=$consecutiveFalseBursts).")
+                        scheduleMotionWakeRearm(cooldownMs)
+                    } else {
+                        val profile = tripManager.activeTrip.value?.activityProfile ?: tripManager.activityProfile.value
+                        val carActive = isAutoMediaActive || isCarUiModeActive()
+                        val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
+                            profile = profile,
+                            policy = _powerPolicy.value,
+                            isAppInForeground = isAppInForeground,
+                            carActive = carActive,
+                            isPaused = true
+                        )
+                        locManager.updateSamplingInterval(interval, minInterval, maxDelay)
                     }
                 }
             }
@@ -1065,23 +1082,31 @@ class AppStateManager private constructor(private val context: Context) {
                 consecutiveFalseBursts = 0
                 motionRearmJob?.cancel()
                 val isPaused = TripManager.getInstance(context).isPaused.value
-                if (isPaused && !isAppInForeground) {
+                val isPhysStationary = try {
+                    StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                } catch (_: Exception) { false }
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                val isScreenOff = pm?.isInteractive == false || !isAppInForeground
+                if (isPaused && isScreenOff) {
+                    locManager.stopLocationUpdates(preserveStationaryState = true)
                     MotionWakeManager.getInstance(context).arm()
+                    TelemetryLogger.log("POWER", "TRIP_RECORDING paused with screen off: GPS stopped completely, motion wake armed.")
                 } else {
                     MotionWakeManager.getInstance(context).disarm()
-                }
-                val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
-                    ?: TripManager.getInstance(context).activityProfile.value
-                val carActive = isAutoMediaActive || isCarUiModeActive()
+                    val profile = TripManager.getInstance(context).activeTrip.value?.activityProfile
+                        ?: TripManager.getInstance(context).activityProfile.value
+                    val carActive = isAutoMediaActive || isCarUiModeActive()
 
-                val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
-                    profile = profile,
-                    policy = policy,
-                    isAppInForeground = isAppInForeground,
-                    carActive = carActive,
-                    isPaused = isPaused
-                )
-                locManager.updateSamplingInterval(interval, minInterval, maxDelay)
+                    val (interval, minInterval, maxDelay) = computeTripRecordingSampling(
+                        profile = profile,
+                        policy = policy,
+                        isAppInForeground = isAppInForeground,
+                        carActive = carActive,
+                        isPaused = isPaused,
+                        isPhysicallyStationary = isPhysStationary
+                    )
+                    locManager.updateSamplingInterval(interval, minInterval, maxDelay)
+                }
             }
             AppLifecycleMode.LIVE_ONLY -> {
                 if (oldMode != AppLifecycleMode.LIVE_ONLY) {

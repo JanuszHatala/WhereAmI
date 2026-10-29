@@ -491,8 +491,8 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                 for (pt in pass1Candidates) {
-                    while (isPrefetchPaused) {
-                        kotlinx.coroutines.delay(500L)
+                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
+                        kotlinx.coroutines.delay(1000L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -504,7 +504,7 @@ class CacheManager private constructor(private val context: Context) {
                     // Skip if now cached by an adjacent query
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
-                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++
@@ -532,8 +532,8 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
 
                 for (pt in pass2Candidates) {
-                    while (isPrefetchPaused) {
-                        kotlinx.coroutines.delay(500L)
+                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
+                        kotlinx.coroutines.delay(1000L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -544,7 +544,7 @@ class CacheManager private constructor(private val context: Context) {
 
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
-                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, forceCache = true)
+                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++

@@ -74,7 +74,15 @@ class PencilTrail(private val maxPoints: Int = 600) {
      *
      * @return blended (lat, lng) arrays for all points, or null when there is nothing to blend
      */
-    fun blendedFrom(cT: Long, cLat: Double, cLng: Double, tipLat: Double, tipLng: Double, decayM: Double = JOIN_DECAY_M): Pair<DoubleArray, DoubleArray>? {
+    fun blendedFrom(
+        cT: Long,
+        cLat: Double,
+        cLng: Double,
+        tipLat: Double,
+        tipLng: Double,
+        speedMps: Double = 0.0,
+        decayM: Double = computeDecayM(speedMps)
+    ): Pair<DoubleArray, DoubleArray>? {
         val n = t.size
         if (n == 0 || !hasRef || cT < refT || cT > t[0]) return null
         val span = (t[0] - refT).toDouble()
@@ -123,6 +131,8 @@ class PencilTrail(private val maxPoints: Int = 600) {
 
         /** Distance over which the committed-vertex offset fades out along the pencil. */
         const val JOIN_DECAY_M = 4.0
+        fun computeDecayM(speedMps: Double = 0.0): Double =
+            if (speedMps > 1.0) (speedMps * 1.5).coerceIn(8.0, 25.0) else JOIN_DECAY_M
         /** States arriving in one frame that mark a delivered batch (normal delivery is one per fix). */
         const val BATCH_STATES = 3
     }

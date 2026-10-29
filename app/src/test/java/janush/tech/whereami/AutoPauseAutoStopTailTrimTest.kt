@@ -32,7 +32,7 @@ class AutoPauseAutoStopTailTrimTest {
         assertEquals(1000L, fgSampling.second)
         assertEquals(0L, fgSampling.third)
 
-        // Screen off: relaxed 20s batched sampling for battery optimization
+        // Screen off: 0L (GPS shutdown completely, zero background drain during pause)
         val bgSampling = AppStateManager.computeTripRecordingSampling(
             profile = ActivityProfile.CAR,
             policy = BatteryPowerPolicy.SMART_AUTO,
@@ -40,9 +40,9 @@ class AutoPauseAutoStopTailTrimTest {
             carActive = false,
             isPaused = true
         )
-        assertEquals(20_000L, bgSampling.first)
-        assertEquals(10_000L, bgSampling.second)
-        assertEquals(20_000L, bgSampling.third)
+        assertEquals(0L, bgSampling.first)
+        assertEquals(0L, bgSampling.second)
+        assertEquals(0L, bgSampling.third)
     }
 
     @Test

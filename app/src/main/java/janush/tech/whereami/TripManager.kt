@@ -1,7 +1,11 @@
 package janush.tech.whereami
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.location.Location
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -254,6 +258,45 @@ class TripManager private constructor(private val context: Context) {
     val activeTrip: StateFlow<TripRecord?> = _activeTrip.asStateFlow()
 
     private var pauseWarningNotified = false
+    private var autoStopAlarmPendingIntent: PendingIntent? = null
+
+    fun scheduleAutoStopAlarm(tripId: Long, timeoutMs: Long) {
+        cancelAutoStopAlarm()
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(context, LiveTrackingService::class.java).apply {
+            action = LiveTrackingService.ACTION_AUTO_STOP_DEADLINE
+            putExtra("trip_id", tripId)
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pi = PendingIntent.getService(context, 8881, intent, flags)
+        autoStopAlarmPendingIntent = pi
+        val triggerAtMs = System.currentTimeMillis() + timeoutMs
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
+            } else {
+                am.setExact(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
+            }
+            TelemetryLogger.logTrip("AUTO_STOP_ALARM", tripId, "Scheduled exact auto-stop alarm in ${timeoutMs / 60000}m")
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to schedule exact auto-stop alarm: ${e.message}")
+        }
+    }
+
+    fun cancelAutoStopAlarm() {
+        autoStopAlarmPendingIntent?.let {
+            try {
+                val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                am?.cancel(it)
+                TelemetryLogger.log("POWER", "Auto-stop exact alarm cancelled")
+            } catch (_: Exception) {}
+            autoStopAlarmPendingIntent = null
+        }
+    }
 
     fun pauseTrip(isManual: Boolean = true) {
         val current = _activeTrip.value ?: return
@@ -293,12 +336,15 @@ class TripManager private constructor(private val context: Context) {
             "TRIP_PAUSE",
             mapOf("tripId" to current.id, "isManual" to isManual, "pointIndex" to pause.pointIndex)
         )
+        val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
+        scheduleAutoStopAlarm(current.id, timeoutMs)
     }
 
     fun resumeTrip(isManual: Boolean = true) {
         val current = _activeTrip.value ?: return
         if (!_isPaused.value) return
         _isPaused.value = false
+        cancelAutoStopAlarm()
         if (isManual) {
             isManualPauseSticky = false
             prefs.edit().remove(KEY_MANUAL_PAUSE_STICKY).apply()
@@ -463,6 +509,10 @@ class TripManager private constructor(private val context: Context) {
                                 distanceMeters = prefs.getFloat(KEY_PAUSE_DIST, unclosed.distanceMeters.toFloat()).toDouble()
                             )
                             _isPaused.value = true
+                            val timeoutMs = (_autoStopMinutes.value.coerceAtLeast(1)) * 60 * 1000L
+                            val elapsedPause = System.currentTimeMillis() - pauseStartTime
+                            val remainingTimeoutMs = (timeoutMs - elapsedPause).coerceAtLeast(10_000L)
+                            scheduleAutoStopAlarm(unclosed.id, remainingTimeoutMs)
                             TelemetryLogger.logTrip("PAUSE_RESTORED", unclosed.id, "Restored paused state after process death: pause started ${(System.currentTimeMillis() - pauseStartTime) / 60000}m ago")
                         }
                     }
@@ -500,7 +550,8 @@ class TripManager private constructor(private val context: Context) {
         if (watchdogJob?.isActive == true) return
         watchdogJob = scope.launch {
             while (true) {
-                kotlinx.coroutines.delay(15_000L) // check every 15s
+                val delayMs = if (_isPaused.value) 60_000L else 15_000L
+                kotlinx.coroutines.delay(delayMs)
                 val active = _activeTrip.value ?: break
                 val mode = _tripMode.value
                 // Fix 2: Check if paused trip has exceeded 1-hour warning threshold
@@ -683,7 +734,8 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
-    private fun stopTrip(isManualStop: Boolean = false) {
+    internal fun stopTrip(isManualStop: Boolean = false) {
+        cancelAutoStopAlarm()
         if (_activeTrip.value == null) return
         // Drain the fixed-lag smoother so the last ~3 s of the trip are part of the recording.
         try {

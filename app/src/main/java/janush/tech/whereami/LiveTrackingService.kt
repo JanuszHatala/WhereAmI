@@ -40,6 +40,7 @@ class LiveTrackingService : Service() {
         const val ACTION_OPEN_LIVE_SHARING = "janush.tech.whereami.ACTION_OPEN_LIVE_SHARING"
         const val EXTRA_OPEN_LIVE_SHARING = "extra_open_live_sharing"
         const val ACTION_PAUSE_WARNING = "janush.tech.whereami.ACTION_PAUSE_WARNING"
+        const val ACTION_AUTO_STOP_DEADLINE = "janush.tech.whereami.ACTION_AUTO_STOP_DEADLINE"
         const val ACTION_TRIP_PAUSE = "janush.tech.whereami.ACTION_TRIP_PAUSE"
         const val ACTION_TRIP_RESUME = "janush.tech.whereami.ACTION_TRIP_RESUME"
         const val ACTION_TRIP_STOP = "janush.tech.whereami.ACTION_TRIP_STOP"
@@ -61,6 +62,19 @@ class LiveTrackingService : Service() {
     private var lastPlaceName: String = "In Transit"
     private var lastSpeedKmh: Float = 0f
 
+    private val screenReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON -> {
+                    evaluateServiceState()
+                    try {
+                        AppStateManager.getInstance(this@LiveTrackingService).recalculateState()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         janush.tech.whereami.tracking.LifecycleDiagnosticsRecorder.init(applicationContext)
@@ -75,6 +89,14 @@ class LiveTrackingService : Service() {
         // Strict WakeLock scoping (AGENTS.md Rule 2.A):
         // Only acquire wake lock during active trip recording, NEVER during Live Sharing alone.
         updateWakeLock(hasTrip)
+
+        val screenFilter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        try {
+            registerReceiver(screenReceiver, screenFilter)
+        } catch (_: Exception) {}
 
         try {
             startForegroundService()
@@ -131,6 +153,15 @@ class LiveTrackingService : Service() {
             }
             ACTION_TRIP_STOP -> {
                 TripManager.getInstance(this).stopManualTrip()
+                return START_STICKY
+            }
+            ACTION_AUTO_STOP_DEADLINE -> {
+                val tripId = intent?.getLongExtra("trip_id", -1L) ?: -1L
+                val active = TripManager.getInstance(this).activeTrip.value
+                if (active != null && (tripId == -1L || active.id == tripId) && TripManager.getInstance(this).isPaused.value) {
+                    TelemetryLogger.logTrip("AUTO_STOP_DEADLINE", active.id, "Auto-stop exact alarm fired while paused: stopping trip")
+                    TripManager.getInstance(this).stopTrip(isManualStop = false)
+                }
                 return START_STICKY
             }
             ACTION_PAUSE_WARNING -> {
@@ -641,9 +672,19 @@ class LiveTrackingService : Service() {
 
         if (trip != null) {
             val isTripPaused = TripManager.getInstance(this).isPaused.value
-            startLocationTracking()
-            // Strict WakeLock scoping: ONLY hold CPU wake lock during active unpaused trip recording.
-            updateWakeLock(!isTripPaused)
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val isScreenOff = pm?.isInteractive == false
+            if (isTripPaused && isScreenOff) {
+                // Zero-idle-drain: completely power down GPS and detach location stream when paused with screen off
+                stopLocationTracking()
+                locationManager.stopLocationUpdates(preserveStationaryState = true)
+                updateWakeLock(false)
+                MotionWakeManager.getInstance(this).arm()
+            } else {
+                startLocationTracking()
+                // Strict WakeLock scoping: ONLY hold CPU wake lock during active unpaused trip recording.
+                updateWakeLock(!isTripPaused)
+            }
             updateNotification(force = true)
         } else if (isSleeping) {
             // Standby / Live Sharing Sleep engaged: shutdown location tracking and GPS, release wake lock, update notification in-place
@@ -745,6 +786,9 @@ class LiveTrackingService : Service() {
     override fun onDestroy() {
         TripManager.getInstance(this).flushPendingForSurvival()
         super.onDestroy()
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {}
         stopLocationTracking()
         serviceJob.cancel()
         updateWakeLock(false)
