@@ -1329,6 +1329,8 @@ class LocationManager private constructor(private val context: Context) {
     @Volatile
     private var osmRateLimitCooldownUntil = 0L
 
+    fun isOsmRateLimited(): Boolean = System.currentTimeMillis() < osmRateLimitCooldownUntil
+
     private fun sanitizeMultiDataHouseNumbers(
         data: MultiLanguagePlaceInfo,
         speedKmh: Float?,
@@ -1448,7 +1450,9 @@ class LocationManager private constructor(private val context: Context) {
                     } else {
                         // Bare highway-only cache cells are stale naming — serve but revalidate ASAP.
                         val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street)
-                        if (bareHighwayCache && isNetworkConnected() && allowNetwork) {
+                        val isStationaryDwell = (speedKmh == null || speedKmh < 0.35f) && (accuracyMeters != null && accuracyMeters <= 25f)
+                        val cachedHasBareStreet = diskCached.pl.street != null && RoadNameNormalizer.extractHouseNumber(diskCached.pl.street) == null
+                        if ((bareHighwayCache || (isStationaryDwell && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
                             scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
                         }
 
@@ -1485,7 +1489,7 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         var effectiveAllowNetwork = allowNetwork
-        if (isScreenOff && allowNetwork) {
+        if (isScreenOff && allowNetwork && !forceCache) {
             val now = android.os.SystemClock.elapsedRealtime()
             val distFromLast = lastScreenOffGeocodedPoint?.let {
                 val res = FloatArray(1)
@@ -1523,7 +1527,7 @@ class LocationManager private constructor(private val context: Context) {
         val nativeAddress = geocode(lat, lng, nativeLocale) ?: baseAddress
 
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
-        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language)
+        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language, speedKmh)
         
         // OSRM /nearest: street name for the locality card AND snapped coordinates for display-only road pull.
         // Screen-off bypass: Skip OSRM network requests when screen is off to eliminate cellular modem drain.
@@ -1597,7 +1601,7 @@ class LocationManager private constructor(private val context: Context) {
             distanceBetween(lat, lng, lastGoodLat, lastGoodLng)
         } else Float.MAX_VALUE
 
-        val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang)
+        val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang, speedKmh)
         val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() } ?: committedPlace?.pl?.street ?: lastGood?.street
         val osmMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
         val thoroughfareMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
@@ -1653,10 +1657,15 @@ class LocationManager private constructor(private val context: Context) {
 
             // Locality accuracy: if OSM has a resolved village/town within a gmina (e.g. Kozy in gmina Kozy),
             // prefer it over Google Geocoder's postal city fallback (e.g. Bielsko-Biała)
-            val effectiveCity = if (!osm?.city.isNullOrBlank() && osm.city != "Unknown City" && osm.municipality != null) {
+            val effectiveCity = if (!osm?.city.isNullOrBlank() && osm.city != "Unknown City") {
                 osm.city
-            } else {
+            } else if (basePlace.city.isNotBlank() && basePlace.city != "Unknown City") {
                 basePlace.city
+            } else {
+                osm?.municipality?.removePrefix("gmina ")?.trim()
+                    ?: osm?.county
+                    ?: basePlace.gmina?.removePrefix("gmina ")?.trim()
+                    ?: basePlace.city
             }
 
             // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
@@ -1768,7 +1777,7 @@ class LocationManager private constructor(private val context: Context) {
 
     // ── OSM Nominatim ─────────────────────────────────────────────────────────
 
-    private fun geocodeWithOsm(lat: Double, lng: Double, language: String): OsmPlaceResult? {
+    private fun geocodeWithOsm(lat: Double, lng: Double, language: String, speedKmh: Float? = null): OsmPlaceResult? {
         val now = System.currentTimeMillis()
         // Quantize coordinates to 4 decimal places (~11m grid cell, matching spatial SQLite cache)
         // to prevent rural hamlet/estate names from bleeding across hundreds of meters along unnamed roads
@@ -1791,7 +1800,8 @@ class LocationManager private constructor(private val context: Context) {
 
             val prefs = context.getSharedPreferences("where_am_i_trip_prefs", Context.MODE_PRIVATE)
             val profile = prefs.getString("pref_activity_profile", "CAR") ?: "CAR"
-            val zoom = if (profile == "CAR") 17 else 18
+            val isLowSpeedOrStationary = speedKmh == null || speedKmh < 15f
+            val zoom = if (profile == "CAR" && !isLowSpeedOrStationary) 17 else 18
 
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
@@ -1847,6 +1857,7 @@ class LocationManager private constructor(private val context: Context) {
                     gminaName
                 } else {
                     str("city") ?: str("town") ?: str("village") ?: str("suburb") ?: str("hamlet")
+                        ?: gminaName ?: rawMunicipality?.removePrefix("gmina ")?.trim() ?: str("county")
                 }
 
                 val osmResult = OsmPlaceResult(

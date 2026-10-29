@@ -100,4 +100,20 @@ class JoinBlendTest {
         // First blended pencil point sits closer to the committed easting than the raw pencil.
         assertTrue(kotlin.math.abs(f.east(ln[0]) - 2.0) < kotlin.math.abs(f.east(p.lngAt(0)) - 2.0))
     }
+
+    @Test
+    fun `driving speed scales join decay distance to eliminate dog-leg kinks`() {
+        assertEquals(4.0, PencilTrail.computeDecayM(0.0), 1e-6)
+        assertEquals(4.0, PencilTrail.computeDecayM(1.0), 1e-6)
+        assertEquals(15.0, PencilTrail.computeDecayM(10.0), 1e-6) // 36 km/h
+        assertEquals(25.0, PencilTrail.computeDecayM(20.0), 1e-6) // 72 km/h (capped at 25m)
+
+        val p = pencil(5_000)
+        val cLat = f.lat(5.0); val cLng = f.lng(1.2)
+        val tipLat = f.lat(24.0); val tipLng = f.lng(0.0)
+        // With speed = 10 m/s, decay is 15m, so at 4m offset is still decaying smoothly
+        val (_, ln) = p.blendedFrom(5_000, cLat, cLng, tipLat, tipLng, speedMps = 10.0)!!
+        val at4m = f.east(ln[3]) // 4m along
+        assertTrue("offset at 4m under high speed decay should be > 0.3m (was $at4m)", at4m > 0.3)
+    }
 }

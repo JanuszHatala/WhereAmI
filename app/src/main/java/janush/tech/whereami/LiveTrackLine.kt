@@ -53,7 +53,7 @@ class LiveTrackLine {
      * Catmull-Rom through the pencil prevents squary/zigzag line appearances behind the moving cursor
      * before vertices are committed to track points.
      */
-    fun rebuildTail(pencil: PencilTrail, tip: GeoPoint, committedThroughMs: Long = -1L) {
+    fun rebuildTail(pencil: PencilTrail, tip: GeoPoint, committedThroughMs: Long = -1L, speedMps: Double = 0.0) {
         points.clear()
         points.addAll(prefix)
         val c = committed
@@ -72,7 +72,7 @@ class LiveTrackLine {
             }
         }
         val blended = if (c.isNotEmpty() && committedThroughMs >= 0L) {
-            pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude)
+            pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude, speedMps = speedMps)
         } else null
         val pSize = pencil.size
         val hasAnchor = c.isNotEmpty()
