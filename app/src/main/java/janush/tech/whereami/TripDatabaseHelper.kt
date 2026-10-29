@@ -56,6 +56,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_TP_HACC = "h_acc"
         private const val COL_TP_BEARING = "bearing"
         private const val COL_TP_FLAGS = "flags"
+        private const val COL_TP_RAW_LAT = "raw_lat"
+        private const val COL_TP_RAW_LNG = "raw_lng"
 
         // Saved Places Table
         private const val TABLE_SAVED_PLACES = "saved_places"
@@ -308,6 +310,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COL_TP_HACC REAL,
                 $COL_TP_BEARING REAL,
                 $COL_TP_FLAGS INTEGER NOT NULL DEFAULT 0,
+                $COL_TP_RAW_LAT REAL,
+                $COL_TP_RAW_LNG REAL,
                 PRIMARY KEY ($COL_TP_TRIP, $COL_TP_SEQ)
             ) WITHOUT ROWID
             """.trimIndent()
@@ -326,6 +330,18 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
         if (!hasCol) {
             db.execSQL("ALTER TABLE $TABLE_TRIPS ADD COLUMN $COL_POINTS_STORE INTEGER NOT NULL DEFAULT 0")
+        }
+        val hasRawLat = db.rawQuery("PRAGMA table_info($TABLE_TRACK_POINTS)", null).use { c ->
+            val nameIdx = c.getColumnIndexOrThrow("name")
+            var found = false
+            while (c.moveToNext()) if (c.getString(nameIdx) == COL_TP_RAW_LAT) found = true
+            found
+        }
+        if (!hasRawLat) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_TRACK_POINTS ADD COLUMN $COL_TP_RAW_LAT REAL")
+                db.execSQL("ALTER TABLE $TABLE_TRACK_POINTS ADD COLUMN $COL_TP_RAW_LNG REAL")
+            } catch (_: Exception) {}
         }
     }
 
@@ -368,7 +384,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val stmt = db.compileStatement(
             "INSERT OR REPLACE INTO $TABLE_TRACK_POINTS " +
                 "($COL_TP_TRIP,$COL_TP_SEQ,$COL_TP_T,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC," +
-                "$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                "$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS,$COL_TP_RAW_LAT,$COL_TP_RAW_LNG) " +
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
         )
         try {
             var seq = startSeq
@@ -385,6 +402,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 if (r.hAccM != null) stmt.bindDouble(9, r.hAccM.toDouble())
                 if (r.bearingDeg != null) stmt.bindDouble(10, r.bearingDeg.toDouble())
                 stmt.bindLong(11, r.flags.toLong())
+                if (r.rawLat != null) stmt.bindDouble(12, r.rawLat)
+                if (r.rawLng != null) stmt.bindDouble(13, r.rawLng)
                 stmt.executeInsert()
                 seq++
             }
@@ -443,7 +462,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
         val rows = ArrayList<TrackPointRow>()
         db.rawQuery(
-            "SELECT $COL_TP_T,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC,$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS " +
+            "SELECT $COL_TP_T,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC,$COL_TP_SPEED,$COL_TP_HACC,$COL_TP_BEARING,$COL_TP_FLAGS,$COL_TP_RAW_LAT,$COL_TP_RAW_LNG " +
                 "FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ? ORDER BY $COL_TP_SEQ",
             arrayOf(tripId.toString())
         ).use { c ->
@@ -458,7 +477,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                         speedMps = if (c.isNull(5)) null else c.getFloat(5),
                         hAccM = if (c.isNull(6)) null else c.getFloat(6),
                         bearingDeg = if (c.isNull(7)) null else c.getFloat(7),
-                        flags = c.getInt(8)
+                        flags = c.getInt(8),
+                        rawLat = if (c.isNull(9)) null else c.getDouble(9),
+                        rawLng = if (c.isNull(10)) null else c.getDouble(10)
                     )
                 )
             }

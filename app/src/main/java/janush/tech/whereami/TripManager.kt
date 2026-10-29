@@ -216,6 +216,12 @@ class TripManager private constructor(private val context: Context) {
         return prefs.getFloat(KEY_AUTO_START_SPEED_PREFIX + profile.name, defaultSpeed)
     }
 
+    fun getPauseDwellThresholdMs(profile: ActivityProfile): Long = when (profile) {
+        ActivityProfile.CAR -> 240_000L // 4.0 min
+        ActivityProfile.CYCLING, ActivityProfile.MTB -> 180_000L // 3.0 min
+        else -> 210_000L // 3.5 min
+    }
+
     fun setAutoStartSpeedForProfile(profile: ActivityProfile, speedKmh: Float) {
         val clamped = speedKmh.coerceIn(1.0f, 150.0f)
         prefs.edit().putFloat(KEY_AUTO_START_SPEED_PREFIX + profile.name, clamped).apply()
@@ -322,6 +328,7 @@ class TripManager private constructor(private val context: Context) {
         val pause = activePause!!
         pauseWarningNotified = false
         resumeMotionGate.reset()
+        vehicleAutoStartGate.reset()
         prefs.edit()
             .putBoolean(KEY_IS_PAUSED, true)
             .putLong(KEY_PAUSE_START_TIME, pause.startTime)
@@ -376,6 +383,7 @@ class TripManager private constructor(private val context: Context) {
         movingSinceInPauseTimestamp = null
         pauseWarningNotified = false
         resumeMotionGate.reset()
+        vehicleAutoStartGate.reset()
         prefs.edit()
             .remove(KEY_IS_PAUSED)
             .remove(KEY_PAUSE_START_TIME)
@@ -1021,11 +1029,33 @@ class TripManager private constructor(private val context: Context) {
                     // Check auto-resume on motion if enabled with sustained locomotion confirmation
                     val targetSpeed = getAutoStartSpeedForProfile(currentProfile)
                     if (_autoResumeOnMotion.value) {
-                        val requiredDurationMs = currentProfile.autoStartDurationMs.coerceAtMost(30_000L)
-                        val requiredDisplacement = if (currentProfile == ActivityProfile.CAR) 30.0 else 15.0
-                        if (resumeMotionGate.offer(now, lat, lng, speedKmh, accuracy, targetSpeed, requiredDurationMs, requiredDisplacement)) {
+                        val pauseAgeMs = activePause?.let { now - it.startTime } ?: 0L
+                        val (requiredDurationMs, requiredDisplacement) = when {
+                            currentProfile == ActivityProfile.CAR && pauseAgeMs <= 180_000L -> Pair(6_000L, 12.0)
+                            currentProfile == ActivityProfile.CAR && pauseAgeMs <= 600_000L -> Pair(12_000L, 18.0)
+                            currentProfile == ActivityProfile.CAR -> Pair(20_000L, 25.0)
+                            pauseAgeMs <= 180_000L -> Pair(5_000L, 8.0)
+                            pauseAgeMs <= 600_000L -> Pair(10_000L, 12.0)
+                            else -> Pair(currentProfile.autoStartDurationMs.coerceAtMost(30_000L), 15.0)
+                        }
+                        val resumed = if (currentProfile == ActivityProfile.CAR) {
+                            vehicleAutoStartGate.offer(
+                                now, lat, lng, speedKmh, accuracy,
+                                targetSpeed, requiredDurationMs, requiredDisplacement
+                            )
+                        } else {
+                            resumeMotionGate.offer(
+                                now, lat, lng, speedKmh, accuracy,
+                                targetSpeed, requiredDurationMs, requiredDisplacement
+                            )
+                        }
+                        if (resumed) {
                             resumeTrip(isManual = false)
-                            TelemetryLogger.logTrip("AUTO_RESUME", active.id, "Confirmed accurate motion at >= ${targetSpeed.toInt()} km/h while paused: auto-resumed trip")
+                            TelemetryLogger.logTrip(
+                                "AUTO_RESUME",
+                                active.id,
+                                "Confirmed accurate motion at >= ${targetSpeed.toInt()} km/h (window=${requiredDurationMs / 1000}s, disp=${requiredDisplacement}m, pauseAge=${pauseAgeMs / 1000}s) while paused: auto-resumed trip"
+                            )
                         }
                     }
 
@@ -1107,9 +1137,10 @@ class TripManager private constructor(private val context: Context) {
                 if (movingDurationMs >= 45_000L) {
                     // Finalize the pause up to the start of resumed motion
                     val pauseEndTime = movingSinceInPauseTimestamp!!
+                    val dwellThreshold = getPauseDwellThresholdMs(currentProfile)
                     val finalized = activePause!!.copy(
                         endTime = pauseEndTime,
-                        durationMs = (pauseEndTime - activePause!!.startTime).coerceAtLeast(150_000L)
+                        durationMs = (pauseEndTime - activePause!!.startTime).coerceAtLeast(dwellThreshold)
                     )
 
                     tryCoalescePause(updatedPauses, finalized, now, current.id)
@@ -1152,9 +1183,10 @@ class TripManager private constructor(private val context: Context) {
 
             val stationaryStartTime = pauseAnchorFirstStationaryTime ?: lastMovingTimestamp!!
             val stationaryMs = now - stationaryStartTime
+            val dwellThreshold = getPauseDwellThresholdMs(currentProfile)
 
-            // Entry threshold: require sustained stationary dwell >= 150s (2.5 min)
-            if (stationaryMs >= 150_000L) {
+            // Entry threshold: require sustained stationary dwell >= dwellThreshold
+            if (stationaryMs >= dwellThreshold) {
                 if (activePause == null) {
                     activePause = TripPause(
                         startTime = stationaryStartTime,

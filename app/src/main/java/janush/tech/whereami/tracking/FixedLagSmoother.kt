@@ -26,7 +26,9 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
         val xPred: DoubleArray?,
         val pPred: Array<DoubleArray>?,
         /** Transition Jacobian previous step -> this step. Null for the first step. */
-        val f: Array<DoubleArray>?
+        val f: Array<DoubleArray>?,
+        val rawLat: Double? = null,
+        val rawLng: Double? = null
     )
 
     private val steps = ArrayList<Step>()
@@ -118,7 +120,9 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
             speedMps = x[KinematicEkf.SPEED],
             headingDeg = headingDeg,
             accuracyM = max(posStd, 0.5f),
-            isStationary = step.isStationary
+            isStationary = step.isStationary,
+            rawLat = step.rawLat,
+            rawLng = step.rawLng
         )
     }
 

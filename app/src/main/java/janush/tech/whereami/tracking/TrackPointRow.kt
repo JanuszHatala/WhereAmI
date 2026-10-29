@@ -17,7 +17,9 @@ data class TrackPointRow(
     val speedMps: Float?,
     val hAccM: Float?,
     val bearingDeg: Float?,
-    val flags: Int = 0
+    val flags: Int = 0,
+    val rawLat: Double? = null,
+    val rawLng: Double? = null
 ) {
     val isStationary: Boolean get() = flags and FLAG_STATIONARY != 0
 
@@ -34,7 +36,9 @@ data class TrackPointRow(
             speedMps = p.speedMps.toFloat(),
             hAccM = p.accuracyM,
             bearingDeg = p.headingDeg.toFloat(),
-            flags = if (p.isStationary) FLAG_STATIONARY else 0
+            flags = if (p.isStationary) FLAG_STATIONARY else 0,
+            rawLat = p.rawLat,
+            rawLng = p.rawLng
         )
 
         /**
@@ -65,7 +69,9 @@ data class TrackPointRow(
                         speedMps = if (same) old!!.speedMps else null,
                         hAccM = if (same) old!!.hAccM else null,
                         bearingDeg = if (same) old!!.bearingDeg else null,
-                        flags = if (same) old!!.flags else 0
+                        flags = if (same) old!!.flags else 0,
+                        rawLat = if (same) old!!.rawLat else null,
+                        rawLng = if (same) old!!.rawLng else null
                     )
                 )
             }

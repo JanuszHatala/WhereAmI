@@ -181,18 +181,12 @@ class RenderPipeline(
         val onFoot = profile.maxSpeedMps <= ON_FOOT_MAX_SPEED_MPS
         slow = onFoot && if (slow) latest.speedMps < slowOffSpeedMps else latest.speedMps < slowOnSpeedMps
         if (slow) target = max(target, slowLatencyMs)
-        if (!onFoot) {
-            val yawMag = abs(outHeadingRateDegS)
-            val turnReduction = if (yawMag > 8.0) ((yawMag - 8.0) / 12.0).coerceIn(0.0, 1.0) * 500.0 else 0.0
-            val effectiveMinLatency = (minLatencyMs - turnReduction).coerceAtLeast(400.0)
-            target = max(target, effectiveMinLatency)
-        }
+        if (!onFoot) target = max(target, minLatencyMs)
         // A vehicle keeps its latency through a data gap: dropping to "now" would dead-reckon the cursor
         // further along an unobserved path (screen-on after batched fixes drew loops into side roads).
         if (onFoot && now - latest.tElapsedMs > 2500.0) target = 0.0
         // At foot pace a faster ramp is invisible (the cursor briefly runs at 75-125 % of the real pace).
-        // During sharp vehicle turns, allow up to 300 ms/s latency ramp to track roundabout entry/exit tightly.
-        val maxStep = (if (onFoot) 250.0 else if (abs(outHeadingRateDegS) > 8.0) 300.0 else 100.0) * dtSec
+        val maxStep = (if (onFoot) 250.0 else 100.0) * dtSec
         latencyMs += (target - latencyMs).coerceIn(-maxStep, maxStep)
 
         val renderT = now - latencyMs
