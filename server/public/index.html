@@ -486,6 +486,25 @@
       background: #3b82f6 !important;
     }
 
+    .host-label-pill {
+      position: absolute;
+      bottom: -15px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.90);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 9999px;
+      padding: 1px 6px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #ffffff;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+      letter-spacing: 0.02em;
+      z-index: 5;
+    }
+
     .live-visitor-marker {
       width: 20px;
       height: 20px;
@@ -666,6 +685,7 @@
               </div>` : ''}
             <div class="host-dot" style="background-color: ${dotColor};"></div>
           </div>
+          <div class="host-label-pill">Host</div>
         </div>
       `;
 
@@ -741,10 +761,11 @@
       const icon = createHostIcon(isOnline, isPaused, statusClass, bearing);
       if (!userMarker) {
         currentMarkerCoords = [coords[0], coords[1]];
-        userMarker = L.marker(coords, { icon, zIndexOffset: 1000 }).addTo(map);
+        userMarker = L.marker(coords, { icon, zIndexOffset: 2500 }).addTo(map);
         recenterMap(15);
       } else {
         userMarker.setIcon(icon);
+        userMarker.setZIndexOffset(2500);
         if (animate) {
           animateMarkerTo(coords, accuracy, animDurationMs);
         } else {
@@ -1273,7 +1294,7 @@
         }
 
         if (data.current) {
-          const { lat, lng, spd, alt, place, trekking, battery, t, acc, isCharging, syncIntervalMs } = data.current;
+          const { lat, lng, bearing, spd, alt, place, trekking, battery, t, acc, isCharging, syncIntervalMs } = data.current;
           lastCoords = [lat, lng];
           updateVisitorDistance();
 
@@ -1335,9 +1356,19 @@
         }
 
         const isTrailVisible = data.trailVisible !== false;
-        if (isTrailVisible && Array.isArray(data.points) && data.points.length > 0) {
-          const latlngs = data.points.map(p => [p.lat, p.lng]);
-          trackPolyline.setLatLngs(latlngs);
+        let allTripPoints = [];
+        if (Array.isArray(data.pastSegments)) {
+          data.pastSegments.forEach(seg => {
+            if (Array.isArray(seg)) {
+              allTripPoints = allTripPoints.concat(seg.map(p => [p.lat, p.lng]));
+            }
+          });
+        }
+        if (Array.isArray(data.points) && data.points.length > 0) {
+          allTripPoints = allTripPoints.concat(data.points.map(p => [p.lat, p.lng]));
+        }
+        if (isTrailVisible && allTripPoints.length > 0) {
+          trackPolyline.setLatLngs(allTripPoints);
         } else {
           trackPolyline.setLatLngs([]);
         }

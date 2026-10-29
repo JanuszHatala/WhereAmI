@@ -131,8 +131,7 @@ class PencilTrail(private val maxPoints: Int = 600) {
 
         /** Distance over which the committed-vertex offset fades out along the pencil. */
         const val JOIN_DECAY_M = 4.0
-        fun computeDecayM(speedMps: Double = 0.0): Double =
-            if (speedMps > 1.0) (speedMps * 1.5).coerceIn(8.0, 25.0) else JOIN_DECAY_M
+        fun computeDecayM(speedMps: Double = 0.0): Double = JOIN_DECAY_M
         /** States arriving in one frame that mark a delivered batch (normal delivery is one per fix). */
         const val BATCH_STATES = 3
     }

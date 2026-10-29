@@ -115,4 +115,17 @@ class ResumeMotionGateTest {
         // One miss at s=5: still completes near the 10 s mark (not a full restart past 19 s).
         assertTrue("started at $startedAt", startedAt in 10_000L..16_000L)
     }
+
+    @Test
+    fun `young pause driving off resumes quickly in 6s window with 12m displacement`() {
+        val gate = ResumeMotionGate.forVehicleAutoStart()
+        var resumedAt = -1L
+        for (s in 0 until 20) {
+            val t = s * 1_000L
+            if (resumedAt < 0 && gate.offer(t, north(s * 5.0), east(0.0), 18f, 6f, 10f, 6_000L, 12.0)) {
+                resumedAt = t
+            }
+        }
+        assertTrue("resumed at $resumedAt", resumedAt in 6_000L..8_000L)
+    }
 }

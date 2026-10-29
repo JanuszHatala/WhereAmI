@@ -209,8 +209,11 @@ class TrackingEngine(
 
         val d2 = ekf.positionInnovationD2(zE, zN, sigma)
         val speedAnomaly = impliedSpeed > activeProfile.maxSpeedMps * 1.2 && (dist > 15.0 || dtSec < 0.8)
+        val isTurningVehicle = activeProfile.maxSpeedMps > 15.0 && impliedSpeed <= activeProfile.maxSpeedMps &&
+            (acc ?: 8f) <= 15f && kotlin.math.abs(xPred[KinematicEkf.YAW]) > 0.05
+        val gateD2 = if (isTurningVehicle) 25.0 else POSITION_GATE_D2
 
-        if (speedAnomaly || d2 > POSITION_GATE_D2) {
+        if (speedAnomaly || d2 > gateD2) {
             ekf.restore(snapX, snapP, snapT)
             ekf.stationaryMode = wasStationary
             val decision = if (speedAnomaly) FixDecision.REJECTED_IMPLIED_SPEED else FixDecision.REJECTED_INNOVATION
@@ -282,7 +285,9 @@ class TrackingEngine(
             pf = ekf.copyCov(),
             xPred = xPred,
             pPred = pPred,
-            f = f
+            f = f,
+            rawLat = fix.lat,
+            rawLng = fix.lng
         )
         val finalized = smoother.add(step, fr)
         lastState = state
@@ -460,7 +465,9 @@ class TrackingEngine(
                 pf = ekf.copyCov(),
                 xPred = null,
                 pPred = null,
-                f = null
+                f = null,
+                rawLat = fix.lat,
+                rawLng = fix.lng
             ),
             fr
         )

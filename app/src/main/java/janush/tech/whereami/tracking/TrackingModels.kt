@@ -97,7 +97,9 @@ data class SmoothedPoint(
     val speedMps: Double,
     val headingDeg: Double,
     val accuracyM: Float,
-    val isStationary: Boolean
+    val isStationary: Boolean,
+    val rawLat: Double? = null,
+    val rawLng: Double? = null
 )
 
 enum class FixDecision {

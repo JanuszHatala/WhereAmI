@@ -68,7 +68,7 @@ object CurvedPolyline {
 
     /** Number of pieces for segment (0,0)-(x2,y2) with neighbours (x0,y0) and (x3,y3); 1 = straight. */
     fun subdivisions(x0: Double, y0: Double, x2: Double, y2: Double, x3: Double, y3: Double, len: Double): Int {
-        if (len < 2 * STEP_M / 3) return 1
+        if (len < 2 * STEP_M / 3 || len > 45.0) return 1
         val a = turnDeg(-x0, -y0, x2, y2)
         val b = turnDeg(x2, y2, x3 - x2, y3 - y2)
         if (a < STRAIGHT_DEG && b < STRAIGHT_DEG) return 1

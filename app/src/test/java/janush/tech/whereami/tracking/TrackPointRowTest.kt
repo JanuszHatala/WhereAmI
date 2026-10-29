@@ -47,4 +47,53 @@ class TrackPointRowTest {
     fun jsonToRows_malformedJson_returnsEmptyInsteadOfThrowing() {
         assertTrue(TripDatabaseHelper.jsonToRows("not json").isEmpty())
     }
+
+    @Test
+    fun from_smoothedPoint_preservesRawCoordinates() {
+        val sp = SmoothedPoint(
+            tElapsedMs = 5000L,
+            tUtcMs = 1700000000000L,
+            lat = 49.8888,
+            lng = 19.2222,
+            altitudeM = 300.0,
+            speedMps = 15.0,
+            headingDeg = 180.0,
+            accuracyM = 3.5f,
+            isStationary = false,
+            rawLat = 49.8890,
+            rawLng = 19.2225
+        )
+        val row = TrackPointRow.from(sp, 300.0, "GPS")
+        assertEquals(49.8888, row.lat, 1e-6)
+        assertEquals(19.2222, row.lng, 1e-6)
+        assertEquals(49.8890, row.rawLat!!, 1e-6)
+        assertEquals(19.2225, row.rawLng!!, 1e-6)
+    }
+
+    @Test
+    fun rebind_matchingCoordinates_preservesRawCoordinates() {
+        val existing = listOf(
+            TrackPointRow(
+                tUtcMs = 1000L,
+                lat = 50.0,
+                lng = 19.0,
+                altitudeM = 200.0,
+                altSource = "GPS",
+                speedMps = 10f,
+                hAccM = 3f,
+                bearingDeg = 45f,
+                rawLat = 50.0001,
+                rawLng = 19.0002
+            )
+        )
+        val remapped = TrackPointRow.rebind(
+            existing,
+            doubleArrayOf(50.0),
+            doubleArrayOf(19.0),
+            listOf(205.0),
+            listOf("DEM")
+        )
+        assertEquals(50.0001, remapped[0].rawLat!!, 1e-6)
+        assertEquals(19.0002, remapped[0].rawLng!!, 1e-6)
+    }
 }

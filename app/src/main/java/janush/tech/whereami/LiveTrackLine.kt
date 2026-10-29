@@ -109,6 +109,28 @@ class LiveTrackLine {
         tailValid = true
     }
 
+    /** Anchors line at committed track without extending pencil or moving tip (e.g. while trip is paused). */
+    fun anchorAtCommitted() {
+        points.clear()
+        points.addAll(prefix)
+        val c = committed
+        val s = (c.size - 3).coerceAtLeast(0)
+        val nc = c.size - s
+        if (nc > 0) {
+            val fromSeg = if (prefixEnd < 0) {
+                points.add(GeoPoint(c[s].latitude, c[s].longitude))
+                0
+            } else prefixEnd - s
+            if (nc - 1 > fromSeg) {
+                CurvedPolyline.densify(
+                    nc, fromSeg, nc - 1,
+                    { c[s + it].latitude }, { c[s + it].longitude }
+                ) { la, ln -> points.add(GeoPoint(la, ln)) }
+            }
+        }
+        tailValid = false
+    }
+
     /** False after [setCommitted] or [clear]: [rebuildTail] is needed before [moveTip]. */
     val hasTail: Boolean get() = tailValid && points.isNotEmpty()
 

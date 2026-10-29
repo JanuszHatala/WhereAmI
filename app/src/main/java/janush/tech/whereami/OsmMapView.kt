@@ -1012,32 +1012,41 @@ fun OsmMapView(
                             addOverlayAboveTiles(map, it)
                             polyline = it
                         }
-                        val before = pencilTrail.size
-                        committedThroughMs = maxOf(committedThroughMs, tripManagerRef.lastCommittedElapsedMs)
-                        pencilTrail.pruneThrough(committedThroughMs)
-                        // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
-                        // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
-                        val catchUp = framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES
-                        if (catchUp) {
-                            pencilTrail.dropAfter(committedThroughMs)
+                        val isPausedNow = tripManagerRef.isPaused.value
+                        if (isPausedNow) {
+                            if (pencilTrail.size > 0 || liveLine.hasTail) {
+                                pencilTrail.clear()
+                                liveLine.anchorAtCommitted()
+                                line.setPoints(liveLine.points)
+                            }
                         } else {
-                            redrawFromMs?.let { pencilTrail.dropAfter(it) }
-                        }
-                        val vehiclePencil = !onFootNow.value
-                        val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
-                        val refillFromMs = if (catchUp && committedThroughMs > 0L) committedThroughMs else pencilEndMs
-                        val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
-                            renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
-                                .count {
-                                    pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
-                                } > 0
-                        val added = !pose.isStationary &&
-                            pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
-                        if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
-                            liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
-                            line.setPoints(liveLine.points)
-                        } else if (liveLine.moveTip(gp)) {
-                            line.setPoints(liveLine.points)
+                            val before = pencilTrail.size
+                            committedThroughMs = maxOf(committedThroughMs, tripManagerRef.lastCommittedElapsedMs)
+                            pencilTrail.pruneThrough(committedThroughMs)
+                            // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
+                            // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
+                            val catchUp = framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES
+                            if (catchUp) {
+                                pencilTrail.dropAfter(committedThroughMs)
+                            } else {
+                                redrawFromMs?.let { pencilTrail.dropAfter(it) }
+                            }
+                            val vehiclePencil = !onFootNow.value
+                            val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
+                            val refillFromMs = if (catchUp && committedThroughMs > 0L) committedThroughMs else pencilEndMs
+                            val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
+                                renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
+                                    .count {
+                                        pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
+                                    } > 0
+                            val added = !pose.isStationary &&
+                                pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
+                            if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
+                                liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
+                                line.setPoints(liveLine.points)
+                            } else if (liveLine.moveTip(gp)) {
+                                line.setPoints(liveLine.points)
+                            }
                         }
                     }
 
