@@ -6,7 +6,7 @@ const { migrate } = require('../src/db/migrate');
 const { createLiveSessionRepository } = require('../src/db/liveSessionRepository');
 const { createApp } = require('../src/app');
 
-const testDbUrl = process.env.TEST_DATABASE_URL || 'postgres://whereami:whereami@127.0.0.1:5432/whereami';
+const testDbUrl = process.env.TEST_DATABASE_URL || 'postgres://whereami:whereami@127.0.0.1:6432/whereami';
 
 describe('API End-to-End Tests', () => {
   let pool;
