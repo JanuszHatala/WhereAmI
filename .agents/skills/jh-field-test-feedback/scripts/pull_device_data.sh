@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-PACKAGE_NAME="janush.tech.whereami"
+PACKAGE_NAME="online.hatala.whereami"
 TARGET_DIR="${1:-.device_telemetry/latest}"
 
 # Ensure output directory exists

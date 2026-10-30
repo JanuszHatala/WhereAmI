@@ -1,7 +1,7 @@
 # Street Abbreviator & Polish Name Normalization Engine
 
 ## 1. Overview
-The `StreetAbbreviator` (`janush.tech.whereami.StreetAbbreviator`) is a modular, locale-aware street name compression and abbreviation engine. Its primary objective is providing ultra-fast, legible, and compact street names on restricted display surfaces such as **Android Auto**, car head units, small widgets, and compact UI modes, while strictly preventing corruption of historical, institutional, or religious non-person street names.
+The `StreetAbbreviator` (`online.hatala.whereami.StreetAbbreviator`) is a modular, locale-aware street name compression and abbreviation engine. Its primary objective is providing ultra-fast, legible, and compact street names on restricted display surfaces such as **Android Auto**, car head units, small widgets, and compact UI modes, while strictly preventing corruption of historical, institutional, or religious non-person street names.
 
 ## 2. Abbreviation Rules & Architecture
 

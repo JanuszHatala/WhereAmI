@@ -1,6 +1,6 @@
 # WhereAmI - Technical Architecture Document (TAD)
 
-This document is the authoritative, comprehensive technical architecture specification for the **WhereAmI** platform (`janush.tech.whereami`). It establishes the system architecture, component boundaries, data flows, core technical decisions (ADRs), code quality rules, and testing requirements.
+This document is the authoritative, comprehensive technical architecture specification for the **WhereAmI** platform (`online.hatala.whereami`). It establishes the system architecture, component boundaries, data flows, core technical decisions (ADRs), code quality rules, and testing requirements.
 
 ---
 
@@ -20,7 +20,7 @@ The platform consists of two principal components: the Android Native Applicatio
 
 ```mermaid
 flowchart TD
-    subgraph Android_App["Android Mobile Client (janush.tech.whereami)"]
+    subgraph Android_App["Android Mobile Client (online.hatala.whereami)"]
         Sensors["Hardware Sensors (GPS, Accelerometer, Significant Motion)"]
         LM["LocationManager (Master Location SSOT)"]
         GFE["TrackingEngine (CTRV EKF + RTS smoother, ADR-07)"]

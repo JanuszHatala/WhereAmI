@@ -13,7 +13,13 @@ function createApp({ repo, pool }) {
   });
   app.use(cors());
   app.use(express.json({ limit: '2mb' }));
-  app.use(express.static(path.join(__dirname, '../public')));
+  app.use(express.static(path.join(__dirname, '../public'), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      }
+    }
+  }));
 
   // Auth helper
   async function checkWriteAuth(req, res, sessionId) {
@@ -35,14 +41,14 @@ function createApp({ repo, pool }) {
       res.json({
         status: 'ok',
         service: 'WhereAmI Live Server',
-        version: '2.0.3',
+        version: '2.0.4',
         db: 'ok'
       });
     } catch (err) {
       res.status(503).json({
         status: 'error',
         service: 'WhereAmI Live Server',
-        version: '2.0.3',
+        version: '2.0.4',
         db: 'disconnected',
         error: err.message
       });

@@ -30,3 +30,4 @@ diagnostic_pull_*/
 device_backup/diagnostics/
 # Device SharedPreferences snapshots (last location, live-share session IDs): local only
 device_backup/shared_prefs/
+device_backup/migration_*/

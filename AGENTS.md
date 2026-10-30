@@ -8,7 +8,7 @@ This document establishes the mandatory architectural standards, development wor
 
 - **Project Name**: WhereAmI
 - **Android Root Directory**: `WhereIAm`
-- **Android Application ID / Package**: `janush.tech.whereami`
+- **Android Application ID / Package**: `online.hatala.whereami`
 - **Companion Web/Sync Backend**: Node.js / Express in `server/`
 - **Technical Architecture Document**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Design System & UI Architecture**: [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md)

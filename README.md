@@ -139,10 +139,10 @@ docker compose up -d
 Once running, visitors open the viewer directly from your server at:
 
 ```
-https://whereami.janush.tech/live/<SESSION_ID>
+https://whereami.hatala.online/live/<SESSION_ID>
 ```
 
-The shared link from the WhereAmI Android app (with **🌐 whereami.janush.tech (Public)** provider selected) already generates this clean URL automatically — no configuration needed on the visitor side.
+The shared link from the WhereAmI Android app (with **🌐 whereami.hatala.online (Public)** provider selected) already generates this clean URL automatically — no configuration needed on the visitor side.
 
 ---
 
@@ -155,7 +155,7 @@ Only the left (host) side of the `-p` mapping needs changing. The container alwa
 -p 8080:3003
 ```
 
-If using a Cloudflare Tunnel or nginx reverse proxy, you can bind to any internal port and let the proxy expose it publicly (as used at `https://whereami.janush.tech`).
+If using a Cloudflare Tunnel or nginx reverse proxy, you can bind to any internal port and let the proxy expose it publicly (as used at `https://whereami.hatala.online`).
 
 ---
 

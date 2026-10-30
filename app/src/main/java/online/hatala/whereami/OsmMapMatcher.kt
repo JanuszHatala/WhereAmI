@@ -1,0 +1,138 @@
+package online.hatala.whereami
+
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.roundToInt
+
+/**
+ * Uses OSRM (Open Source Routing Machine) nearest API to snap GPS coordinates to the 
+ * actual road geometry using the vehicle's compass bearing.
+ * This completely eliminates "perpendicular cross-street snapping" where point-based
+ * geocoding snaps to a side street because it happens to be 2 meters closer to the raw GPS dot.
+ */
+data class OsrmNearest(
+    val name: String?,
+    val lat: Double,
+    val lng: Double,
+    val distanceM: Double
+)
+
+object OsmMapMatcher : online.hatala.whereami.tracking.RouteMatchApi {
+    private var lastRequestTime = 0L
+    private var rateLimitCooldownUntil = 0L
+
+    @Synchronized
+    fun getNearestStreet(lat: Double, lng: Double, bearing: Float?): String? =
+        getNearest(lat, lng, bearing)?.name
+
+    /**
+     * OSRM `/nearest` waypoint (name + snapped coordinates). Same rate limit as street lookups so live
+     * display snapping does not add extra traffic to the public demo server.
+     */
+    @Synchronized
+    fun getNearest(lat: Double, lng: Double, bearing: Float?): OsrmNearest? {
+        val now = System.currentTimeMillis()
+        if (now < rateLimitCooldownUntil) return null
+
+        val elapsed = now - lastRequestTime
+        if (elapsed < 1100L) {
+            // Respect OSRM public API demo server rate limit (~1 req/sec)
+            try {
+                Thread.sleep(1100L - elapsed)
+            } catch (_: InterruptedException) {
+                return null
+            }
+        }
+        lastRequestTime = System.currentTimeMillis()
+
+        // If bearing is provided, apply a +/- 35 degree tolerance window
+        // This forces the routing engine to reject perpendicular streets (e.g. cross streets)
+        val bearingParam = if (bearing != null && bearing >= 0f) {
+            "&bearings=${bearing.roundToInt()},35"
+        } else {
+            ""
+        }
+
+        val urlStr = "https://router.project-osrm.org/nearest/v1/driving/$lng,$lat?number=1$bearingParam"
+
+        return try {
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+
+            if (conn.responseCode == 429) {
+                rateLimitCooldownUntil = System.currentTimeMillis() + 60_000L
+                TelemetryLogger.log("OSRM", "HTTP 429 Too Many Requests; 60s cooldown active")
+                return null
+            }
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().readText()
+                val root = JSONObject(body)
+                val waypoints = root.optJSONArray("waypoints")
+                if (waypoints != null && waypoints.length() > 0) {
+                    val waypoint = waypoints.getJSONObject(0)
+                    val loc = waypoint.optJSONArray("location") ?: return null
+                    val snapLng = loc.optDouble(0, Double.NaN)
+                    val snapLat = loc.optDouble(1, Double.NaN)
+                    if (snapLat.isNaN() || snapLng.isNaN()) return null
+                    val name = waypoint.optString("name").takeIf { it.isNotBlank() }
+                    val dist = waypoint.optDouble("distance", Double.NaN).takeIf { !it.isNaN() } ?: 0.0
+                    return OsrmNearest(name, snapLat, snapLng, dist)
+                }
+            }
+            null
+        } catch (e: Exception) {
+            TelemetryLogger.log("OSRM", "Error fetching from OSRM: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Post-trip OSRM `/match` for one chunk. Shares the 1.1 s spacing and the 429 cooldown with [getNearestStreet],
+     * so live street lookups and background matching never exceed the public server limit together.
+     */
+    @Synchronized
+    override fun matchChunk(points: List<online.hatala.whereami.tracking.MatchPoint>): online.hatala.whereami.tracking.ChunkResult {
+        val now = System.currentTimeMillis()
+        if (now < rateLimitCooldownUntil) return online.hatala.whereami.tracking.ChunkResult.Transient
+        val elapsed = now - lastRequestTime
+        if (elapsed < 1100L) {
+            try { Thread.sleep(1100L - elapsed) } catch (_: InterruptedException) {
+                return online.hatala.whereami.tracking.ChunkResult.Transient
+            }
+        }
+        lastRequestTime = System.currentTimeMillis()
+        val url = online.hatala.whereami.tracking.RouteMatching.buildUrl("https://router.project-osrm.org", points)
+        return try {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 15000
+            when (val code = conn.responseCode) {
+                429 -> {
+                    rateLimitCooldownUntil = System.currentTimeMillis() + 60_000L
+                    TelemetryLogger.log("OSRM", "match HTTP 429; 60s cooldown active")
+                    online.hatala.whereami.tracking.ChunkResult.Transient
+                }
+                200 -> {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val geometry = online.hatala.whereami.tracking.RouteMatching.parseMatchResponse(body)
+                    if (geometry != null) online.hatala.whereami.tracking.ChunkResult.Matched(geometry)
+                    else online.hatala.whereami.tracking.ChunkResult.NoMatch
+                }
+                // 4xx other than 429 (e.g. NoMatch/TooBig surfaced as 400): deterministic for this input.
+                in 400..499 -> online.hatala.whereami.tracking.ChunkResult.NoMatch
+                else -> {
+                    TelemetryLogger.log("OSRM", "match HTTP $code")
+                    online.hatala.whereami.tracking.ChunkResult.Transient
+                }
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("OSRM", "match error: ${e.message}")
+            online.hatala.whereami.tracking.ChunkResult.Transient
+        }
+    }
+}
