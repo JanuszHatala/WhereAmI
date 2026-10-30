@@ -263,6 +263,10 @@ class TripManager private constructor(private val context: Context) {
     private val _activeTrip = MutableStateFlow<TripRecord?>(null)
     val activeTrip: StateFlow<TripRecord?> = _activeTrip.asStateFlow()
 
+    private val liveRawPoints = ArrayList<GeoPoint>()
+    private val _rawTrackPoints = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val rawTrackPoints: StateFlow<List<GeoPoint>> = _rawTrackPoints.asStateFlow()
+
     private var pauseWarningNotified = false
     private var autoStopAlarmPendingIntent: PendingIntent? = null
 
@@ -489,6 +493,9 @@ class TripManager private constructor(private val context: Context) {
                     TelemetryLogger.logTrip("CLOSED_ZOMBIE", unclosed.id, "Closed zombie trip abandoned ${(now - lastActivityUtc)/60000}m ago")
                 } else {
                     _activeTrip.value = unclosed
+                    liveRawPoints.clear()
+                    liveRawPoints.addAll(unclosed.rawPoints)
+                    _rawTrackPoints.value = liveRawPoints.toList()
                     synchronized(rowLock) {
                         pendingRows.clear()
                         persistedPointCount = unclosed.points.size
@@ -699,6 +706,8 @@ class TripManager private constructor(private val context: Context) {
         )
         val id = dbHelper.insertTrip(trip)
         val started = trip.copy(id = id)
+        liveRawPoints.clear()
+        _rawTrackPoints.value = emptyList()
         _activeTrip.value = started
         online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
             "TRIP_START",
@@ -858,6 +867,8 @@ class TripManager private constructor(private val context: Context) {
                 ElevationCorrectionManager.startSingleTrip(context, finishedTrip.id, OverrideMode.FILL_MISSING, notifyCompletion = false)
             }
         }
+        liveRawPoints.clear()
+        _rawTrackPoints.value = emptyList()
         _activeTrip.value = null
         online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
             "TRIP_STOP",
@@ -1106,6 +1117,14 @@ class TripManager private constructor(private val context: Context) {
             }
             return
         }
+
+        val rawPoint = if (altitude != null && !altitude.isNaN() && altitude != 0.0) {
+            GeoPoint(lat, lng, altitude)
+        } else {
+            GeoPoint(lat, lng)
+        }
+        liveRawPoints.add(rawPoint)
+        _rawTrackPoints.value = liveRawPoints.toList()
 
         // ── Pause Detection & Tracking ─────────────────────────────────────────
         val updatedPauses = current.pauses.toMutableList()
@@ -1368,7 +1387,7 @@ class TripManager private constructor(private val context: Context) {
         if (drainSampler) trackSampler.drain().forEach(::commit)
 
         if (committed == 0 && distance == current.distanceMeters) return
-        val updated = current.copy(points = newPoints, distanceMeters = distance)
+        val updated = current.copy(points = newPoints, rawPoints = liveRawPoints.toList(), distanceMeters = distance)
         _activeTrip.value = updated
         if (committed > 0) persistTripAsync(updated, force = false, alwaysMeta = false)
     }

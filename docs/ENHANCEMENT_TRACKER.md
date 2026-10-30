@@ -1622,6 +1622,21 @@ Evidence & Diagnostics:
 | **SET123-01** | Migrate legacy stored auto-stop presets ($\le 20$m) to new extended defaults. | `TripManager.kt`, `AutoPauseAutoStopTailTrimTest.kt` | Implemented | Automatic migration on load updates stored profile keys to Car 45m, Bike/MTB 60m, Hike/Walk 90m, Run 30m. |
 | **VER-123** | versionCode 160 / 1.18.29 verification. | `app/build.gradle.kts` | Implemented | Gates passed cleanly. |
 
+## 126. Round 124: Configurable Filtered and Raw Trip Polylines with Zero-Polyline Battery Mode (2026-10-30, v2.0.1)
+
+Evidence & Diagnostics:
+- User requested map options for filtered trip polyline (existing) and raw GNSS polyline (new thin line in different color).
+- Both options accessible in Map Settings & Layers dialog as independent toggle switches (filtered default ON, raw default OFF).
+- Disabling both lines enables a battery-saving mode where polyline overlay drawing and live line computation are completely bypassed on display frames, while background trip recording, distance tracking, rest pauses, and database persistence continue at 100% fidelity.
+- Applies consistently to active live recording and historical trip reviews.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **MAP124-01** | Configurable filtered and raw polyline switches with battery-saving zero-polyline mode. | `OsmMapView.kt`, `MapProfileConfigHelper.kt`, `MapProfileConfigTest.kt` | Implemented | Added toggles in Map Settings dialog; thin cyan `#06B6D4` raw line; frame loop skips line rendering when both are off. |
+| **TRK124-02** | Real-time raw GNSS track points and historical raw coordinate extraction. | `TripManager.kt`, `TripModels.kt`, `TripDatabaseHelper.kt`, `TripRecordRawPointsTest.kt` | Implemented | Real-time accumulation of raw fixes during tracking; extraction of saved `raw_lat`/`raw_lng` for past trips. |
+| **VER-124** | versionCode 171 / 2.0.1 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` and `assembleDebug` passed cleanly. |
+
+
 
 
 
