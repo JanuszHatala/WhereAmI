@@ -163,4 +163,36 @@ class RoadDisplayFormatTest {
             )
         )
     }
+
+    @Test
+    fun `OSRM bare DK52 with Nominatim side street Szkolna never emits Szkolna DK52`() {
+        // Field trip 272 Bujaków: Nominatim geocoded Szkolna at the DK52 junction
+        val (street, ref) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DK52",
+            osmStreet = "Szkolna",
+            osmRoadRef = null
+        )
+        assertEquals("DK52", street)
+        assertEquals(
+            "DK52",
+            RoadNameNormalizer.formatStreetDisplay(street, ref, "PL")
+        )
+        // Even if normalize is called directly with Szkolna and DK52:
+        assertEquals(
+            "DK52",
+            RoadNameNormalizer.normalize("Szkolna", "DK52", countryCode = "PL")
+        )
+    }
+
+    @Test
+    fun `sanitizeHouseNumber on corridor preserves highway code when stripped`() {
+        assertEquals(
+            "Krakowska (DK52)",
+            RoadNameNormalizer.sanitizeHouseNumber("Krakowska 242 (DK52)", allowHouseNumber = false)
+        )
+        assertEquals(
+            "Krakowska 242 (DK52)",
+            RoadNameNormalizer.sanitizeHouseNumber("Krakowska 242 (DK52)", allowHouseNumber = true)
+        )
+    }
 }

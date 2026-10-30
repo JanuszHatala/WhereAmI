@@ -97,9 +97,12 @@ class LiveTrackLine {
             if (!hasAnchor) {
                 points.add(GeoPoint(tailLat(0), tailLng(0)))
             }
+            val prevPoint = if (hasAnchor && c.size >= 2) c[c.size - 2] else null
             CurvedPolyline.densify(
                 totalTail, 0, totalTail - 1,
-                { tailLat(it) }, { tailLng(it) }
+                { tailLat(it) }, { tailLng(it) },
+                prevLat = prevPoint?.latitude,
+                prevLng = prevPoint?.longitude
             ) { la, ln -> points.add(GeoPoint(la, ln)) }
         } else {
             for (i in (if (hasAnchor) 1 else 0) until totalTail) {

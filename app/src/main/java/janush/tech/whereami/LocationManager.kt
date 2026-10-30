@@ -1440,19 +1440,27 @@ class LocationManager private constructor(private val context: Context) {
                     if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
                         TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
                         if (committedPlace != null) {
+                            val sameLocality = diskCached.pl.city.equals(committedPlace!!.pl.city, ignoreCase = true)
+                            val fallbackStreet = if (sameLocality) {
+                                committedPlace!!.pl.street
+                            } else {
+                                // Crossing into a new locality: never leak previous locality's street name across border!
+                                committedPlace!!.pl.roadRef?.let { RoadNameNormalizer.normalize(null, it) }
+                                    ?: diskCached.pl.street
+                            }
                             val preserved = diskCached.copy(
-                                en = diskCached.en.copy(street = committedPlace!!.en.street, roadRef = committedPlace!!.en.roadRef),
-                                pl = diskCached.pl.copy(street = committedPlace!!.pl.street, roadRef = committedPlace!!.pl.roadRef),
-                                native = diskCached.native.copy(street = committedPlace!!.native.street, roadRef = committedPlace!!.native.roadRef)
+                                en = diskCached.en.copy(street = fallbackStreet, roadRef = committedPlace!!.en.roadRef),
+                                pl = diskCached.pl.copy(street = fallbackStreet, roadRef = committedPlace!!.pl.roadRef),
+                                native = diskCached.native.copy(street = fallbackStreet, roadRef = committedPlace!!.native.roadRef)
                             )
                             return sanitizeMultiDataHouseNumbers(preserved, speedKmh, accuracyMeters)
                         }
                     } else {
-                        // Bare highway-only cache cells are stale naming — serve but revalidate ASAP.
+                        // Bare highway-only cache cells or missing house numbers during stationary dwell require revalidation
                         val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street)
-                        val isStationaryDwell = (speedKmh == null || speedKmh < 0.35f) && (accuracyMeters != null && accuracyMeters <= 25f)
+                        val isStationaryOrLowSpeed = (speedKmh == null || speedKmh < 15f) && (accuracyMeters == null || accuracyMeters <= 35f)
                         val cachedHasBareStreet = diskCached.pl.street != null && RoadNameNormalizer.extractHouseNumber(diskCached.pl.street) == null
-                        if ((bareHighwayCache || (isStationaryDwell && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
+                        if ((bareHighwayCache || (isStationaryOrLowSpeed && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
                             scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
                         }
 
@@ -1603,8 +1611,9 @@ class LocationManager private constructor(private val context: Context) {
 
         val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang, speedKmh)
         val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() } ?: committedPlace?.pl?.street ?: lastGood?.street
-        val osmMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
-        val thoroughfareMatchesTrajectory = trajectoryStreet == null || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
+        val isHighwayTrajectory = trajectoryStreet != null && RoadNameNormalizer.isHighwayCodeOnly(trajectoryStreet)
+        val osmMatchesTrajectory = trajectoryStreet == null || isHighwayTrajectory || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
+        val thoroughfareMatchesTrajectory = trajectoryStreet == null || isHighwayTrajectory || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
 
         val effectiveRoadCandidate = osrmStreet ?: osm?.street ?: address?.thoroughfare
         val shouldShowHouse = RoadNameNormalizer.shouldShowHouseNumber(
@@ -1779,9 +1788,14 @@ class LocationManager private constructor(private val context: Context) {
 
     private fun geocodeWithOsm(lat: Double, lng: Double, language: String, speedKmh: Float? = null): OsmPlaceResult? {
         val now = System.currentTimeMillis()
+        val prefs = context.getSharedPreferences("where_am_i_trip_prefs", Context.MODE_PRIVATE)
+        val profile = prefs.getString("pref_activity_profile", "CAR") ?: "CAR"
+        val isLowSpeedOrStationary = speedKmh == null || speedKmh < 15f
+        val zoom = if (profile == "CAR" && !isLowSpeedOrStationary) 17 else 18
+
         // Quantize coordinates to 4 decimal places (~11m grid cell, matching spatial SQLite cache)
-        // to prevent rural hamlet/estate names from bleeding across hundreds of meters along unnamed roads
-        val osmKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}_$language"
+        // Include zoom level so high-speed road-only caching (zoom 17) does not suppress stationary house numbers (zoom 18)
+        val osmKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}_z${zoom}_$language"
         val cachedOsm = osmResponseCache[osmKey]
         if (cachedOsm != null && (now - cachedOsm.timestamp) < 30 * 60 * 1000L) {
             return cachedOsm.result
@@ -1797,11 +1811,6 @@ class LocationManager private constructor(private val context: Context) {
                 Thread.sleep(1000L - elapsed)
             }
             lastOsmRequestTime = System.currentTimeMillis()
-
-            val prefs = context.getSharedPreferences("where_am_i_trip_prefs", Context.MODE_PRIVATE)
-            val profile = prefs.getString("pref_activity_profile", "CAR") ?: "CAR"
-            val isLowSpeedOrStationary = speedKmh == null || speedKmh < 15f
-            val zoom = if (profile == "CAR" && !isLowSpeedOrStationary) 17 else 18
 
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +

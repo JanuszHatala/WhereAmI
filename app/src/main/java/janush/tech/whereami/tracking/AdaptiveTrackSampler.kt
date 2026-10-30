@@ -55,9 +55,14 @@ class AdaptiveTrackSampler {
         val tol = toleranceM(p.speedMps)
         val worstPoint = if (window.isNotEmpty()) findMaxDeviationPoint(a, p, window) else null
         if (worstPoint != null && worstPoint.second > tol) {
+            val vertex = worstPoint.first
+            if (distanceM(a, vertex) < 0.8) {
+                // Apex is within sub-metre GNSS texture. Keep buffering in window rather than committing micro-segment.
+                window.add(p)
+                return emptyList()
+            }
             // The path bent somewhere inside the window: commit the true apex (vertex of maximum deviation),
             // not window.last() which cuts corners and flattens apexes.
-            val vertex = worstPoint.first
             val vertexIdx = window.indexOf(vertex)
             val remainingInWindow = if (vertexIdx >= 0 && vertexIdx < window.size - 1) {
                 window.subList(vertexIdx + 1, window.size).toMutableList()

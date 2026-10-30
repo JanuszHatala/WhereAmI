@@ -95,6 +95,33 @@ object RoadNameNormalizer {
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
 
+    val SIDE_STREET_NAMES = setOf(
+        "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
+        "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
+        "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
+        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola"
+    )
+
+    fun isKnownSideStreet(street: String?): Boolean {
+        if (street.isNullOrBlank()) return false
+        val stripped = stripParenHighwayRef(street) ?: return false
+        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim().lowercase(Locale.ROOT)
+        return SIDE_STREET_NAMES.contains(base)
+    }
+
+    fun isCommemorativeStreet(street: String?): Boolean {
+        if (street.isNullOrBlank()) return false
+        val stripped = stripParenHighwayRef(street) ?: return false
+        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim().lowercase(Locale.ROOT)
+        if (base.contains("jana pawła") || base.contains("jana pawla")) return false
+        return base.startsWith("kardynał") || base.startsWith("kardynal") ||
+                base.startsWith("księdz") || base.startsWith("ksiedz") ||
+                base.startsWith("ks.") || base.startsWith("św.") || base.startsWith("sw.") ||
+                base.startsWith("święt") || base.startsWith("swiet") ||
+                base.startsWith("gen.") || base.startsWith("marsz") ||
+                base.startsWith("pluton") || base.startsWith("por.")
+    }
+
     /**
      * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
      * OSM name (`Krakowska`). Prefer the local name; attach the code only when OSM confirms [osmRoadRef]
@@ -102,6 +129,8 @@ object RoadNameNormalizer {
      *
      * Never glue an OSRM-only code onto an unrelated named way: trip 249 Czaniec showed
      * `Kardynała Karola Wojtyły (DK52)` because OSRM snapped to DK52 while Nominatim named Wojtyły.
+     * Never glue a highway code onto a side street: trip 272 Bujaków showed `Szkolna (DK52)` because
+     * OSRM snapped to DK52 while Nominatim resolved the side street at the junction.
      *
      * @return pair of (streetForNormalize, refForNormalize)
      */
@@ -116,11 +145,26 @@ object RoadNameNormalizer {
             .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() && !isHighwayCodeOnly(s) } }
             .firstOrNull()
         val osmRef = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
+        val isOsrmHighway = osrm != null && isHighwayCodeOnly(osrm)
+
         return when {
+            // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref if any
             osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRef
-            named != null -> named to osmRef
+
+            // Named street is a known side street (e.g. "Szkolna", "Cicha") while on a highway corridor:
+            // Discard the side street! Show canonical highway code.
+            named != null && isKnownSideStreet(named) && isOsrmHighway -> osrm to osmRef
+
+            // Named street is a genuine corridor name (e.g. "Krakowska", "Bielska", "3 Maja"):
+            // Attach confirmed osmRef (never glue bare OSRM-only code onto Krakowska unless confirmed by OSM)
+            named != null && isLikelyCorridorLocalName(named) -> named to osmRef
+
+            // Named street is not a corridor name (e.g. "Kardynała Karola Wojtyły"): keep local name, never attach highway ref
+            named != null && osmRef == null -> named to null
+
+            // Fallback: highway code or whatever was available
             osrm != null -> osrm to osmRef
-            else -> null to osmRef
+            else -> named to osmRef
         }
     }
 
@@ -129,7 +173,7 @@ object RoadNameNormalizer {
      * Long commemorative names (`Kardynała Karola Wojtyły`) must not inherit a nearby highway code.
      */
     fun isLikelyCorridorLocalName(street: String?): Boolean {
-        if (street.isNullOrBlank() || isHighwayCodeOnly(street) || isResidentialSideStreet(street)) return false
+        if (street.isNullOrBlank() || isHighwayCodeOnly(street)) return false
         val stripped = stripParenHighwayRef(street) ?: return false
         val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim()
         if (base.isEmpty()) return false
@@ -140,13 +184,7 @@ object RoadNameNormalizer {
         ) {
             return false
         }
-        val sideStreetNames = setOf(
-            "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
-            "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
-            "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
-            "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola"
-        )
-        if (sideStreetNames.contains(lower)) return false
+        if (SIDE_STREET_NAMES.contains(lower)) return false
 
         val isDirectional = lower.endsWith("ska") || lower.endsWith("cka") || lower.endsWith("dzka")
         val isArterialKeyword = lower.contains("obwodnica") || lower.contains("główna") || lower.contains("glowna") ||
@@ -332,10 +370,14 @@ object RoadNameNormalizer {
      * Preserves major highway corridors and clean base street names.
      */
     fun sanitizeHouseNumber(street: String?, allowHouseNumber: Boolean): String? {
-        if (street.isNullOrBlank()) return street
-        if (allowHouseNumber) return street
-        if (isMajorRoad(street)) return street
-        return extractBaseStreet(street)
+        if (street.isNullOrBlank() || allowHouseNumber) return street
+        if (extractHouseNumber(street).isNullOrBlank()) return street
+        val highwayCode = extractHighwayCode(street)
+        val base = cleanStreetPrefix(extractBaseStreet(street))
+        return when {
+            highwayCode != null -> "$base ($highwayCode)"
+            else -> base
+        }
     }
 
     /**
@@ -516,7 +558,9 @@ object RoadNameNormalizer {
         // If it's a major highway:
         if (normalizedHighway != null) {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
-            val combined = if (!isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)) {
+            val shouldAttachRef = !isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road) &&
+                    !isKnownSideStreet(road) && !isCommemorativeStreet(road)
+            val combined = if (shouldAttachRef) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
                 if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
                     "$cleanLocal $effectiveHouseNumber ($normalizedHighway)"
@@ -542,20 +586,23 @@ object RoadNameNormalizer {
     }
 
     /**
-     * Extracts trailing house number if present (e.g. "ul. Zdrojowa 11A" -> "11A").
+     * Extracts trailing house number if present (e.g. "ul. Zdrojowa 11A" -> "11A", "Krakowska 242 (DK52)" -> "242").
      */
     fun extractHouseNumber(street: String?): String? {
         if (street.isNullOrBlank()) return null
-        val match = TRAILING_HOUSE_NUM.find(street) ?: return null
+        val stripped = stripParenHighwayRef(street) ?: return null
+        val match = TRAILING_HOUSE_NUM.find(stripped) ?: return null
         return match.value.trim()
     }
 
     /**
-     * Extracts base street name by stripping trailing house numbers (e.g. "ul. Kościuszki 14A" -> "ul. Kościuszki").
+     * Extracts base street name by stripping trailing house numbers and parenthesized highway codes
+     * (e.g. "ul. Kościuszki 14A" -> "ul. Kościuszki", "Krakowska 242 (DK52)" -> "Krakowska").
      */
     fun extractBaseStreet(street: String?): String {
         if (street.isNullOrBlank()) return ""
-        return street.replace(TRAILING_HOUSE_NUM, "").trim()
+        val stripped = stripParenHighwayRef(street) ?: ""
+        return stripped.replace(TRAILING_HOUSE_NUM, "").trim()
     }
 
     /**
