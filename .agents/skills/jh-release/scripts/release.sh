@@ -10,7 +10,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 GRADLE="app/build.gradle.kts"
 APK="app/build/outputs/apk/debug/app-debug.apk"
-PKG="janush.tech.whereami"
+PKG="online.hatala.whereami"
 
 version_of() { sed -nE "s/^[[:space:]]*$1 = \"?([^\"]+)\"?/\1/p" "${2:-$GRADLE}" | head -1; }
 

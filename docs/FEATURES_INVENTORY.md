@@ -1,6 +1,6 @@
 # WhereAmI - Master Feature Inventory & Evolution Register
 
-This document is the authoritative, comprehensive historical and current register for **ALL** features requested, designed, implemented, evolved, or retired from the inception of the **WhereAmI** project (`janush.tech.whereami`).
+This document is the authoritative, comprehensive historical and current register for **ALL** features requested, designed, implemented, evolved, or retired from the inception of the **WhereAmI** project (`online.hatala.whereami`).
 
 It tracks the workflow and architectural decisions across all development sessions, aggregating features logically rather than repeating duplicate entries, and documents all encountered bugs, trade-offs, and solutions.
 
@@ -501,11 +501,11 @@ It tracks the workflow and architectural decisions across all development sessio
 
 ## 8. Category 7: Android System Integration & Power Architecture
 
-### SYS-01: Professional Package Modernization (`janush.tech.whereami`)
+### SYS-01: Professional Package Modernization (`online.hatala.whereami`)
 - **Core Value**: Professional package name and application ID matching project identity.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - Renamed from `com.example.whereiam` / `com.example.whereami` to `janush.tech.whereami`.
+  - Renamed from `com.example.whereiam` / `com.example.whereami` to `online.hatala.whereami`.
   - Safely migrated SQLite database (753KB, 32 trips), 7 SharedPreferences XMLs, and 13 boundary JSONs on user device.
 
 ### SYS-02: Android Auto Unified Media & Spatial Service
@@ -629,7 +629,7 @@ This section documents features that were requested, prototyped, or previously d
 - **Why Abandoned / Replaced**:
   - `com.example` is an amateur placeholder not suitable for a production-grade utility.
   - Inconsistent with project branding `WhereAmI`.
-  - *Decision*: Completely migrated codebase, namespace, and Android application ID to `janush.tech.whereami`. All database, preference, and cache files were safely backed up and migrated on device.
+  - *Decision*: Completely migrated codebase, namespace, and Android application ID to `online.hatala.whereami`. All database, preference, and cache files were safely backed up and migrated on device.
 - **Attribution**: User instruction.
 
 ---

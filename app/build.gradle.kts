@@ -5,14 +5,14 @@ plugins {
 }
 
 android {
-    namespace = "janush.tech.whereami"
+    namespace = "online.hatala.whereami"
     compileSdk = 36
     defaultConfig {
-        applicationId = "janush.tech.whereami"
+        applicationId = "online.hatala.whereami"
         minSdk = 24
         targetSdk = 36
-        versionCode = 169
-        versionName = "1.18.38"
+        versionCode = 170
+        versionName = "2.0.0"
     }
 
     buildTypes {

@@ -51,10 +51,10 @@
             android:name=".CacheNotificationReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="janush.tech.whereami.ACTION_PREFETCH_START" />
-                <action android:name="janush.tech.whereami.ACTION_PREFETCH_PAUSE" />
-                <action android:name="janush.tech.whereami.ACTION_PREFETCH_RESUME" />
-                <action android:name="janush.tech.whereami.ACTION_PREFETCH_STOP" />
+                <action android:name="online.hatala.whereami.ACTION_PREFETCH_START" />
+                <action android:name="online.hatala.whereami.ACTION_PREFETCH_PAUSE" />
+                <action android:name="online.hatala.whereami.ACTION_PREFETCH_RESUME" />
+                <action android:name="online.hatala.whereami.ACTION_PREFETCH_STOP" />
             </intent-filter>
         </receiver>
 
@@ -62,9 +62,9 @@
             android:name=".ElevationActionReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="janush.tech.whereami.ACTION_PAUSE_ELEVATION" />
-                <action android:name="janush.tech.whereami.ACTION_RESUME_ELEVATION" />
-                <action android:name="janush.tech.whereami.ACTION_STOP_ELEVATION" />
+                <action android:name="online.hatala.whereami.ACTION_PAUSE_ELEVATION" />
+                <action android:name="online.hatala.whereami.ACTION_RESUME_ELEVATION" />
+                <action android:name="online.hatala.whereami.ACTION_STOP_ELEVATION" />
             </intent-filter>
         </receiver>
 

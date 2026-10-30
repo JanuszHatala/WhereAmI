@@ -1,0 +1,261 @@
+package online.hatala.whereami
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
+import org.junit.Test
+
+class RoadNameNormalizerTest {
+
+    @Test
+    fun testNationalRoadsNormalization() {
+        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa 52"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa nr 52"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("Krajowa 52"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK52"))
+        assertEquals("DK28", RoadNameNormalizer.normalize("Droga Krajowa 28"))
+        assertEquals("DK28", RoadNameNormalizer.normalize("28"))
+        assertEquals("DK47", RoadNameNormalizer.normalize("47"))
+    }
+
+    @Test
+    fun testProvincialRoadsNormalization() {
+        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("Wojewódzka 946"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("DW 946"))
+        assertEquals("DW948", RoadNameNormalizer.normalize("Droga Wojewódzka nr 948"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("946"))
+    }
+
+    @Test
+    fun testHighwaysAndExpressways() {
+        assertEquals("A4", RoadNameNormalizer.normalize("Autostrada A4"))
+        assertEquals("A4", RoadNameNormalizer.normalize("A 4"))
+        assertEquals("S7", RoadNameNormalizer.normalize("Droga Ekspresowa S7"))
+        assertEquals("S7", RoadNameNormalizer.normalize("S 7"))
+        assertEquals("E77", RoadNameNormalizer.normalize("Droga Międzynarodowa E77"))
+    }
+
+    @Test
+    fun testMajorRoadsStripHouseNumbers() {
+        // Major roads must NOT have house numbers appended
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52", houseNumber = "142"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946", houseNumber = "55B"))
+    }
+
+    @Test
+    fun testResidentialStreetsStripHouseNumbersAndCleanPrefix() {
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza", houseNumber = "12"))
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza 12"))
+        assertEquals("al. Wolności", RoadNameNormalizer.normalize("aleja Wolności", houseNumber = "4A"))
+        assertEquals("os. Tysiąclecia", RoadNameNormalizer.normalize("osiedle Tysiąclecia", houseNumber = "5"))
+        assertEquals("pl. Grunwaldzki", RoadNameNormalizer.normalize("plac Grunwaldzki"))
+        assertEquals("Zagłębocze", RoadNameNormalizer.normalize("Zagłębocze 45"))
+        assertEquals("Górska", RoadNameNormalizer.normalize("Górska 92"))
+        assertEquals("Zielona", RoadNameNormalizer.normalize("Zielona 18"))
+    }
+
+    @Test
+    fun testNamedStreetWithHighwayRef() {
+        assertEquals("ul. Wadowicka (DK52)", RoadNameNormalizer.normalize("ulica Wadowicka", rawRef = "DK52"))
+        assertEquals("ul. Żywiecka (DW946)", RoadNameNormalizer.normalize("ulica Żywiecka", rawRef = "946"))
+        assertEquals("al. świętego Jana Pawła II (S1)", RoadNameNormalizer.normalize("Aleje świętego Jana Pawła II"))
+    }
+
+    @Test
+    fun testIsMajorRoad() {
+        assertTrue(RoadNameNormalizer.isMajorRoad("DK52"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("DW946"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("A4"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("S7"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("S1"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("28"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("946"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Aleje świętego Jana Pawła II (S1)"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Wadowicka (DK52)"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Droga Krajowa 28"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Aleja Generała Władysława Andersa"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Trasa Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Północno-Wschodnia Obwodnica Bielska-Białej"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Droga Bez Nazwy", roadRef = "S52"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Aleja gen. Władysława Andersa"))
+        assertFalse(RoadNameNormalizer.isMajorRoad("ul. Kościuszki"))
+        assertFalse(RoadNameNormalizer.isMajorRoad("Rynek"))
+        assertFalse(RoadNameNormalizer.isMajorRoad("ul. Braterska"))
+        assertFalse(RoadNameNormalizer.isMajorRoad("Generała Józefa Chłopickiego"))
+    }
+
+    @Test
+    fun testShouldShowHouseNumberGating() {
+        // High accuracy (<= 20m) and low speed (< 15 km/h) on residential road -> allowed
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 5.0f, accuracyMeters = 8.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 4.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = null, accuracyMeters = 10.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 12.0f, accuracyMeters = 15.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 20.0f, isMajorRoad = false))
+
+        // Velocity >= 15 km/h -> stripped
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 15.0f, accuracyMeters = 8.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 45.0f, accuracyMeters = 5.0f, isMajorRoad = false))
+
+        // Stationary / indoor dwell (speed < 1 km/h): allowed up to 40m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 25.0f, isMajorRoad = false))
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 35.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 42.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = null, isMajorRoad = false))
+
+        // Slow walking (speed < 5 km/h): allowed up to 35m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 3.5f, accuracyMeters = 30.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 3.5f, accuracyMeters = 36.0f, isMajorRoad = false))
+
+        // Moving (5 - 15 km/h): allowed up to 25m accuracy
+        assertTrue(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 20.0f, isMajorRoad = false))
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 10.0f, accuracyMeters = 28.0f, isMajorRoad = false))
+
+        // Major road / corridor -> strictly stripped regardless of speed/accuracy
+        assertFalse(RoadNameNormalizer.shouldShowHouseNumber(speedKmh = 0.0f, accuracyMeters = 3.0f, isMajorRoad = true))
+    }
+
+    @Test
+    fun testCoalesceBareCodeSideStreetShielding() {
+        // Graniczna is a side street without matching roadRef - must NOT coalesce with DK52
+        val resultGraniczna = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "DK52",
+            cachedStreet = "Graniczna",
+            cachedRoadRef = null
+        )
+        org.junit.Assert.assertNull(resultGraniczna)
+
+        // Krakowska with matching roadRef DK52 - coalesces cleanly
+        val resultKrakowska = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "DK52",
+            cachedStreet = "Krakowska",
+            cachedRoadRef = "DK52"
+        )
+        org.junit.Assert.assertNotNull(resultKrakowska)
+        org.junit.Assert.assertEquals("Krakowska", resultKrakowska?.first)
+        org.junit.Assert.assertEquals("DK52", resultKrakowska?.second)
+    }
+
+    @Test
+    fun testStreetsMatch() {
+        assertTrue(RoadNameNormalizer.streetsMatch("ul. Mickiewicza", "Mickiewicza"))
+        assertTrue(RoadNameNormalizer.streetsMatch("Lipnicka", "ulica Lipnicka"))
+        assertTrue(RoadNameNormalizer.streetsMatch("ul. Stefanii Sempołowskiej", "Sempołowskiej"))
+        assertTrue(RoadNameNormalizer.streetsMatch("Zielona", "Zielona 92"))
+        assertFalse(RoadNameNormalizer.streetsMatch("Stojałowskiego", "Lipnicka"))
+        assertFalse(RoadNameNormalizer.streetsMatch("ul. Główna", "Boczna"))
+    }
+
+    @Test
+    fun testSanitizeHouseNumber() {
+        assertEquals("ul. Zdrojowa", RoadNameNormalizer.sanitizeHouseNumber("ul. Zdrojowa 11A", allowHouseNumber = false))
+        assertEquals("ul. Zdrojowa 11A", RoadNameNormalizer.sanitizeHouseNumber("ul. Zdrojowa 11A", allowHouseNumber = true))
+        assertEquals("DK52", RoadNameNormalizer.sanitizeHouseNumber("DK52", allowHouseNumber = false))
+        assertEquals("ul. Krakowska (DK52)", RoadNameNormalizer.sanitizeHouseNumber("ul. Krakowska (DK52)", allowHouseNumber = false))
+        assertEquals("ul. Bielska", RoadNameNormalizer.sanitizeHouseNumber("ul. Bielska", allowHouseNumber = false))
+        assertEquals("os. Młocki Dolne", RoadNameNormalizer.sanitizeHouseNumber("os. Młocki Dolne", allowHouseNumber = false))
+    }
+
+    @Test
+    fun testInternationalAndSlovakRoadNormalization() {
+        // In Slovakia, numeric refs should never be prefixed with Polish DK or DW
+        assertEquals("I/18", RoadNameNormalizer.normalize("18", countryCode = "SK"))
+        assertEquals("Cesta slobody (I/18)", RoadNameNormalizer.normalize("Cesta slobody", rawRef = "18", countryCode = "SK"))
+        assertEquals("I/78", RoadNameNormalizer.normalize("78", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize("537", countryCode = "SK"))
+        assertEquals("Cesta slobody (II/537)", RoadNameNormalizer.normalize("Cesta slobody", rawRef = "537", countryCode = "SK"))
+        assertEquals("I/18", RoadNameNormalizer.normalize("I/18", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize("II/537", countryCode = "SK"))
+
+        // Even if rawRef mistakenly has DK18 or DW537 outside Poland, strip the Polish prefix
+        assertEquals("I/18", RoadNameNormalizer.normalize(null, rawRef = "DK18", countryCode = "SK"))
+        assertEquals("II/537", RoadNameNormalizer.normalize(null, rawRef = "DW537", countryCode = "SK"))
+
+        // Generic other country (e.g. CZ, DE)
+        assertEquals("18", RoadNameNormalizer.normalize("18", countryCode = "CZ"))
+        assertEquals("537", RoadNameNormalizer.normalize("537", countryCode = "DE"))
+    }
+
+    @Test
+    fun corridorLocalName_isNotShieldedWhenTheWayCarriesTheRoadNumber() {
+        // DK52 through Bujaków: OSRM snaps "Bielska", Nominatim's way has ref 52.
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Bielska", "52"))
+        assertEquals("Bielska (DK52)", RoadNameNormalizer.normalize("Bielska", "52"))
+        // A parallel / crossing local street without a road number stays shielded at speed.
+        assertTrue(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Polna", null))
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(30f, true, "Polna", null))
+        assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(54f, false, "Polna", null))
+    }
+
+    @Test
+    fun wayRef_onlyFromTheRoadObjectItself() {
+        assertEquals("52", RoadNameNormalizer.wayRef("Bielska", "Bielska" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", "Bujaków" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", "Bielska" to null))
+        assertEquals(null, RoadNameNormalizer.wayRef(null, "Bielska" to "52"))
+        assertEquals(null, RoadNameNormalizer.wayRef("Bielska", null))
+    }
+
+    @Test
+    fun testShouldShowHouseNumberOnMajorCorridorWithLocalName() {
+        // Stationary or slow speed on a major road WITH a local street name: ALLOW house numbers
+        assertTrue(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 0f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = true,
+                hasNamedLocalStreet = true
+            )
+        )
+        assertTrue(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 4f,
+                accuracyMeters = 8f,
+                isMajorRoad = true,
+                isStationary = false,
+                hasNamedLocalStreet = true
+            )
+        )
+
+        // Bare highway (e.g. A4, S7, DK52 without a local street name): DO NOT allow house numbers
+        assertFalse(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 0f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = true,
+                hasNamedLocalStreet = false
+            )
+        )
+
+        // Driving fast (> 15 km/h) on major corridor: DO NOT allow house numbers
+        assertFalse(
+            RoadNameNormalizer.shouldShowHouseNumber(
+                speedKmh = 45f,
+                accuracyMeters = 5f,
+                isMajorRoad = true,
+                isStationary = false,
+                hasNamedLocalStreet = true
+            )
+        )
+    }
+
+    @Test
+    fun testFormatStreetDisplayWithHouseNumber() {
+        assertEquals("ul. Zielona 92", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = true))
+        assertEquals("ul. Zielona", RoadNameNormalizer.formatStreetDisplay("ul. Zielona 92", null, "PL", allowHouseNumber = false))
+        assertEquals("DK52", RoadNameNormalizer.formatStreetDisplay("DK52", "52", "PL", allowHouseNumber = true))
+        assertEquals("Krakowska 5 (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska 5", "52", "PL", allowHouseNumber = true))
+        assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska 5", "52", "PL", allowHouseNumber = false))
+        assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska (DK52)", null, "PL", allowHouseNumber = true))
+    }
+}
+

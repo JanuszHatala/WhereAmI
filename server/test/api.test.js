@@ -32,7 +32,7 @@ describe('API End-to-End Tests', () => {
     const res = await request(app).get('/health');
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'ok');
-    assert.equal(res.body.version, '2.0.3');
+    assert.equal(res.body.version, '2.0.4');
     assert.equal(res.body.db, 'ok');
   });
 
