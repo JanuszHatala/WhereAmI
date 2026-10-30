@@ -1396,19 +1396,8 @@
         }
 
         const isTrailVisible = data.trailVisible !== false;
-        let allTripPoints = [];
-        if (Array.isArray(data.pastSegments)) {
-          data.pastSegments.forEach(seg => {
-            if (Array.isArray(seg)) {
-              allTripPoints = allTripPoints.concat(seg.map(p => [p.lat, p.lng]));
-            }
-          });
-        }
-        if (Array.isArray(data.points) && data.points.length > 0) {
-          allTripPoints = allTripPoints.concat(data.points.map(p => [p.lat, p.lng]));
-        }
-        if (isTrailVisible && allTripPoints.length > 0) {
-          trackPolyline.setLatLngs(allTripPoints);
+        if (isTrailVisible && Array.isArray(data.points) && data.points.length > 0) {
+          trackPolyline.setLatLngs(data.points.map(p => [p.lat, p.lng]));
         } else {
           trackPolyline.setLatLngs([]);
         }
@@ -1424,16 +1413,28 @@
           if (pastSegmentsLayers.length !== data.pastSegments.length) {
             pastSegmentsLayers.forEach(l => map.removeLayer(l));
             pastSegmentsLayers = [];
-            data.pastSegments.forEach(seg => {
+            const pastColors = ['#64748b', '#0284c7', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899'];
+            data.pastSegments.forEach((seg, idx) => {
+              if (!Array.isArray(seg) || seg.length === 0) return;
               const segLatLngs = seg.map(p => [p.lat, p.lng]);
+              const color = pastColors[idx % pastColors.length];
               const poly = L.polyline(segLatLngs, {
-                color: '#64748b',
+                color: color,
                 weight: 3.5,
-                opacity: 0.55,
+                opacity: 0.65,
                 dashArray: '6, 8',
                 lineJoin: 'round',
                 lineCap: 'round'
               });
+              const firstPt = seg[0];
+              const timeStr = firstPt && firstPt.t
+                ? new Date(firstPt.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '';
+              const dateStr = firstPt && firstPt.t
+                ? new Date(firstPt.t).toLocaleDateString([], { month: 'short', day: 'numeric' })
+                : '';
+              const label = timeStr ? `Past trip: ${dateStr} ${timeStr}` : `Past trip #${idx + 1}`;
+              poly.bindTooltip(label, { sticky: true, opacity: 0.9 });
               if (showPastTrips) poly.addTo(map);
               pastSegmentsLayers.push(poly);
             });
