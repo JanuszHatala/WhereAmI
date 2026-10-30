@@ -62,4 +62,13 @@ class MapProfileConfigTest {
             assertTrue(config.fontScale in MapFontScale.values())
         }
     }
+
+    @Test
+    fun testPolylinePreferencesConstantsAndDefaults() {
+        assertEquals("where_am_i_map_prefs", MapProfileConfigHelper.PREFS_NAME)
+        assertEquals("pref_show_filtered_polyline", MapProfileConfigHelper.PREF_SHOW_FILTERED_POLYLINE)
+        assertEquals("pref_show_raw_polyline", MapProfileConfigHelper.PREF_SHOW_RAW_POLYLINE)
+        assertTrue("Filtered polyline must be enabled by default", MapProfileConfigHelper.DEFAULT_SHOW_FILTERED_POLYLINE)
+        assertFalse("Raw polyline must be disabled by default", MapProfileConfigHelper.DEFAULT_SHOW_RAW_POLYLINE)
+    }
 }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.osmdroid.util.GeoPoint
 
 data class HeatMapFilterState(
     val activityProfiles: Set<ActivityProfile> = emptySet(), // empty = All Modes
@@ -111,6 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Trips state
     val activeTrip: StateFlow<TripRecord?> = tripManager.activeTrip
+    val rawTrackPoints: StateFlow<List<GeoPoint>> = tripManager.rawTrackPoints
     val tripMode: StateFlow<TripMode> = tripManager.tripMode
     val autoStopMinutes: StateFlow<Int> = tripManager.autoStopMinutes
 
