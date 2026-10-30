@@ -126,7 +126,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         migrateLegacyKeys(db)
         sanitizeKnownMismatches(db)
         sanitizePolishHighwayCodesOutsidePoland(db)
-        sanitizeBareHighwayAndDupeParenStreets(db)
+        sanitizeDupeParenStreets(db)
         sanitizeFalseHighwayOnLocalNames(db)
     }
 
@@ -193,23 +193,11 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     }
 
     /**
-     * Removes bare `DK*`/`DW*`/`A*`/`S*` street cells (force re-geocode to local names) and collapses
-     * doubled annotations like `Krakowska (DK52) (DK52)`. Field round 2026-10-21: 600 bare DK52 rows
-     * and 23 doubled-paren rows kept the locality card on the highway code.
+     * Collapses doubled annotations like `Krakowska (DK52) (DK52)`.
+     * Note: Bare highway codes (`S1`, `A4`, `DK52`, `DW957`) must NEVER be deleted; they represent valid
+     * canonical road names on motorways, expressways, and regional corridors without residential street names.
      */
-    fun sanitizeBareHighwayAndDupeParenStreets(db: SQLiteDatabase = writableDatabase) {
-        try {
-            db.execSQL(
-                """
-                DELETE FROM $TABLE_CACHE
-                WHERE $COL_STREET GLOB 'DK[0-9]*'
-                   OR $COL_STREET GLOB 'DW[0-9]*'
-                   OR $COL_STREET GLOB 'A[0-9]*'
-                   OR $COL_STREET GLOB 'S[0-9]*'
-                   OR $COL_STREET GLOB 'E[0-9]*'
-                """.trimIndent()
-            )
-        } catch (_: Exception) {}
+    fun sanitizeDupeParenStreets(db: SQLiteDatabase = writableDatabase) {
         try {
             val cursor = db.rawQuery(
                 """
@@ -284,6 +272,11 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 db.endTransaction()
             }
         } catch (_: Exception) {}
+    }
+
+    @Deprecated("Renamed to sanitizeDupeParenStreets; bare highways are now preserved permanently")
+    fun sanitizeBareHighwayAndDupeParenStreets(db: SQLiteDatabase = writableDatabase) {
+        sanitizeDupeParenStreets(db)
     }
 
     /**

@@ -118,6 +118,14 @@ class RoadDisplayFormatTest {
     }
 
     @Test
+    fun `bare expressway S1 and DW957 upgrade to local names but never overwrite existing local names`() {
+        assertFalse(RoadNameNormalizer.shouldPreferExistingStreet("S1", "Warszawska"))
+        assertFalse(RoadNameNormalizer.shouldPreferExistingStreet("DW957", "Kolejowa"))
+        assertTrue(RoadNameNormalizer.shouldPreferExistingStreet("Warszawska", "S1"))
+        assertTrue(RoadNameNormalizer.shouldPreferExistingStreet("Kolejowa", "DW957"))
+    }
+
+    @Test
     fun `extractHighwayCode from paren and bare code`() {
         assertEquals("DW948", RoadNameNormalizer.extractHighwayCode("DW948"))
         assertEquals("DK52", RoadNameNormalizer.extractHighwayCode("Krakowska (DK52)"))

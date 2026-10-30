@@ -101,4 +101,20 @@ class SpatialCacheGridTest {
         val missingCount = uniqueGridCells.count { it !in cachedKeys }
         assertEquals(1, missingCount)
     }
+
+    @Test
+    fun testHighwayCorridorsRetainedAsValidCache() {
+        // Expressways and provincial roads without residential street names (S1, DW957)
+        val s1Point = 49.7240673 to 19.1196188
+        val dw957Point = 49.5898739 to 19.5830405
+        val s1Key = SpatialCacheHelper.toGridKey(s1Point.first, s1Point.second)
+        val dw957Key = SpatialCacheHelper.toGridKey(dw957Point.first, dw957Point.second)
+
+        val cachedKeys = setOf(s1Key, dw957Key)
+
+        assertEquals("49.7241_19.1196", s1Key)
+        assertEquals("49.5899_19.5830", dw957Key)
+        org.junit.Assert.assertTrue("S1 grid key must be recognized in cached keys", s1Key in cachedKeys)
+        org.junit.Assert.assertTrue("DW957 grid key must be recognized in cached keys", dw957Key in cachedKeys)
+    }
 }
