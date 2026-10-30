@@ -35,14 +35,14 @@ function createApp({ repo, pool }) {
       res.json({
         status: 'ok',
         service: 'WhereAmI Live Server',
-        version: '2.0.2',
+        version: '2.0.3',
         db: 'ok'
       });
     } catch (err) {
       res.status(503).json({
         status: 'error',
         service: 'WhereAmI Live Server',
-        version: '2.0.2',
+        version: '2.0.3',
         db: 'disconnected',
         error: err.message
       });

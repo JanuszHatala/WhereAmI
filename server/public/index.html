@@ -708,8 +708,25 @@
       }
     }
 
+    function updateHostMarkerRotation(bearing) {
+      if (!userMarker) return;
+      const el = userMarker.getElement();
+      if (!el) return;
+      const rotator = el.querySelector('.host-rotator');
+      if (!rotator) return;
+      const mapBearing = (map && map.getBearing) ? (map.getBearing() || 0) : 0;
+      const currentBearing = (bearing !== null && bearing !== undefined)
+        ? bearing
+        : (lastHostState && lastHostState.bearing !== null && lastHostState.bearing !== undefined ? lastHostState.bearing : null);
+      if (currentBearing === null) return;
+      const b = ((currentBearing - mapBearing) % 360 + 360) % 360;
+      rotator.style.transform = `rotate(${b}deg)`;
+    }
+
     function createHostIcon(isOnline, isPaused, statusClass, bearing) {
-      const b = (bearing !== null && bearing !== undefined) ? bearing : 0;
+      const mapBearing = (map && map.getBearing) ? (map.getBearing() || 0) : 0;
+      const rawBearing = (bearing !== null && bearing !== undefined) ? bearing : 0;
+      const b = ((rawBearing - mapBearing) % 360 + 360) % 360;
       const dotColor = isOnline ? '#22c55e' : (isPaused ? '#f59e0b' : '#94a3b8');
       const hasArrow = isOnline && bearing !== null && bearing !== undefined;
 
@@ -797,6 +814,7 @@
 
     function updateHostMarker(coords, isOnline, isPaused, statusClass, bearing, accuracy, animate = false, animDurationMs = 1500) {
       if (!coords) return;
+      lastCoords = coords;
       lastHostState = { isOnline, isPaused, statusClass, bearing, accuracy };
       const icon = createHostIcon(isOnline, isPaused, statusClass, bearing);
       if (!userMarker) {
@@ -843,6 +861,7 @@
     map.on('rotate', () => {
       const b = (map.getBearing ? map.getBearing() : 0) || 0;
       updateCompassHeading(b);
+      updateHostMarkerRotation();
     });
 
     function resetNorth() {
@@ -850,9 +869,7 @@
         map.setBearing(0);
       }
       updateCompassHeading(0);
-      if (userMarker && lastCoords) {
-        updateHostMarker(lastCoords, lastHostState.isOnline, lastHostState.isPaused, lastHostState.statusClass, lastHostState.bearing, lastHostState.accuracy);
-      }
+      updateHostMarkerRotation();
     }
 
     function toggleCard() {
