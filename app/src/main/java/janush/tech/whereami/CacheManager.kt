@@ -509,14 +509,12 @@ class CacheManager private constructor(private val context: Context) {
                             cachedKeys.add(key)
                             addedRoutes++
                         }
-                        kotlinx.coroutines.delay(500L)
+                        kotlinx.coroutines.delay(1100L)
                     }
 
                     pass1Current++
                     _prefetchState.value = PrefetchState.Running(1, "Pass 1: Macro Coverage (~50m)", pass1Current, pass1Total, addedRoutes)
                     updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
-
-                    kotlinx.coroutines.delay(1500L)
                 }
 
                 // ── PASS 2: Fine Precision Down to ~15m Grid Resolution ──────────────
@@ -549,14 +547,12 @@ class CacheManager private constructor(private val context: Context) {
                             cachedKeys.add(key)
                             addedRoutes++
                         }
-                        kotlinx.coroutines.delay(500L)
+                        kotlinx.coroutines.delay(1100L)
                     }
 
                     pass2Current++
                     _prefetchState.value = PrefetchState.Running(2, "Pass 2: Fine Precision (~15m)", pass2Current, pass2Total, addedRoutes)
                     updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
-
-                    kotlinx.coroutines.delay(1500L)
                 }
 
                 // PASS 3: Administrative Boundaries 
@@ -644,7 +640,7 @@ class CacheManager private constructor(private val context: Context) {
             try {
                 spatialHelper.sanitizeKnownMismatches(db)
                 spatialHelper.sanitizePolishHighwayCodesOutsidePoland(db)
-                spatialHelper.sanitizeBareHighwayAndDupeParenStreets(db)
+                spatialHelper.sanitizeDupeParenStreets(db)
                 spatialHelper.sanitizeFalseHighwayOnLocalNames(db)
                 // Clean orphan/unknown entries
                 val cursor = db.rawQuery("SELECT count(*) FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'", null)

@@ -62,4 +62,26 @@ class AdaptiveTrackSamplerTest {
         assertEquals("Committed vertex must be the apex p1Apex", p1Apex.lat, c2[0].lat, 1e-6)
         assertEquals("Committed vertex must be the apex p1Apex", p1Apex.lng, c2[0].lng, 1e-6)
     }
+
+    @Test
+    fun `sub-metre jitter apex candidate is buffered rather than committed as micro-vertex`() {
+        val sampler = AdaptiveTrackSampler()
+        val speed = 2.0
+
+        val p0 = pt(0L, 50.000000, 19.000000, speed)
+        assertTrue(sampler.offer(p0).isNotEmpty())
+
+        // Point 1: 0.5m from anchor (< 0.8m)
+        val p1Jitter = pt(500L, 50.000003, 19.000004, speed)
+        assertTrue("Sub-metre point must be buffered", sampler.offer(p1Jitter).isEmpty())
+
+        // Point 2: 3m from anchor (< maxSpacingM 4m)
+        val p2 = pt(1200L, 50.000000, 19.000040, speed)
+        val c2 = sampler.offer(p2)
+        assertTrue("Sub-metre jitter must not trigger vertex commit", c2.isEmpty())
+        // And even when chord reaches maxSpacing, p1Jitter must never be emitted as an apex
+        val p3 = pt(2000L, 50.000000, 19.000070, speed)
+        val c3 = sampler.offer(p3)
+        assertTrue("Only p3 may be emitted on maxSpacing", c3.none { it.lat == p1Jitter.lat })
+    }
 }

@@ -24,15 +24,17 @@ object CurvedPolyline {
     const val STRAIGHT_DEG = 0.5
     /**
      * Either corner sharper than this: draw the segment straight.
-     * Centripetal Catmull-Rom otherwise overshoots multipath kinks into visible Z/V zigzags
-     * (field trip 248 on Głęboka / Piłsudskiego) even when stored vertices are only metres off.
-     * 135 deg allows standard 90-120 deg street corners to curve smoothly without looping.
+     * Segments up to 160 deg (hairpin bends, sharp 90-155 deg street corners, roundabouts, U-turns)
+     * curve smoothly without looping thanks to centripetal Catmull-Rom parameterization.
+     * Dead course reversals (>= 160 deg) are drawn straight to prevent self-intersecting loops.
      */
-    const val SHARP_CORNER_DEG = 135.0
+    const val SHARP_CORNER_DEG = 160.0
 
     /**
      * Emits segments [fromSeg, toSeg) of the [n] vertices: for each segment its interior curve points and then
      * its end vertex. The start vertex of [fromSeg] is not emitted (the caller already has it).
+     * [prevLat] and [prevLng] supply the optional vertex before [fromSeg] (e.g. preceding committed point)
+     * to preserve tangent continuity across incremental segment joins.
      */
     inline fun densify(
         n: Int,
@@ -40,6 +42,8 @@ object CurvedPolyline {
         toSeg: Int,
         latAt: (Int) -> Double,
         lngAt: (Int) -> Double,
+        prevLat: Double? = null,
+        prevLng: Double? = null,
         emit: (Double, Double) -> Unit
     ) {
         val end = minOf(toSeg, n - 1)
@@ -53,6 +57,7 @@ object CurvedPolyline {
             val len = hypot(x2, y2)
             val x0: Double; val y0: Double
             if (j > 0) { x0 = (lngAt(j - 1) - lng1) * mLng; y0 = (latAt(j - 1) - lat1) * mLat }
+            else if (prevLat != null && prevLng != null) { x0 = (prevLng - lng1) * mLng; y0 = (prevLat - lat1) * mLat }
             else { x0 = -x2; y0 = -y2 }
             val x3: Double; val y3: Double
             if (j + 2 < n) { x3 = (lngAt(j + 2) - lng1) * mLng; y3 = (latAt(j + 2) - lat1) * mLat }
