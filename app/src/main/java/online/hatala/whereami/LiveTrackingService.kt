@@ -308,7 +308,16 @@ class LiveTrackingService : Service() {
             else -> "Ready to auto-record (standby • low power)"
         }
         val notification = buildNotification(initialTitle, initialText)
-        startForeground(NOTIF_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            androidx.core.app.ServiceCompat.startForeground(
+                this,
+                NOTIF_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
         lastNotificationPostTime = SystemClock.elapsedRealtime()
         lastNotificationTitle = initialTitle
         lastNotificationText = initialText

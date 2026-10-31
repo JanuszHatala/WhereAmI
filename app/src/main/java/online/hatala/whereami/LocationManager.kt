@@ -705,13 +705,13 @@ class LocationManager private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         val speedKmh = speedMs * 3.6f
 
-        // Kinematic turn tracking: if vehicle turns (heading change >= 30 deg at speed >= 3 km/h),
+        // Kinematic turn tracking: if vehicle turns (heading change >= 25 deg at speed >= 1 km/h),
         // record turn timestamp so we promptly switch to the new street.
-        if (bearing != null && speedKmh >= 3f) {
+        if (bearing != null && speedKmh >= 1f) {
             val prev = lastSustainedBearing
             if (prev != null) {
                 val delta = kotlin.math.abs(((bearing - prev + 540) % 360) - 180)
-                if (delta >= 30f) {
+                if (delta >= 25f) {
                     lastTurnTimestamp = now
                     TelemetryLogger.log("STREET", "Kinematic turn detected: Δbearing=${delta.toInt()}°, heading=$prev -> $bearing")
                     lastSustainedBearing = bearing
@@ -813,7 +813,24 @@ class LocationManager private constructor(private val context: Context) {
             )
         }
 
-        val isRecentTurn = (now - lastTurnTimestamp) < 14_000L
+        val isRecentTurn = (now - lastTurnTimestamp) < 16_000L
+
+        // When turning onto a major corridor (e.g. from local street onto DK52 / Żywiecka),
+        // adopt candidate immediately on the 1st fix (zero delay) to prevent showing the old street
+        if (isRecentTurn && isCandidateMajor && !isCommittedMajor && !rawStreetPl.isNullOrBlank()) {
+            TelemetryLogger.log("STREET", "Turn onto major corridor from '$committedStreetPl' to '$rawStreetPl': adopting immediately on 1st fix")
+            committedStreetPl = rawStreetPl
+            committedStreetBase = rawBase
+            lastCommittedStreetLocality = multiData.pl.city
+            candidateStreetPl = null
+            candidateStreetBase = null
+            candidateStreetCount = 0
+            return multiData.copy(
+                en = multiData.en.copy(street = committedStreetPl),
+                pl = multiData.pl.copy(street = committedStreetPl),
+                native = multiData.native.copy(street = committedStreetPl)
+            )
+        }
 
         // High-Speed Corridor Shield:
         // While driving at high speed (> 35 km/h) along a confirmed corridor without having made a physical turn:

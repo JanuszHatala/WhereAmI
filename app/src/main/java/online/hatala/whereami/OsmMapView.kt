@@ -69,6 +69,7 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import java.util.Locale
 import online.hatala.whereami.tracking.AndroidSensorRegistrar
 import online.hatala.whereami.tracking.CompassArrow
 import online.hatala.whereami.tracking.CompassHeadingSensor
@@ -617,7 +618,11 @@ fun OsmMapView(
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
     val visibleGuests = remember(activeGuests, showInactiveGuests) {
-        if (showInactiveGuests) activeGuests else activeGuests.filter { !it.isInactive }
+        val filtered = if (showInactiveGuests) activeGuests else activeGuests.filter { !it.isInactive }
+        // Deduplicate by guest name, retaining only the single latest position per unique person
+        filtered.groupBy { it.name.trim().lowercase(Locale.ROOT) }
+            .values
+            .mapNotNull { group -> group.maxByOrNull { it.lastUpdated } }
     }
     var currentSpiderfyPositions by remember { mutableStateOf<Map<String, GeoPoint>>(emptyMap()) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
@@ -1054,7 +1059,7 @@ fun OsmMapView(
                                         .count {
                                             pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
                                         } > 0
-                                val added = !pose.isStationary &&
+                                val added = !pose.isStationary && (!pose.isPredicted || pose.speedMps >= 1.5) &&
                                     pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
                                 if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                                     liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
@@ -4100,8 +4105,8 @@ fun computeSpiderfyOffsets(
 
         val centerLat = guests[i].lat
         val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(centerLat)) / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
-        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(16.0, 45.0)
-        val clusterThresholdM = 22.0
+        val clusterThresholdM = (desiredOffsetPx * metersPerPixel).coerceAtMost(45.0)
+        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(3.0, 45.0)
 
         for (j in (i + 1) until guests.size) {
             if (!visited[j]) {
@@ -4126,13 +4131,12 @@ fun computeSpiderfyOffsets(
         } else {
             val k = cluster.size
             // Navigation bearing: 0 = North, PI/2 = East, PI = South, -PI/2 = West.
-            // When within 10m of obstacle (co-located at home/desk), fan out toward West (-PI/2)
-            // to stay clear of top-right altitude badge and right-side controls.
+            // When within 1m of obstacle, fan out toward West (-PI/2) to stay clear of right-side map buttons.
             val baseAngle = if (collidingObstacle != null) {
                 val dLat = clusterLat - collidingObstacle.latitude
                 val dLng = clusterLng - collidingObstacle.longitude
                 val obsDist = kotlin.math.hypot(dLat * mLat, dLng * mLng)
-                if (obsDist > 10.0) {
+                if (obsDist > 1.0) {
                     kotlin.math.atan2(dLng, dLat)
                 } else {
                     -Math.PI / 2.0 // Due West

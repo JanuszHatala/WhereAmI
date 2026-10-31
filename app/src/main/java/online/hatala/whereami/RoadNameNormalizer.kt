@@ -82,15 +82,30 @@ object RoadNameNormalizer {
         street: String?,
         roadRef: String?,
         countryCode: String? = "PL",
-        allowHouseNumber: Boolean = false
+        allowHouseNumber: Boolean = false,
+        houseNumber: String? = null
     ): String? {
         val s = street?.trim()?.takeIf { it.isNotEmpty() }
         val r = roadRef?.trim()?.takeIf { it.isNotEmpty() }
-        if (s != null && PAREN_HIGHWAY_REF.containsMatchIn(s)) return s
+        if (s == null && r == null) return null
+        val extractedH = houseNumber ?: extractHouseNumber(s)
+        val highwayCode = extractHighwayCode(s) ?: extractHighwayCode(r)
+        val baseStreet = stripParenHighwayRef(extractBaseStreet(s))
+
+        if (baseStreet != null) {
+            val refToUse = highwayCode ?: r
+            return normalize(
+                rawStreet = baseStreet,
+                rawRef = refToUse,
+                houseNumber = extractedH,
+                includeHouseNumber = allowHouseNumber && !extractedH.isNullOrBlank(),
+                countryCode = countryCode
+            ) ?: s
+        }
         if (s != null && isHighwayCodeOnly(s)) {
             return normalize(null, r ?: s, null, includeHouseNumber = false, countryCode = countryCode) ?: s
         }
-        return normalize(s, r, null, includeHouseNumber = allowHouseNumber, countryCode = countryCode)
+        return normalize(s, r, extractedH, includeHouseNumber = allowHouseNumber, countryCode = countryCode)
             ?: s
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }

@@ -7,52 +7,58 @@ import org.junit.Test
 class CurvedPolylineTest {
 
     @Test
-    fun `gradual curve of 2 degrees over 35m segment is subdivided into smooth arc`() {
-        // x0=(-35, 0), x1=(0,0), x2=(35, 1.2), x3=(70, 3.6) -> turn angles ~ 2 degrees
-        val x0 = -35.0; val y0 = 0.0
-        val x2 = 35.0; val y2 = 1.2
-        val x3 = 70.0; val y3 = 3.6
-        val len = Math.hypot(x2, y2)
-
-        val k = CurvedPolyline.subdivisions(x0, y0, x2, y2, x3, y3, len)
-        assertTrue("Subdivisions for 35m gradual bend must be > 1 (was $k)", k > 1)
-        assertTrue("Subdivisions should produce points at smooth spacing", k >= 10)
-    }
-
-    @Test
-    fun `perfectly straight line with 0 degree turn is not subdivided`() {
-        val x0 = -35.0; val y0 = 0.0
-        val x2 = 35.0; val y2 = 0.0
-        val x3 = 70.0; val y3 = 0.0
-        val len = 35.0
-
-        val k = CurvedPolyline.subdivisions(x0, y0, x2, y2, x3, y3, len)
-        assertEquals("Perfectly straight segment must have 1 subdivision", 1, k)
-    }
-
-    @Test
-    fun `hairpin bend of 150 degrees curves smoothly instead of straight chord`() {
-        val x0 = -10.0; val y0 = 0.0
-        val x2 = 5.0; val y2 = 8.0
-        val x3 = -5.0; val y3 = 12.0
-        val len = Math.hypot(x2, y2)
-
-        val k = CurvedPolyline.subdivisions(x0, y0, x2, y2, x3, y3, len)
-        assertTrue("Subdivisions for 150-deg hairpin bend must be > 1 (was $k)", k > 1)
-    }
-
-    @Test
-    fun `densify preserves incoming tangent when prevLat and prevLng are provided`() {
-        val lats = doubleArrayOf(50.0, 50.0001, 50.0002)
-        val lngs = doubleArrayOf(19.0, 19.0001, 19.0002)
+    fun `corner rounding rounds 90-degree bend smoothly`() {
+        val lats = doubleArrayOf(50.0, 50.0002, 50.0002)
+        val lngs = doubleArrayOf(19.0, 19.0, 19.0003)
         val emitted = mutableListOf<Pair<Double, Double>>()
 
         CurvedPolyline.densify(
             n = 3, fromSeg = 0, toSeg = 2,
-            latAt = { lats[it] }, lngAt = { lngs[it] },
-            prevLat = 49.9999, prevLng = 18.9999
+            latAt = { lats[it] }, lngAt = { lngs[it] }
         ) { la, ln -> emitted.add(Pair(la, ln)) }
 
-        assertTrue("Must emit curve points", emitted.isNotEmpty())
+        // Must emit points cutting the corner smoothly
+        assertTrue("Emitted points must include fillet points (was ${emitted.size})", emitted.size > 2)
+
+        // Convex hull invariant: no point should exceed max lat or max lng
+        val minLat = lats.minOrNull()!!
+        val maxLat = lats.maxOrNull()!!
+        val minLng = lngs.minOrNull()!!
+        val maxLng = lngs.maxOrNull()!!
+
+        for ((la, ln) in emitted) {
+            assertTrue("Lat $la must be within [$minLat, $maxLat]", la in (minLat - 1e-7)..(maxLat + 1e-7))
+            assertTrue("Lng $ln must be within [$minLng, $maxLng]", ln in (minLng - 1e-7)..(maxLng + 1e-7))
+        }
+    }
+
+    @Test
+    fun `perfectly straight line emits only segment end vertex without bulges`() {
+        val lats = doubleArrayOf(50.0, 50.0002, 50.0004)
+        val lngs = doubleArrayOf(19.0, 19.0002, 19.0004)
+        val emitted = mutableListOf<Pair<Double, Double>>()
+
+        CurvedPolyline.densify(
+            n = 3, fromSeg = 0, toSeg = 2,
+            latAt = { lats[it] }, lngAt = { lngs[it] }
+        ) { la, ln -> emitted.add(Pair(la, ln)) }
+
+        assertEquals("Straight line segments emit 1 point per segment", 2, emitted.size)
+        assertEquals(50.0002, emitted[0].first, 1e-6)
+        assertEquals(19.0002, emitted[0].second, 1e-6)
+        assertEquals(50.0004, emitted[1].first, 1e-6)
+        assertEquals(19.0004, emitted[1].second, 1e-6)
+    }
+
+    @Test
+    fun `turnDeg correctly classifies straight vs turn`() {
+        val straightDeg = CurvedPolyline.turnDeg(0.0, 10.0, 0.0, 10.0)
+        assertEquals(0.0, straightDeg, 1e-3)
+
+        val rightDeg = CurvedPolyline.turnDeg(0.0, 10.0, 10.0, 0.0)
+        assertEquals(90.0, rightDeg, 1e-3)
+
+        val uTurnDeg = CurvedPolyline.turnDeg(0.0, 10.0, 0.0, -10.0)
+        assertEquals(180.0, uTurnDeg, 1e-3)
     }
 }

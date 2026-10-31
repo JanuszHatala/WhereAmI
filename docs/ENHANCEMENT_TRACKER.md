@@ -1655,6 +1655,35 @@ Evidence & Diagnostics:
 | **CAC125-04** | Cache sentinels for unmapped points in prefetch. | `CacheManager.kt` | Implemented | Writes fallback sentinels to `spatial_cache` to prevent indefinite missing loops. |
 | **VER-125** | versionCode 172 / 2.0.2 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (592 tests) and `assembleDebug` passed cleanly. |
 
+## 128. Round 126: Field Test Feedback (Oct 28 & 31): Timeline Deduplication, Panel Relocation & Moving Speed, Spiderfy High-Zoom Proximity, Chaikin Polyline Smoothing, Android 14 Location FGS Fix (2026-10-31, v2.0.3)
+
+Evidence & Diagnostics:
+- User feedback and field traces analyzed from 2026-10-28 and 2026-10-31 recordings/screenshots:
+  - Timeline counted Czaniec 3 times on pauses; fixed to deduplicate consecutive entries.
+  - Relocated trip summary panels: Activity Profile replaced with Total/Moving time; Speed card includes average moving speed.
+  - Guest avatar spiderfy offset was clamped to 16m-45m geographically; removed the 16m floor so avatars can approach within 3-4m at high zoom when not colliding on screen.
+  - Catmull-Rom polyline smoothing caused lateral overshoot zig-zags; replaced with Chaikin-style quadratic Bezier corner fillets (convex hull property prevents zig-zags).
+  - Live track line overshot deceleration stops; clamped prediction travel when stopped/braking.
+  - Missing cache deficit count "8 missing" arose from active in-progress trip points; filtered deficit check to completed trips only.
+  - Missing house numbers at stops: added `SpatialCacheHelper.findNearbyHouseNumber` fallback and preserved house numbers with highway ref parentheses in `RoadNameNormalizer`.
+  - Duplicate guest avatars: deduplicated `visibleGuests` by lowercase name to show single latest position per person.
+  - Turn onto Żywiecka street: lowered kinematic turn threshold to 1 km/h and 25 deg to release corridor inertia immediately on turns.
+  - Trip 278 screen-off gap: telemetry showed FusedLocationProvider switched to coarse 20s network fixes because `startForeground` omitted `FOREGROUND_SERVICE_TYPE_LOCATION`; updated to `ServiceCompat.startForeground` on Android Q+.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **TIM126-01** | Timeline locality deduplication across pauses. | `MainActivity.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Only records visit again when leaving and re-entering. |
+| **PAN126-02** | Panel rearrangement, condensed spacing & moving average speed. | `MainActivity.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Added moving avg speed; rearranged rows. |
+| **SPI126-03** | Screen-space guest spiderfy proximity without 16m geographic floor. | `OsmMapView.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Approached down to 3-4m at high zoom when uncollided. |
+| **CRV126-04** | Chaikin quadratic Bezier corner fillets & stop deceleration clamp. | `CurvedPolyline.kt`, `RenderPipeline.kt`, `OsmMapView.kt` | Implemented | Eliminates S-curves and stop overshoots. |
+| **CAC126-05** | Filter cache deficit checks to completed trips only. | `CacheManager.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | In-progress points excluded from cache deficit count. |
+| **HSE126-06** | House number spatial cache lookup at stop & ref formatting. | `SpatialCacheHelper.kt`, `RoadNameNormalizer.kt`, `MainActivity.kt` | Implemented | Resolves nearby house number on stop. |
+| **GST126-07** | Deduplicate live guest avatars by user name. | `OsmMapView.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Only latest position per person rendered. |
+| **HYST126-08** | Fast-track turn inertia release on sharp turns. | `LocationManager.kt` | Implemented | Immediately tracks new street on turns. |
+| **FGS126-09** | Android 14+ `FOREGROUND_SERVICE_TYPE_LOCATION` enforcement. | `LiveTrackingService.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Preserves 1 Hz GNSS fixes while screen is off. |
+| **VER-126** | versionCode 173 / 2.0.3 verification. | `app/build.gradle.kts` | Implemented | All tests pass, APK installed on device. |
+
+
 
 
 
