@@ -193,7 +193,14 @@ class LiveTrackingService : Service() {
                 if (isSleeping && !hasTrip) {
                     // Update sleep notification in-place: Live Sharing stopped, show standard Standby Sleep
                     updateNotification(force = true)
-                    return START_STICKY
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_DETACH)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(false)
+                    }
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
                 if (hasTrip) {
                     updateNotification()
@@ -695,6 +702,15 @@ class LiveTrackingService : Service() {
                 LiveSharingManager.getInstance(this).startStationaryHeartbeat()
             }
             updateNotification(force = true)
+            // Complete FGS shutdown during Sleep: detach persistent sleeping notification and stop service
+            // Eliminates overnight location FGS runtime and prevents battery drain attribution
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_DETACH)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(false)
+            }
+            stopSelf()
         } else if (hasLive) {
             // Live sharing active without active trip recording:
             // Keep location stream active only when unpaused and moving/GPS active;
