@@ -507,4 +507,64 @@ class AutoSleepManagerTest {
             AutoSleepManager.hasUpcomingMorningAlarm(nowMs, tomorrowAlarm.timeInMillis)
         )
     }
+
+    @Test
+    fun testMorningBedtimeEndedHoldsSleepWhenScreenOffAndStationary() {
+        // Bedtime ended at 06:30, it is 07:00 morning, but screen is still off and phone is stationary on nightstand
+        val shouldHoldSleep = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = false,
+            isScreenOff = true,
+            isStationary = true
+        )
+        assertFalse(
+            "Bedtime window end must hold sleep mode if phone is still screen-off & stationary on nightstand",
+            shouldHoldSleep
+        )
+
+        // As soon as screen turns on (user picks up / unlocks phone), sleep mode wakes immediately
+        val shouldWakeOnScreenOn = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = false,
+            isScreenOff = false, // Screen turned on!
+            isStationary = true
+        )
+        assertTrue("Screen turning on must wake sleep mode outside bedtime window", shouldWakeOnScreenOn)
+
+        // Alarm firing also wakes sleep immediately even if screen is off
+        val shouldWakeOnAlarm = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = true, // Alarm fired!
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = false,
+            isScreenOff = true,
+            isStationary = true
+        )
+        assertTrue("Alarm firing must wake sleep mode even if screen is off", shouldWakeOnAlarm)
+    }
 }

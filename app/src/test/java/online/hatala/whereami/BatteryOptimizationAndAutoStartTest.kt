@@ -404,8 +404,8 @@ class BatteryOptimizationAndAutoStartTest {
             )
         )
 
-        // 4. For CAR profile at 15s stationary (buckling seatbelt / starting engine): DO NOT abort early before 35s
-        assertFalse(
+        // 4. For CAR profile at 15s verified physically stationary on desk/nightstand (0 m/s, disp 0m, variance < 0.045): early abort to eliminate false-burst GNSS drain
+        assertTrue(
             AppStateManager.shouldEarlyAbortBurst(
                 elapsedMs = 15_000L,
                 minDurationMs = minDuration,
@@ -413,6 +413,19 @@ class BatteryOptimizationAndAutoStartTest {
                 targetCandidateSpeedMs = targetCandidateSpeedMs,
                 displacementMeters = 0.0,
                 isPhysicallyStationary = true,
+                isCarProfile = true
+            )
+        )
+
+        // 4b. For CAR profile at 15s with engine idling or vibration (not physically stationary): DO NOT abort early before 35s
+        assertFalse(
+            AppStateManager.shouldEarlyAbortBurst(
+                elapsedMs = 15_000L,
+                minDurationMs = minDuration,
+                currentSpeedMs = 0.0f,
+                targetCandidateSpeedMs = targetCandidateSpeedMs,
+                displacementMeters = 0.0,
+                isPhysicallyStationary = false,
                 isCarProfile = true
             )
         )

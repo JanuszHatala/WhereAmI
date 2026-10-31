@@ -504,10 +504,14 @@ class CacheManager private constructor(private val context: Context) {
                     // Skip if now cached by an adjacent query
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
-                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
+                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++
+                        } else {
+                            // If geocoding returned unmapped/empty data, ensure sentinel is saved so candidate does not loop indefinitely as missing
+                            spatialHelper.put(pt.latitude, pt.longitude, resolved)
+                            cachedKeys.add(key)
                         }
                         kotlinx.coroutines.delay(1100L)
                     }
@@ -542,10 +546,14 @@ class CacheManager private constructor(private val context: Context) {
 
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
-                        locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
+                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++
+                        } else {
+                            // If geocoding returned unmapped/empty data, ensure sentinel is saved so candidate does not loop indefinitely as missing
+                            spatialHelper.put(pt.latitude, pt.longitude, resolved)
+                            cachedKeys.add(key)
                         }
                         kotlinx.coroutines.delay(1100L)
                     }

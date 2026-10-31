@@ -472,6 +472,7 @@ fun OsmMapView(
     altitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
     onAltitudeSourceModeChange: ((AltitudeSourceMode) -> Unit)? = null,
     trackPoints: List<GeoPoint> = emptyList(),
+    rawTrackPoints: List<GeoPoint> = emptyList(),
     selectedTrips: List<TripRecord> = emptyList(),
     savedPlaces: List<SavedPlace> = emptyList(),
     boundaryPoints: List<GeoPoint>? = null,
@@ -564,11 +565,19 @@ fun OsmMapView(
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var marker by remember { mutableStateOf<Marker?>(null) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
+    var showFilteredPolyline by remember {
+        mutableStateOf(MapProfileConfigHelper.getShowFilteredPolyline(context))
+    }
+    var showRawPolyline by remember {
+        mutableStateOf(MapProfileConfigHelper.getShowRawPolyline(context))
+    }
     var polyline by remember { mutableStateOf<Polyline?>(null) }
+    var rawPolyline by remember { mutableStateOf<Polyline?>(null) }
     val liveLine = remember { LiveTrackLine() }
     var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
     var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var selectedTripRawPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     val guestMarkersMap = remember { mutableMapOf<String, Marker>() }
     val guestMarkerBadgeKeys = remember { mutableMapOf<String, String>() }
@@ -668,6 +677,9 @@ fun OsmMapView(
     // The frame loop is a long-lived coroutine: it must read the *current* fix, not the one captured at launch.
     val latestFix by rememberUpdatedState(currentFix)
     val latestRecording by rememberUpdatedState(isRecording)
+    val latestRawTrackPoints by rememberUpdatedState(rawTrackPoints)
+    val latestShowFilteredPolyline by rememberUpdatedState(showFilteredPolyline)
+    val latestShowRawPolyline by rememberUpdatedState(showRawPolyline)
     val latestDestinationAltitude by rememberUpdatedState(destinationAltitude)
     val latestDestinationAltitudeLoading by rememberUpdatedState(destinationAltitudeLoading)
     val latestDestinationPoint by rememberUpdatedState(destinationPoint)
@@ -1001,51 +1013,84 @@ fun OsmMapView(
                     // rendered path since the newest committed vertex) + cursor tip. The line therefore always
                     // ends under the cursor and never re-shapes ahead of it.
                     if (latestRecording) {
-                        val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-                        val line = polyline ?: Polyline(map).also {
-                            it.outlinePaint.color = trackColor
-                            it.outlinePaint.strokeWidth = 12f
-                            it.outlinePaint.strokeCap = Paint.Cap.ROUND
-                            it.outlinePaint.strokeJoin = Paint.Join.ROUND
-                            it.infoWindow = null
-                            it.setOnClickListener { _, _, _ -> true }
-                            addOverlayAboveTiles(map, it)
-                            polyline = it
-                        }
                         val isPausedNow = tripManagerRef.isPaused.value
-                        if (isPausedNow) {
-                            if (pencilTrail.size > 0 || liveLine.hasTail) {
-                                pencilTrail.clear()
-                                liveLine.anchorAtCommitted()
-                                line.setPoints(liveLine.points)
+
+                        // 1. Filtered trip polyline
+                        if (latestShowFilteredPolyline) {
+                            val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                            val line = polyline ?: Polyline(map).also {
+                                it.outlinePaint.color = trackColor
+                                it.outlinePaint.strokeWidth = 12f
+                                it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                                it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                                it.infoWindow = null
+                                it.setOnClickListener { _, _, _ -> true }
+                                addOverlayAboveTiles(map, it)
+                                polyline = it
+                            }
+                            if (isPausedNow) {
+                                if (pencilTrail.size > 0 || liveLine.hasTail) {
+                                    pencilTrail.clear()
+                                    liveLine.anchorAtCommitted()
+                                    line.setPoints(liveLine.points)
+                                }
+                            } else {
+                                val before = pencilTrail.size
+                                committedThroughMs = maxOf(committedThroughMs, tripManagerRef.lastCommittedElapsedMs)
+                                pencilTrail.pruneThrough(committedThroughMs)
+                                // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
+                                // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
+                                val catchUp = framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES
+                                if (catchUp) {
+                                    pencilTrail.dropAfter(committedThroughMs)
+                                } else {
+                                    redrawFromMs?.let { pencilTrail.dropAfter(it) }
+                                }
+                                val vehiclePencil = !onFootNow.value
+                                val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
+                                val refillFromMs = if (catchUp && committedThroughMs > 0L) committedThroughMs else pencilEndMs
+                                val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
+                                    renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
+                                        .count {
+                                            pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
+                                        } > 0
+                                val added = !pose.isStationary &&
+                                    pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
+                                if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
+                                    liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
+                                    line.setPoints(liveLine.points)
+                                } else if (liveLine.moveTip(gp)) {
+                                    line.setPoints(liveLine.points)
+                                }
                             }
                         } else {
-                            val before = pencilTrail.size
-                            committedThroughMs = maxOf(committedThroughMs, tripManagerRef.lastCommittedElapsedMs)
-                            pencilTrail.pruneThrough(committedThroughMs)
-                            // Large catch-up (app background → foreground, or fused batch): drop extrapolated pencil
-                            // entirely and rebuild from committed → now so we do not draw hieroglyph chords/spikes.
-                            val catchUp = framesMissed || redrawFromMs != null || newStates.size >= PencilTrail.BATCH_STATES
-                            if (catchUp) {
-                                pencilTrail.dropAfter(committedThroughMs)
-                            } else {
-                                redrawFromMs?.let { pencilTrail.dropAfter(it) }
+                            if (polyline != null) {
+                                map.overlays.remove(polyline)
+                                polyline = null
                             }
-                            val vehiclePencil = !onFootNow.value
-                            val pencilEndMs = if (pencilTrail.size > 0) pencilTrail.timeAt(pencilTrail.size - 1) else committedThroughMs
-                            val refillFromMs = if (catchUp && committedThroughMs > 0L) committedThroughMs else pencilEndMs
-                            val backfilled = catchUp && !pose.isStationary && refillFromMs > 0L &&
-                                renderPipeline.pathBetween(refillFromMs, pose.renderTimeMs)
-                                    .count {
-                                        pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
-                                    } > 0
-                            val added = !pose.isStationary &&
-                                pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
-                            if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
-                                liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
-                                line.setPoints(liveLine.points)
-                            } else if (liveLine.moveTip(gp)) {
-                                line.setPoints(liveLine.points)
+                        }
+
+                        // 2. Raw GNSS polyline (thin cyan line connecting raw antenna fixes, drawn above filtered line)
+                        if (latestShowRawPolyline) {
+                            val rawLine = rawPolyline ?: Polyline(map).also {
+                                it.outlinePaint.color = Color.parseColor("#06B6D4")
+                                it.outlinePaint.strokeWidth = 4f
+                                it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                                it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                                it.infoWindow = null
+                                it.setOnClickListener { _, _, _ -> true }
+                                addOverlayAboveTiles(map, it)
+                                rawPolyline = it
+                            }
+                            val rawPts = latestRawTrackPoints
+                            if (rawPts.isNotEmpty()) {
+                                val pts = if (!isPausedNow) rawPts + gp else rawPts
+                                rawLine.setPoints(pts)
+                            }
+                        } else {
+                            if (rawPolyline != null) {
+                                map.overlays.remove(rawPolyline)
+                                rawPolyline = null
                             }
                         }
                     }
@@ -1181,51 +1226,99 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Update live trip polyline (Vivid Red #EF4444)
-    LaunchedEffect(trackPoints, isRecording) {
+    // Update live trip polyline (Filtered & Raw)
+    LaunchedEffect(trackPoints, rawTrackPoints, isRecording, showFilteredPolyline, showRawPolyline) {
         val map = mapView ?: return@LaunchedEffect
         if (!isRecording) {
             liveLine.clear()
             pencilTrail.clear()
             committedThroughMs = -1L
-            if (trackPoints.isEmpty()) {
+            if (trackPoints.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
                 polyline?.let { map.overlays.remove(it) }
                 polyline = null
+                rawPolyline?.let { map.overlays.remove(it) }
+                rawPolyline = null
                 map.invalidate()
                 return@LaunchedEffect
             }
 
-            val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-            val line = polyline ?: Polyline(map).also {
-                it.outlinePaint.color = trackColor
-                it.outlinePaint.strokeWidth = 12f
-                it.outlinePaint.strokeCap = Paint.Cap.ROUND
-                it.outlinePaint.strokeJoin = Paint.Join.ROUND
-                it.infoWindow = null
-                it.setOnClickListener { _, _, _ -> true }
-                addOverlayAboveTiles(map, it)
-                polyline = it
+            if (showFilteredPolyline && trackPoints.isNotEmpty()) {
+                val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                val line = polyline ?: Polyline(map).also {
+                    it.outlinePaint.color = trackColor
+                    it.outlinePaint.strokeWidth = 12f
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    polyline = it
+                }
+
+                addOverlayAboveTiles(map, line)
+                line.setPoints(LiveTrackLine.curved(trackPoints))
+            } else {
+                polyline?.let { map.overlays.remove(it) }
+                polyline = null
             }
 
-            addOverlayAboveTiles(map, line)
-            line.setPoints(LiveTrackLine.curved(trackPoints))
+            if (showRawPolyline && rawTrackPoints.isNotEmpty()) {
+                val rawLine = rawPolyline ?: Polyline(map).also {
+                    it.outlinePaint.color = Color.parseColor("#06B6D4")
+                    it.outlinePaint.strokeWidth = 4f
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    rawPolyline = it
+                }
+
+                addOverlayAboveTiles(map, rawLine)
+                rawLine.setPoints(rawTrackPoints)
+            } else {
+                rawPolyline?.let { map.overlays.remove(it) }
+                rawPolyline = null
+            }
             map.invalidate()
         } else {
             // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
             // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
             // loop appends the dynamic tail. This is the single source of the live polyline.
-            val committedGeoPoints = trackPoints.map { p -> GeoPoint(p.latitude, p.longitude) }
-            liveLine.setCommitted(committedGeoPoints)
-            committedThroughMs = tripManagerRef.lastCommittedElapsedMs
-            if (trackPoints.isEmpty()) pencilTrail.clear()
-            pencilTrail.pruneThrough(committedThroughMs)
-            val currentPt = marker?.position
-                ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
-                ?: latLng?.let { GeoPoint(it.first, it.second) }
-            val tip = currentPt ?: trackPoints.lastOrNull()
-            if (tip != null) {
-                liveLine.rebuildTail(pencilTrail, tip, committedThroughMs)
-                polyline?.setPoints(liveLine.points)
+            if (!showFilteredPolyline) {
+                polyline?.let { map.overlays.remove(it) }
+                polyline = null
+            } else {
+                val committedGeoPoints = trackPoints.map { p -> GeoPoint(p.latitude, p.longitude) }
+                liveLine.setCommitted(committedGeoPoints)
+                committedThroughMs = tripManagerRef.lastCommittedElapsedMs
+                if (trackPoints.isEmpty()) pencilTrail.clear()
+                pencilTrail.pruneThrough(committedThroughMs)
+                val currentPt = marker?.position
+                    ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
+                    ?: latLng?.let { GeoPoint(it.first, it.second) }
+                val tip = currentPt ?: trackPoints.lastOrNull()
+                if (tip != null) {
+                    liveLine.rebuildTail(pencilTrail, tip, committedThroughMs)
+                    polyline?.setPoints(liveLine.points)
+                }
+            }
+
+            if (!showRawPolyline) {
+                rawPolyline?.let { map.overlays.remove(it) }
+                rawPolyline = null
+            } else if (rawTrackPoints.isNotEmpty()) {
+                val rawLine = rawPolyline ?: Polyline(map).also {
+                    it.outlinePaint.color = Color.parseColor("#06B6D4")
+                    it.outlinePaint.strokeWidth = 4f
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    rawPolyline = it
+                }
+                rawLine.setPoints(rawTrackPoints)
             }
             map.invalidate()
         }
@@ -1453,16 +1546,18 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Render Selected Past Trips with Distinct Colors (Phase 2)
+    // Render Selected Past Trips with Distinct Colors (Filtered & Raw)
     // Invariant: When an active trip is actively recording or trackPoints is present,
     // NEVER render past trips on the map.
-    LaunchedEffect(selectedTrips, isRecording, trackPoints.size) {
+    LaunchedEffect(selectedTrips, isRecording, trackPoints.size, showFilteredPolyline, showRawPolyline) {
         val map = mapView ?: return@LaunchedEffect
         // Remove existing past trip polylines
         selectedTripPolylines.forEach { map.overlays.remove(it) }
         selectedTripPolylines = emptyList()
+        selectedTripRawPolylines.forEach { map.overlays.remove(it) }
+        selectedTripRawPolylines = emptyList()
 
-        if (isRecording || trackPoints.isNotEmpty() || selectedTrips.isEmpty()) {
+        if (isRecording || trackPoints.isNotEmpty() || selectedTrips.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
             map.invalidate()
             return@LaunchedEffect
         }
@@ -1479,8 +1574,9 @@ fun OsmMapView(
         )
 
         val newLines = mutableListOf<Polyline>()
+        val newRawLines = mutableListOf<Polyline>()
         selectedTrips.forEachIndexed { index, trip ->
-            if (trip.points.size >= 2) {
+            if (showFilteredPolyline && trip.points.size >= 2) {
                 val colorHex = if (selectedTrips.size == 1) {
                     MapProfileConfigHelper.getConfig(context, trip.activityProfile).trackColorHex
                 } else {
@@ -1499,8 +1595,23 @@ fun OsmMapView(
                 addOverlayAboveTiles(map, line)
                 newLines.add(line)
             }
+
+            if (showRawPolyline && trip.rawPoints.size >= 2) {
+                val rawLine = Polyline(map).apply {
+                    outlinePaint.color = Color.parseColor("#06B6D4")
+                    outlinePaint.strokeWidth = 4f
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                    setPoints(trip.rawPoints)
+                }
+                addOverlayAboveTiles(map, rawLine)
+                newRawLines.add(rawLine)
+            }
         }
         selectedTripPolylines = newLines
+        selectedTripRawPolylines = newRawLines
         map.invalidate()
     }
 
@@ -2469,6 +2580,18 @@ fun OsmMapView(
                 mapView?.invalidate()
                 mapView?.postInvalidate()
             },
+            showFilteredPolylineEnabled = showFilteredPolyline,
+            onShowFilteredPolylineToggle = {
+                showFilteredPolyline = it
+                MapProfileConfigHelper.setShowFilteredPolyline(context, it)
+                mapView?.invalidate()
+            },
+            showRawPolylineEnabled = showRawPolyline,
+            onShowRawPolylineToggle = {
+                showRawPolyline = it
+                MapProfileConfigHelper.setShowRawPolyline(context, it)
+                mapView?.invalidate()
+            },
             currentAltitudeSourceMode = altitudeSourceMode,
             onAltitudeSourceModeChange = { onAltitudeSourceModeChange?.invoke(it) },
             currentFontScale = fontScale,
@@ -2558,6 +2681,10 @@ private fun MapSettingsDialog(
     onCompassArrowToggle: (Boolean) -> Unit = {},
     showAltitudeEnabled: Boolean = true,
     onShowAltitudeToggle: (Boolean) -> Unit = {},
+    showFilteredPolylineEnabled: Boolean = true,
+    onShowFilteredPolylineToggle: (Boolean) -> Unit = {},
+    showRawPolylineEnabled: Boolean = false,
+    onShowRawPolylineToggle: (Boolean) -> Unit = {},
     currentAltitudeSourceMode: AltitudeSourceMode = AltitudeSourceMode.DEM,
     onAltitudeSourceModeChange: (AltitudeSourceMode) -> Unit = {},
     currentTrackColorHex: String = "#EF4444",
@@ -3167,6 +3294,117 @@ private fun MapSettingsDialog(
                         lineHeight = 15.sp
                     )
                 }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Trip Polylines (Filtered & Raw)
+            Text(
+                text = "Trip Polylines",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+
+            // 1. Show Filtered Trip Line
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShowFilteredPolylineToggle(!showFilteredPolylineEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Filtered Trip Line",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Smooth, kinematic-filtered route line (standard)",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showFilteredPolylineEnabled,
+                    onCheckedChange = { onShowFilteredPolylineToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            // 2. Show Raw GNSS Line
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShowRawPolylineToggle(!showRawPolylineEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Raw GNSS Line",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Thin cyan line connecting every raw GPS antenna fix",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showRawPolylineEnabled,
+                    onCheckedChange = { onShowRawPolylineToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF06B6D4),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            if (!showFilteredPolylineEnabled && !showRawPolylineEnabled) {
+                Text(
+                    text = "Disabling both lines pauses map line rendering to save battery. Trip recording continues in full fidelity.",
+                    fontSize = 11.sp,
+                    color = ComposeColor(0xFF10B981),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = androidx.compose.ui.text.TextStyle(
+                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 14.sp
+                    )
+                )
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))

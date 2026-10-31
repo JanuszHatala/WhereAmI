@@ -151,20 +151,31 @@ class AppStateManager private constructor(private val context: Context) {
             isPhysicallyStationary: Boolean,
             isCarProfile: Boolean = false
         ): Boolean {
-            val effectiveMinDuration = if (isCarProfile) 35_000L else minDurationMs
-            if (elapsedMs < effectiveMinDuration) return false
+            if (elapsedMs < minDurationMs) return false
             if (currentSpeedMs >= targetCandidateSpeedMs) return false
             val isSpeedStationary = currentSpeedMs < 1.0f // < 3.6 km/h
             val isNoDisplacement = displacementMeters < 12.0
+
+            // If device is verified physically stationary by accelerometer (variance < 0.045)
+            // with zero/negligible displacement (< 6m), abort early regardless of profile.
+            // A running/driving car produces continuous engine and road vibration (isPhysicallyStationary = false).
+            if (isPhysicallyStationary && isSpeedStationary && displacementMeters < 6.0) {
+                return true
+            }
+
             if (!isCarProfile && (isPhysicallyStationary || (isSpeedStationary && isNoDisplacement))) {
                 return true
             }
-            if (isCarProfile && currentSpeedMs < 2.0f) {
-                if (displacementMeters < 15.0) {
-                    return true
-                }
-                if (elapsedMs >= 45_000L && displacementMeters < 25.0) {
-                    return true
+
+            if (isCarProfile) {
+                if (elapsedMs < 35_000L) return false
+                if (currentSpeedMs < 2.0f) {
+                    if (displacementMeters < 15.0) {
+                        return true
+                    }
+                    if (elapsedMs >= 45_000L && displacementMeters < 25.0) {
+                        return true
+                    }
                 }
             }
             return false

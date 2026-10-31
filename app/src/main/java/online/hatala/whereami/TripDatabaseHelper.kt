@@ -253,6 +253,18 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             } catch (_: Exception) {}
             return Pair(pts, srcs)
         }
+
+        internal fun rowsToGeoPoints(rows: List<TrackPointRow>): List<GeoPoint> = rows.map {
+            val alt = it.altitudeM
+            if (alt != null && !alt.isNaN() && alt != 0.0) GeoPoint(it.lat, it.lng, alt) else GeoPoint(it.lat, it.lng)
+        }
+
+        internal fun rowsToRawGeoPoints(rows: List<TrackPointRow>): List<GeoPoint> = rows.mapNotNull {
+            if (it.rawLat != null && it.rawLng != null) {
+                val alt = it.altitudeM
+                if (alt != null && !alt.isNaN() && alt != 0.0) GeoPoint(it.rawLat, it.rawLng, alt) else GeoPoint(it.rawLat, it.rawLng)
+            } else null
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -485,11 +497,6 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             }
         }
         return rows
-    }
-
-    private fun rowsToGeoPoints(rows: List<TrackPointRow>): List<GeoPoint> = rows.map {
-        val alt = it.altitudeM
-        if (alt != null && !alt.isNaN() && alt != 0.0) GeoPoint(it.lat, it.lng, alt) else GeoPoint(it.lat, it.lng)
     }
 
     private fun countTrackPoints(db: SQLiteDatabase, tripId: Long, legacyJson: String): Int {
@@ -895,6 +902,10 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val pausesColIdx = cursor.getColumnIndex(COL_PAUSES_JSON)
         val pausesJson = if (pausesColIdx >= 0 && !cursor.isNull(pausesColIdx)) cursor.getString(pausesColIdx) ?: "[]" else "[]"
 
+        val rows = if (pointsFromTable) getTrackPointRows(id) else emptyList()
+        val points = if (pointsFromTable) rowsToGeoPoints(rows) else jsonToPoints(pointsJson)
+        val rawPoints = if (pointsFromTable) rowsToRawGeoPoints(rows) else emptyList()
+
         return TripRecord(
             id = id,
             title = title,
@@ -905,7 +916,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             avgSpeedKmh = avgSpeed,
             isAutoDetected = isAuto,
             activityProfile = profile,
-            points = if (pointsFromTable) rowsToGeoPoints(getTrackPointRows(id)) else jsonToPoints(pointsJson),
+            points = points,
+            rawPoints = rawPoints,
             placesVisited = jsonToPlaces(placesJson),
             pauses = jsonToPauses(pausesJson)
         )
@@ -1053,6 +1065,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val latest = sorted.last()
 
         val allPoints = mutableListOf<GeoPoint>()
+        val allRawPoints = mutableListOf<GeoPoint>()
         val allPlaces = mutableListOf<VisitedPlace>()
         val allPauses = mutableListOf<TripPause>()
         var totalDist = 0.0
@@ -1076,6 +1089,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             }
 
             allPoints.addAll(trip.points)
+            allRawPoints.addAll(trip.rawPoints)
 
             // 2. Add visited places with recalculated distance from the start of the merged trip
             for (p in trip.placesVisited) {
@@ -1148,6 +1162,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             isAutoDetected = earliest.isAutoDetected,
             activityProfile = finalProfile,
             points = allPoints,
+            rawPoints = allRawPoints,
             placesVisited = allPlaces,
             pauses = allPauses.sortedBy { it.startTime }
         )
@@ -1428,6 +1443,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             endTime = splitTime,
             distanceMeters = dist1,
             points = pointsPart1,
+            rawPoints = rowsToRawGeoPoints(allRows.take(splitIdx)),
             placesVisited = placesPart1,
             pauses = pausesPart1
         )
@@ -1445,6 +1461,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             isAutoDetected = trip.isAutoDetected,
             activityProfile = trip.activityProfile,
             points = pointsPart2,
+            rawPoints = rowsToRawGeoPoints(allRows.drop(splitIdx)),
             placesVisited = placesPart2,
             pauses = pausesPart2
         )

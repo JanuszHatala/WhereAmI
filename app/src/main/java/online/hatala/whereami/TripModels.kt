@@ -201,6 +201,7 @@ data class TripRecord(
     val isAutoDetected: Boolean = false,
     val activityProfile: ActivityProfile = ActivityProfile.CAR,
     val points: List<GeoPoint> = emptyList(),
+    val rawPoints: List<GeoPoint> = emptyList(),
     val placesVisited: List<VisitedPlace> = emptyList(),
     val pauses: List<TripPause> = emptyList()
 )

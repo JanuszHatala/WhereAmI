@@ -1622,6 +1622,40 @@ Evidence & Diagnostics:
 | **SET123-01** | Migrate legacy stored auto-stop presets ($\le 20$m) to new extended defaults. | `TripManager.kt`, `AutoPauseAutoStopTailTrimTest.kt` | Implemented | Automatic migration on load updates stored profile keys to Car 45m, Bike/MTB 60m, Hike/Walk 90m, Run 30m. |
 | **VER-123** | versionCode 160 / 1.18.29 verification. | `app/build.gradle.kts` | Implemented | Gates passed cleanly. |
 
+## 126. Round 124: Configurable Filtered and Raw Trip Polylines with Zero-Polyline Battery Mode (2026-10-30, v2.0.1)
+
+Evidence & Diagnostics:
+- User requested map options for filtered trip polyline (existing) and raw GNSS polyline (new thin line in different color).
+- Both options accessible in Map Settings & Layers dialog as independent toggle switches (filtered default ON, raw default OFF).
+- Disabling both lines enables a battery-saving mode where polyline overlay drawing and live line computation are completely bypassed on display frames, while background trip recording, distance tracking, rest pauses, and database persistence continue at 100% fidelity.
+- Applies consistently to active live recording and historical trip reviews.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **MAP124-01** | Configurable filtered and raw polyline switches with battery-saving zero-polyline mode. | `OsmMapView.kt`, `MapProfileConfigHelper.kt`, `MapProfileConfigTest.kt` | Implemented | Added toggles in Map Settings dialog; thin cyan `#06B6D4` raw line; frame loop skips line rendering when both are off. |
+| **TRK124-02** | Real-time raw GNSS track points and historical raw coordinate extraction. | `TripManager.kt`, `TripModels.kt`, `TripDatabaseHelper.kt`, `TripRecordRawPointsTest.kt` | Implemented | Real-time accumulation of raw fixes during tracking; extraction of saved `raw_lat`/`raw_lng` for past trips. |
+| **VER-124** | versionCode 171 / 2.0.1 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` and `assembleDebug` passed cleanly. |
+
+## 127. Round 125: Permanent Overnight Sleep FGS Shutdown, Fast Burst Abort & Morning Wake Gating (2026-10-31, v2.0.2)
+
+Evidence & Diagnostics:
+- Device `dumpsys batterystats online.hatala.whereami` (UID `u0a147`) revealed:
+  - `fgs: 11h 26m 8s` (active Foreground Service held continuously overnight).
+  - `gnss:fgs=3.26 (4m 24s 428ms)` and `wakelock:fgs=0.538 (1m 15s 721ms)` during screen-off sleep/doze.
+- Root Cause 1: `LiveTrackingService` maintained `foregroundServiceType="location"` FGS registration throughout sleep/hibernation without calling `stopForeground()` or `stopSelf()`.
+- Root Cause 2: `shouldEarlyAbortBurst` hardcoded 35s minimum duration for CAR profile, forcing 36s GPS runtime and partial wakelocks even when device was resting motionless on a nightstand (accelerometer variance $< 0.045$).
+- Root Cause 3: Bedtime window ended at 06:30 unconditionally, re-arming motion wake and triggering bursts at 08:36, 09:06, and 09:19 while screen was off.
+- Root Cause 4: Newly recorded trip points (Trip 275 had 332 track points / 331 unique grid cells) remained in cache deficit until auto-sync ran on charger at 22:19. Unmapped/empty geocoder responses now write fallback sentinels so missing count does not repeat.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BAT125-01** | Complete FGS shutdown during Sleep Mode and Standby Hibernation. | `LiveTrackingService.kt` | Implemented | Calls `stopForeground(STOP_FOREGROUND_DETACH)` + `stopSelf()` when `isSleeping == true`. Detached notification persists with exempt `[▶ Wake]` action. |
+| **BAT125-02** | 15s fast early abort for CAR motion bursts when physically stationary. | `AppStateManager.kt`, `AppStateManagerBurstTest.kt` | Implemented | Aborts at 15s when `isPhysicallyStationary` is true (variance $< 0.045$), speed $< 1$ m/s, disp $< 6$m. 58% burst GPS cut. |
+| **BAT125-03** | Gated morning wake holding sleep mode while screen is off and stationary. | `AutoSleepManager.kt`, `AutoSleepManagerTest.kt` | Implemented | Holds sleep mode past bedtime end until alarm rings, screen turns on, or user wakes via notification. |
+| **CAC125-04** | Cache sentinels for unmapped points in prefetch. | `CacheManager.kt` | Implemented | Writes fallback sentinels to `spatial_cache` to prevent indefinite missing loops. |
+| **VER-125** | versionCode 172 / 2.0.2 verification. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` (592 tests) and `assembleDebug` passed cleanly. |
+
+
 
 
 
