@@ -606,6 +606,36 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         }
     }
 
+    /**
+     * Inspects nearby spatial cache entries within [radiusMeters] for a known house number
+     * on the same street name. Used when stopped or at low speed to enrich street cards.
+     */
+    fun findNearbyHouseNumber(lat: Double, lng: Double, streetName: String?, radiusMeters: Double = 35.0): String? {
+        if (streetName.isNullOrBlank()) return null
+        val deltaLat = radiusMeters / 111320.0
+        val deltaLng = radiusMeters / (111320.0 * Math.cos(Math.toRadians(lat)).coerceAtLeast(0.01))
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT $COL_STREET FROM $TABLE_CACHE WHERE $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ?",
+            arrayOf(
+                (lat - deltaLat).toString(),
+                (lat + deltaLat).toString(),
+                (lng - deltaLng).toString(),
+                (lng + deltaLng).toString()
+            )
+        )
+        cursor.use {
+            while (it.moveToNext()) {
+                val candidateStreet = it.getString(0)
+                if (RoadNameNormalizer.streetsMatch(streetName, candidateStreet)) {
+                    val num = RoadNameNormalizer.extractHouseNumber(candidateStreet)
+                    if (!num.isNullOrBlank()) return num
+                }
+            }
+        }
+        return null
+    }
+
     fun put(lat: Double, lng: Double, info: MultiLanguagePlaceInfo) {
         val key = toGridKey(lat, lng)
         // Never let a bare DW/DK/A/S code overwrite a local street name already cached in this cell

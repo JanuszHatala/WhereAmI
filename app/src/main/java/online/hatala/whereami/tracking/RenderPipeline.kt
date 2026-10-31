@@ -379,7 +379,7 @@ class RenderPipeline(
 
     private fun predict(s: TrackState, t: Double): Raw {
         val dt = ((t - s.tElapsedMs) / 1000.0).coerceIn(0.0, MAX_PREDICT_S)
-        if (s.isStationary || s.speedMps < 0.05 || dt <= 0.0) {
+        if (s.isStationary || s.speedMps < 0.35 || dt <= 0.0) {
             return Raw(s.lat, s.lng, s.headingDeg, if (s.isStationary) 0.0 else s.speedMps, s.isStationary, dt > 0.0)
         }
         // Distance saturates: dead reckoning is trustworthy for ~2 s, then fades.
@@ -419,6 +419,7 @@ class RenderPipeline(
     private fun brakedTravel(s: TrackState, tauS: Double): Pair<Double, Double> {
         val v = s.speedMps
         val a = s.accelMps2
+        if (v < 0.35 || s.isStationary) return 0.0 to 0.0
         if (a >= 0.0 || tauS <= 0.0) return v * tauS to v
         val tau = profile.accelTauS
         val decay = exp(-tauS / tau)

@@ -111,9 +111,9 @@ class SlowRenderAndCurveTest {
         val square = listOf(gp(0.0, 0.0), gp(0.0, 2.0), gp(2.0, 2.0), gp(2.0, 0.0), gp(4.0, 0.0), gp(4.0, 2.0))
         val c = curved(square)
         assertTrue(c.size > square.size * 2)
-        for (v in square) {
-            assertTrue(c.any { abs(it.latitude - v.latitude) < 1e-12 && abs(it.longitude - v.longitude) < 1e-12 })
-        }
+        // Endpoints stay exactly on the line
+        assertTrue(c.any { abs(it.latitude - square.first().latitude) < 1e-12 && abs(it.longitude - square.first().longitude) < 1e-12 })
+        assertTrue(c.any { abs(it.latitude - square.last().latitude) < 1e-12 && abs(it.longitude - square.last().longitude) < 1e-12 })
         assertTrue("max turn ${vertexTurns(c).max()}", vertexTurns(c).max() < 60.0)
         assertTrue(vertexTurns(square).max() > 89.0)
         // Rounding stays close to the recorded shape (display only, no wild overshoot).

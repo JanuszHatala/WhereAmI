@@ -450,7 +450,9 @@ class CacheManager private constructor(private val context: Context) {
 
                 // Calculate total unique points in all trips for accurate reporting
                 val allUnique15mPoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
-                for (trip in allTrips) {
+                val activeTripId = TripManager.getInstance(context).activeTrip.value?.id
+                val completedTrips = allTrips.filter { it.endTime != null && it.endTime > 0 && it.id != activeTripId }
+                for (trip in completedTrips) {
                     for (pt in trip.points) {
                         val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                         if (!allUnique15mPoints.containsKey(key)) {
@@ -797,7 +799,9 @@ class CacheManager private constructor(private val context: Context) {
                 spatialHelper.migrateLegacyKeys()
 
                 val allUnique15mPoints = mutableMapOf<String, org.osmdroid.util.GeoPoint>()
-                for (trip in allTrips) {
+                val activeTripId = TripManager.getInstance(context).activeTrip.value?.id
+                val completedTrips = allTrips.filter { it.endTime != null && it.endTime > 0 && it.id != activeTripId }
+                for (trip in completedTrips) {
                     for (pt in trip.points) {
                         val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                         if (!allUnique15mPoints.containsKey(key)) {

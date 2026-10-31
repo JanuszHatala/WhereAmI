@@ -9635,7 +9635,15 @@ private fun LocalityCard(
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
                     val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
                     val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
-                    if (savedNum != null) "$effectiveStreet $savedNum" else effectiveStreet
+                    val cacheNum = if (savedNum == null && currentLatLng != null) {
+                        SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
+                    } else null
+                    val effectiveNum = savedNum ?: cacheNum
+                    if (effectiveNum != null) {
+                        val highway = RoadNameNormalizer.extractHighwayCode(effectiveStreet)
+                        val base = RoadNameNormalizer.stripParenHighwayRef(RoadNameNormalizer.extractBaseStreet(effectiveStreet))
+                        if (highway != null) "$base $effectiveNum ($highway)" else "$base $effectiveNum"
+                    } else effectiveStreet
                 } else effectiveStreet
 
                 val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
@@ -10329,7 +10337,15 @@ private fun LocalityCard(
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
                     val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
                     val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
-                    if (savedNum != null) "$effectiveStreet $savedNum" else effectiveStreet
+                    val cacheNum = if (savedNum == null && currentLatLng != null) {
+                        SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
+                    } else null
+                    val effectiveNum = savedNum ?: cacheNum
+                    if (effectiveNum != null) {
+                        val highway = RoadNameNormalizer.extractHighwayCode(effectiveStreet)
+                        val base = RoadNameNormalizer.stripParenHighwayRef(RoadNameNormalizer.extractBaseStreet(effectiveStreet))
+                        if (highway != null) "$base $effectiveNum ($highway)" else "$base $effectiveNum"
+                    } else effectiveStreet
                 } else effectiveStreet
 
                 val streetOrRoad = RoadNameNormalizer.formatStreetDisplay(
@@ -11646,11 +11662,17 @@ fun TripDetailDialog(
             p to dist
         }
 
-        // Helper to find the active place at timestamp t
-        fun getActivePlaceAt(t: Long): VisitedPlace {
-            return trip.placesVisited.lastOrNull { it.timestamp <= t }
-                ?: trip.placesVisited.firstOrNull()
-                ?: VisitedPlace(
+        // 2. Extract distinct locality entries:
+        // A locality is counted again ONLY when leaving and re-entering it.
+        val distinctPlaces = mutableListOf<VisitedPlace>()
+        for (p in trip.placesVisited) {
+            if (distinctPlaces.isEmpty() || !distinctPlaces.last().placeName.equals(p.placeName, ignoreCase = true)) {
+                distinctPlaces.add(p)
+            }
+        }
+        if (distinctPlaces.isEmpty()) {
+            distinctPlaces.add(
+                VisitedPlace(
                     placeName = trip.title.ifBlank { "Trip Locality" },
                     hierarchySubtitle = "",
                     timestamp = trip.startTime,
@@ -11658,82 +11680,38 @@ fun TripDetailDialog(
                     longitude = trip.points.firstOrNull()?.longitude ?: 0.0,
                     distanceAtEntryMeters = 0.0
                 )
+            )
         }
 
-        // 2. Define moving intervals bounded by pauses:
+        // 3. Interleave distinct place entries and pauses in chronological order
         var placeOrder = 1
-        var curTime = trip.startTime
-        var curDist = 0.0
+        var prevTime = trip.startTime
+        var prevDist = 0.0
+        var placeIdx = 0
+        var pauseIdx = 0
 
-        for (pauseIdx in 0..sortedPauses.size) {
+        while (placeIdx < distinctPlaces.size || pauseIdx < sortedPauses.size) {
+            val nextPlace = distinctPlaces.getOrNull(placeIdx)
             val nextPause = sortedPauses.getOrNull(pauseIdx)
-            val intervalEndTime = nextPause?.first?.startTime ?: tripEndTime
-            val intervalEndDist = nextPause?.second ?: totalTripDist
 
-            // Find any places entered strictly inside (curTime, intervalEndTime]
-            val placesInInterval = trip.placesVisited.filter {
-                it.timestamp > curTime && it.timestamp <= intervalEndTime
-            }.sortedBy { it.timestamp }
-
-            var legStartTime = curTime
-            var legStartDist = curDist
-
-            if (placesInInterval.isEmpty()) {
-                // User remained in the currently active place for the entire interval
-                val activePlace = getActivePlaceAt(curTime)
-                val legDist = (intervalEndDist - legStartDist).coerceAtLeast(0.0)
-                val legDur = (intervalEndTime - legStartTime).coerceAtLeast(0L)
-                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
-                items.add(RouteTimelineItem.Place(displayPlace, placeOrder++, legDist, legDur))
-            } else {
-                // There were place transitions within this interval
-                // First leg in active place before the first transition:
-                val firstTransition = placesInInterval.first()
-                val activePlace = getActivePlaceAt(curTime)
-                val firstLegDist = (firstTransition.distanceAtEntryMeters - legStartDist).coerceAtLeast(0.0)
-                val firstLegDur = (firstTransition.timestamp - legStartTime).coerceAtLeast(0L)
-                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
-                items.add(RouteTimelineItem.Place(displayPlace, placeOrder++, firstLegDist, firstLegDur))
-
-                legStartTime = firstTransition.timestamp
-                legStartDist = firstTransition.distanceAtEntryMeters
-
-                // Intermediate transitions
-                for (pIdx in 0 until placesInInterval.size) {
-                    val p = placesInInterval[pIdx]
-                    val nextTargetTime = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].timestamp else intervalEndTime
-                    val nextTargetDist = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].distanceAtEntryMeters else intervalEndDist
-                    val pLegDist = (nextTargetDist - p.distanceAtEntryMeters).coerceAtLeast(0.0)
-                    val pLegDur = (nextTargetTime - p.timestamp).coerceAtLeast(0L)
-                    items.add(RouteTimelineItem.Place(p, placeOrder++, pLegDist, pLegDur))
-                }
-            }
-
-            // If there is a pause at the end of this interval, emit the pause item
-            if (nextPause != null) {
+            if (nextPlace != null && (nextPause == null || nextPlace.timestamp <= nextPause.first.startTime)) {
+                val legDist = (nextPlace.distanceAtEntryMeters - prevDist).coerceAtLeast(0.0)
+                val legDur = (nextPlace.timestamp - prevTime).coerceAtLeast(0L)
+                items.add(RouteTimelineItem.Place(nextPlace, placeOrder++, legDist, legDur))
+                prevTime = nextPlace.timestamp
+                prevDist = nextPlace.distanceAtEntryMeters
+                placeIdx++
+            } else if (nextPause != null) {
                 val pause = nextPause.first
                 val pauseDist = nextPause.second
-                val travelDist = (pauseDist - curDist).coerceAtLeast(0.0)
-                val travelDur = (pause.startTime - curTime).coerceAtLeast(0L)
+                val travelDist = (pauseDist - prevDist).coerceAtLeast(0.0)
+                val travelDur = (pause.startTime - prevTime).coerceAtLeast(0L)
                 items.add(RouteTimelineItem.Pause(pause, pauseIdx, pauseDist, travelDist, travelDur))
-
                 val pauseEnd = pause.endTime ?: (pause.startTime + pause.durationMs)
-                curTime = pauseEnd
-                curDist = pauseDist
+                prevTime = pauseEnd
+                prevDist = pauseDist
+                pauseIdx++
             }
-        }
-
-        // 3. For round trips (ended back at initial locality) or trips with substantial distance past last place entry,
-        // synthesize destination arrival item if total distance is at least 300m further than the last place entry.
-        val lastPlaceItem = items.filterIsInstance<RouteTimelineItem.Place>().lastOrNull()
-        if (lastPlaceItem != null && totalTripDist > 300.0 && (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters) > 300.0) {
-            val destinationPlace = getActivePlaceAt(tripEndTime).copy(
-                timestamp = tripEndTime,
-                distanceAtEntryMeters = totalTripDist
-            )
-            val finalLegDist = (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters).coerceAtLeast(0.0)
-            val finalLegDur = (tripEndTime - lastPlaceItem.place.timestamp).coerceAtLeast(0L)
-            items.add(RouteTimelineItem.Place(destinationPlace, placeOrder++, finalLegDist, finalLegDur))
         }
 
         items
@@ -11763,6 +11741,9 @@ fun TripDetailDialog(
         movingSec > 0 -> String.format(Locale.getDefault(), "%ds", movingSec)
         else -> "N/A"
     }
+    val movingAvgSpeedKmh = if (movingDurationMs > 5000L && trip.distanceMeters > 50.0) {
+        (trip.distanceMeters / (movingDurationMs / 1000.0)) * 3.6
+    } else 0.0
 
     var showProfileMenu by remember { mutableStateOf(false) }
     var pauseToDeleteIndex by remember { mutableStateOf<Int?>(null) }
@@ -11979,63 +11960,7 @@ fun TripDetailDialog(
                             }
                         }
 
-                        // Duration Card (Total & Moving Time)
-                        Card(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("TOTAL / MOVING TIME", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = durationFormatted,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "Moving: $movingFormatted",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Max),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Speed Card
-                        Card(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("SPEED (MAX / AVG)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFBBF24),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-
-                        // Activity Profile Card
+                        // Activity Profile Card (Row 1 Right)
                         Card(
                             modifier = Modifier
                                 .weight(1f)
@@ -12123,6 +12048,71 @@ fun TripDetailDialog(
                         }
                     }
 
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Speed Card (Row 2 Left)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("SPEED (MAX / AVG)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFBBF24),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "Moving: %.1f km/h", movingAvgSpeedKmh),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        // Duration Card (Total & Moving Time) (Row 2 Right)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("TOTAL / MOVING TIME", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = durationFormatted,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981)
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    text = "Moving: $movingFormatted",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                            }
+                        }
+                    }
+
                     // 3. Time Details Card
                     Card(
                         shape = RoundedCornerShape(12.dp),
@@ -12131,7 +12121,7 @@ fun TripDetailDialog(
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Text("SCHEDULE & TIMING", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
                             if (isSameDay) {
@@ -12477,9 +12467,21 @@ fun TripDetailDialog(
                                                         )
                                                     )
                                                     val allPlacesInTimeline = timelineItems.filterIsInstance<RouteTimelineItem.Place>()
+                                                    val isSinglePlace = allPlacesInTimeline.size == 1
                                                     val isFirstPlace = item == allPlacesInTimeline.firstOrNull()
                                                     val isLastPlace = item == allPlacesInTimeline.lastOrNull() && allPlacesInTimeline.size > 1
-                                                    if (isFirstPlace) {
+                                                    if (isSinglePlace) {
+                                                        Text(
+                                                            text = "Start & Finish",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Color(0xFF10B981),
+                                                            style = LocalTextStyle.current.copy(
+                                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                lineHeight = 11.sp
+                                                            )
+                                                        )
+                                                    } else if (isFirstPlace) {
                                                         Text(
                                                             text = "Trip Start",
                                                             fontSize = 10.sp,
