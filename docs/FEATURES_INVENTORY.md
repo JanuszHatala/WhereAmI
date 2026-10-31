@@ -152,6 +152,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - `ResumeMotionGate.kt`: pause auto-resume only on accurate sustained motion (v1.15.0).
   - `BatchedRequestSequencer.kt` (flush before a batched request changes), `tracking/TrackStateLog.kt` (every state to the renderer), `RenderPipeline.pathBetween` pencil refill, braking prediction, vehicle latency kept through gaps (v1.16.0).
   - `CourseUpHeading.kt`: course-up from filter/motion only (compass and path tangent stay on the arrow); walking slew hysteresis 3 deg; pencil 1 m floor; no Catmull-Rom through the pencil (v1.16.1).
+  - Configurable filtered and raw trip polylines with battery-saving zero-polyline mode (v2.0.1; Map Settings "Show Filtered Trip Line", "Show Raw GNSS Line").
 - **Decision History & Evolution**:
   - *User Feedback (Field Test 2026-10-19)*: stepped map rotation, lagging cursor, straight chord after screen-off, angular polyline.
   - *Resolution*: replaced `GpsFilterEngine`, `PositionStabilizer` and `PositionInterpolator` (see ADR-07 in `docs/ARCHITECTURE.md`).
@@ -542,9 +543,11 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Architecture & Implementation**:
   - `MotionWakeManager.kt`: Integrates Android's hardware `Sensor.TYPE_SIGNIFICANT_MOTION` with `TriggerEventListener` (~0 mW micro-power sensor hub operation).
   - In `AppLifecycleMode.IDLE`, continuous GNSS hardware polling is powered down completely (`LocationManager.stopLocationUpdates()`).
-  - Upon locomotion, triggers a profile-adapted confirmation GPS burst (`(profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)`). Auto-starts recording if movement threshold is sustained; powers back down and re-arms sensor if motion stops.
+  - Upon locomotion, triggers a profile-adapted confirmation GPS burst (`(profile.autoStartDurationMs + 20_000L).coerceAtLeast(35_000L)`). Auto-starts recording if movement threshold is sustained; powers back down and re-arms sensor if motion stops. Early-aborts at 15s if device is verified physically stationary on a desk/nightstand (variance $< 0.045$, disp $< 6$m).
+  - Sleep Mode & Hibernation: Completely shuts down Foreground Service (`stopForeground(STOP_FOREGROUND_DETACH)` + `stopSelf()`), detaching static sleeping notification with an exempt `[▶ Wake]` action to eliminate overnight location FGS runtime.
+  - Gated morning wake: Holds sleep mode past bedtime end while screen is off and device is stationary until morning alarm rings, screen turns on, or user wakes via notification.
   - Option A for MANUAL mode: powers down GPS completely when screen is off with no active trip or live sharing.
-  - Unit tests: `BatteryOptimizationAndAutoStartTest.kt`.
+  - Unit tests: `BatteryOptimizationAndAutoStartTest.kt`, `AutoSleepManagerTest.kt`, `AppStateManagerBurstTest.kt`.
 
 ---
 

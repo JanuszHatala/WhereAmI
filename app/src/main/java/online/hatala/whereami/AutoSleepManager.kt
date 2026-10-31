@@ -189,7 +189,9 @@ class AutoSleepManager private constructor(private val context: Context) {
             isManualSleep: Boolean = false,
             wasDndActiveInSession: Boolean = false,
             wasInBedtimeWindowDuringSleep: Boolean = true,
-            hasUpcomingMorningAlarm: Boolean = false
+            hasUpcomingMorningAlarm: Boolean = false,
+            isScreenOff: Boolean = false,
+            isStationary: Boolean = false
         ): Boolean {
             if (!isAutoSleepEnabled || !isCurrentlySleeping) return false
 
@@ -198,7 +200,7 @@ class AutoSleepManager private constructor(private val context: Context) {
                 // If user set alarm and alarm fired in morning, wake even manual sleep
                 if (isAlarmFired && isMorning) return true
                 // Disjunctive morning wake: outside sleep window in morning exits manual sleep too
-                if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive) && !hasUpcomingMorningAlarm) return true
+                if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive) && !hasUpcomingMorningAlarm && (!isScreenOff || !isStationary)) return true
                 return false
             }
 
@@ -212,9 +214,14 @@ class AutoSleepManager private constructor(private val context: Context) {
             // When an upcoming morning alarm is scheduled, hold sleep until it rings
             if (hasUpcomingMorningAlarm && isMorning) return false
 
-            // Bedtime window completely ended and DND is not holding it.
-            if (wasInBedtimeWindowDuringSleep && !isTimeInWindow && (!followDnd || !isDndActive)) return true
-            if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive)) return true
+            // If bedtime window ended but user is still asleep (screen off & physically stationary),
+            // hold sleep mode to prevent background false-motion bursts until user interacts or screen turns on.
+            if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive)) {
+                if (isScreenOff && isStationary) {
+                    return false
+                }
+                return true
+            }
 
             return false
         }
@@ -528,7 +535,9 @@ class AutoSleepManager private constructor(private val context: Context) {
         val appStateMgr = AppStateManager.getInstance(context)
         val tripManager = TripManager.getInstance(context)
         val hasTrip = tripManager.activeTrip.value != null
-        val isScreenOff = !appStateMgr.isAppInForegroundFlow.value
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val isDisplayOff = pm?.isInteractive == false
+        val isScreenOff = isDisplayOff || !appStateMgr.isAppInForegroundFlow.value
         val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value ||
                 LocationManager.getInstance(context).getLastValidSpeedMs() < 0.35f
         val isCurrentlySleeping = appStateMgr.isStandbySleeping.value
@@ -597,7 +606,9 @@ class AutoSleepManager private constructor(private val context: Context) {
                 isManualSleep = isManualSleep,
                 wasDndActiveInSession = wasDndActiveInSession,
                 wasInBedtimeWindowDuringSleep = wasInBedtimeWindowDuringSleep,
-                hasUpcomingMorningAlarm = hasUpcomingAlarm
+                hasUpcomingMorningAlarm = hasUpcomingAlarm,
+                isScreenOff = isDisplayOff,
+                isStationary = isStationary
             )
             if (shouldWake) {
                 val isEarlyWake = inWindow && (alarmFired || (!dndActive && wasDndActiveInSession))

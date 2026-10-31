@@ -275,6 +275,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val currentLocationFix by viewModel.currentLocationFix.collectAsState()
     val keepScreenOn by viewModel.keepScreenOn.collectAsState()
     val activeTrip by viewModel.activeTrip.collectAsState()
+    val rawTrackPoints by viewModel.rawTrackPoints.collectAsState()
     val tripMode by viewModel.tripMode.collectAsState()
     val activityProfile by viewModel.activityProfile.collectAsState()
     val autoStopMinutes by viewModel.autoStopMinutes.collectAsState()
@@ -685,6 +686,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             latLng = currentLatLng,
             locationFix = currentLocationFix,
             trackPoints = activeTrip?.points ?: emptyList(),
+            rawTrackPoints = rawTrackPoints,
             selectedTrips = selectedTripsList,
             savedPlaces = savedPlaces,
             activeGuests = activeGuests,

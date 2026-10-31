@@ -11,7 +11,11 @@ data class ProfileMapConfig(
 )
 
 object MapProfileConfigHelper {
-    private const val PREFS_NAME = "where_am_i_map_prefs"
+    const val PREFS_NAME = "where_am_i_map_prefs"
+    const val PREF_SHOW_FILTERED_POLYLINE = "pref_show_filtered_polyline"
+    const val PREF_SHOW_RAW_POLYLINE = "pref_show_raw_polyline"
+    const val DEFAULT_SHOW_FILTERED_POLYLINE = true
+    const val DEFAULT_SHOW_RAW_POLYLINE = false
 
     fun getDefaultConfig(profile: ActivityProfile): ProfileMapConfig = when (profile) {
         ActivityProfile.CAR -> ProfileMapConfig(
@@ -179,6 +183,26 @@ object MapProfileConfigHelper {
     fun setShowInactiveGuests(context: Context, enabled: Boolean) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean("pref_show_inactive_guests", enabled).apply()
+    }
+
+    fun getShowFilteredPolyline(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(PREF_SHOW_FILTERED_POLYLINE, DEFAULT_SHOW_FILTERED_POLYLINE)
+    }
+
+    fun setShowFilteredPolyline(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(PREF_SHOW_FILTERED_POLYLINE, enabled).apply()
+    }
+
+    fun getShowRawPolyline(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(PREF_SHOW_RAW_POLYLINE, DEFAULT_SHOW_RAW_POLYLINE)
+    }
+
+    fun setShowRawPolyline(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(PREF_SHOW_RAW_POLYLINE, enabled).apply()
     }
 }
 
