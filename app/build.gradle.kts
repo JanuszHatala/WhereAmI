@@ -11,8 +11,8 @@ android {
         applicationId = "online.hatala.whereami"
         minSdk = 24
         targetSdk = 36
-        versionCode = 173
-        versionName = "2.0.3"
+        versionCode = 174
+        versionName = "2.0.4"
     }
 
     buildTypes {

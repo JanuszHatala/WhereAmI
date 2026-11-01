@@ -11662,17 +11662,11 @@ fun TripDetailDialog(
             p to dist
         }
 
-        // 2. Extract distinct locality entries:
-        // A locality is counted again ONLY when leaving and re-entering it.
-        val distinctPlaces = mutableListOf<VisitedPlace>()
-        for (p in trip.placesVisited) {
-            if (distinctPlaces.isEmpty() || !distinctPlaces.last().placeName.equals(p.placeName, ignoreCase = true)) {
-                distinctPlaces.add(p)
-            }
-        }
-        if (distinctPlaces.isEmpty()) {
-            distinctPlaces.add(
-                VisitedPlace(
+        // Helper to find the active place at timestamp t
+        fun getActivePlaceAt(t: Long): VisitedPlace {
+            return trip.placesVisited.lastOrNull { it.timestamp <= t }
+                ?: trip.placesVisited.firstOrNull()
+                ?: VisitedPlace(
                     placeName = trip.title.ifBlank { "Trip Locality" },
                     hierarchySubtitle = "",
                     timestamp = trip.startTime,
@@ -11680,41 +11674,82 @@ fun TripDetailDialog(
                     longitude = trip.points.firstOrNull()?.longitude ?: 0.0,
                     distanceAtEntryMeters = 0.0
                 )
-            )
         }
 
-        // 3. Interleave distinct place entries and pauses in chronological order
-        var placeOrder = 1
-        var prevTime = trip.startTime
-        var prevDist = 0.0
-        var placeIdx = 0
-        var pauseIdx = 0
+        // 2. Define moving intervals bounded by pauses:
+        var curTime = trip.startTime
+        var curDist = 0.0
 
-        while (placeIdx < distinctPlaces.size || pauseIdx < sortedPauses.size) {
-            val nextPlace = distinctPlaces.getOrNull(placeIdx)
+        for (pauseIdx in 0..sortedPauses.size) {
             val nextPause = sortedPauses.getOrNull(pauseIdx)
+            val intervalEndTime = nextPause?.first?.startTime ?: tripEndTime
+            val intervalEndDist = nextPause?.second ?: totalTripDist
 
-            if (nextPlace != null && (nextPause == null || nextPlace.timestamp <= nextPause.first.startTime)) {
-                val legDist = (nextPlace.distanceAtEntryMeters - prevDist).coerceAtLeast(0.0)
-                val legDur = (nextPlace.timestamp - prevTime).coerceAtLeast(0L)
-                items.add(RouteTimelineItem.Place(nextPlace, placeOrder++, legDist, legDur))
-                prevTime = nextPlace.timestamp
-                prevDist = nextPlace.distanceAtEntryMeters
-                placeIdx++
-            } else if (nextPause != null) {
+            // Find any places entered strictly inside (curTime, intervalEndTime]
+            val placesInInterval = trip.placesVisited.filter {
+                it.timestamp > curTime && it.timestamp <= intervalEndTime
+            }.sortedBy { it.timestamp }
+
+            var legStartTime = curTime
+            var legStartDist = curDist
+
+            if (placesInInterval.isEmpty()) {
+                // User remained in the currently active place for the entire interval
+                val activePlace = getActivePlaceAt(curTime)
+                val legDist = (intervalEndDist - legStartDist).coerceAtLeast(0.0)
+                val legDur = (intervalEndTime - legStartTime).coerceAtLeast(0L)
+                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
+                items.add(RouteTimelineItem.Place(displayPlace, 0, legDist, legDur))
+            } else {
+                // There were place transitions within this interval
+                val firstTransition = placesInInterval.first()
+                val activePlace = getActivePlaceAt(curTime)
+                val firstLegDist = (firstTransition.distanceAtEntryMeters - legStartDist).coerceAtLeast(0.0)
+                val firstLegDur = (firstTransition.timestamp - legStartTime).coerceAtLeast(0L)
+                val displayPlace = activePlace.copy(timestamp = legStartTime, distanceAtEntryMeters = legStartDist)
+                items.add(RouteTimelineItem.Place(displayPlace, 0, firstLegDist, firstLegDur))
+
+                legStartTime = firstTransition.timestamp
+                legStartDist = firstTransition.distanceAtEntryMeters
+
+                for (pIdx in 0 until placesInInterval.size) {
+                    val p = placesInInterval[pIdx]
+                    val nextTargetTime = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].timestamp else intervalEndTime
+                    val nextTargetDist = if (pIdx < placesInInterval.size - 1) placesInInterval[pIdx + 1].distanceAtEntryMeters else intervalEndDist
+                    val pLegDist = (nextTargetDist - p.distanceAtEntryMeters).coerceAtLeast(0.0)
+                    val pLegDur = (nextTargetTime - p.timestamp).coerceAtLeast(0L)
+                    items.add(RouteTimelineItem.Place(p, 0, pLegDist, pLegDur))
+                }
+            }
+
+            if (nextPause != null) {
                 val pause = nextPause.first
                 val pauseDist = nextPause.second
-                val travelDist = (pauseDist - prevDist).coerceAtLeast(0.0)
-                val travelDur = (pause.startTime - prevTime).coerceAtLeast(0L)
+                val travelDist = (pauseDist - curDist).coerceAtLeast(0.0)
+                val travelDur = (pause.startTime - curTime).coerceAtLeast(0L)
                 items.add(RouteTimelineItem.Pause(pause, pauseIdx, pauseDist, travelDist, travelDur))
+
                 val pauseEnd = pause.endTime ?: (pause.startTime + pause.durationMs)
-                prevTime = pauseEnd
-                prevDist = pauseDist
-                pauseIdx++
+                curTime = pauseEnd
+                curDist = pauseDist
             }
         }
 
-        items
+        // 3. Assign sequential order (recounting a place only when left and re-entered)
+        var currentVisitIndex = 0
+        var lastVisitedPlaceName = ""
+        items.map { item ->
+            if (item is RouteTimelineItem.Place) {
+                val name = item.place.placeName.trim()
+                if (currentVisitIndex == 0 || !name.equals(lastVisitedPlaceName, ignoreCase = true)) {
+                    currentVisitIndex++
+                    lastVisitedPlaceName = name
+                }
+                item.copy(orderNumber = currentVisitIndex)
+            } else {
+                item
+            }
+        }
     }
 
     val durationMs = if (effectiveEndTime != null && effectiveEndTime > trip.startTime) effectiveEndTime - trip.startTime else 0L
@@ -11940,7 +11975,7 @@ fun TripDetailDialog(
                             .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Distance Card
+                        // Distance Card (Row 1 Left)
                         Card(
                             modifier = Modifier
                                 .weight(1f)
@@ -11950,17 +11985,107 @@ fun TripDetailDialog(
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text("TOTAL DISTANCE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = String.format(Locale.getDefault(), "%.2f km", trip.distanceMeters / 1000.0),
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF38BDF8)
+                                    color = Color(0xFF38BDF8),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both),
+                                        lineHeight = 18.sp
+                                    )
                                 )
                             }
                         }
 
-                        // Activity Profile Card (Row 1 Right)
+                        // Duration Card (Total & Moving Time) (Row 1 Right)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("TOTAL / MOVING TIME", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = durationFormatted,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both),
+                                        lineHeight = 17.sp
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    text = "Moving: $movingFormatted",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF38BDF8),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Speed Card (Row 2 Left)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("SPEED (MAX / AVG)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFBBF24),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "Moving: %.1f km/h", movingAvgSpeedKmh),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                            }
+                        }
+
+                        // Activity Profile Card (Row 2 Right)
                         Card(
                             modifier = Modifier
                                 .weight(1f)
@@ -11970,7 +12095,7 @@ fun TripDetailDialog(
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text("ACTIVITY PROFILE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Box {
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
@@ -12048,71 +12173,6 @@ fun TripDetailDialog(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Max),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Speed Card (Row 2 Left)
-                        Card(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("SPEED (MAX / AVG)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFBBF24),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text(
-                                    text = String.format(Locale.getDefault(), "Moving: %.1f km/h", movingAvgSpeedKmh),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF38BDF8),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-
-                        // Duration Card (Total & Moving Time) (Row 2 Right)
-                        Card(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("TOTAL / MOVING TIME", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = durationFormatted,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981)
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text(
-                                    text = "Moving: $movingFormatted",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF38BDF8)
-                                )
-                            }
-                        }
-                    }
-
                     // 3. Time Details Card
                     Card(
                         shape = RoundedCornerShape(12.dp),
@@ -12121,54 +12181,61 @@ fun TripDetailDialog(
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text("SCHEDULE & TIMING", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
+                            Spacer(modifier = Modifier.height(2.dp))
                             if (isSameDay) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Date:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text(startDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Date:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text(startDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text(startTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text(startTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text(endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text(endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                             } else {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text("$startDateStr, $startTimeStr", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Trip Start:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text("$startDateStr, $startTimeStr", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text(if (endDateStr != null) "$endDateStr, $endTimeStr" else endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Trip End:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text(if (endDateStr != null) "$endDateStr, $endTimeStr" else endTimeStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                             }
                             if (trip.points.isNotEmpty()) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Recorded GPS Fixes:", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                                    Text("${trip.points.size} points", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                    Text("Recorded GPS Fixes:", fontSize = 12.sp, color = Color(0xFF94A3B8), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
+                                    Text("${trip.points.size} points", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false), lineHeight = 12.sp))
                                 }
                             }
                         }
@@ -12359,8 +12426,13 @@ fun TripDetailDialog(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            val totalPlaces = timelineItems.count { it is RouteTimelineItem.Place }
-                            val totalPauses = timelineItems.count { it is RouteTimelineItem.Pause }
+                            val totalPlaces = timelineItems.filterIsInstance<RouteTimelineItem.Place>()
+                                .map { it.place.placeName.trim().lowercase() }
+                                .fold(mutableListOf<String>()) { acc, name ->
+                                    if (name.isNotEmpty() && (acc.isEmpty() || acc.last() != name)) acc.add(name)
+                                    acc
+                                }.size.coerceAtLeast(1)
+                            val totalPauses = trip.pauses.size
                             val timelineTitle = when {
                                 totalPauses > 0 -> "ROUTE TIMELINE ($totalPlaces ${if (totalPlaces == 1) "place" else "places"}, $totalPauses ${if (totalPauses == 1) "pause" else "pauses"})"
                                 else -> "VISITED LOCALITIES ($totalPlaces)"
