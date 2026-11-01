@@ -826,14 +826,20 @@ class CacheManager private constructor(private val context: Context) {
                 val totalMissing = missingRoutes + missingBoundaries
                 if (totalMissing > 0 && _prefetchState.value is PrefetchState.Idle) {
                     val isRecording = TripManager.getInstance(context).activeTrip.value != null
-                    val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
-                    if (isRecording || isLiveSharing) {
+                    if (isRecording) {
                         return@launch
                     }
+                    val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+                    val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
                     val canAutoWifi = autoStartOnWifi && isUnmeteredWifi()
                     val canAutoCharger = autoStartOnCharger && isDeviceCharging()
-                    if (canAutoWifi || canAutoCharger) {
-                        TelemetryLogger.log("CACHE", "Auto-starting prefetch: Wi-Fi=$canAutoWifi, Charger=$canAutoCharger, Missing=$totalMissing")
+
+                    // If live sharing is active, allow auto-prefetch only when stationary, on Wi-Fi, or charging
+                    if (isLiveSharing && !isStationary && !canAutoWifi && !canAutoCharger) {
+                        return@launch
+                    }
+                    if (canAutoWifi || canAutoCharger || (allowOnBattery && isStationary)) {
+                        TelemetryLogger.log("CACHE", "Auto-starting prefetch: Wi-Fi=$canAutoWifi, Charger=$canAutoCharger, Stationary=$isStationary, Missing=$totalMissing")
                         startPrefetch(isUserInitiated = false)
                     } else if (notifyWhenAvailable) {
                         postUpdatesAvailableNotification(deficit)

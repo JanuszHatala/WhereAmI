@@ -4070,6 +4070,14 @@ internal fun makeGuestMarkerIcon(
     )
 }
 
+private data class ScreenBox(val x: Double, val y: Double, val halfW: Double, val halfH: Double) {
+    fun overlaps(other: ScreenBox, padding: Double = 4.0): Boolean {
+        val dx = kotlin.math.abs(x - other.x)
+        val dy = kotlin.math.abs(y - other.y)
+        return dx < (halfW + other.halfW + padding) && dy < (halfH + other.halfH + padding)
+    }
+}
+
 fun computeSpiderfyOffsets(
     guests: List<LiveGuest>,
     hostPos: GeoPoint? = null,
@@ -4078,82 +4086,102 @@ fun computeSpiderfyOffsets(
     density: Float = 2.5f
 ): Map<String, GeoPoint> {
     if (guests.isEmpty()) return emptyMap()
+
+    val refLat = hostPos?.latitude ?: guests.firstOrNull()?.lat ?: 49.85
+    val refLng = hostPos?.longitude ?: guests.firstOrNull()?.lng ?: 19.28
+    val cosLat = kotlin.math.cos(Math.toRadians(refLat)).coerceAtLeast(0.01)
+    val metersPerPixel = (156543.03392 * cosLat / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
+    val dpPerMeter = 1.0 / (metersPerPixel * density.toDouble().coerceAtLeast(1.0))
+    val mLat = 111132.0
+    val mLng = 111132.0 * cosLat
+
+    val staticBoxes = mutableListOf<ScreenBox>()
+    if (hostPos != null) {
+        val hostX = (hostPos.longitude - refLng) * mLng * dpPerMeter
+        val hostY = -(hostPos.latitude - refLat) * mLat * dpPerMeter
+        staticBoxes.add(ScreenBox(hostX, hostY, 18.0, 18.0)) // host marker
+        staticBoxes.add(ScreenBox(hostX, hostY - 28.0, 34.0, 12.0)) // altitude badge above host
+    }
+
+    for (obs in obstaclePoints) {
+        val obsX = (obs.longitude - refLng) * mLng * dpPerMeter
+        val obsY = -(obs.latitude - refLat) * mLat * dpPerMeter
+        staticBoxes.add(ScreenBox(obsX, obsY, 18.0, 18.0))
+    }
+
+    val candidateOffsets = listOf(
+        Pair(0.0, 0.0),       // 1. Natural position (no displacement)
+        Pair(-88.0, 0.0),     // 2. West (Left - clears horizontally away from right controls and altitude badge)
+        Pair(-72.0, 12.0),    // 3. South-West
+        Pair(-72.0, -28.0),   // 4. North-West
+        Pair(0.0, 40.0),      // 5. South (down)
+        Pair(0.0, -56.0),     // 6. North (above altitude badge)
+        Pair(88.0, 0.0),      // 7. East (right)
+        Pair(72.0, 12.0),     // 8. South-East
+        Pair(72.0, -28.0),    // 9. North-East
+        Pair(-110.0, 0.0),    // 10. West 2
+        Pair(0.0, 60.0),      // 11. South 2
+        Pair(0.0, -75.0)      // 12. North 2
+    )
+
     val result = mutableMapOf<String, GeoPoint>()
-    val visited = BooleanArray(guests.size)
+    val placedBoxes = mutableListOf<ScreenBox>()
 
-    val desiredOffsetDp = 36f
-    val desiredOffsetPx = desiredOffsetDp * density
-
-    fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLng = Math.toRadians(lng2 - lng1)
-        val a = Math.sin(dLat / 2.0) * Math.sin(dLat / 2.0) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLng / 2.0) * Math.sin(dLng / 2.0)
-        return 6371000.0 * 2.0 * Math.atan2(Math.sqrt(a), Math.sqrt(1.0 - a))
+    // Sort guests so closest to host are placed first
+    val sortedGuests = guests.sortedBy { g ->
+        if (hostPos != null) {
+            val dLat = (g.lat - hostPos.latitude) * mLat
+            val dLng = (g.lng - hostPos.longitude) * mLng
+            kotlin.math.hypot(dLat, dLng)
+        } else 0.0
     }
 
-    val obstacles = mutableListOf<GeoPoint>()
-    hostPos?.let { obstacles.add(it) }
-    obstacles.addAll(obstaclePoints)
+    for (guest in sortedGuests) {
+        val origX = (guest.lng - refLng) * mLng * dpPerMeter
+        val origY = -(guest.lat - refLat) * mLat * dpPerMeter
 
-    for (i in guests.indices) {
-        if (visited[i]) continue
-        val cluster = mutableListOf<LiveGuest>()
-        cluster.add(guests[i])
-        visited[i] = true
+        var bestOffset = candidateOffsets[0]
+        var foundClean = false
 
-        val centerLat = guests[i].lat
-        val metersPerPixel = (156543.03392 * kotlin.math.cos(Math.toRadians(centerLat)) / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
-        val clusterThresholdM = (desiredOffsetPx * metersPerPixel).coerceAtMost(45.0)
-        val radiusM = (desiredOffsetPx * metersPerPixel).coerceIn(3.0, 45.0)
+        for (cand in candidateOffsets) {
+            val testBox = ScreenBox(origX + cand.first, origY + cand.second, 48.0, 14.0)
+            val collidesStatic = staticBoxes.any { testBox.overlaps(it, padding = 4.0) }
+            val collidesPlaced = placedBoxes.any { testBox.overlaps(it, padding = 4.0) }
 
-        for (j in (i + 1) until guests.size) {
-            if (!visited[j]) {
-                if (distanceM(guests[i].lat, guests[i].lng, guests[j].lat, guests[j].lng) < clusterThresholdM) {
-                    cluster.add(guests[j])
-                    visited[j] = true
-                }
+            if (!collidesStatic && !collidesPlaced) {
+                bestOffset = cand
+                foundClean = true
+                break
             }
         }
 
-        val clusterLat = cluster.map { it.lat }.average()
-        val clusterLng = cluster.map { it.lng }.average()
-        val mLat = 111132.0
-        val mLng = 111132.0 * kotlin.math.cos(Math.toRadians(clusterLat)).coerceAtLeast(0.01)
-
-        val collidingObstacle = obstacles.firstOrNull { obs ->
-            distanceM(clusterLat, clusterLng, obs.latitude, obs.longitude) < clusterThresholdM
+        // If no clean candidate found, default to West (Left)
+        if (!foundClean) {
+            bestOffset = candidateOffsets[1]
         }
 
-        if (cluster.size == 1 && collidingObstacle == null) {
-            result[cluster[0].id] = cluster[0].geoPoint
+        val finalX = origX + bestOffset.first
+        val finalY = origY + bestOffset.second
+        placedBoxes.add(ScreenBox(finalX, finalY, 48.0, 14.0))
+
+        if (bestOffset.first == 0.0 && bestOffset.second == 0.0) {
+            result[guest.id] = guest.geoPoint
         } else {
-            val k = cluster.size
-            // Navigation bearing: 0 = North, PI/2 = East, PI = South, -PI/2 = West.
-            // When within 1m of obstacle, fan out toward West (-PI/2) to stay clear of right-side map buttons.
-            val baseAngle = if (collidingObstacle != null) {
-                val dLat = clusterLat - collidingObstacle.latitude
-                val dLng = clusterLng - collidingObstacle.longitude
-                val obsDist = kotlin.math.hypot(dLat * mLat, dLng * mLng)
-                if (obsDist > 1.0) {
-                    kotlin.math.atan2(dLng, dLat)
-                } else {
-                    -Math.PI / 2.0 // Due West
-                }
-            } else {
-                -Math.PI / 2.0
+            var dXMeters = bestOffset.first / dpPerMeter
+            var dYMeters = -bestOffset.second / dpPerMeter
+            val curDistM = kotlin.math.hypot(dXMeters, dYMeters)
+            if (curDistM > 0.0) {
+                val clampedDistM = curDistM.coerceIn(16.0, 45.0)
+                val scale = clampedDistM / curDistM
+                dXMeters *= scale
+                dYMeters *= scale
             }
-
-            for (idx in 0 until k) {
-                val angle = baseAngle + (2.0 * Math.PI * idx / k)
-                // True bearing: Lat = cos(angle), Lng = sin(angle)
-                val offsetLat = (radiusM * kotlin.math.cos(angle)) / mLat
-                val offsetLng = (radiusM * kotlin.math.sin(angle)) / mLng
-                result[cluster[idx].id] = GeoPoint(clusterLat + offsetLat, clusterLng + offsetLng)
-            }
+            val dispLat = guest.lat + (dYMeters / mLat)
+            val dispLng = guest.lng + (dXMeters / mLng)
+            result[guest.id] = GeoPoint(dispLat, dispLng)
         }
     }
+
     return result
 }
 

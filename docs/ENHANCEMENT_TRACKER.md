@@ -1683,6 +1683,29 @@ Evidence & Diagnostics:
 | **FGS126-09** | Android 14+ `FOREGROUND_SERVICE_TYPE_LOCATION` enforcement. | `LiveTrackingService.kt`, `FieldTestFeedbackOct31Test.kt` | Implemented | Preserves 1 Hz GNSS fixes while screen is off. |
 | **VER-126** | versionCode 173 / 2.0.3 verification. | `app/build.gradle.kts` | Implemented | All tests pass, APK installed on device. |
 
+---
+
+## Round 127: Field Testing (2026-11-01) Timeline Chronology, Panel Spacing, Cache Prefetch Unblock & Screen-Space Guest Collision Avoidance
+
+Evidence & Diagnostics:
+- User field feedback and telemetry analyzed on 2026-11-01:
+  - Route timeline chronological sequence: preserved full chronological order with rest pauses positioned exactly between pre-pause and post-pause legs (not displaced to end of trip).
+  - Visited places count in header (`ROUTE TIMELINE (5 places, 1 pause)`) and breadcrumbs strictly follow leave-and-reenter rule via consecutive deduplication.
+  - Trip detail panels relocated: Row 1 Right = Total / Moving Time; Row 2 Right = Activity Profile. Spacing between title and subtitle minimized with normalized font metrics (`PlatformTextStyle(includeFontPadding = false)`). Schedule & Timing lines condensed to `Arrangement.spacedBy(2.dp)` with multi-day date detection.
+  - Permanent cache deficit fix: `CacheManager` unblocked auto-prefetch during live sharing when the device is stationary, on Wi-Fi, or charging.
+  - Screen-space guest avatar collision avoidance: `computeSpiderfyOffsets` operates in screen DP bounding boxes. When uncollided at high zoom, offset is 0.0 (stays at exact GPS position, no leader line); when colliding on screen, shifts by minimal clean screen distance away from controls and altitude badge.
+  - Broken trip 278: reconstructed missing 2321.3m trajectory along Skotnica -> DK52 Krakowska -> Biała Droga matching OSRM centerline and telemetry checkpoints; updated database and phone.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **TIM127-01** | Route timeline chronological order and leave-and-reenter place counting. | `MainActivity.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Pauses stay between legs; header counts 5 places and 1 pause. |
+| **PAN127-02** | Panel swapping, font normalization, and condensed Schedule & Timing. | `MainActivity.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Total/Moving time swapped to Row 1; line spacing reduced to 2dp. |
+| **CAC127-03** | Unblock background cache prefetch during live sharing when stationary/wifi/charging. | `CacheManager.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Auto-prefetch runs without being blocked by continuous live sharing. |
+| **SPI127-04** | Screen-space bounding-box guest avatar collision avoidance. | `OsmMapView.kt`, `FieldTestFeedbackNov01Test.kt`, `LiveGuestTest.kt` | Implemented | Avatars stay at exact GPS position when clear; shift away when colliding. |
+| **TRP127-05** | Reconstruct broken trip 278 geometry along DK52 Krakowska. | `scripts/reconstruct_trip_278.py`, `where_am_i_trips.db` | Implemented | 59 points synthesized, distance recalculated from 3.7km to 4.5km on phone. |
+| **VER-127** | Bump to versionCode 174 / 2.0.4. | `app/build.gradle.kts` | Implemented | All unit tests pass, assembleDebug passes. |
+
+
 
 
 
