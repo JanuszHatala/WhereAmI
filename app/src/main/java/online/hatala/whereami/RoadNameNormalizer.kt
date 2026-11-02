@@ -166,6 +166,10 @@ object RoadNameNormalizer {
             // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref if any
             osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRef
 
+            // If OSM itself confirmed both the named street and the road ref on the same way:
+            // ALWAYS coalesce them! (e.g. "Tadeusza Kościuszki" on DK52 in Chocznia, "Wadowicka" on DK52 in Inwałd)
+            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() -> osmStreet to osmRef
+
             // Named street is a known side street (e.g. "Szkolna", "Cicha") while on a highway corridor:
             // Discard the side street! Show canonical highway code.
             named != null && isKnownSideStreet(named) && isOsrmHighway -> osrm to osmRef

@@ -1420,6 +1420,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             var expandedPauseTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
             var expandedRouteTripIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
             var selectedTripForDetail by remember { mutableStateOf<TripRecord?>(null) }
+            var isActiveRouteExpanded by remember { mutableStateOf(false) }
             var tripSelectionFilterMode by remember { mutableStateOf(TripSelectionFilterMode.ALL) }
 
             // Auto-reset filter mode to ALL when selection is cleared
@@ -2077,12 +2078,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 }
                                             }
                                             Button(
+                                                onClick = { selectedTripForDetail = activeTrip },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = Color(0xFF0284C7),
+                                                    contentColor = Color.White
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.defaultMinSize(minWidth = 65.dp)
+                                            ) {
+                                                Text("Details", fontSize = 11.sp, maxLines = 1, softWrap = false, color = Color.White, fontWeight = FontWeight.Bold)
+                                            }
+                                            Button(
                                                 onClick = {
                                                     showTripsSheet = false
                                                     viewModel.triggerFitTrack()
                                                 },
                                                 colors = ButtonDefaults.buttonColors(
-                                                    containerColor = Color(0xFF0284C7),
+                                                    containerColor = Color(0xFF334155),
                                                     contentColor = Color.White
                                                 ),
                                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -2094,7 +2107,20 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         }
                                     }
 
-                                    val places = activeTrip!!.placesVisited
+                                    val currentActive = activeTrip!!
+                                    val distKm = currentActive.distanceMeters / 1000.0
+                                    val maxSpeedKmh = currentActive.maxSpeedKmh
+                                    Text(
+                                        text = String.format(Locale.getDefault(), "Distance: %.2f km • Max: %.1f km/h", distKm, maxSpeedKmh),
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+
+                                    val places = currentActive.placesVisited
                                     if (places.isEmpty()) {
                                         Text(
                                             text = "Moving... localities will appear as you travel.",
@@ -2103,13 +2129,53 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             modifier = Modifier.padding(top = 4.dp)
                                         )
                                     } else {
-                                        val summary = places.takeLast(3).joinToString(" → ") { it.placeName }
-                                        Text(
-                                            text = "Recent: $summary",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.padding(top = 4.dp)
-                                        )
+                                        val routeItems = remember(currentActive.id, places.size) {
+                                            val items = mutableListOf<String>()
+                                            places.forEach { place ->
+                                                val icon = if (place.placeKind != PlaceKind.LOCALITY) "${place.placeKind.iconEmoji} " else ""
+                                                val itemStr = "$icon${place.placeName}"
+                                                if (items.lastOrNull() != itemStr) {
+                                                    items.add(itemStr)
+                                                }
+                                            }
+                                            items
+                                        }
+                                        val fullRouteText = "Route: " + routeItems.joinToString(" → ")
+                                        var hasActiveRouteOverflow by remember(currentActive.id, fullRouteText) { mutableStateOf(false) }
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp)
+                                                .clickable(enabled = hasActiveRouteOverflow || isActiveRouteExpanded) {
+                                                    isActiveRouteExpanded = !isActiveRouteExpanded
+                                                }
+                                        ) {
+                                            Text(
+                                                text = fullRouteText,
+                                                color = Color(0xFFCBD5E1),
+                                                fontSize = 11.sp,
+                                                maxLines = if (isActiveRouteExpanded) Int.MAX_VALUE else 3,
+                                                overflow = TextOverflow.Ellipsis,
+                                                lineHeight = 15.sp,
+                                                onTextLayout = { textLayoutResult ->
+                                                    if (!isActiveRouteExpanded) {
+                                                        if (textLayoutResult.hasVisualOverflow || textLayoutResult.lineCount > 3) {
+                                                            hasActiveRouteOverflow = true
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                            if (hasActiveRouteOverflow || isActiveRouteExpanded) {
+                                                Text(
+                                                    text = if (isActiveRouteExpanded) "▲ Show less" else "▼ Show full route (${routeItems.size} places)",
+                                                    color = Color(0xFF38BDF8),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3045,7 +3111,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
             selectedTripForDetail?.let { currentDetailTrip ->
                 // Find latest trip record from savedTrips if updated
-                val liveTrip = savedTrips.find { it.id == currentDetailTrip.id } ?: currentDetailTrip
+                val liveTrip = (if (activeTrip?.id == currentDetailTrip.id) activeTrip else savedTrips.find { it.id == currentDetailTrip.id }) ?: currentDetailTrip
                 TripDetailDialog(
                     trip = liveTrip,
                     onDismissRequest = { selectedTripForDetail = null },
@@ -11843,8 +11909,10 @@ fun TripDetailDialog(
                             IconButton(onClick = { onRename(trip) }) {
                                 Icon(Icons.Default.Edit, contentDescription = "Rename", tint = Color(0xFF38BDF8))
                             }
-                            IconButton(onClick = { onDelete(trip) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFF87171))
+                            if (trip.endTime != null) {
+                                IconButton(onClick = { onDelete(trip) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFF87171))
+                                }
                             }
                         }
                     }

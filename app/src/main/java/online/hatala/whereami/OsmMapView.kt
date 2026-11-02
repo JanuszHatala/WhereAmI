@@ -550,12 +550,15 @@ fun OsmMapView(
 
     LaunchedEffect(Unit) {
         Configuration.getInstance().apply {
-            userAgentValue = "WhereIAmPersonalApp/1.1"
-            tileFileSystemMaxQueueSize = 80
-            // 300 MB persistent offline tile disk cache
-            tileFileSystemCacheMaxBytes = 300L * 1024 * 1024
-            tileFileSystemCacheTrimBytes = 250L * 1024 * 1024
-            cacheMapTileCount = 100
+            userAgentValue = "WhereAmI/2.0 (Android; https://github.com/janush74/WhereAmI)"
+            tileFileSystemThreads = 4.toShort()
+            tileDownloadThreads = 4.toShort()
+            tileFileSystemMaxQueueSize = 120.toShort()
+            tileDownloadMaxQueueSize = 120.toShort()
+            // 600 MB persistent offline tile disk cache
+            tileFileSystemCacheMaxBytes = 600L * 1024 * 1024
+            tileFileSystemCacheTrimBytes = 500L * 1024 * 1024
+            cacheMapTileCount = 250.toShort()
         }
     }
 
@@ -1089,8 +1092,7 @@ fun OsmMapView(
                             }
                             val rawPts = latestRawTrackPoints
                             if (rawPts.isNotEmpty()) {
-                                val pts = if (!isPausedNow) rawPts + gp else rawPts
-                                rawLine.setPoints(pts)
+                                rawLine.setPoints(rawPts)
                             }
                         } else {
                             if (rawPolyline != null) {
@@ -1399,7 +1401,8 @@ fun OsmMapView(
             hostPos = hostGp,
             obstaclePoints = obstacleGps,
             zoomLevel = map.zoomLevelDouble,
-            density = density
+            density = density,
+            mapOrientationDeg = map.mapOrientation
         )
         currentSpiderfyPositions = spiderfyPositions
 
@@ -4083,7 +4086,8 @@ fun computeSpiderfyOffsets(
     hostPos: GeoPoint? = null,
     obstaclePoints: List<GeoPoint> = emptyList(),
     zoomLevel: Double = 17.0,
-    density: Float = 2.5f
+    density: Float = 2.5f,
+    mapOrientationDeg: Float = 0f
 ): Map<String, GeoPoint> {
     if (guests.isEmpty()) return emptyMap()
 
@@ -4095,33 +4099,51 @@ fun computeSpiderfyOffsets(
     val mLat = 111132.0
     val mLng = 111132.0 * cosLat
 
+    val rad = Math.toRadians(mapOrientationDeg.toDouble())
+    val cosA = kotlin.math.cos(rad)
+    val sinA = kotlin.math.sin(rad)
+
+    fun toScreen(latDeg: Double, lngDeg: Double): Pair<Double, Double> {
+        val xNu = (lngDeg - refLng) * mLng * dpPerMeter
+        val yNu = -(latDeg - refLat) * mLat * dpPerMeter
+        val sx = cosA * xNu - sinA * yNu
+        val sy = sinA * xNu + cosA * yNu
+        return Pair(sx, sy)
+    }
+
+    fun fromScreenOffset(sx: Double, sy: Double): Pair<Double, Double> {
+        val xNu = cosA * sx + sinA * sy
+        val yNu = -sinA * sx + cosA * sy
+        val dXMeters = xNu / dpPerMeter
+        val dYMeters = -yNu / dpPerMeter
+        val dLat = dYMeters / mLat
+        val dLng = dXMeters / mLng
+        return Pair(dLat, dLng)
+    }
+
     val staticBoxes = mutableListOf<ScreenBox>()
     if (hostPos != null) {
-        val hostX = (hostPos.longitude - refLng) * mLng * dpPerMeter
-        val hostY = -(hostPos.latitude - refLat) * mLat * dpPerMeter
-        staticBoxes.add(ScreenBox(hostX, hostY, 18.0, 18.0)) // host marker
-        staticBoxes.add(ScreenBox(hostX, hostY - 28.0, 34.0, 12.0)) // altitude badge above host
+        val (hostX, hostY) = toScreen(hostPos.latitude, hostPos.longitude)
+        staticBoxes.add(ScreenBox(hostX, hostY, 20.0, 20.0)) // host marker
+        staticBoxes.add(ScreenBox(hostX, hostY - 32.0, 38.0, 14.0)) // altitude badge above host on screen
     }
 
     for (obs in obstaclePoints) {
-        val obsX = (obs.longitude - refLng) * mLng * dpPerMeter
-        val obsY = -(obs.latitude - refLat) * mLat * dpPerMeter
-        staticBoxes.add(ScreenBox(obsX, obsY, 18.0, 18.0))
+        val (obsX, obsY) = toScreen(obs.latitude, obs.longitude)
+        staticBoxes.add(ScreenBox(obsX, obsY, 20.0, 20.0))
     }
 
     val candidateOffsets = listOf(
         Pair(0.0, 0.0),       // 1. Natural position (no displacement)
-        Pair(-88.0, 0.0),     // 2. West (Left - clears horizontally away from right controls and altitude badge)
-        Pair(-72.0, 12.0),    // 3. South-West
-        Pair(-72.0, -28.0),   // 4. North-West
-        Pair(0.0, 40.0),      // 5. South (down)
-        Pair(0.0, -56.0),     // 6. North (above altitude badge)
-        Pair(88.0, 0.0),      // 7. East (right)
-        Pair(72.0, 12.0),     // 8. South-East
-        Pair(72.0, -28.0),    // 9. North-East
-        Pair(-110.0, 0.0),    // 10. West 2
-        Pair(0.0, 60.0),      // 11. South 2
-        Pair(0.0, -75.0)      // 12. North 2
+        Pair(-88.0, 12.0),    // 2. West-Southwest (clears altitude badge & right controls, with non-zero lat)
+        Pair(-72.0, -28.0),   // 3. North-West
+        Pair(0.0, 48.0),      // 4. South (down)
+        Pair(0.0, -56.0),     // 5. North (above altitude badge)
+        Pair(88.0, 12.0),     // 6. East-Southeast
+        Pair(72.0, -28.0),    // 7. North-East
+        Pair(-110.0, 0.0),    // 8. West 2
+        Pair(0.0, 68.0),      // 9. South 2
+        Pair(0.0, -75.0)      // 10. North 2
     )
 
     val result = mutableMapOf<String, GeoPoint>()
@@ -4137,14 +4159,13 @@ fun computeSpiderfyOffsets(
     }
 
     for (guest in sortedGuests) {
-        val origX = (guest.lng - refLng) * mLng * dpPerMeter
-        val origY = -(guest.lat - refLat) * mLat * dpPerMeter
+        val (origX, origY) = toScreen(guest.lat, guest.lng)
 
         var bestOffset = candidateOffsets[0]
         var foundClean = false
 
         for (cand in candidateOffsets) {
-            val testBox = ScreenBox(origX + cand.first, origY + cand.second, 48.0, 14.0)
+            val testBox = ScreenBox(origX + cand.first, origY + cand.second, 28.0, 26.0)
             val collidesStatic = staticBoxes.any { testBox.overlaps(it, padding = 4.0) }
             val collidesPlaced = placedBoxes.any { testBox.overlaps(it, padding = 4.0) }
 
@@ -4155,20 +4176,21 @@ fun computeSpiderfyOffsets(
             }
         }
 
-        // If no clean candidate found, default to West (Left)
+        // If no clean candidate found, default to West-Southwest
         if (!foundClean) {
             bestOffset = candidateOffsets[1]
         }
 
         val finalX = origX + bestOffset.first
         val finalY = origY + bestOffset.second
-        placedBoxes.add(ScreenBox(finalX, finalY, 48.0, 14.0))
+        placedBoxes.add(ScreenBox(finalX, finalY, 28.0, 26.0))
 
         if (bestOffset.first == 0.0 && bestOffset.second == 0.0) {
             result[guest.id] = guest.geoPoint
         } else {
-            var dXMeters = bestOffset.first / dpPerMeter
-            var dYMeters = -bestOffset.second / dpPerMeter
+            val (dLatRaw, dLngRaw) = fromScreenOffset(bestOffset.first, bestOffset.second)
+            var dXMeters = dLngRaw * mLng
+            var dYMeters = dLatRaw * mLat
             val curDistM = kotlin.math.hypot(dXMeters, dYMeters)
             if (curDistM > 0.0) {
                 val clampedDistM = curDistM.coerceIn(16.0, 45.0)

@@ -257,5 +257,28 @@ class RoadNameNormalizerTest {
         assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska 5", "52", "PL", allowHouseNumber = false))
         assertEquals("Krakowska (DK52)", RoadNameNormalizer.formatStreetDisplay("Krakowska (DK52)", null, "PL", allowHouseNumber = true))
     }
+
+    @Test
+    fun testCoalesceConfirmedCorridorStreets() {
+        // In Chocznia: OSM way has name="Tadeusza Kościuszki" and ref="52", OSRM returns "52"
+        val (choczniaStreet, choczniaRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "52",
+            osmStreet = "Tadeusza Kościuszki",
+            osmRoadRef = "52"
+        )
+        assertEquals("Tadeusza Kościuszki", choczniaStreet)
+        assertEquals("52", choczniaRef)
+        assertEquals("Tadeusza Kościuszki (DK52)", RoadNameNormalizer.formatStreetDisplay(choczniaStreet, choczniaRef, "PL"))
+
+        // In Inwałd: OSM way has name="Wadowicka" and ref="52", OSRM returns "52"
+        val (inwaldStreet, inwaldRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "52",
+            osmStreet = "Wadowicka",
+            osmRoadRef = "52"
+        )
+        assertEquals("Wadowicka", inwaldStreet)
+        assertEquals("52", inwaldRef)
+        assertEquals("Wadowicka (DK52)", RoadNameNormalizer.formatStreetDisplay(inwaldStreet, inwaldRef, "PL"))
+    }
 }
 

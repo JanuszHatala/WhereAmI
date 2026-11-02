@@ -997,7 +997,10 @@ class TripManager private constructor(private val context: Context) {
         speedMs: Float?,
         currentPlace: PlaceInfo?,
         accuracy: Float? = null,
-        altitude: Double? = null
+        altitude: Double? = null,
+        rawLat: Double? = null,
+        rawLng: Double? = null,
+        rawAlt: Double? = null
     ) {
         val now = System.currentTimeMillis()
         val speedKmh = (speedMs ?: 0f) * 3.6f
@@ -1118,10 +1121,13 @@ class TripManager private constructor(private val context: Context) {
             return
         }
 
-        val rawPoint = if (altitude != null && !altitude.isNaN() && altitude != 0.0) {
-            GeoPoint(lat, lng, altitude)
+        val rLat = rawLat ?: lat
+        val rLng = rawLng ?: lng
+        val rAlt = rawAlt ?: altitude
+        val rawPoint = if (rAlt != null && !rAlt.isNaN() && rAlt != 0.0) {
+            GeoPoint(rLat, rLng, rAlt)
         } else {
-            GeoPoint(lat, lng)
+            GeoPoint(rLat, rLng)
         }
         liveRawPoints.add(rawPoint)
         _rawTrackPoints.value = liveRawPoints.toList()

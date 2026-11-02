@@ -262,7 +262,11 @@ class LocationManager private constructor(private val context: Context) {
                 // They have NO separate rural gmina. Suppress "gm." and "pow." entirely.
                 if (!isCountyCity) {
                     // Clean deduplication: omit gm. X if city is X
-                    if (!cleanGmina.isNullOrEmpty() && !cleanGmina.equals(city, ignoreCase = true)) {
+                    // Suppress corrupted non-gmina hamlets mistakenly passed as gmina (e.g. "Jamnik")
+                    val isInvalidGmina = cleanGmina.isNullOrEmpty() ||
+                        cleanGmina.equals("Jamnik", ignoreCase = true) ||
+                        cleanGmina.contains("Jamnik", ignoreCase = true)
+                    if (!isInvalidGmina && !cleanGmina!!.equals(city, ignoreCase = true)) {
                         parts.add("gm. $cleanGmina")
                     }
                     // Omit pow. Y if city or gmina is Y
@@ -895,14 +899,18 @@ class LocationManager private constructor(private val context: Context) {
 
         // When crossing into a confirmed new locality, after making a physical turn,
         // or transitioning between village estates (osiedla/przysiółki),
-        // relax threshold to adopt the new name promptly (2 confirmations / 2 seconds)
+        // relax threshold to adopt the new name promptly (2 confirmations / 2 seconds).
+        // BUT NEVER relax leaving a major highway corridor for a non-major residential street
+        // (prevents roundabout entry curves and highway bends from hopping to side streets like "Lipowa 6").
         val isEstateTransition = (committedStreetBase?.startsWith("os. ") == true) || rawBase.startsWith("os. ")
+        val canRelax = (isLocalityTransition || isRecentTurn || isEstateTransition) &&
+            !(isCommittedMajor && !isCandidateMajor)
         val requiredCount = when {
-            isLocalityTransition || isRecentTurn || isEstateTransition -> minOf(rawRequiredCount, 2)
+            canRelax -> minOf(rawRequiredCount, 2)
             else -> rawRequiredCount
         }
         val requiredDuration = when {
-            isLocalityTransition || isRecentTurn || isEstateTransition -> minOf(rawRequiredDuration, 2_000L)
+            canRelax -> minOf(rawRequiredDuration, 2_000L)
             else -> rawRequiredDuration
         }
         val candidateDuration = now - candidateStreetFirstSeenTime
@@ -1053,12 +1061,15 @@ class LocationManager private constructor(private val context: Context) {
                 // 1. Immediate TripManager kinematic notification (live state machine) and recorded geometry
                 //    (fixed-lag smoothed points).
                 tripManager.onLocationUpdate(
-                    lat,
-                    lng,
-                    speed,
-                    committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
-                    fixAccuracy,
-                    alt
+                    lat = lat,
+                    lng = lng,
+                    speedMs = speed,
+                    currentPlace = committedPlace?.let { it.pl.takeIf { p -> p.isValid() } ?: it.en },
+                    accuracy = fixAccuracy,
+                    altitude = alt,
+                    rawLat = rawFix.lat,
+                    rawLng = rawFix.lng,
+                    rawAlt = rawFix.altitudeM
                 )
                 tripManager.onSmoothedPoints(result.finalized)
 
@@ -1861,13 +1872,19 @@ class LocationManager private constructor(private val context: Context) {
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
                 val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true, countryCode = osmCountryCode)
 
-                val rawMunicipality = str("municipality")
-                    ?: str("commune")
-                    ?: str("gmina")
-                    ?: str("district")
-                    ?: str("city_district")
-                    ?: str("subdistrict")
-                    ?: str("local_administrative_area")
+                val isPoland = osmCountryCode == "PL"
+                val rawMunicipality = if (isPoland) {
+                    val cand = str("municipality") ?: str("commune") ?: str("gmina")
+                    cand?.takeIf { it.startsWith("gmina", ignoreCase = true) }
+                } else {
+                    str("municipality")
+                        ?: str("commune")
+                        ?: str("gmina")
+                        ?: str("district")
+                        ?: str("city_district")
+                        ?: str("subdistrict")
+                        ?: str("local_administrative_area")
+                }
 
                 // In Poland: If municipality starts with "gmina ", check if village/town is present.
                 // If city is a neighbouring metropolis (e.g. city="Bielsko-Biała" for postal delivery, but municipality="gmina Kozy"),
@@ -2000,11 +2017,16 @@ class LocationManager private constructor(private val context: Context) {
         val houseNum = this.subThoroughfare
         val cc = this.countryCode?.uppercase() ?: countryCode
         val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true, countryCode = cc)
-        val gminaName = subLocality
-        val powiatName = subAdminArea
-        val stateName = adminArea ?: "Unknown Region"
         val rawCountry = this.countryName ?: "Unknown Country"
         val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+        val isPoland = cc == "PL" || rawCountry.equals("Poland", ignoreCase = true) || rawCountry.equals("Polska", ignoreCase = true)
+        val gminaName = if (isPoland) {
+            subLocality?.takeIf { it.startsWith("gmina", ignoreCase = true) }
+        } else {
+            subLocality
+        }
+        val powiatName = subAdminArea
+        val stateName = adminArea ?: "Unknown Region"
         return PlaceInfo(cityName, streetName, null, gminaName, powiatName, stateName, resolvedCountry, cc)
     }
 }

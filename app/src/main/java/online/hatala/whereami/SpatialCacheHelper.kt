@@ -74,8 +74,16 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     LocationManager.canonicalizePolishVoivodeship(rawVoivodeship)
                 } else rawVoivodeship
                 val rawCity = obj.optString("city", "Unknown City")
+                val isPoland = cc.uppercase() == "PL" || resolvedCountry == "Polska"
                 val rawGmina = obj.optString("gmina").takeIf { it.isNotBlank() }
-                val resolvedCity = if (rawGmina?.contains("gm. Kozy", ignoreCase = true) == true || rawGmina?.contains("gmina Kozy", ignoreCase = true) == true) {
+                val resolvedGmina = if (isPoland && rawGmina != null) {
+                    if (rawGmina.equals("Jamnik", ignoreCase = true) || rawGmina.contains("Jamnik", ignoreCase = true)) {
+                        if (rawCity.equals("Jaszczurowa", ignoreCase = true)) "gmina Mucharz" else null
+                    } else if (!rawGmina.startsWith("gmina", ignoreCase = true) && !rawGmina.startsWith("gm.", ignoreCase = true)) {
+                        null
+                    } else rawGmina
+                } else rawGmina
+                val resolvedCity = if (resolvedGmina?.contains("gm. Kozy", ignoreCase = true) == true || resolvedGmina?.contains("gmina Kozy", ignoreCase = true) == true) {
                     if (rawCity.equals("Krzemionki", ignoreCase = true) || rawCity.equals("Małe Kozy", ignoreCase = true)) {
                         "Kozy"
                     } else rawCity
@@ -86,7 +94,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     city = resolvedCity,
                     street = RoadNameNormalizer.sanitizeStreetForCountry(rawStreet, cc) ?: rawStreet,
                     roadRef = RoadNameNormalizer.sanitizeStreetForCountry(rawRoadRef, cc) ?: rawRoadRef,
-                    gmina = rawGmina,
+                    gmina = resolvedGmina,
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
                     voivodeship = resolvedVoivodeship,
                     country = resolvedCountry,
@@ -128,6 +136,53 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizePolishHighwayCodesOutsidePoland(db)
         sanitizeDupeParenStreets(db)
         sanitizeFalseHighwayOnLocalNames(db)
+        sanitizeCorruptedPolishMunicipalities(db)
+    }
+
+    /**
+     * Purges or corrects hamlets/subdistricts erroneously cached as gminas in Poland
+     * (e.g. `Jamnik` -> `gmina Mucharz` for Jaszczurowa, or null for non-gmina strings).
+     * Field trip 280 Jaszczurowa 2026-11-01.
+     */
+    fun sanitizeCorruptedPolishMunicipalities(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_PL_JSON LIKE '%"Jamnik"%'
+                   OR $COL_PL_JSON LIKE '%"gmina":"Jamnik"%'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val en = deserializePlaceInfo(it.getString(1))
+                    val pl = deserializePlaceInfo(it.getString(2))
+                    val native = deserializePlaceInfo(it.getString(3))
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {}
     }
 
     /**
