@@ -213,7 +213,20 @@ class TrackingEngine(
             (acc ?: 8f) <= 15f && kotlin.math.abs(xPred[KinematicEkf.YAW]) > 0.05
         val gateD2 = if (isTurningVehicle) 25.0 else POSITION_GATE_D2
 
-        if (speedAnomaly || d2 > gateD2) {
+        // Backward spike rejection: while vehicle is moving forward at speed (> 5 m/s), reject sudden
+        // displacement steps backwards against the forward vehicle heading (> 125° reversal and > 6m step)
+        // caused by degraded GNSS multipath reflections.
+        val forwardSpeed = xPred[KinematicEkf.SPEED]
+        val headingRad = xPred[KinematicEkf.HEADING]
+        val stepE = zE - fr.east(prev.lng)
+        val stepN = zN - fr.north(prev.lat)
+        val isBackwardExcursion = if (forwardSpeed > 5.0 && dist > 6.0 && activeProfile.maxSpeedMps > 10.0) {
+            val stepAngleDeg = Math.toDegrees(kotlin.math.atan2(stepE, stepN))
+            val deltaAngleDeg = kotlin.math.abs(shortestDeltaDeg(Math.toDegrees(headingRad), stepAngleDeg))
+            deltaAngleDeg > 125.0
+        } else false
+
+        if (speedAnomaly || d2 > gateD2 || isBackwardExcursion) {
             ekf.restore(snapX, snapP, snapT)
             ekf.stationaryMode = wasStationary
             val decision = if (speedAnomaly) FixDecision.REJECTED_IMPLIED_SPEED else FixDecision.REJECTED_INNOVATION

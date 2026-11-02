@@ -215,6 +215,17 @@ class LiveSharingManager private constructor(private val context: Context) {
     init {
         loadSavedSession()
         loadStaticLiveId()
+        loadLastRecordedCoords()
+    }
+
+    private fun loadLastRecordedCoords() {
+        val appPrefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+        val lat = appPrefs.getFloat("lat", 0f).toDouble()
+        val lng = appPrefs.getFloat("lng", 0f).toDouble()
+        if (lat != 0.0 && lng != 0.0) {
+            lastRecordedLat = lat
+            lastRecordedLng = lng
+        }
     }
 
     private fun loadStaticLiveId() {
@@ -481,11 +492,11 @@ class LiveSharingManager private constructor(private val context: Context) {
                 val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
                 val baseIntervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
                 val screenOff = !AppStateManager.getInstance(context).isAppInForegroundFlow.value
-                // Sleep: 60 min. Screen-off Live-Only: at least 5 min even if the session is set to 1 min
+                // Sleep: 60 min. Screen-off Live-Only: at least 15 min even if the session is set to 1 min
                 // (overnight visitors presence must not ping the radio every minute).
                 val intervalMs = when {
                     isCurrentlySleeping -> 60 * 60_000L
-                    screenOff -> baseIntervalMs.coerceAtLeast(5 * 60_000L)
+                    screenOff -> baseIntervalMs.coerceAtLeast(15 * 60_000L)
                     else -> baseIntervalMs
                 }
                 delay(intervalMs)
@@ -498,6 +509,14 @@ class LiveSharingManager private constructor(private val context: Context) {
                 var effectiveLng = lastRecordedLng
                 var effectiveCity: String? = null
                 var effectiveAccuracy = lastRecordedAccuracy
+
+                if (effectiveLat == 0.0 || effectiveLng == 0.0) {
+                    val p = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
+                    effectiveLat = p.getFloat("lat", 0f).toDouble()
+                    effectiveLng = p.getFloat("lng", 0f).toDouble()
+                    if (lastRecordedLat == 0.0 && effectiveLat != 0.0) lastRecordedLat = effectiveLat
+                    if (lastRecordedLng == 0.0 && effectiveLng != 0.0) lastRecordedLng = effectiveLng
+                }
 
                 if (isCurrentlySleeping) {
                     val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value

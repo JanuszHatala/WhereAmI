@@ -137,6 +137,29 @@ class HierarchyResolutionTest {
     }
 
     @Test
+    fun testJaszczurowaRejectsJamnikAsGmina() {
+        // Corrupted hamlet without gmina prefix (e.g. "Jamnik") must NEVER be formatted as "gm. Jamnik"
+        val corrupted = PlaceInfo(
+            city = "Jaszczurowa",
+            street = "Krakowska",
+            roadRef = "DK28",
+            gmina = "Jamnik",
+            powiat = "powiat wadowicki",
+            voivodeship = "województwo małopolskie",
+            country = "Polska",
+            countryCode = "PL"
+        )
+        val hierarchyCorrupted = LocationManager.formatHierarchy(corrupted)
+        assertFalse("Hierarchy must never contain 'gm. Jamnik'", hierarchyCorrupted.contains("Jamnik"))
+        assertEquals("pow. wadowicki • woj. małopolskie", hierarchyCorrupted)
+
+        // Genuine gmina ("gmina Mucharz") formats cleanly
+        val valid = corrupted.copy(gmina = "gmina Mucharz")
+        val hierarchyValid = LocationManager.formatHierarchy(valid)
+        assertEquals("gm. Mucharz • pow. wadowicki • woj. małopolskie", hierarchyValid)
+    }
+
+    @Test
     fun testFormatHierarchyWithEnglishVoivodeshipInPoland() {
         val place = PlaceInfo(
             city = "Wadowice",

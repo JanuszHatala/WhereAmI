@@ -128,8 +128,8 @@ class LocalFrame(val lat0: Double, val lng0: Double) {
 
     fun east(lng: Double): Double = (lng - lng0) * mPerDegLng
     fun north(lat: Double): Double = (lat - lat0) * mPerDegLat
-    fun lat(northM: Double): Double = lat0 + northM / mPerDegLat
-    fun lng(eastM: Double): Double = lng0 + eastM / mPerDegLng
+    fun lat(northM: Double): Double = (lat0 + northM / mPerDegLat).coerceIn(-90.0, 90.0)
+    fun lng(eastM: Double): Double = (lng0 + eastM / mPerDegLng).coerceIn(-180.0, 180.0)
 
     companion object {
         const val METERS_PER_DEG_LAT = 111_320.0

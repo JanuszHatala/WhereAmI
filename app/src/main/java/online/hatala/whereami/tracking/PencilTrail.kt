@@ -102,7 +102,7 @@ class PencilTrail(private val maxPoints: Int = 600) {
         val outLng = DoubleArray(n)
         for (i in 0 until n) {
             val w = if (len <= 1e-6) 0.0 else (1.0 - arc[i] / len).coerceAtLeast(0.0)
-            val f = w * w
+            val f = w * w * (3.0 - 2.0 * w)
             outLat[i] = lat[i] + dLat * f
             outLng[i] = lng[i] + dLng * f
         }
@@ -129,9 +129,17 @@ class PencilTrail(private val maxPoints: Int = 600) {
             return (0.15 * speedMps).coerceIn(floor, 4.0)
         }
 
-        /** Distance over which the committed-vertex offset fades out along the pencil. */
+        /** Baseline distance over which the committed-vertex offset fades out along the pencil for walking. */
         const val JOIN_DECAY_M = 4.0
-        fun computeDecayM(speedMps: Double = 0.0): Double = JOIN_DECAY_M
+
+        /**
+         * Speed-adaptive blend distance: remains at 4.0m for on-foot movement, and scales smoothly
+         * with driving speed up to 25.0m to eliminate sharp 90° lateral notches and dog-leg steps.
+         */
+        fun computeDecayM(speedMps: Double = 0.0): Double {
+            if (speedMps <= 2.5) return JOIN_DECAY_M
+            return (1.5 * speedMps).coerceIn(JOIN_DECAY_M, 25.0)
+        }
         /** States arriving in one frame that mark a delivered batch (normal delivery is one per fix). */
         const val BATCH_STATES = 3
     }

@@ -35,10 +35,10 @@ class KinematicEkf(var profile: TrackingProfile) {
         const val ACCEL = 5
 
         /** Process noise std-dev of heading [rad / sqrt(s)] (model imperfection, very small). */
-        private const val SIGMA_HEADING = 0.02
+        private const val SIGMA_HEADING = 0.04
 
         /** Process noise of position [m / sqrt(s)] (accounts for lever arm / unmodelled drift). */
-        private const val SIGMA_POSITION = 0.15
+        private const val SIGMA_POSITION = 0.85
 
         /** Residual speed process noise [m/s / sqrt(s)]: speed changes are carried by the accel state. */
         private const val SIGMA_SPEED = 0.3
@@ -149,6 +149,8 @@ class KinematicEkf(var profile: TrackingProfile) {
         if (dt <= 0.0) return null
         // A turn rate older than a few seconds carries no information: do not arc through gaps.
         if (dt > 3.0) x[YAW] = 0.0
+        // Near-zero speed carries no valid yaw rate: prevent stationary multipath spin
+        if (x[SPEED] < 1.5) x[YAW] = 0.0
 
         val f = Array(N) { DoubleArray(N) }
         val base = DoubleArray(N)

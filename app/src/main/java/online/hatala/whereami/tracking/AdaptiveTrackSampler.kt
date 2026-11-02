@@ -119,7 +119,7 @@ class AdaptiveTrackSampler {
         fun minSpacingM(speedMps: Double): Double = (0.5 * speedMps).coerceIn(0.8, 8.0)
 
         /** Even on a perfectly straight line store a vertex at least this often (about 2 s of travel). */
-        fun maxSpacingM(speedMps: Double): Double = (2.0 * speedMps).coerceIn(2.0, 60.0)
+        fun maxSpacingM(speedMps: Double): Double = (1.5 * speedMps).coerceIn(2.0, 35.0)
 
         private const val R = 6_371_000.0
 

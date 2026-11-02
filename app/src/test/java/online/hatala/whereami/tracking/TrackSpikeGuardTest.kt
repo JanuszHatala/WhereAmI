@@ -304,4 +304,26 @@ class TrackSpikeGuardTest {
         }
         assertEquals("Every curve vertex must be committed without chord lockup", coords.size, committed.size)
     }
+
+    @Test
+    fun `geodetically invalid point like Trip 281 divergence is rejected`() {
+        val invalidPoint = SmoothedPoint(
+            tElapsedMs = 1000L,
+            tUtcMs = 1793537542037L,
+            lat = 339.74653292857846,
+            lng = 222.81547438833104,
+            altitudeM = 400.0,
+            speedMps = 0.5,
+            headingDeg = 180.0,
+            accuracyM = 10f,
+            isStationary = false
+        )
+        val isGeodeticValid = invalidPoint.lat.isFinite() && invalidPoint.lng.isFinite() &&
+            invalidPoint.lat in -90.0..90.0 && invalidPoint.lng in -180.0..180.0
+        assertFalse("Point with latitude 339.75 must be marked geodetically invalid", isGeodeticValid)
+
+        val frame = LocalFrame(49.82, 19.05)
+        assertTrue(frame.lat(100_000_000.0) <= 90.0)
+        assertTrue(frame.lng(100_000_000.0) <= 180.0)
+    }
 }

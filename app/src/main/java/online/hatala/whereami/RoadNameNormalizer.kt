@@ -114,7 +114,9 @@ object RoadNameNormalizer {
         "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
         "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
         "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
-        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola"
+        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola",
+        "wiejska", "starowiejska", "gminna", "rolna", "spacerowa", "stawowa", "kolejowa", "dworska",
+        "osiedlowa", "widokowa", "spacerowa", "kamienna", "zacisze", "parkowa", "podgórska", "podgorska"
     )
 
     fun isKnownSideStreet(street: String?): Boolean {
@@ -166,6 +168,10 @@ object RoadNameNormalizer {
             // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref if any
             osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRef
 
+            // If OSM itself confirmed both the named street and the road ref on the same way:
+            // ALWAYS coalesce them! (e.g. "Tadeusza Kościuszki" on DK52 in Chocznia, "Wadowicka" on DK52 in Inwałd)
+            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() -> osmStreet to osmRef
+
             // Named street is a known side street (e.g. "Szkolna", "Cicha") while on a highway corridor:
             // Discard the side street! Show canonical highway code.
             named != null && isKnownSideStreet(named) && isOsrmHighway -> osrm to osmRef
@@ -200,6 +206,8 @@ object RoadNameNormalizer {
             return false
         }
         if (SIDE_STREET_NAMES.contains(lower)) return false
+        val genericRuralAdjectives = setOf("wiejska", "starowiejska", "gminna", "rolna", "dworska", "osiedlowa", "kolejowa", "stawowa")
+        if (genericRuralAdjectives.contains(lower)) return false
 
         val isDirectional = lower.endsWith("ska") || lower.endsWith("cka") || lower.endsWith("dzka")
         val isArterialKeyword = lower.contains("obwodnica") || lower.contains("główna") || lower.contains("glowna") ||

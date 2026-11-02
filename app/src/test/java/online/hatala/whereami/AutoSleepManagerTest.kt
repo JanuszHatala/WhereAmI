@@ -567,4 +567,47 @@ class AutoSleepManagerTest {
         )
         assertTrue("Alarm firing must wake sleep mode even if screen is off", shouldWakeOnAlarm)
     }
+
+    @Test
+    fun testMorningBedtimeEndedHoldsSleepWhenScreenOffRegardlessOfStationaryJitter() {
+        // Bedtime ended at 06:30, it is 07:00 morning, but screen is still off on nightstand
+        // Even if StationaryDetector had been unlatched/stopped (isStationary = false), screen-off must hold sleep!
+        val shouldHoldSleep = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = false,
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = false,
+            isScreenOff = true,
+            isStationary = false // Unlatched/stopped sensor
+        )
+        assertFalse(
+            "Screen-off in the morning outside bedtime window must hold sleep to prevent battery drain",
+            shouldHoldSleep
+        )
+    }
+
+    @Test
+    fun testUpcomingMorningAlarmExtendedWindowUpTo6Hours() {
+        // Now = 06:30 AM (nowMs), alarm scheduled at 10:00 AM (diff 3.5 hours)
+        val nowCal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 6)
+            set(java.util.Calendar.MINUTE, 30)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val alarmCal = java.util.Calendar.getInstance().apply {
+            timeInMillis = nowCal.timeInMillis
+            set(java.util.Calendar.HOUR_OF_DAY, 10)
+            set(java.util.Calendar.MINUTE, 0)
+        }
+        val hasAlarm = AutoSleepManager.hasUpcomingMorningAlarm(nowCal.timeInMillis, alarmCal.timeInMillis)
+        assertTrue("Morning alarm 3.5h ahead (10:00 AM) must be recognized as upcoming morning alarm", hasAlarm)
+    }
 }
