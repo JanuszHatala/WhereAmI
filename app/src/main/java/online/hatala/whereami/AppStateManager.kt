@@ -624,7 +624,7 @@ class AppStateManager private constructor(private val context: Context) {
             TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
             LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
             if (tripManager.tripMode.value != TripMode.AUTO || tripManager.activeTrip.value != null) {
-                startLiveOnlyWatcher()
+                startLiveOnlyWatcher(isLocomotionActive = true)
                 return
             }
         }
@@ -757,7 +757,7 @@ class AppStateManager private constructor(private val context: Context) {
                 if (tripManager.activeTrip.value == null) {
                     when (_currentMode.value) {
                         AppLifecycleMode.IDLE -> {
-                            locManager.stopLocationUpdates()
+                            locManager.stopLocationUpdates(preserveStationaryState = true)
                             consecutiveFalseBursts++
                             val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
                             TelemetryLogger.log("POWER", "Motion burst terminated without trip auto-start. Powering down GPS and scheduling re-arm in ${cooldownMs / 1000}s (streak=$consecutiveFalseBursts).")
@@ -878,13 +878,30 @@ class AppStateManager private constructor(private val context: Context) {
         }
     }
 
-    private fun startLiveOnlyWatcher(fastTrackStationaryShutdown: Boolean = false) {
+    private fun startLiveOnlyWatcher(
+        fastTrackStationaryShutdown: Boolean = false,
+        isLocomotionActive: Boolean = false
+    ) {
         liveOnlyWatcherJob?.cancel()
         val locManager = LocationManager.getInstance(context)
         val motionManager = MotionWakeManager.getInstance(context)
         val charging = _isCharging.value
 
-        // When moving, sample at conservative interval
+        // When screen is off without active locomotion and without an active trip,
+        // zero-idle-drain invariant requires GPS powered down immediately.
+        if (!isAppInForeground && !isLocomotionActive) {
+            TelemetryLogger.log(
+                "POWER",
+                "LIVE_ONLY: Screen is off: powering down GPS immediately, arming MotionWakeManager, and starting stationary heartbeat."
+            )
+            motionManager.arm()
+            LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+            locManager.stopLocationUpdates(preserveStationaryState = true)
+            AutoSleepManager.getInstance(context).evaluateAutoSleep()
+            return
+        }
+
+        // When moving or screen on, sample at conservative interval
         val interval = if (charging) 6_000L else 15_000L
         val minInterval = if (charging) 3_000L else 8_000L
         if (fastTrackStationaryShutdown && !isAppInForeground) {

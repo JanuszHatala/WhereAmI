@@ -706,7 +706,7 @@ class LiveTrackingService : Service() {
             // Standby / Live Sharing Sleep engaged: shutdown location tracking and GPS, release wake lock, update notification in-place
             stopLocationTracking()
             updateWakeLock(false)
-            locationManager.stopLocationUpdates()
+            locationManager.stopLocationUpdates(preserveStationaryState = true)
             if (hasUnpausedLive) {
                 LiveSharingManager.getInstance(this).startStationaryHeartbeat()
             }

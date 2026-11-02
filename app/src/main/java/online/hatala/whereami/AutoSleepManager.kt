@@ -175,7 +175,7 @@ class AutoSleepManager private constructor(private val context: Context) {
             val sameDay = cal.get(Calendar.DAY_OF_YEAR) == calAlarm.get(Calendar.DAY_OF_YEAR) &&
                     cal.get(Calendar.YEAR) == calAlarm.get(Calendar.YEAR)
 
-            return sameDay && alarmHour in 4..11 && diffMs <= 3 * 3600_000L
+            return sameDay && alarmHour in 4..11 && diffMs <= 6 * 3600_000L
         }
 
         fun shouldAutoWake(
@@ -200,7 +200,7 @@ class AutoSleepManager private constructor(private val context: Context) {
                 // If user set alarm and alarm fired in morning, wake even manual sleep
                 if (isAlarmFired && isMorning) return true
                 // Disjunctive morning wake: outside sleep window in morning exits manual sleep too
-                if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive) && !hasUpcomingMorningAlarm && (!isScreenOff || !isStationary)) return true
+                if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive) && !hasUpcomingMorningAlarm && !isScreenOff) return true
                 return false
             }
 
@@ -214,10 +214,10 @@ class AutoSleepManager private constructor(private val context: Context) {
             // When an upcoming morning alarm is scheduled, hold sleep until it rings
             if (hasUpcomingMorningAlarm && isMorning) return false
 
-            // If bedtime window ended but user is still asleep (screen off & physically stationary),
-            // hold sleep mode to prevent background false-motion bursts until user interacts or screen turns on.
+            // If bedtime window ended but user is still asleep (screen off),
+            // hold sleep mode to prevent background false-motion bursts until user interacts (screen on) or alarm fires.
             if (isMorning && !isTimeInWindow && (!followDnd || !isDndActive)) {
-                if (isScreenOff && isStationary) {
+                if (isScreenOff) {
                     return false
                 }
                 return true
