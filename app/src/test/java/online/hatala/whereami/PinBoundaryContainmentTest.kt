@@ -145,8 +145,13 @@ class PinBoundaryContainmentTest {
 
     @Test
     fun `live mode keeps named cache even when GPS is briefly outside polygon`() {
-        // GPS just outside Kobiernice-named cache must still be usable for live borders
+        // GPS just outside Kobiernice-named cache (~100m outside enclosingSquare) must still be usable for live borders
+        val nearGps = GeoPoint(49.77500, 19.19700)
         assertTrue(
+            BoundaryHelper.isCachePolygonUsableForLive(enclosingSquare(), nearGps)
+        )
+        // Distant polygon (> 2km away) must NOT be usable for live borders
+        assertFalse(
             BoundaryHelper.isCachePolygonUsableForLive(distantEastSquare(), pin)
         )
         assertFalse(

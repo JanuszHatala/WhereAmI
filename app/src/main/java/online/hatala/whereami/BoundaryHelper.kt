@@ -84,6 +84,15 @@ object BoundaryHelper {
                     )
                     return null
                 }
+            } else if (geoPoint != null) {
+                if (!isCachePolygonUsableForLive(pts, geoPoint)) {
+                    TelemetryLogger.log(
+                        "BOUNDARY",
+                        "Discarding cached polygon for $cleanKey — GPS is far outside boundary " +
+                            "(${geoPoint.latitude}, ${geoPoint.longitude})"
+                    )
+                    return null
+                }
             }
             return pts
         }
@@ -162,6 +171,14 @@ object BoundaryHelper {
                     throttle()
                     fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = containGate)
                 }
+                // For live GPS, verify candidate fetched polygon actually contains or is near current position
+                if (fetched != null && geoPoint != null && !isCachePolygonUsableForLive(fetched, geoPoint)) {
+                    TelemetryLogger.log(
+                        "BOUNDARY",
+                        "Live boundary for $cleanCity does not enclose current location (${geoPoint.latitude}, ${geoPoint.longitude}); falling back"
+                    )
+                    fetched = null
+                }
             }
 
             // Municipality / gmina fallback
@@ -223,9 +240,36 @@ object BoundaryHelper {
         return forPin && geoPoint != null
     }
 
-    /** Live borders keep the named locality polygon even if GPS briefly leaves it. */
-    fun isCachePolygonUsableForLive(points: List<GeoPoint>, @Suppress("UNUSED_PARAMETER") gps: GeoPoint): Boolean {
-        return points.size >= 3
+    /** Live borders keep the named locality polygon if GPS is inside or near the border (within margin). */
+    fun isCachePolygonUsableForLive(points: List<GeoPoint>, gps: GeoPoint): Boolean {
+        if (points.size < 3) return false
+        if (polygonContains(points, gps.latitude, gps.longitude)) return true
+        return isNearPolygon(points, gps.latitude, gps.longitude, marginMeters = 800.0)
+    }
+
+    fun isNearPolygon(points: List<GeoPoint>, lat: Double, lon: Double, marginMeters: Double = 800.0): Boolean {
+        if (points.size < 3) return false
+        var minLat = Double.MAX_VALUE; var maxLat = -Double.MAX_VALUE
+        var minLon = Double.MAX_VALUE; var maxLon = -Double.MAX_VALUE
+        for (p in points) {
+            if (p.latitude < minLat) minLat = p.latitude
+            if (p.latitude > maxLat) maxLat = p.latitude
+            if (p.longitude < minLon) minLon = p.longitude
+            if (p.longitude > maxLon) maxLon = p.longitude
+        }
+        val marginDegLat = marginMeters / 111_320.0
+        val marginDegLon = marginMeters / (111_320.0 * kotlin.math.cos(Math.toRadians(lat)).coerceAtLeast(0.1))
+        if (lat < minLat - marginDegLat || lat > maxLat + marginDegLat ||
+            lon < minLon - marginDegLon || lon > maxLon + marginDegLon) {
+            return false
+        }
+        val marginSq = marginMeters * marginMeters
+        for (p in points) {
+            val dLat = (p.latitude - lat) * 111_320.0
+            val dLon = (p.longitude - lon) * 111_320.0 * kotlin.math.cos(Math.toRadians(lat))
+            if (dLat * dLat + dLon * dLon <= marginSq) return true
+        }
+        return false
     }
 
     fun hasBoundary(context: Context, cityName: String?, countryCode: String = "pl"): Boolean {

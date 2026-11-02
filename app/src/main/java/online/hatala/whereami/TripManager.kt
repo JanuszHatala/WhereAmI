@@ -696,6 +696,7 @@ class TripManager private constructor(private val context: Context) {
         lastCommittedElapsedMs = -1L
         lastCommittedUtcMs = -1L
         lastRejectedSmoothedPoint = null
+        LocationManager.getInstance(context).resetTracking()
 
         val profile = _activityProfile.value
 
@@ -1291,6 +1292,10 @@ class TripManager private constructor(private val context: Context) {
         val res = FloatArray(1)
 
         fun appendPoint(p: SmoothedPoint) {
+            if (!p.lat.isFinite() || !p.lng.isFinite() || p.lat < -90.0 || p.lat > 90.0 || p.lng < -180.0 || p.lng > 180.0) {
+                TelemetryLogger.logTrip("SPIKE_REJECTED", current.id, "Rejected geodetically invalid point (${p.lat}, ${p.lng})")
+                return
+            }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
             newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
             val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
@@ -1301,6 +1306,10 @@ class TripManager private constructor(private val context: Context) {
         }
 
         fun commit(p: SmoothedPoint) {
+            if (!p.lat.isFinite() || !p.lng.isFinite() || p.lat < -90.0 || p.lat > 90.0 || p.lng < -180.0 || p.lng > 180.0) {
+                TelemetryLogger.logTrip("SPIKE_REJECTED", current.id, "Rejected geodetically invalid point (${p.lat}, ${p.lng})")
+                return
+            }
             val last = newPoints.lastOrNull()
             if (last != null && last.latitude == p.lat && last.longitude == p.lng) return
             // Last-line defence: do not store multipath tips (trip 240 auto-stop 386 m chord;

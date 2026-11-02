@@ -111,11 +111,17 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
     private fun toPoint(step: Step, x: DoubleArray, frame: LocalFrame): SmoothedPoint {
         val headingDeg = wrapDeg360(Math.toDegrees(x[KinematicEkf.HEADING]))
         val posStd = sqrt(max(0.0, (step.pf[0][0] + step.pf[1][1]) / 2.0)).toFloat()
+        val sLat = if (kotlin.math.abs(x[KinematicEkf.NORTH]) <= 200_000.0) {
+            frame.lat(x[KinematicEkf.NORTH])
+        } else (step.rawLat ?: frame.lat(0.0))
+        val sLng = if (kotlin.math.abs(x[KinematicEkf.EAST]) <= 200_000.0) {
+            frame.lng(x[KinematicEkf.EAST])
+        } else (step.rawLng ?: frame.lng(0.0))
         return SmoothedPoint(
             tElapsedMs = step.tElapsedMs,
             tUtcMs = step.tUtcMs,
-            lat = frame.lat(x[KinematicEkf.NORTH]),
-            lng = frame.lng(x[KinematicEkf.EAST]),
+            lat = sLat,
+            lng = sLng,
             altitudeM = step.altitudeM,
             speedMps = x[KinematicEkf.SPEED],
             headingDeg = headingDeg,

@@ -137,6 +137,30 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizeDupeParenStreets(db)
         sanitizeFalseHighwayOnLocalNames(db)
         sanitizeCorruptedPolishMunicipalities(db)
+        sanitizePoisonedSideStreets(db)
+    }
+
+    /**
+     * Purges entries where generic side streets were erroneously merged with highway codes
+     * (e.g. `Wiejska (DK52)` or `Starowiejska (DK52)`).
+     */
+    fun sanitizePoisonedSideStreets(db: SQLiteDatabase = writableDatabase) {
+        try {
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_STREET LIKE 'Wiejska (DK%'
+                   OR $COL_STREET LIKE 'Starowiejska (DK%'
+                   OR $COL_STREET LIKE 'Gminna (DK%'
+                   OR $COL_STREET LIKE 'Rolna (DK%'
+                   OR $COL_STREET LIKE 'Dworska (DK%'
+                   OR $COL_PL_JSON LIKE '%"Wiejska (DK%'
+                   OR $COL_PL_JSON LIKE '%"Starowiejska (DK%'
+                """.trimIndent()
+            )
+        } catch (e: Exception) {
+            TelemetryLogger.log("SPATIAL_CACHE", "sanitizePoisonedSideStreets error: ${e.message}")
+        }
     }
 
     /**

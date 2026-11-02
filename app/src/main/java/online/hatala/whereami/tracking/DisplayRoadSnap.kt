@@ -12,7 +12,7 @@ import kotlin.math.hypot
  * roundabouts and corridor GNSS bias do not leave the red line in the buildings beside the carriageway.
  */
 class DisplayRoadSnap(
-    val maxOffsetM: Double = 18.0,
+    val maxOffsetM: Double = 25.0,
     val tauS: Double = 2.5
 ) {
     private var eastM = 0.0

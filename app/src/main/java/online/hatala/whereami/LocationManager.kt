@@ -656,9 +656,9 @@ class LocationManager private constructor(private val context: Context) {
         val distMoved = distanceBetween(lat, lng, lastCommittedLat, lastCommittedLng)
         val speedKmh = lastValidSpeedMs * 3.6f
 
-        // When driving (> 25 km/h), require at least 350m inside the new territory OR sustained for 7+ seconds
-        val minDistanceRequired = if (speedKmh > 25f) 350f else 150f
-        val minDurationRequiredMs = if (speedKmh > 25f) 7_000L else 4_000L
+        // When driving (> 25 km/h), require at least 200m inside the new territory OR sustained for 4+ seconds
+        val minDistanceRequired = if (speedKmh > 25f) 200f else 150f
+        val minDurationRequiredMs = if (speedKmh > 25f) 4_000L else 3_000L
 
         if (candidatePlace != null && candidatePlace!!.pl.city.equals(rawCity, ignoreCase = true)) {
             candidateCount++
@@ -1020,7 +1020,10 @@ class LocationManager private constructor(private val context: Context) {
                 val result = synchronized(trackingLock) {
                     syncDiagnosticsSession(activeTrip?.id)
                     val wanted = TrackingBridge.profileFor(currentProfile)
-                    if (trackingEngine.profile.name != wanted.name) trackingEngine.profile = wanted
+                    if (trackingEngine.profile.name != wanted.name) {
+                        trackingEngine.reset()
+                        trackingEngine.profile = wanted
+                    }
                     val gyroRate = if (lastIngestedElapsedMs > 0L) {
                         TrackingRuntime.gyro.meanRate(lastIngestedElapsedMs, rawFix.tElapsedMs)
                     } else null

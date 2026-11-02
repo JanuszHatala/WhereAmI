@@ -114,7 +114,9 @@ object RoadNameNormalizer {
         "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
         "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
         "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
-        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola"
+        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola",
+        "wiejska", "starowiejska", "gminna", "rolna", "spacerowa", "stawowa", "kolejowa", "dworska",
+        "osiedlowa", "widokowa", "spacerowa", "kamienna", "zacisze", "parkowa", "podgórska", "podgorska"
     )
 
     fun isKnownSideStreet(street: String?): Boolean {
@@ -204,6 +206,8 @@ object RoadNameNormalizer {
             return false
         }
         if (SIDE_STREET_NAMES.contains(lower)) return false
+        val genericRuralAdjectives = setOf("wiejska", "starowiejska", "gminna", "rolna", "dworska", "osiedlowa", "kolejowa", "stawowa")
+        if (genericRuralAdjectives.contains(lower)) return false
 
         val isDirectional = lower.endsWith("ska") || lower.endsWith("cka") || lower.endsWith("dzka")
         val isArterialKeyword = lower.contains("obwodnica") || lower.contains("główna") || lower.contains("glowna") ||

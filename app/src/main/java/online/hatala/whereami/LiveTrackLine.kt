@@ -37,7 +37,7 @@ class LiveTrackLine {
         if (target >= 0) {
             if (prefixEnd < 0) { prefix.add(c[0]); prefixEnd = 0 }
             if (target > prefixEnd) {
-                CurvedPolyline.densify(c.size, prefixEnd, target, { c[it].latitude }, { c[it].longitude }) { la, ln ->
+                CurvedPolyline.densify(c.size, prefixEnd, target, { c[it].latitude }, { c[it].longitude }, maxFilletM = 14.0) { la, ln ->
                     prefix.add(GeoPoint(la, ln))
                 }
                 prefixEnd = target
@@ -98,11 +98,13 @@ class LiveTrackLine {
                 points.add(GeoPoint(tailLat(0), tailLng(0)))
             }
             val prevPoint = if (hasAnchor && c.size >= 2) c[c.size - 2] else null
+            val filletRadius = if (speedMps > 8.0) 14.0 else if (speedMps > 3.0) 8.0 else 4.0
             CurvedPolyline.densify(
                 totalTail, 0, totalTail - 1,
                 { tailLat(it) }, { tailLng(it) },
                 prevLat = prevPoint?.latitude,
-                prevLng = prevPoint?.longitude
+                prevLng = prevPoint?.longitude,
+                maxFilletM = filletRadius
             ) { la, ln -> points.add(GeoPoint(la, ln)) }
         } else {
             for (i in (if (hasAnchor) 1 else 0) until totalTail) {

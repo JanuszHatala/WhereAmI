@@ -11,15 +11,15 @@ class DisplayRoadSnapTest {
     @Test
     fun `pulls display toward road when nearest is within gate`() {
         val snap = DisplayRoadSnap()
-        // Raw GPS 8 m east of the road centreline
-        val rawLat = f.lat(0.0); val rawLng = f.lng(8.0)
+        // Raw GPS 22 m east of the road centreline (e.g. DK52 highway lane/shoulder offset)
+        val rawLat = f.lat(0.0); val rawLng = f.lng(22.0)
         val roadLat = f.lat(0.0); val roadLng = f.lng(0.0)
-        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 8.0, dtSec = 1.0)
-        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 8.0, dtSec = 1.0)
-        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 8.0, dtSec = 1.0)
+        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 22.0, dtSec = 1.0)
+        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 22.0, dtSec = 1.0)
+        snap.observeNearest(rawLat, rawLng, roadLat, roadLng, distanceM = 22.0, dtSec = 1.0)
         val (la, ln) = snap.apply(rawLat, rawLng)
         val east = f.east(ln)
-        assertTrue("display should move west toward the road, east=$east", east < 5.0)
+        assertTrue("display should move west toward the road, east=$east", east < 15.0)
         assertEquals(0.0, f.north(la), 0.5)
     }
 

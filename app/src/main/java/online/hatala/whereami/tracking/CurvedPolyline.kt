@@ -17,7 +17,7 @@ import kotlin.math.roundToInt
 object CurvedPolyline {
     /** Target spacing of the inserted points along a rounded corner. */
     const val STEP_M = 0.8
-    const val MAX_FILLET_M = 3.5
+    const val MAX_FILLET_M = 16.0
     const val MIN_CORNER_DEG = 5.0
     const val MAX_CORNER_DEG = 150.0
 
@@ -33,6 +33,7 @@ object CurvedPolyline {
         lngAt: (Int) -> Double,
         prevLat: Double? = null,
         prevLng: Double? = null,
+        maxFilletM: Double = MAX_FILLET_M,
         emit: (Double, Double) -> Unit
     ) {
         val end = minOf(toSeg, n - 1)
@@ -54,7 +55,7 @@ object CurvedPolyline {
 
                 val theta = turnDeg(x2, y2, x3, y3)
                 if (theta in MIN_CORNER_DEG..MAX_CORNER_DEG && lout > 0.5) {
-                    val r = minOf(MAX_FILLET_M, 0.25 * lin, 0.25 * lout)
+                    val r = minOf(maxFilletM, 0.38 * lin, 0.38 * lout)
                     // Fillet start along incoming leg (relative to vertex j)
                     val qx = x2 - r * (x2 / lin)
                     val qy = y2 - r * (y2 / lin)

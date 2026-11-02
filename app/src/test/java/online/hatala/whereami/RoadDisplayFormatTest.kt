@@ -203,4 +203,17 @@ class RoadDisplayFormatTest {
             RoadNameNormalizer.sanitizeHouseNumber("Krakowska 242 (DK52)", allowHouseNumber = true)
         )
     }
+
+    @Test
+    fun `Wiejska side street without house number is never coalesced into Wiejska DK52`() {
+        val pair = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            committedStreet = "DK52",
+            committedRoadRef = "52",
+            cachedStreet = "Wiejska",
+            cachedRoadRef = null
+        )
+        assertEquals(null, pair)
+        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Wiejska"))
+        assertTrue(RoadNameNormalizer.isKnownSideStreet("Wiejska"))
+    }
 }
