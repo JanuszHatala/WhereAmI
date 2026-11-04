@@ -153,6 +153,15 @@ class TrackSpikeGuardTest {
     }
 
     @Test
+    fun `needle out-and-back spike is identified and rejected`() {
+        val (aLat, aLng) = at(0.0, 0.0)
+        val (bLat, bLng) = at(-30.0, 0.0)
+        val (cLat, cLng) = at(0.5, 0.5)
+        assertTrue(TrackSpikeGuard.isNeedleSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+        assertTrue(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
+
+    @Test
     fun `gentle road bend is not a lateral V spike`() {
         val (aLat, aLng) = at(0.0, 0.0)
         val (bLat, bLng) = at(20.0, 3.0)

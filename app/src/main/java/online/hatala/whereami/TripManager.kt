@@ -1374,7 +1374,7 @@ class TripManager private constructor(private val context: Context) {
                     return
                 }
                 lastRejectedSmoothedPoint = null
-                // A->B->C lateral V: drop middle B (in-memory or overwrite in DB) then continue to commit C.
+                // A->B->C lateral V / needle spike: drop middle B (in-memory and in DB) then continue to commit C.
                 if (prev2 != null &&
                     TrackSpikeGuard.isLateralVSpike(
                         prev2.latitude, prev2.longitude,
@@ -1383,17 +1383,26 @@ class TripManager private constructor(private val context: Context) {
                     )
                 ) {
                     newPoints.removeAt(newPoints.size - 1)
-                    synchronized(rowLock) {
+                    val dropSeq = synchronized(rowLock) {
                         if (pendingRows.isNotEmpty()) {
                             pendingRows.removeAt(pendingRows.lastIndex)
+                            -1
                         } else if (persistedPointCount > 0) {
                             persistedPointCount--
+                            persistedPointCount
+                        } else -1
+                    }
+                    if (dropSeq >= 0) {
+                        scope.launch(dbWriter) {
+                            try {
+                                dbHelper.deleteLastTrackPoints(current.id, dropSeq)
+                            } catch (_: Exception) {}
                         }
                     }
                     TelemetryLogger.logTrip(
                         "SPIKE_REJECTED",
                         current.id,
-                        "Dropped lateral V middle before committing tip"
+                        "Dropped lateral V / needle middle before committing tip"
                     )
                 }
             }

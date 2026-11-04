@@ -456,6 +456,16 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /** Deletes track points from [fromSeq] onward for [tripId] (e.g. when dropping a spike vertex). */
+    fun deleteLastTrackPoints(tripId: Long, fromSeq: Int) {
+        val db = writableDatabase
+        db.delete(
+            TABLE_TRACK_POINTS,
+            "$COL_TP_TRIP = ? AND $COL_TP_SEQ >= ?",
+            arrayOf(tripId.toString(), fromSeq.toString())
+        )
+    }
+
     /** Newest `t_utc` for an open trip, or null when the table has no timed points. */
     fun getLastTrackPointUtcMs(tripId: Long): Long? {
         val db = readableDatabase

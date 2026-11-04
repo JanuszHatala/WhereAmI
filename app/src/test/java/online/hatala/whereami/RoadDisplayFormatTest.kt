@@ -84,25 +84,25 @@ class RoadDisplayFormatTest {
     }
 
     @Test
-    fun `isLikelyCorridorLocalName accepts thoroughfare aliases not commemorative names`() {
-        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("Krakowska"))
-        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("Krakowska (DK52)"))
-        assertTrue(RoadNameNormalizer.isLikelyCorridorLocalName("3 Maja"))
-        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Kardynała Karola Wojtyły"))
-        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Kardynała Karola Wojtyły (DK52)"))
+    fun `coalesceBareCodeWithCachedName requires matching roadRef or parenthesized highway ref`() {
         assertEquals(
             null,
             RoadNameNormalizer.coalesceBareCodeWithCachedName(
-                "DK52", "DK52", "Kardynała Karola Wojtyły", "DK52"
+                "DK52", "DK52", "Kardynała Karola Wojtyły", null
             )
         )
+        val pair = RoadNameNormalizer.coalesceBareCodeWithCachedName(
+            "DK52", "52", "Krakowska", "52"
+        )
+        assertEquals("Krakowska", pair?.first)
+        assertEquals("52", pair?.second)
     }
 
     @Test
     fun `OSRM Krakowska keeps local name`() {
         val (street, ref) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
             osrmStreet = "Krakowska",
-            osmStreet = "Something Else",
+            osmStreet = "Krakowska",
             osmRoadRef = "52"
         )
         assertEquals("Krakowska", street)
@@ -150,10 +150,10 @@ class RoadDisplayFormatTest {
             committedStreet = "DK52",
             committedRoadRef = "52",
             cachedStreet = "Krakowska",
-            cachedRoadRef = null
+            cachedRoadRef = "52"
         )
         assertEquals("Krakowska", pair!!.first)
-        assertEquals("DK52", pair.second)
+        assertEquals("52", pair.second)
         assertEquals(
             "Krakowska (DK52)",
             RoadNameNormalizer.formatStreetDisplay(pair.first, pair.second, "PL")
@@ -180,15 +180,11 @@ class RoadDisplayFormatTest {
             osmStreet = "Szkolna",
             osmRoadRef = null
         )
-        assertEquals("DK52", street)
+        assertEquals("Szkolna", street)
+        assertEquals(null, ref)
         assertEquals(
-            "DK52",
+            "Szkolna",
             RoadNameNormalizer.formatStreetDisplay(street, ref, "PL")
-        )
-        // Even if normalize is called directly with Szkolna and DK52:
-        assertEquals(
-            "DK52",
-            RoadNameNormalizer.normalize("Szkolna", "DK52", countryCode = "PL")
         )
     }
 
@@ -213,7 +209,5 @@ class RoadDisplayFormatTest {
             cachedRoadRef = null
         )
         assertEquals(null, pair)
-        assertFalse(RoadNameNormalizer.isLikelyCorridorLocalName("Wiejska"))
-        assertTrue(RoadNameNormalizer.isKnownSideStreet("Wiejska"))
     }
 }

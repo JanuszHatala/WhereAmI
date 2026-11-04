@@ -57,7 +57,8 @@ object CurvedPolyline {
                 val theta = turnDeg(x2, y2, x3, y3)
                 if (theta in MIN_CORNER_DEG..MAX_CORNER_DEG && lout > 0.5) {
                     val halfTurnSin = kotlin.math.sin(Math.toRadians(theta * 0.5))
-                    val rSagitta = if (halfTurnSin > 1e-4) (2.0 * MAX_SAGITTA_M) / halfTurnSin else maxFilletM
+                    val effectiveMaxSagitta = if (theta > 30.0) minOf(0.65, MAX_SAGITTA_M) else MAX_SAGITTA_M
+                    val rSagitta = if (halfTurnSin > 1e-4) (2.0 * effectiveMaxSagitta) / halfTurnSin else maxFilletM
                     val r = minOf(maxFilletM, rSagitta, 0.46 * lin, 0.46 * lout)
                     // Fillet start along incoming leg (relative to vertex j)
                     val qx = x2 - r * (x2 / lin)

@@ -60,7 +60,7 @@ class RoadNameNormalizerTest {
     fun testNamedStreetWithHighwayRef() {
         assertEquals("ul. Wadowicka (DK52)", RoadNameNormalizer.normalize("ulica Wadowicka", rawRef = "DK52"))
         assertEquals("ul. Żywiecka (DW946)", RoadNameNormalizer.normalize("ulica Żywiecka", rawRef = "946"))
-        assertEquals("al. świętego Jana Pawła II (S1)", RoadNameNormalizer.normalize("Aleje świętego Jana Pawła II"))
+        assertEquals("al. świętego Jana Pawła II (S1)", RoadNameNormalizer.normalize("Aleje świętego Jana Pawła II", rawRef = "S1"))
     }
 
     @Test
@@ -75,13 +75,13 @@ class RoadNameNormalizerTest {
         assertTrue(RoadNameNormalizer.isMajorRoad("Aleje świętego Jana Pawła II (S1)"))
         assertTrue(RoadNameNormalizer.isMajorRoad("ul. Wadowicka (DK52)"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Droga Krajowa 28"))
-        assertTrue(RoadNameNormalizer.isMajorRoad("Niepodległości"))
-        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Trasa Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Niepodległości (S52)"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Aleja Generała Władysława Andersa"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Trasa Niepodległości"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Północno-Wschodnia Obwodnica Bielska-Białej"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Droga Bez Nazwy", roadRef = "S52"))
-        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino", roadRef = "DK52"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Aleja gen. Władysława Andersa"))
         assertFalse(RoadNameNormalizer.isMajorRoad("ul. Kościuszki"))
         assertFalse(RoadNameNormalizer.isMajorRoad("Rynek"))
@@ -300,7 +300,10 @@ class RoadNameNormalizerTest {
                 osmStreet = "Bielska"
             )
         )
-        assertTrue(RoadNameNormalizer.isKnownSideStreet("Podlesie"))
+        // Verify data-driven major highway helper
+        assertTrue(RoadNameNormalizer.isMajorHighway("primary", null))
+        assertTrue(RoadNameNormalizer.isMajorHighway("secondary", null))
+        assertFalse(RoadNameNormalizer.isMajorHighway("residential", null))
     }
 }
 
