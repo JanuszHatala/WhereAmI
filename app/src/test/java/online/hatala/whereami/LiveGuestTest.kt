@@ -434,11 +434,71 @@ class LiveGuestTest {
         // Must be shifted toward the West (longitude strictly less than obstacle longitude)
         assertTrue("Guest must be shifted West away from right-side controls and altitude badge: pLng=${p.longitude}, homeLng=${homePin.longitude}", p.longitude < homePin.longitude)
 
-        // Must be tightly clamped (16m - 45m), never jumping 100m+ away
+        // Must be separated in screen space at zoom 17.5
         val mLat = 111_132.92
         val mLng = 111_412.84 * Math.cos(Math.toRadians(homePin.latitude))
         val distM = Math.hypot((p.latitude - homePin.latitude) * mLat, (p.longitude - homePin.longitude) * mLng)
-        assertTrue("Displacement distance should be tightly bounded (16m..45m), was $distM m", distM in 15.0..46.0)
+        assertTrue("Displacement distance at zoom 17.5 should be bounded, was $distM m", distM in 15.0..60.0)
+    }
+
+    @Test
+    fun `test computeSpiderfyOffsets separates guests across zoom levels 14 to 17 without screen overlap`() {
+        val homePin = org.osmdroid.util.GeoPoint(49.8512, 19.2852)
+        val g1 = LiveGuest(id = "ja", name = "ja", lat = 49.8512, lng = 19.2852, lastUpdated = 2000L)
+        val g2 = LiveGuest(id = "niki", name = "Niki", lat = 49.85125, lng = 19.28525, lastUpdated = 1500L)
+
+        for (zoom in listOf(14.5, 15.5, 16.5, 17.5)) {
+            val offsets = computeSpiderfyOffsets(
+                guests = listOf(g1, g2),
+                hostPos = homePin,
+                obstaclePoints = listOf(homePin),
+                zoomLevel = zoom,
+                density = 2.75f,
+                fontScaleFactor = 1.6f
+            )
+            val p1 = offsets["ja"]!!
+            val p2 = offsets["niki"]!!
+            val mLat = 111_132.92
+            val mLng = 111_412.84 * Math.cos(Math.toRadians(homePin.latitude))
+            val metersPerPixel = (156543.03392 * Math.cos(Math.toRadians(homePin.latitude))) / (Math.pow(2.0, zoom) * 1.6)
+            val dpPerMeter = 1.0 / (metersPerPixel * 2.75)
+
+            val dxDp = (p1.longitude - p2.longitude) * mLng * dpPerMeter
+            val dyDp = -(p1.latitude - p2.latitude) * mLat * dpPerMeter
+            val screenDistDp = Math.hypot(dxDp, dyDp)
+            assertTrue("At zoom $zoom, guests must be separated by at least 42dp on screen (was $screenDistDp dp)", screenDistDp >= 42.0)
+        }
+    }
+
+    @Test
+    fun `test computeSpiderfyOffsets keeps first guest on exact position when pin does not touch avatar and avoids offscreen shift`() {
+        // Pin is ~25m East of guests at zoom 19 (well clear of the 28dp avatar circle, even though badge is 130dp wide)
+        val g1 = LiveGuest(id = "ja", name = "ja", lat = 49.85120, lng = 19.28520, lastUpdated = 2000L)
+        val g2 = LiveGuest(id = "niki", name = "Niki", lat = 49.85121, lng = 19.28522, lastUpdated = 1500L)
+        val distantHost = org.osmdroid.util.GeoPoint(49.8180, 19.0500) // 17.3 km away
+        val nearbyPin = org.osmdroid.util.GeoPoint(49.85118, 19.28555)
+        // Map viewport center is East of guests so guests are near the left edge of the screen
+        val vpCenter = org.osmdroid.util.GeoPoint(49.85120, 19.28545)
+
+        val offsets = computeSpiderfyOffsets(
+            guests = listOf(g1, g2),
+            hostPos = distantHost,
+            obstaclePoints = listOf(nearbyPin),
+            zoomLevel = 19.0,
+            density = 2.75f,
+            fontScaleFactor = 1.15f,
+            viewportCenter = vpCenter,
+            viewportWidthDp = 360.0,
+            viewportHeightDp = 760.0
+        )
+
+        val p1 = offsets["ja"]!!
+        val p2 = offsets["niki"]!!
+        // First guest ("ja") must remain at its exact GPS position (zero displacement)
+        assertEquals(g1.lat, p1.latitude, 1e-6)
+        assertEquals(g1.lng, p1.longitude, 1e-6)
+        // Second guest ("niki") must not be shifted further West off the left edge of the screen
+        assertTrue("Second guest near left screen edge must not be shifted further West: p2.lng=${p2.longitude}, g2.lng=${g2.lng}", p2.longitude >= g2.lng - 1e-6)
     }
 }
 

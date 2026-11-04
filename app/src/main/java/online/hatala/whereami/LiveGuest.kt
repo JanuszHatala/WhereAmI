@@ -19,6 +19,9 @@ data class LiveGuest(
     val geoPoint: GeoPoint
         get() = GeoPoint(lat, lng)
 
+    val hasValidLocation: Boolean
+        get() = lat != 0.0 && lng != 0.0 && !lat.isNaN() && !lng.isNaN()
+
     val isInactive: Boolean
         get() = isInactiveAt(System.currentTimeMillis())
 

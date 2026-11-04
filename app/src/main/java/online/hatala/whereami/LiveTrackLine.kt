@@ -59,57 +59,45 @@ class LiveTrackLine {
         val c = committed
         val s = (c.size - 3).coerceAtLeast(0)
         val nc = c.size - s
-        if (nc > 0) {
-            val fromSeg = if (prefixEnd < 0) {
-                points.add(GeoPoint(c[s].latitude, c[s].longitude))
-                0
-            } else prefixEnd - s
-            if (nc - 1 > fromSeg) {
-                CurvedPolyline.densify(
-                    nc, fromSeg, nc - 1,
-                    { c[s + it].latitude }, { c[s + it].longitude }
-                ) { la, ln -> points.add(GeoPoint(la, ln)) }
-            }
-        }
         val blended = if (c.isNotEmpty() && committedThroughMs >= 0L) {
             pencil.blendedFrom(committedThroughMs, c.last().latitude, c.last().longitude, tip.latitude, tip.longitude, speedMps = speedMps)
         } else null
         val pSize = pencil.size
-        val hasAnchor = c.isNotEmpty()
-        val totalTail = (if (hasAnchor) 1 else 0) + pSize + 1
-        fun tailLat(idx: Int): Double = when {
-            hasAnchor && idx == 0 -> c.last().latitude
-            idx == totalTail - 1 -> tip.latitude
+        // Build unified tail [c[s]..c.last(), pencil[0]..pencil[pSize-1], tip] so the join vertex c.last()
+        // is rounded seamlessly along with the surrounding committed and pencil segments.
+        val total = nc + pSize + 1
+        fun vLat(idx: Int): Double = when {
+            idx < nc -> c[s + idx].latitude
+            idx == total - 1 -> tip.latitude
             else -> {
-                val pIdx = if (hasAnchor) idx - 1 else idx
+                val pIdx = idx - nc
                 blended?.first?.get(pIdx) ?: pencil.latAt(pIdx)
             }
         }
-        fun tailLng(idx: Int): Double = when {
-            hasAnchor && idx == 0 -> c.last().longitude
-            idx == totalTail - 1 -> tip.longitude
+        fun vLng(idx: Int): Double = when {
+            idx < nc -> c[s + idx].longitude
+            idx == total - 1 -> tip.longitude
             else -> {
-                val pIdx = if (hasAnchor) idx - 1 else idx
+                val pIdx = idx - nc
                 blended?.second?.get(pIdx) ?: pencil.lngAt(pIdx)
             }
         }
-        if (totalTail >= 3) {
-            if (!hasAnchor) {
-                points.add(GeoPoint(tailLat(0), tailLng(0)))
-            }
-            val prevPoint = if (hasAnchor && c.size >= 2) c[c.size - 2] else null
+        val fromSeg = if (nc > 0) {
+            if (prefixEnd < 0) {
+                points.add(GeoPoint(vLat(0), vLng(0)))
+                0
+            } else prefixEnd - s
+        } else {
+            points.add(GeoPoint(vLat(0), vLng(0)))
+            0
+        }
+        if (total - 1 > fromSeg) {
             val filletRadius = if (speedMps > 8.0) 14.0 else if (speedMps > 3.0) 8.0 else 4.0
             CurvedPolyline.densify(
-                totalTail, 0, totalTail - 1,
-                { tailLat(it) }, { tailLng(it) },
-                prevLat = prevPoint?.latitude,
-                prevLng = prevPoint?.longitude,
+                total, fromSeg, total - 1,
+                { vLat(it) }, { vLng(it) },
                 maxFilletM = filletRadius
             ) { la, ln -> points.add(GeoPoint(la, ln)) }
-        } else {
-            for (i in (if (hasAnchor) 1 else 0) until totalTail) {
-                points.add(GeoPoint(tailLat(i), tailLng(i)))
-            }
         }
         tailValid = true
     }

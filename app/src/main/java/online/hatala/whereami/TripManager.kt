@@ -849,9 +849,17 @@ class TripManager private constructor(private val context: Context) {
                 "Trip discarded: dist=${trimDistanceMeters.toInt()}m duration=${durationMs / 1000}s auto=${current.isAutoDetected} scribble=$isScribbleTrip trivial=$isTrivialTrip"
             )
         } else {
+            val totalPauseMs = sanitizedPauses.sumOf { it.durationMs }
+            val movingMs = (durationMs - totalPauseMs).coerceAtLeast(1000L)
+            val physicalAvgSpeedKmh = if (durationMs >= 1000L && trimDistanceMeters >= 5.0) {
+                ((trimDistanceMeters / (movingMs / 1000.0)) * 3.6).toFloat().coerceAtMost(current.maxSpeedKmh.coerceAtLeast(1f))
+            } else {
+                current.avgSpeedKmh
+            }
             val finishedTrip = current.copy(
                 endTime = trimEndTime,
                 distanceMeters = trimDistanceMeters,
+                avgSpeedKmh = physicalAvgSpeedKmh,
                 points = trimmedPoints,
                 pauses = sanitizedPauses
             )
@@ -1236,13 +1244,22 @@ class TripManager private constructor(private val context: Context) {
 
         lastLocation = newLoc
 
-        // Speed stats (live Doppler/kalman speed; geometry and distance come from smoothed points)
+        // Speed stats (physical distance / moving time when available; fallback to sample mean during first meters)
         if (speedKmh > 1.0f) {
             totalSpeedSamples++
             sumSpeedKmh += speedKmh
         }
         val newMaxSpeed = maxOf(current.maxSpeedKmh, speedKmh)
-        val newAvgSpeed = if (totalSpeedSamples > 0) (sumSpeedKmh / totalSpeedSamples).toFloat() else current.avgSpeedKmh
+        val elapsedMs = (now - current.startTime).coerceAtLeast(0L)
+        val pauseMs = updatedPauses.sumOf { it.durationMs } + (activePause?.durationMs ?: 0L)
+        val movingMs = (elapsedMs - pauseMs).coerceAtLeast(1000L)
+        val newAvgSpeed = if (elapsedMs >= 5000L && current.distanceMeters >= 15.0) {
+            ((current.distanceMeters / (movingMs / 1000.0)) * 3.6).toFloat().coerceAtMost(newMaxSpeed)
+        } else if (totalSpeedSamples > 0) {
+            (sumSpeedKmh / totalSpeedSamples).toFloat()
+        } else {
+            current.avgSpeedKmh
+        }
 
         // Check for newly entered locality (with intentional visit filter: penetrate > 150m OR stay > 45s)
         val newPlaces = current.placesVisited.toMutableList()
@@ -1332,7 +1349,10 @@ class TripManager private constructor(private val context: Context) {
                 )
                 if (twoPoint || threePoint) {
                     val prevRejected = lastRejectedSmoothedPoint
+                    val accOk = p.accuracyM <= 16f && ((prevRejected?.accuracyM ?: 10f) <= 16f)
+                    val speedSustained = p.speedMps >= 1.5 && (prevRejected?.speedMps ?: 0.0) >= 1.5
                     if (prevRejected != null && !p.isStationary && p.tUtcMs > prevRejected.tUtcMs &&
+                        accOk && speedSustained &&
                         !TrackSpikeGuard.isSpikeStep(
                             prevRejected.lat, prevRejected.lng, prevRejected.tUtcMs,
                             p.lat, p.lng, p.tUtcMs, p.speedMps, p.isStationary,
@@ -1602,6 +1622,19 @@ class TripManager private constructor(private val context: Context) {
             )
 
             if ((isPenetrated || isSustainedStay) && !isRecentPingPong) {
+                if (placesList.size == 1 && placesList[0].placeKind == PlaceKind.LOCALITY) {
+                    val firstPlace = placesList[0]
+                    val initialStayMs = (candidate.firstSeenTimestamp - firstPlace.timestamp).coerceAtLeast(0L)
+                    val initialDistM = (candidate.entryDistanceMeters - firstPlace.distanceAtEntryMeters).coerceAtLeast(0.0)
+                    if (initialStayMs < 25_000L && initialDistM < 120.0) {
+                        TelemetryLogger.logTrip(
+                            "LOCALITY_INITIAL_PRUNED",
+                            tripId,
+                            "Pruned border-skimmed start locality ${firstPlace.placeName} (stay=${initialStayMs / 1000}s, dist=${initialDistM.toInt()}m) in favor of $candidateName"
+                        )
+                        placesList.clear()
+                    }
+                }
                 TelemetryLogger.logTrip(
                     "LOCALITY_COMMITTED",
                     tripId,

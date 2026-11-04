@@ -999,13 +999,20 @@ class LiveSharingManager private constructor(private val context: Context) {
             distFromLast = dist[0]
         }
 
-        val (intervalMs, breadcrumbGate) = resolveSyncParameters(
+        val (rawIntervalMs, breadcrumbGate) = resolveSyncParameters(
             isCharging = isCharging,
             profile = activeProfile,
             speedKmh = speedKmh,
             distanceMeters = distFromLast,
             batteryIntervalMinutes = session.syncIntervalMinutes
         )
+        val screenOff = !AppStateManager.getInstance(context).isAppInForegroundFlow.value
+        val isTripPaused = tripManager.isPaused.value
+        val intervalMs = if (screenOff && !isCharging && (!isTripRecording || isTripPaused)) {
+            rawIntervalMs.coerceAtLeast(5 * 60_000L)
+        } else {
+            rawIntervalMs
+        }
 
         val shouldSync = intervalMs > 0L && (now - session.lastSyncTime >= intervalMs)
 

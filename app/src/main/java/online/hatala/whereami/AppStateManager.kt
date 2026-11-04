@@ -152,22 +152,26 @@ class AppStateManager private constructor(private val context: Context) {
             isCarProfile: Boolean = false
         ): Boolean {
             if (elapsedMs < minDurationMs) return false
-            if (currentSpeedMs >= targetCandidateSpeedMs) return false
             val isSpeedStationary = currentSpeedMs < 1.0f // < 3.6 km/h
             val isNoDisplacement = displacementMeters < 12.0
 
             // If device is verified physically stationary by accelerometer (variance < 0.045)
-            // with zero/negligible displacement (< 6m), abort early regardless of profile.
+            // with zero/negligible displacement (< 10m), abort early regardless of profile or stale speed.
             // A running/driving car produces continuous engine and road vibration (isPhysicallyStationary = false).
-            if (isPhysicallyStationary && isSpeedStationary && displacementMeters < 6.0) {
+            if (isPhysicallyStationary && displacementMeters < 10.0 && (isSpeedStationary || displacementMeters < 6.0)) {
                 return true
             }
+
+            if (currentSpeedMs >= targetCandidateSpeedMs) return false
 
             if (!isCarProfile && (isPhysicallyStationary || (isSpeedStationary && isNoDisplacement))) {
                 return true
             }
 
             if (isCarProfile) {
+                if (isSpeedStationary && elapsedMs >= 25_000L && displacementMeters < 10.0) {
+                    return true
+                }
                 if (elapsedMs < 35_000L) return false
                 if (currentSpeedMs < 2.0f) {
                     if (displacementMeters < 15.0) {
@@ -297,6 +301,25 @@ class AppStateManager private constructor(private val context: Context) {
             val plugged = stickyIntent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
             _isCharging.value = isBatteryChargingOrPlugged(status, plugged, _isCharging.value)
         }
+
+        val carFilter = IntentFilter().apply {
+            addAction(android.app.UiModeManager.ACTION_ENTER_CAR_MODE)
+            addAction(android.app.UiModeManager.ACTION_EXIT_CAR_MODE)
+        }
+        val carReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                TelemetryLogger.log("POWER", "Car mode broadcast received: ${intent?.action}")
+                recalculateState()
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(carReceiver, carFilter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(carReceiver, carFilter)
+            }
+        } catch (_: Exception) {}
+
         recalculateState()
     }
 
@@ -457,11 +480,17 @@ class AppStateManager private constructor(private val context: Context) {
             motionRearmJob?.cancel()
             // Standby sleep wakes on app resume (MainActivity.onStart) if outside Bedtime/DND sleep window
             val autoSleepMgr = AutoSleepManager.getInstance(context)
-            val isBedtimeOrDnd = autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()
+            val isMorning = AutoSleepManager.isMorningTime(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
+            val isAlarmFired = autoSleepMgr.isAlarmFiredRecently()
+            val isBedtimeOrDnd = (autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()) && !(isMorning && isAlarmFired)
             if (_isStandbySleeping.value && !isBedtimeOrDnd) {
-                wakeStandbySleep(isExplicitUserAction = false)
+                wakeStandbySleep(isExplicitUserAction = true)
             } else if (!_isStandbySleeping.value) {
-                autoSleepMgr.checkAndRecoverAutoPausedLiveShare()
+                if (isMorning && isAlarmFired) {
+                    autoSleepMgr.onSleepWoken()
+                } else {
+                    autoSleepMgr.checkAndRecoverAutoPausedLiveShare()
+                }
             }
             ensureAutoStandbyServiceRunning()
         } else {

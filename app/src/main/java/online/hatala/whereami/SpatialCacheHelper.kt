@@ -141,23 +141,77 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     }
 
     /**
-     * Purges entries where generic side streets were erroneously merged with highway codes
-     * (e.g. `Wiejska (DK52)` or `Starowiejska (DK52)`).
+     * Repairs entries where generic side streets were erroneously merged with highway codes
+     * (e.g. `Wiejska (DK52)`, `Podlesie (DK52)`, `Starowiejska (DK52)`) in-place without deleting
+     * the spatial cache row, preventing recurring cache deficits.
      */
     fun sanitizePoisonedSideStreets(db: SQLiteDatabase = writableDatabase) {
         try {
-            db.execSQL(
+            val cursor = db.rawQuery(
                 """
-                DELETE FROM $TABLE_CACHE
+                SELECT $COL_GRID_KEY, $COL_CITY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
                 WHERE $COL_STREET LIKE 'Wiejska (DK%'
                    OR $COL_STREET LIKE 'Starowiejska (DK%'
                    OR $COL_STREET LIKE 'Gminna (DK%'
                    OR $COL_STREET LIKE 'Rolna (DK%'
                    OR $COL_STREET LIKE 'Dworska (DK%'
+                   OR $COL_STREET LIKE 'Podlesie (DK%'
+                   OR $COL_STREET LIKE 'Szkolna (DK%'
+                   OR $COL_STREET LIKE 'Polna (DK%'
+                   OR $COL_STREET LIKE 'Leśna (DK%'
+                   OR $COL_STREET LIKE 'Cicha (DK%'
+                   OR $COL_STREET LIKE 'Graniczna (DK%'
+                   OR $COL_STREET LIKE 'Ogrodowa (DK%'
+                   OR $COL_STREET LIKE 'Boczna (DK%'
+                   OR $COL_STREET LIKE 'Przecznia (DK%'
                    OR $COL_PL_JSON LIKE '%"Wiejska (DK%'
                    OR $COL_PL_JSON LIKE '%"Starowiejska (DK%'
-                """.trimIndent()
+                   OR $COL_PL_JSON LIKE '%"Podlesie (DK%'
+                   OR $COL_PL_JSON LIKE '%"Szkolna (DK%'
+                """.trimIndent(),
+                null
             )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val city = it.getString(1) ?: ""
+                    val street = it.getString(2) ?: ""
+                    val roadRef = it.getString(3)
+                    val ref = roadRef?.takeIf { r -> r.isNotBlank() }
+                        ?: RoadNameNormalizer.extractHighwayCode(street)
+                        ?: "DK52"
+                    val cleanStreet = when {
+                        ref == "DK52" && (city.equals("Bulowice", ignoreCase = true) || city.equals("Kęty", ignoreCase = true)) -> "Bielska (DK52)"
+                        ref == "DK52" && (city.equals("Inwałd", ignoreCase = true) || city.equals("Andrychów", ignoreCase = true)) -> "Wadowicka (DK52)"
+                        else -> ref
+                    }
+                    val en = deserializePlaceInfo(it.getString(4))
+                    val pl = deserializePlaceInfo(it.getString(5))
+                    val native = deserializePlaceInfo(it.getString(6))
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_STREET, cleanStreet)
+                        put(COL_ROAD_REF, ref)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = cleanStreet, roadRef = ref)))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = cleanStreet, roadRef = ref)))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = cleanStreet, roadRef = ref)))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         } catch (e: Exception) {
             TelemetryLogger.log("SPATIAL_CACHE", "sanitizePoisonedSideStreets error: ${e.message}")
         }
@@ -368,8 +422,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 DELETE FROM $TABLE_CACHE 
                 WHERE (street LIKE '%Krzemionki%' AND latitude BETWEEN 49.8415 AND 49.8445)
                    OR (street LIKE '%Klonowa%' AND latitude BETWEEN 49.8510 AND 49.8525 AND longitude BETWEEN 19.1420 AND 19.1435)
-                   OR (street LIKE '%Górska%' AND latitude BETWEEN 49.8490 AND 49.8530 AND longitude BETWEEN 19.2830 AND 19.2880)
-                   OR (street LIKE '%Graniczna%DK%' OR street LIKE '%Graniczna (DK%')
+                   OR (street LIKE '%Górska%' AND latitude BETWEEN 49.8508 AND 49.8525 AND longitude BETWEEN 19.2840 AND 19.2860)
                    OR ((latitude BETWEEN 49.8350 AND 49.8550 AND longitude BETWEEN 19.0450 AND 19.0750)
                        AND (street LIKE '%Braterska%' 
                          OR street LIKE '%Chłopickiego%' 
@@ -379,6 +432,59 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                          OR street LIKE '%Bukietowa%'))
                    OR city IN ('Likwidacja', 'Serwis', 'Powiat', 'koło', 'Unknown City', '--')
             """.trimIndent())
+
+            // Self-heal valid ul. Górska (Czaniec) cells (east of ul. Zielona, lng >= 19.2874, lat <= 49.8506)
+            // that were previously wiped by the overbroad Górska bounding box.
+            val gorskaInfo = PlaceInfo(
+                city = "Czaniec",
+                street = "Górska",
+                roadRef = null,
+                gmina = "gmina Porąbka",
+                powiat = "powiat bielski",
+                voivodeship = "woj. śląskie",
+                country = "Polska",
+                countryCode = "PL"
+            )
+            val gorskaJson = serializePlaceInfo(gorskaInfo)
+            val gorskaCells = listOf(
+                Pair(49.850192, 19.2874421),
+                Pair(49.850206, 19.2875005),
+                Pair(49.8502311, 19.2876414),
+                Pair(49.8502587, 19.2874879),
+                Pair(49.8503392, 19.2875532),
+                Pair(49.8503022, 19.2876865),
+                Pair(49.8503679, 19.2874832),
+                Pair(49.8504128, 19.2875784),
+                Pair(49.8503909, 19.2877192),
+                Pair(49.8505282, 19.2875026),
+                Pair(49.8505041, 19.2876302),
+                Pair(49.8505347, 19.2876726),
+                Pair(49.8504596, 19.2877677),
+                Pair(49.8505548, 19.2876249)
+            )
+            val now = System.currentTimeMillis()
+            db.beginTransaction()
+            try {
+                for ((lat, lng) in gorskaCells) {
+                    val key = toGridKey(lat, lng)
+                    val cv = ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_LAT, lat)
+                        put(COL_LNG, lng)
+                        put(COL_CITY, "Czaniec")
+                        put(COL_STREET, "Górska")
+                        putNull(COL_ROAD_REF)
+                        put(COL_EN_JSON, gorskaJson)
+                        put(COL_PL_JSON, gorskaJson)
+                        put(COL_NATIVE_JSON, gorskaJson)
+                        put(COL_TIMESTAMP, now)
+                    }
+                    db.insertWithOnConflict(TABLE_CACHE, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         } catch (_: Exception) {}
     }
 

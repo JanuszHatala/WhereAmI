@@ -71,6 +71,8 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         sessionToken = mediaSession.sessionToken
 
         locationManager = LocationManager.getInstance(this)
+        locationManager.isGpsStopped = false
+        locationManager.updateSamplingInterval(1000L, 1000L, 0L)
 
         startForegroundService()
         startTracking()

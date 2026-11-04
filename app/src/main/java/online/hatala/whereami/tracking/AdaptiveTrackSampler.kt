@@ -29,13 +29,13 @@ class AdaptiveTrackSampler {
             return listOf(p)
         }
         if (p.isStationary) {
-            // Parked: nothing new to draw. Keep the last moving point so the departure joins cleanly,
-            // and advance the anchor clock so departure dt does not include stationary dwell time.
+            // Parked: commit the final pre-stop point even if close to the previous vertex so the committed
+            // track reaches the true stopping point and prunes any braking pencil trail.
             val last = window.lastOrNull()
             window.clear()
-            if (last != null && distanceM(a, last) >= minSpacingM(last.speedMps)) {
+            if (last != null && distanceM(a, last) >= 0.8) {
                 anchor = last.copy(tElapsedMs = p.tElapsedMs, tUtcMs = p.tUtcMs)
-                return listOf(last)
+                return listOf(last.copy(tElapsedMs = p.tElapsedMs))
             }
             anchor = a.copy(tElapsedMs = p.tElapsedMs, tUtcMs = p.tUtcMs)
             return emptyList()
@@ -113,10 +113,10 @@ class AdaptiveTrackSampler {
         const val PARKING_ESCAPE_M = 12.0
 
         /** Allowed sideways error of the stored polyline vs. the smoothed path. */
-        fun toleranceM(speedMps: Double): Double = (0.25 + 0.06 * speedMps).coerceIn(0.25, 2.0)
+        fun toleranceM(speedMps: Double): Double = (0.20 + 0.04 * speedMps).coerceIn(0.20, 1.1)
 
         /** Below this chord length nothing is stored (sub-metre GNSS texture is not geometry). */
-        fun minSpacingM(speedMps: Double): Double = (0.5 * speedMps).coerceIn(0.8, 8.0)
+        fun minSpacingM(speedMps: Double): Double = (0.32 * speedMps).coerceIn(0.8, 4.5)
 
         /** Even on a perfectly straight line store a vertex at least this often (about 2 s of travel). */
         fun maxSpacingM(speedMps: Double): Double = (1.5 * speedMps).coerceIn(2.0, 35.0)

@@ -18,7 +18,8 @@ object CurvedPolyline {
     /** Target spacing of the inserted points along a rounded corner. */
     const val STEP_M = 0.8
     const val MAX_FILLET_M = 16.0
-    const val MIN_CORNER_DEG = 5.0
+    const val MAX_SAGITTA_M = 0.85
+    const val MIN_CORNER_DEG = 2.5
     const val MAX_CORNER_DEG = 150.0
 
     /**
@@ -55,7 +56,9 @@ object CurvedPolyline {
 
                 val theta = turnDeg(x2, y2, x3, y3)
                 if (theta in MIN_CORNER_DEG..MAX_CORNER_DEG && lout > 0.5) {
-                    val r = minOf(maxFilletM, 0.38 * lin, 0.38 * lout)
+                    val halfTurnSin = kotlin.math.sin(Math.toRadians(theta * 0.5))
+                    val rSagitta = if (halfTurnSin > 1e-4) (2.0 * MAX_SAGITTA_M) / halfTurnSin else maxFilletM
+                    val r = minOf(maxFilletM, rSagitta, 0.46 * lin, 0.46 * lout)
                     // Fillet start along incoming leg (relative to vertex j)
                     val qx = x2 - r * (x2 / lin)
                     val qy = y2 - r * (y2 / lin)
@@ -70,7 +73,7 @@ object CurvedPolyline {
                     }
 
                     // Emit interior quadratic Bezier fillet points: B is control point at (x2, y2)
-                    val steps = maxOf(2, minOf(5, (r / STEP_M).roundToInt()))
+                    val steps = maxOf(3, minOf(6, (r / STEP_M).roundToInt()))
                     for (s in 1 until steps) {
                         val u = s.toDouble() / steps
                         val w0 = (1.0 - u) * (1.0 - u)
