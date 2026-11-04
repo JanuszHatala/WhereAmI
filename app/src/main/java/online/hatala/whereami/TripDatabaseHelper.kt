@@ -36,6 +36,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         /** 0 = geometry still lives in points_json (not yet backfilled), 1 = geometry lives in track_points. */
         private const val COL_POINTS_STORE = "points_store"
 
+        val TRIP_SUMMARY_COLUMNS = arrayOf(
+            COL_ID, COL_TITLE, COL_START_TIME, COL_END_TIME, COL_DISTANCE, COL_MAX_SPEED,
+            COL_AVG_SPEED, COL_IS_AUTO, COL_ACTIVITY_PROFILE, COL_PLACES_JSON, COL_PAUSES_JSON,
+            COL_POINTS_STORE
+        )
+
         // Track points table (v9): one row per recorded sample
         private const val TABLE_TRACK_POINTS = "track_points"
         private const val TABLE_TRIP_MATCHES = "trip_matches"
@@ -606,6 +612,88 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         ensureSavedPlacesColumns(db)
         sanitizeStoredPlaces(db)
         repairCorruptedTripTimes(db)
+        purgeObsoletePointsJson(db)
+        reconcileTripSpeedsAndBorderSkims(db)
+    }
+
+    private fun purgeObsoletePointsJson(db: SQLiteDatabase) {
+        try {
+            db.execSQL("UPDATE $TABLE_TRIPS SET $COL_POINTS_JSON = '[]' WHERE $COL_POINTS_STORE = 1 AND length($COL_POINTS_JSON) > 10")
+        } catch (e: Exception) {
+            TelemetryLogger.log("DB_MIGRATION", "Error purging obsolete points_json: ${e.message}")
+        }
+    }
+
+    private fun reconcileTripSpeedsAndBorderSkims(db: SQLiteDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                "SELECT $COL_ID, $COL_START_TIME, $COL_END_TIME, $COL_DISTANCE, $COL_AVG_SPEED, $COL_MAX_SPEED, $COL_PAUSES_JSON, $COL_PLACES_JSON " +
+                    "FROM $TABLE_TRIPS WHERE $COL_END_TIME IS NOT NULL",
+                null
+            )
+            val updates = mutableListOf<Pair<Long, ContentValues>>()
+            cursor.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(COL_ID)
+                val startIdx = c.getColumnIndexOrThrow(COL_START_TIME)
+                val endIdx = c.getColumnIndexOrThrow(COL_END_TIME)
+                val distIdx = c.getColumnIndexOrThrow(COL_DISTANCE)
+                val avgIdx = c.getColumnIndexOrThrow(COL_AVG_SPEED)
+                val maxIdx = c.getColumnIndexOrThrow(COL_MAX_SPEED)
+                val pausesIdx = c.getColumnIndexOrThrow(COL_PAUSES_JSON)
+                val placesIdx = c.getColumnIndexOrThrow(COL_PLACES_JSON)
+
+                while (c.moveToNext()) {
+                    val id = c.getLong(idIdx)
+                    val start = c.getLong(startIdx)
+                    val end = c.getLong(endIdx)
+                    val dist = c.getDouble(distIdx)
+                    val storedAvg = c.getFloat(avgIdx)
+                    val maxSpeed = c.getFloat(maxIdx)
+                    val pausesJson = c.getString(pausesIdx) ?: "[]"
+                    val placesJson = c.getString(placesIdx) ?: "[]"
+
+                    val cv = ContentValues()
+                    val durationMs = (end - start).coerceAtLeast(0L)
+                    if (durationMs > 5000L && dist > 50.0) {
+                        val pauses = jsonToPauses(pausesJson)
+                        val pauseMs = pauses.sumOf { it.durationMs }
+                        val movingMs = (durationMs - pauseMs).coerceAtLeast(1000L)
+                        val physicalAvg = ((dist / (movingMs / 1000.0)) * 3.6).toFloat()
+                            .coerceAtMost(maxSpeed.coerceAtLeast(1f))
+                        if (kotlin.math.abs(physicalAvg - storedAvg) > 0.15f) {
+                            cv.put(COL_AVG_SPEED, physicalAvg)
+                        }
+                    }
+
+                    val places = jsonToPlaces(placesJson)
+                    if (places.size >= 2 && places[0].placeKind == PlaceKind.LOCALITY) {
+                        val first = places[0]
+                        val second = places[1]
+                        val stayMs = (second.timestamp - first.timestamp).coerceAtLeast(0L)
+                        val stayDistM = (second.distanceAtEntryMeters - first.distanceAtEntryMeters).coerceAtLeast(0.0)
+                        if (stayMs < 25_000L && stayDistM < 120.0) {
+                            val pruned = places.drop(1)
+                            cv.put(COL_PLACES_JSON, placesToJson(pruned))
+                        }
+                    }
+
+                    if (cv.size() > 0) {
+                        updates.add(id to cv)
+                    }
+                }
+            }
+            if (updates.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for ((id, cv) in updates) {
+                        db.update(TABLE_TRIPS, cv, "$COL_ID = ?", arrayOf(id.toString()))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun sanitizeStoredPlaces(db: SQLiteDatabase) {
@@ -895,7 +983,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         } else {
             ActivityProfile.CAR
         }
-        val pointsJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_POINTS_JSON)) ?: "[]"
+        val pointsJsonColIdx = cursor.getColumnIndex(COL_POINTS_JSON)
+        val pointsJson = if (pointsJsonColIdx >= 0 && !cursor.isNull(pointsJsonColIdx)) cursor.getString(pointsJsonColIdx) ?: "[]" else "[]"
         val storeIdx = cursor.getColumnIndex(COL_POINTS_STORE)
         val pointsFromTable = storeIdx >= 0 && !cursor.isNull(storeIdx) && cursor.getInt(storeIdx) == 1
         val placesJson = cursor.getString(cursor.getColumnIndexOrThrow(COL_PLACES_JSON)) ?: "[]"
@@ -928,7 +1017,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val db = readableDatabase
         val cursor = db.query(
             TABLE_TRIPS,
-            null,
+            TRIP_SUMMARY_COLUMNS,
             null,
             null,
             null,
@@ -981,7 +1070,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val db = readableDatabase
         val cursor = db.query(
             TABLE_TRIPS,
-            null,
+            TRIP_SUMMARY_COLUMNS,
             selection,
             args,
             null,

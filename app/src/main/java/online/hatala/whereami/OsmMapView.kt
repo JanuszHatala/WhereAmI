@@ -548,23 +548,26 @@ fun OsmMapView(
         }
     }
 
-    LaunchedEffect(Unit) {
+    remember(context) {
         Configuration.getInstance().apply {
             userAgentValue = "WhereAmI/2.0 (Android; https://github.com/janush74/WhereAmI)"
-            tileFileSystemThreads = 4.toShort()
-            tileDownloadThreads = 4.toShort()
-            tileFileSystemMaxQueueSize = 120.toShort()
-            tileDownloadMaxQueueSize = 120.toShort()
+            tileFileSystemThreads = 8.toShort()
+            tileDownloadThreads = 8.toShort()
+            tileFileSystemMaxQueueSize = 160.toShort()
+            tileDownloadMaxQueueSize = 160.toShort()
             // 600 MB persistent offline tile disk cache
             tileFileSystemCacheMaxBytes = 600L * 1024 * 1024
             tileFileSystemCacheTrimBytes = 500L * 1024 * 1024
-            cacheMapTileCount = 250.toShort()
+            cacheMapTileCount = 350.toShort()
         }
+        true
     }
 
     val minZoom = 3.0
-    val maxZoom = 22.0
+    val maxZoom = 19.85
     var currentZoom by remember { mutableStateOf(16.0) }
+    var currentMapOrientation by remember { mutableStateOf(0f) }
+    var viewportScrollBucket by remember { mutableStateOf(0) }
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var marker by remember { mutableStateOf<Marker?>(null) }
@@ -719,6 +722,12 @@ fun OsmMapView(
             MapBaseLayer.TOPO -> OpenTopoMapSource
             MapBaseLayer.SATELLITE -> EsriSatelliteSource
         }
+        val layerMaxZoom = if (baseLayer == MapBaseLayer.TOPO) 17.85 else maxZoom
+        map.maxZoomLevel = layerMaxZoom
+        if (map.zoomLevelDouble > layerMaxZoom) {
+            map.controller.setZoom(layerMaxZoom)
+            currentZoom = layerMaxZoom
+        }
         map.setTileSource(tileSource)
         MapProfileConfigHelper.setBaseLayer(context, activityProfile, baseLayer)
         map.invalidate()
@@ -789,6 +798,7 @@ fun OsmMapView(
             MapOrientationMode.WEST -> map.mapOrientation = 90f
             MapOrientationMode.COURSE_UP -> { /* smoothly handled at 35 FPS in frame loop */ }
         }
+        currentMapOrientation = map.mapOrientation
         map.invalidate()
     }
 
@@ -1014,6 +1024,7 @@ fun OsmMapView(
                             }
                             val course = courseSlew.step(mapBearing, dtSec)
                             map.mapOrientation = normalizeAngle(-course.toFloat())
+                            currentMapOrientation = map.mapOrientation
                         }
                     }
 
@@ -1064,6 +1075,9 @@ fun OsmMapView(
                                         } > 0
                                 val added = !pose.isStationary && (!pose.isPredicted || pose.speedMps >= 1.5) &&
                                     pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
+                                if (pose.isStationary && pencilTrail.size > 0 && committedThroughMs >= pose.renderTimeMs - 1_500L) {
+                                    pencilTrail.clear()
+                                }
                                 if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                                     liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
                                     line.setPoints(liveLine.points)
@@ -1306,7 +1320,8 @@ fun OsmMapView(
                     ?: latLng?.let { GeoPoint(it.first, it.second) }
                 val tip = currentPt ?: trackPoints.lastOrNull()
                 if (tip != null) {
-                    liveLine.rebuildTail(pencilTrail, tip, committedThroughMs)
+                    val curSpeedMps = (latestFix?.speedMs ?: 0f).toDouble()
+                    liveLine.rebuildTail(pencilTrail, tip, committedThroughMs, speedMps = curSpeedMps)
                     polyline?.setPoints(liveLine.points)
                 }
             }
@@ -1365,7 +1380,18 @@ fun OsmMapView(
     }
 
     // Render Guest Markers (Follow back guest positions)
-    LaunchedEffect(visibleGuests, showGuestDistanceBadge, latLng) {
+    val zoomSpiderfyBucket = kotlin.math.round(currentZoom * 8.0).toInt()
+    val orientationSpiderfyBucket = kotlin.math.round(currentMapOrientation / 5.0).toInt()
+    LaunchedEffect(
+        visibleGuests,
+        showGuestDistanceBadge,
+        latLng,
+        zoomSpiderfyBucket,
+        orientationSpiderfyBucket,
+        viewportScrollBucket,
+        fontScale,
+        savedPlaces.size
+    ) {
         val map = mapView ?: return@LaunchedEffect
 
         if (visibleGuests.isEmpty()) {
@@ -1395,14 +1421,23 @@ fun OsmMapView(
         val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
         val hostGp = marker?.position ?: latLng?.let { GeoPoint(it.first, it.second) }
         val obstacleGps = savedPlaces.map { it.geoPoint }
+        val effectiveZoom = if (currentZoom > 0.0) currentZoom else map.zoomLevelDouble
+        val vpCenter = GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
+        val vpWidthDp = (map.width / density).toDouble().takeIf { it > 100.0 } ?: 360.0
+        val vpHeightDp = (map.height / density).toDouble().takeIf { it > 100.0 } ?: 760.0
 
         val spiderfyPositions = computeSpiderfyOffsets(
             guests = visibleGuests,
             hostPos = hostGp,
             obstaclePoints = obstacleGps,
-            zoomLevel = map.zoomLevelDouble,
+            zoomLevel = effectiveZoom,
             density = density,
-            mapOrientationDeg = map.mapOrientation
+            mapOrientationDeg = map.mapOrientation,
+            fontScaleFactor = fontScale.scaleFactor,
+            showGuestDistanceBadge = showGuestDistanceBadge,
+            viewportCenter = vpCenter,
+            viewportWidthDp = vpWidthDp,
+            viewportHeightDp = vpHeightDp
         )
         currentSpiderfyPositions = spiderfyPositions
 
@@ -1888,15 +1923,43 @@ fun OsmMapView(
                         false
                     }
 
+                    var lastScrollSpiderfyLat = 0.0
+                    var lastScrollSpiderfyLng = 0.0
                     addMapListener(object : org.osmdroid.events.MapListener {
                         override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
                             if (isUserDragging) {
                                 isFollowing = false
                             }
+                            if (kotlin.math.abs(mapOrientation - currentMapOrientation) >= 2f) {
+                                currentMapOrientation = mapOrientation
+                            }
+                            if (kotlin.math.abs(zoomLevelDouble - currentZoom) >= 0.05) {
+                                currentZoom = zoomLevelDouble
+                            }
+                            if (latestVisibleGuests.isNotEmpty()) {
+                                val c = mapCenter
+                                val dLat = kotlin.math.abs(c.latitude - lastScrollSpiderfyLat)
+                                val dLng = kotlin.math.abs(c.longitude - lastScrollSpiderfyLng)
+                                val spanLat = boundingBox.latitudeSpan.coerceAtLeast(1e-5)
+                                val spanLng = boundingBox.longitudeSpanWithDateLine.coerceAtLeast(1e-5)
+                                if (dLat > spanLat * 0.06 || dLng > spanLng * 0.06) {
+                                    lastScrollSpiderfyLat = c.latitude
+                                    lastScrollSpiderfyLng = c.longitude
+                                    viewportScrollBucket++
+                                }
+                            }
                             return false
                         }
                         override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
                             currentZoom = event?.zoomLevel ?: zoomLevelDouble
+                            currentMapOrientation = mapOrientation
+                            viewportScrollBucket++
+                            postDelayed({
+                                if (kotlin.math.abs(zoomLevelDouble - currentZoom) >= 0.02) {
+                                    currentZoom = zoomLevelDouble
+                                }
+                                viewportScrollBucket++
+                            }, 350L)
                             return false
                         }
                     })
@@ -1925,8 +1988,13 @@ fun OsmMapView(
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
                         val map = mapView ?: return@clickable
+                        val targetZoom = (map.zoomLevelDouble + 1.0).coerceAtMost(maxZoom)
                         map.controller.zoomIn()
-                        currentZoom = map.zoomLevelDouble
+                        currentZoom = targetZoom
+                        map.postDelayed({
+                            currentZoom = map.zoomLevelDouble
+                            viewportScrollBucket++
+                        }, 360L)
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -1946,8 +2014,13 @@ fun OsmMapView(
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
                         val map = mapView ?: return@clickable
+                        val targetZoom = (map.zoomLevelDouble - 1.0).coerceAtLeast(minZoom)
                         map.controller.zoomOut()
-                        currentZoom = map.zoomLevelDouble
+                        currentZoom = targetZoom
+                        map.postDelayed({
+                            currentZoom = map.zoomLevelDouble
+                            viewportScrollBucket++
+                        }, 360L)
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -4074,10 +4147,16 @@ internal fun makeGuestMarkerIcon(
 }
 
 private data class ScreenBox(val x: Double, val y: Double, val halfW: Double, val halfH: Double) {
-    fun overlaps(other: ScreenBox, padding: Double = 4.0): Boolean {
+    fun overlaps(other: ScreenBox, padding: Double = 6.0): Boolean {
         val dx = kotlin.math.abs(x - other.x)
         val dy = kotlin.math.abs(y - other.y)
         return dx < (halfW + other.halfW + padding) && dy < (halfH + other.halfH + padding)
+    }
+
+    fun overlapArea(other: ScreenBox, padding: Double = 6.0): Double {
+        val ox = (halfW + other.halfW + padding) - kotlin.math.abs(x - other.x)
+        val oy = (halfH + other.halfH + padding) - kotlin.math.abs(y - other.y)
+        return if (ox > 0.0 && oy > 0.0) ox * oy else 0.0
     }
 }
 
@@ -4087,15 +4166,23 @@ fun computeSpiderfyOffsets(
     obstaclePoints: List<GeoPoint> = emptyList(),
     zoomLevel: Double = 17.0,
     density: Float = 2.5f,
-    mapOrientationDeg: Float = 0f
+    mapOrientationDeg: Float = 0f,
+    fontScaleFactor: Float = 1.0f,
+    showGuestDistanceBadge: Boolean = true,
+    viewportCenter: GeoPoint? = null,
+    viewportWidthDp: Double = 360.0,
+    viewportHeightDp: Double = 760.0
 ): Map<String, GeoPoint> {
     if (guests.isEmpty()) return emptyMap()
 
-    val refLat = hostPos?.latitude ?: guests.firstOrNull()?.lat ?: 49.85
-    val refLng = hostPos?.longitude ?: guests.firstOrNull()?.lng ?: 19.28
+    val refLat = viewportCenter?.latitude ?: hostPos?.latitude ?: guests.firstOrNull()?.lat ?: 49.85
+    val refLng = viewportCenter?.longitude ?: hostPos?.longitude ?: guests.firstOrNull()?.lng ?: 19.28
     val cosLat = kotlin.math.cos(Math.toRadians(refLat)).coerceAtLeast(0.01)
-    val metersPerPixel = (156543.03392 * cosLat / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
-    val dpPerMeter = 1.0 / (metersPerPixel * density.toDouble().coerceAtLeast(1.0))
+    val scale = fontScaleFactor.toDouble().coerceIn(0.85, 2.0)
+    // osmdroid renders 256px tiles scaled by tilesScaleFactor (= fontScaleFactor).
+    // 1 dp on screen equals (density) screen pixels, while 1 meter equals tilesScaleFactor / metersPerBasePixel pixels.
+    val metersPerBasePixel = (156543.03392 * cosLat / Math.pow(2.0, zoomLevel.coerceIn(4.0, 21.0)))
+    val dpPerMeter = scale / (metersPerBasePixel * density.toDouble().coerceAtLeast(1.0))
     val mLat = 111132.0
     val mLng = 111132.0 * cosLat
 
@@ -4121,86 +4208,145 @@ fun computeSpiderfyOffsets(
         return Pair(dLat, dLng)
     }
 
-    val staticBoxes = mutableListOf<ScreenBox>()
+    val staticPinBoxes = mutableListOf<ScreenBox>()
+    val staticBadgeBoxes = mutableListOf<ScreenBox>()
     if (hostPos != null) {
         val (hostX, hostY) = toScreen(hostPos.latitude, hostPos.longitude)
-        staticBoxes.add(ScreenBox(hostX, hostY, 20.0, 20.0)) // host marker
-        staticBoxes.add(ScreenBox(hostX, hostY - 32.0, 38.0, 14.0)) // altitude badge above host on screen
+        staticPinBoxes.add(ScreenBox(hostX, hostY, 10.0 * scale, 10.0 * scale)) // host marker
+        staticBadgeBoxes.add(ScreenBox(hostX, hostY - 30.0 * scale, 36.0 * scale, 12.0 * scale)) // altitude badge above host
     }
 
-    for (obs in obstaclePoints) {
-        val (obsX, obsY) = toScreen(obs.latitude, obs.longitude)
-        staticBoxes.add(ScreenBox(obsX, obsY, 20.0, 20.0))
-    }
-
-    val candidateOffsets = listOf(
-        Pair(0.0, 0.0),       // 1. Natural position (no displacement)
-        Pair(-88.0, 12.0),    // 2. West-Southwest (clears altitude badge & right controls, with non-zero lat)
-        Pair(-72.0, -28.0),   // 3. North-West
-        Pair(0.0, 48.0),      // 4. South (down)
-        Pair(0.0, -56.0),     // 5. North (above altitude badge)
-        Pair(88.0, 12.0),     // 6. East-Southeast
-        Pair(72.0, -28.0),    // 7. North-East
-        Pair(-110.0, 0.0),    // 8. West 2
-        Pair(0.0, 68.0),      // 9. South 2
-        Pair(0.0, -75.0)      // 10. North 2
-    )
+    // Static pins: only host marker and altitude badge (saved places must never displace guests)
+    val vpScreen = viewportCenter?.let { toScreen(it.latitude, it.longitude) }
 
     val result = mutableMapOf<String, GeoPoint>()
     val placedBoxes = mutableListOf<ScreenBox>()
 
-    // Sort guests so closest to host are placed first
-    val sortedGuests = guests.sortedBy { g ->
-        if (hostPos != null) {
-            val dLat = (g.lat - hostPos.latitude) * mLat
-            val dLng = (g.lng - hostPos.longitude) * mLng
-            kotlin.math.hypot(dLat, dLng)
-        } else 0.0
-    }
+    // Sort guests deterministically so closest to host are placed first
+    val sortedGuests = guests.sortedWith(
+        compareBy<LiveGuest> { g ->
+            if (hostPos != null) {
+                val dLat = (g.lat - hostPos.latitude) * mLat
+                val dLng = (g.lng - hostPos.longitude) * mLng
+                kotlin.math.hypot(dLat, dLng)
+            } else 0.0
+        }.thenBy { it.id }
+    )
 
-    for (guest in sortedGuests) {
+    for ((guestIdx, guest) in sortedGuests.withIndex()) {
         val (origX, origY) = toScreen(guest.lat, guest.lng)
+        val distM = if (hostPos != null) {
+            val dLat = (guest.lat - hostPos.latitude) * mLat
+            val dLng = (guest.lng - hostPos.longitude) * mLng
+            kotlin.math.hypot(dLat, dLng).toFloat()
+        } else null
+        val badgeText = GuestMarkerHelper.formatBadgeText(guest, distM, showGuestDistanceBadge)
+        // Avatar circle centered at anchor (origX, origY); badge pill hangs below avatar.
+        val avatarHalf = 14.0 * scale
+        val badgeWidthDp = if (badgeText.isNotEmpty()) (badgeText.length * 5.2 + 14.0) * scale else 0.0
+        val badgeHalfW = maxOf(avatarHalf, badgeWidthDp * 0.5)
+        val badgeHalfH = 10.0 * scale
+        val badgeCenterOffsetY = 16.0 * scale + 3.0 * scale + badgeHalfH
 
-        var bestOffset = candidateOffsets[0]
-        var foundClean = false
-
-        for (cand in candidateOffsets) {
-            val testBox = ScreenBox(origX + cand.first, origY + cand.second, 28.0, 26.0)
-            val collidesStatic = staticBoxes.any { testBox.overlaps(it, padding = 4.0) }
-            val collidesPlaced = placedBoxes.any { testBox.overlaps(it, padding = 4.0) }
-
-            if (!collidesStatic && !collidesPlaced) {
-                bestOffset = cand
-                foundClean = true
-                break
+        fun boxesForOffset(dxDp: Double, dyDp: Double): List<ScreenBox> {
+            val ax = origX + dxDp
+            val ay = origY + dyDp
+            val avatarBox = ScreenBox(ax, ay, avatarHalf, avatarHalf)
+            return if (badgeText.isNotEmpty()) {
+                val badgeBox = ScreenBox(ax, ay + badgeCenterOffsetY, badgeHalfW, badgeHalfH)
+                listOf(avatarBox, badgeBox)
+            } else {
+                listOf(avatarBox)
             }
         }
 
-        // If no clean candidate found, default to West-Southwest
-        if (!foundClean) {
-            bestOffset = candidateOffsets[1]
+        // Build tight compact candidates sorted strictly by distance from (0, 0)
+        // so guests stay at (0, 0) whenever possible and shift by the absolute minimum needed (max 32dp).
+        val nonZeroCandidates = ArrayList<Pair<Double, Double>>(24)
+        // Ring 1 (~20-24dp): immediately clears an adjacent co-located guest
+        nonZeroCandidates.add(Pair(0.0, -22.0 * scale))
+        nonZeroCandidates.add(Pair(0.0, 22.0 * scale))
+        nonZeroCandidates.add(Pair(-24.0 * scale, 0.0))
+        nonZeroCandidates.add(Pair(24.0 * scale, 0.0))
+        nonZeroCandidates.add(Pair(-18.0 * scale, -18.0 * scale))
+        nonZeroCandidates.add(Pair(18.0 * scale, -18.0 * scale))
+        nonZeroCandidates.add(Pair(-18.0 * scale, 18.0 * scale))
+        nonZeroCandidates.add(Pair(18.0 * scale, 18.0 * scale))
+        // Ring 2 (~28-32dp): for 3+ co-located guests
+        nonZeroCandidates.add(Pair(0.0, -32.0 * scale))
+        nonZeroCandidates.add(Pair(0.0, 32.0 * scale))
+        nonZeroCandidates.add(Pair(-32.0 * scale, 0.0))
+        nonZeroCandidates.add(Pair(32.0 * scale, 0.0))
+        nonZeroCandidates.add(Pair(-26.0 * scale, -22.0 * scale))
+        nonZeroCandidates.add(Pair(26.0 * scale, -22.0 * scale))
+        nonZeroCandidates.add(Pair(-26.0 * scale, 22.0 * scale))
+        nonZeroCandidates.add(Pair(26.0 * scale, 22.0 * scale))
+
+        nonZeroCandidates.sortBy { (dx, dy) ->
+            // Slight preference for West over East at equal radius to clear right-side map buttons
+            kotlin.math.hypot(dx, dy) + if (dx < 0) -0.5 else 0.0
         }
 
-        val finalX = origX + bestOffset.first
-        val finalY = origY + bestOffset.second
-        placedBoxes.add(ScreenBox(finalX, finalY, 28.0, 26.0))
+        val candidates = ArrayList<Pair<Double, Double>>(nonZeroCandidates.size + 1)
+        candidates.add(Pair(0.0, 0.0))
+        candidates.addAll(nonZeroCandidates)
+
+        fun viewportOverflowDp(dxDp: Double, dyDp: Double): Double {
+            val vp = vpScreen ?: return 0.0
+            if (dxDp == 0.0 && dyDp == 0.0) return 0.0
+            val (vcX, vcY) = vp
+            // Only enforce viewport bounds when the guest's real position is within visible screen bounds
+            if (kotlin.math.abs(origX - vcX) > viewportWidthDp * 0.5 ||
+                kotlin.math.abs(origY - vcY) > viewportHeightDp * 0.5) {
+                return 0.0
+            }
+            val minSafeX = vcX - viewportWidthDp * 0.5 + badgeHalfW + 8.0
+            val maxSafeX = vcX + viewportWidthDp * 0.5 - badgeHalfW - 58.0
+            val minSafeY = vcY - viewportHeightDp * 0.5 + 145.0
+            val maxSafeY = vcY + viewportHeightDp * 0.5 - 140.0
+            val ax = origX + dxDp
+            val ay = origY + dyDp
+            val outL = if (minSafeX <= maxSafeX) (minSafeX - ax).coerceAtLeast(0.0) else 0.0
+            val outR = if (minSafeX <= maxSafeX) (ax - maxSafeX).coerceAtLeast(0.0) else 0.0
+            val outT = if (minSafeY <= maxSafeY) (minSafeY - ay).coerceAtLeast(0.0) else 0.0
+            val outB = if (minSafeY <= maxSafeY) (ay - maxSafeY).coerceAtLeast(0.0) else 0.0
+            return outL + outR + outT + outB
+        }
+
+        var bestOffset = candidates[0]
+        var bestPenalty = Double.MAX_VALUE
+
+        for (cand in candidates) {
+            val testBoxes = boxesForOffset(cand.first, cand.second)
+            val avatarBox = testBoxes.first()
+            // Static pins collide only with the guest's circular avatar, never with the wide text badge below it
+            val pinOverlap = staticPinBoxes.sumOf { sb -> avatarBox.overlapArea(sb, padding = 2.0) }
+            val hostBadgeOverlap = testBoxes.sumOf { tb -> staticBadgeBoxes.sumOf { sb -> tb.overlapArea(sb, padding = 2.0) } }
+            val staticOverlap = pinOverlap + hostBadgeOverlap
+            val placedOverlap = testBoxes.sumOf { tb -> placedBoxes.sumOf { pb -> tb.overlapArea(pb, padding = 4.0 * scale) } }
+            val totalOverlap = staticOverlap + placedOverlap * 2.0
+            val vpOverflow = viewportOverflowDp(cand.first, cand.second)
+
+            if (totalOverlap == 0.0 && vpOverflow == 0.0) {
+                bestOffset = cand
+                bestPenalty = 0.0
+                break
+            }
+            val distPenalty = kotlin.math.hypot(cand.first, cand.second) * 1.5
+            val penalty = totalOverlap * 10.0 + vpOverflow * 5.0 + distPenalty
+            if (penalty < bestPenalty) {
+                bestPenalty = penalty
+                bestOffset = cand
+            }
+        }
+
+        placedBoxes.addAll(boxesForOffset(bestOffset.first, bestOffset.second))
 
         if (bestOffset.first == 0.0 && bestOffset.second == 0.0) {
             result[guest.id] = guest.geoPoint
         } else {
-            val (dLatRaw, dLngRaw) = fromScreenOffset(bestOffset.first, bestOffset.second)
-            var dXMeters = dLngRaw * mLng
-            var dYMeters = dLatRaw * mLat
-            val curDistM = kotlin.math.hypot(dXMeters, dYMeters)
-            if (curDistM > 0.0) {
-                val clampedDistM = curDistM.coerceIn(16.0, 45.0)
-                val scale = clampedDistM / curDistM
-                dXMeters *= scale
-                dYMeters *= scale
-            }
-            val dispLat = guest.lat + (dYMeters / mLat)
-            val dispLng = guest.lng + (dXMeters / mLng)
-            result[guest.id] = GeoPoint(dispLat, dispLng)
+            val (dLat, dLng) = fromScreenOffset(bestOffset.first, bestOffset.second)
+            result[guest.id] = GeoPoint(guest.lat + dLat, guest.lng + dLng)
         }
     }
 

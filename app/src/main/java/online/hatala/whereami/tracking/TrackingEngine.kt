@@ -3,6 +3,7 @@ package online.hatala.whereami.tracking
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Single source of truth for position, speed and heading.
@@ -155,7 +156,12 @@ class TrackingEngine(
 
         // ── Accuracy gate ────────────────────────────────────────────────────────
         val acc = fix.accuracyM
-        if (acc != null && acc > activeProfile.maxAccuracyM) {
+        val maxAcc: Float = if (activeProfile.name == "CAR" && ((fix.speedMps ?: 0f) < 2.0f || externalStationary)) {
+            minOf(activeProfile.maxAccuracyM, 16.0f)
+        } else {
+            activeProfile.maxAccuracyM
+        }
+        if (acc != null && acc > maxAcc) {
             val silence = if (lastAcceptedElapsedMs > 0L) fix.tElapsedMs - lastAcceptedElapsedMs else 0L
             val relaxed = silence > SILENCE_RELAX_MS && acc <= activeProfile.maxAccuracyM * 2f
             if (!relaxed) return reject(fix, FixDecision.REJECTED_ACCURACY, emptyList())
@@ -203,7 +209,7 @@ class TrackingEngine(
             ekf.inflatePositionVariance(max(sigma, 3.0).let { it * it })
         }
 
-        val f = ekf.predict(fix.tElapsedMs)!!
+        val f = ekf.predict(fix.tElapsedMs, dopplerSpeed)!!
         val xPred = ekf.copyState()
         val pPred = ekf.copyCov()
 
@@ -250,10 +256,9 @@ class TrackingEngine(
         ekf.stationaryMode = stationary
         if (stationary && !wasStat) {
             stationarySinceMs = fix.tElapsedMs
-            // The braking estimate is overconfident about where the vehicle came to rest. Re-open the
-            // position variance once so the stop converges to the mean of its fixes within seconds, instead
-            // of creeping for the whole convergence window and jumping when driving off.
-            val extra = STOP_ENTRY_VARIANCE_FRACTION * sigma * sigma
+            // Gentle variance opening on stop entry so RTS backward smoothing across the braking
+            // transition stays continuous without snapping the cursor sideways into a 90° Z-hook.
+            val extra = STOP_ENTRY_VARIANCE_FRACTION * min(sigma, 4.0).let { it * it }
             ekf.inflatePositionVariance(extra)
             pPred[KinematicEkf.EAST][KinematicEkf.EAST] += extra
             pPred[KinematicEkf.NORTH][KinematicEkf.NORTH] += extra

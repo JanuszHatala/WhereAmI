@@ -629,6 +629,10 @@ function createLiveSessionRepository(pool) {
            VALUES ($1, $2, now(), $3, $4, $5, $6)`,
           [eventId, sessionId, cleanGuestId, gName, device, gColor]
         );
+        await client.query(
+          'UPDATE live_sessions SET view_count = view_count + 1 WHERE id = $1',
+          [sessionId]
+        );
       }
 
       await client.query('COMMIT');
@@ -642,7 +646,11 @@ function createLiveSessionRepository(pool) {
 
   async function getViewLog(sessionId, limit = 200) {
     const res = await pool.query(
-      `SELECT e.id, e.t, e.guest_id, e.name, e.device, e.color_index, g.lat, g.lng, g.acc
+      `SELECT e.id, e.t, e.guest_id,
+              COALESCE(NULLIF(g.name, ''), e.name) AS name,
+              e.device,
+              COALESCE(g.color_index, e.color_index) AS color_index,
+              g.lat, g.lng, g.acc
        FROM live_view_events e
        LEFT JOIN live_guests g ON e.session_id = g.session_id AND e.guest_id = g.guest_id
        WHERE e.session_id = $1

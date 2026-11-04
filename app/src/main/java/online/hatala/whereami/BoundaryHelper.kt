@@ -161,6 +161,7 @@ object BoundaryHelper {
             }
 
             // Name search — live GPS primary path; pin fallback when reverse has no polygon.
+            var fetchedFromNamedCity = false
             if (fetched == null && cleanCity != null) {
                 throttle()
                 fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = containGate)
@@ -171,13 +172,22 @@ object BoundaryHelper {
                     throttle()
                     fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = containGate)
                 }
-                // For live GPS, verify candidate fetched polygon actually contains or is near current position
-                if (fetched != null && geoPoint != null && !isCachePolygonUsableForLive(fetched, geoPoint)) {
-                    TelemetryLogger.log(
-                        "BOUNDARY",
-                        "Live boundary for $cleanCity does not enclose current location (${geoPoint.latitude}, ${geoPoint.longitude}); falling back"
-                    )
-                    fetched = null
+                if (fetched != null && fetched.isNotEmpty()) {
+                    fetchedFromNamedCity = true
+                    if (!pinMode) {
+                        val namedSimplified = subsamplePoints(fetched, 120)
+                        memoryCache[cleanKey] = namedSimplified
+                        saveToDiskCache(context, cleanKey, namedSimplified)
+                    }
+                    // For live GPS, verify candidate fetched polygon actually contains or is near current position
+                    if (geoPoint != null && !isCachePolygonUsableForLive(fetched, geoPoint)) {
+                        TelemetryLogger.log(
+                            "BOUNDARY",
+                            "Live boundary for $cleanCity does not enclose current location (${geoPoint.latitude}, ${geoPoint.longitude}); falling back without overwriting $cleanKey"
+                        )
+                        fetched = null
+                        fetchedFromNamedCity = false
+                    }
                 }
             }
 
@@ -222,10 +232,13 @@ object BoundaryHelper {
 
             if (fetched != null && fetched.isNotEmpty()) {
                 val simplified = subsamplePoints(fetched, 120)
-                memoryCache[cleanKey] = simplified
-                saveToDiskCache(context, cleanKey, simplified)
+                // Never poison a named locality's disk/memory cache key with a reverse-boundary or gmina fallback polygon
+                if (pinMode || cleanCity == null || fetchedFromNamedCity) {
+                    memoryCache[cleanKey] = simplified
+                    saveToDiskCache(context, cleanKey, simplified)
+                }
                 return@withContext simplified
-            } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode) {
+            } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode && cleanCity != null && !File(getCacheDir(context), "$cleanKey.json").exists()) {
                 // Authoritative non-429 response had no polygon. Cache empty array so we don't hammer Nominatim repeatedly.
                 // Never negative-cache pin lookups — containment fallbacks must remain available.
                 saveToDiskCache(context, cleanKey, emptyList())
@@ -244,7 +257,7 @@ object BoundaryHelper {
     fun isCachePolygonUsableForLive(points: List<GeoPoint>, gps: GeoPoint): Boolean {
         if (points.size < 3) return false
         if (polygonContains(points, gps.latitude, gps.longitude)) return true
-        return isNearPolygon(points, gps.latitude, gps.longitude, marginMeters = 800.0)
+        return isNearPolygon(points, gps.latitude, gps.longitude, marginMeters = 180.0)
     }
 
     fun isNearPolygon(points: List<GeoPoint>, lat: Double, lon: Double, marginMeters: Double = 800.0): Boolean {
@@ -445,9 +458,23 @@ object BoundaryHelper {
 
     private fun loadFromDiskCache(context: Context, key: String): List<GeoPoint>? {
         return try {
-            val file = File(getCacheDir(context), "$key.json")
+            val dir = getCacheDir(context)
+            val file = File(dir, "$key.json")
             if (!file.exists()) return null
             val jsonStr = file.readText()
+            if (!key.startsWith("pin_") && jsonStr.length > 10) {
+                val duplicateNeighbor = dir.listFiles()?.any { other ->
+                    other.name != file.name &&
+                        !other.name.startsWith("pin_") &&
+                        other.length() == file.length() &&
+                        other.readText() == jsonStr
+                } == true
+                if (duplicateNeighbor) {
+                    TelemetryLogger.log("BOUNDARY", "Purging poisoned duplicate boundary cache file ${file.name}")
+                    file.delete()
+                    return null
+                }
+            }
             val arr = JSONArray(jsonStr)
             val pts = ArrayList<GeoPoint>(arr.length())
             for (i in 0 until arr.length()) {

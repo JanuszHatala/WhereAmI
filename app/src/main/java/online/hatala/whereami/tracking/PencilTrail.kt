@@ -84,16 +84,22 @@ class PencilTrail(private val maxPoints: Int = 600) {
         decayM: Double = computeDecayM(speedMps)
     ): Pair<DoubleArray, DoubleArray>? {
         val n = t.size
-        if (n == 0 || !hasRef || cT < refT || cT > t[0]) return null
-        val span = (t[0] - refT).toDouble()
-        val u = if (span <= 0.0) 1.0 else ((cT - refT) / span).coerceIn(0.0, 1.0)
-        val rLat = refLat + (lat[0] - refLat) * u
-        val rLng = refLng + (lng[0] - refLng) * u
+        if (n == 0 || !hasRef) return null
+        val (rLat, rLng) = when {
+            cT in refT..t[0] -> {
+                val span = (t[0] - refT).toDouble()
+                val u = if (span <= 0.0) 1.0 else ((cT - refT) / span).coerceIn(0.0, 1.0)
+                (refLat + (lat[0] - refLat) * u) to (refLng + (lng[0] - refLng) * u)
+            }
+            cT < refT -> refLat to refLng
+            else -> lat[0] to lng[0]
+        }
         val dLat = cLat - rLat
         val dLng = cLng - rLng
         val k = cos(Math.toRadians(cLat)).coerceAtLeast(0.01)
         fun m(aLat: Double, aLng: Double, bLat: Double, bLng: Double) =
             hypot((bLng - aLng) * k, bLat - aLat) * LocalFrame.METERS_PER_DEG_LAT
+        if (m(rLat, rLng, cLat, cLng) > 25.0) return null
         val arc = DoubleArray(n)
         for (i in 1 until n) arc[i] = arc[i - 1] + m(lat[i - 1], lng[i - 1], lat[i], lng[i])
         val total = arc[n - 1] + m(lat[n - 1], lng[n - 1], tipLat, tipLng)

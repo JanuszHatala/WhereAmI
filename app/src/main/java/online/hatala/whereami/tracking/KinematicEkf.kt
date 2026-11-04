@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -112,7 +113,7 @@ class KinematicEkf(var profile: TrackingProfile) {
         x[NORTH] -= dNorth
     }
 
-    private fun motion(s: DoubleArray, dt: Double, out: DoubleArray) {
+    private fun motion(s: DoubleArray, dt: Double, out: DoubleArray, measuredSpeedMps: Double? = null) {
         val v = s[SPEED]
         val h = s[HEADING]
         val w = s[YAW]
@@ -127,6 +128,13 @@ class KinematicEkf(var profile: TrackingProfile) {
             vEnd = 0.0
             val tStop = if (a < 0.0) (v / -a).coerceAtMost(dt) else dt
             dist = 0.5 * v * tStop
+        }
+        // Trapezoidal braking/deceleration guard: when current Doppler speed is lower than predicted speed,
+        // bound step displacement by the trapezoidal mean speed so hard stops do not overshoot forward.
+        if (measuredSpeedMps != null && dt in 0.05..3.0 && measuredSpeedMps < v) {
+            val trapDist = 0.5 * (v + max(0.0, measuredSpeedMps)) * dt
+            dist = min(dist, trapDist)
+            vEnd = min(vEnd, max(0.0, 0.5 * (vEnd + measuredSpeedMps)))
         }
         dist = max(dist, 0.0)
         val half = w * dt / 2.0
@@ -143,7 +151,7 @@ class KinematicEkf(var profile: TrackingProfile) {
      * Propagate to [tNewMs]. Returns the state transition Jacobian F (needed by the RTS smoother),
      * or null when no time elapsed.
      */
-    fun predict(tNewMs: Long): Array<DoubleArray>? {
+    fun predict(tNewMs: Long, measuredSpeedMps: Double? = null): Array<DoubleArray>? {
         if (!initialized) return null
         val dt = (tNewMs - tMs) / 1000.0
         if (dt <= 0.0) return null
@@ -154,14 +162,14 @@ class KinematicEkf(var profile: TrackingProfile) {
 
         val f = Array(N) { DoubleArray(N) }
         val base = DoubleArray(N)
-        motion(x, dt, base)
+        motion(x, dt, base, measuredSpeedMps)
         val pert = DoubleArray(N)
         val out = DoubleArray(N)
         for (j in 0 until N) {
             System.arraycopy(x, 0, pert, 0, N)
             val eps = 1e-6 * max(1.0, abs(x[j]))
             pert[j] += eps
-            motion(pert, dt, out)
+            motion(pert, dt, out, measuredSpeedMps)
             for (i in 0 until N) f[i][j] = (out[i] - base[i]) / eps
         }
 

@@ -70,9 +70,23 @@ object RoadNameNormalizer {
         return ref.trim().takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
     }
 
-    fun shouldShieldMajorCorridor(speedKmh: Float?, isCommittedMajor: Boolean, osrmStreet: String?, osmRoadRef: String?): Boolean =
-        speedKmh != null && speedKmh > 35f && isCommittedMajor && osrmStreet != null &&
-            !isMajorRoad(osrmStreet, osmRoadRef)
+    fun shouldShieldMajorCorridor(
+        speedKmh: Float?,
+        isCommittedMajor: Boolean,
+        osrmStreet: String?,
+        osmRoadRef: String?,
+        osmStreet: String? = null
+    ): Boolean {
+        if (speedKmh == null || speedKmh <= 35f || !isCommittedMajor || osrmStreet == null) return false
+        if (isMajorRoad(osrmStreet, null)) return false
+        if (isKnownSideStreet(osrmStreet)) return true
+        // osmRoadRef comes from Nominatim's osmStreet, NOT from OSRM. It only exempts osrmStreet when
+        // osrmStreet is the same road as osmStreet (or osmStreet is absent/code-only and osrmStreet is a corridor name).
+        val osrmMatchesOsm = !osmStreet.isNullOrBlank() && streetsMatch(osrmStreet, osmStreet)
+        val refAppliesToOsrm = !osmRoadRef.isNullOrBlank() &&
+            (osrmMatchesOsm || ((osmStreet.isNullOrBlank() || isHighwayCodeOnly(osmStreet)) && isLikelyCorridorLocalName(osrmStreet)))
+        return !isMajorRoad(osrmStreet, if (refAppliesToOsrm) osmRoadRef else null)
+    }
 
     /**
      * Single line for the locality card / Auto. Never joins a local name with a bare ref via " • "
@@ -116,7 +130,8 @@ object RoadNameNormalizer {
         "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
         "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola",
         "wiejska", "starowiejska", "gminna", "rolna", "spacerowa", "stawowa", "kolejowa", "dworska",
-        "osiedlowa", "widokowa", "spacerowa", "kamienna", "zacisze", "parkowa", "podgórska", "podgorska"
+        "osiedlowa", "widokowa", "spacerowa", "kamienna", "zacisze", "parkowa", "podgórska", "podgorska",
+        "podlesie", "podleśna", "podlesna", "zarzecze", "zagrody", "potokowa", "granica"
     )
 
     fun isKnownSideStreet(street: String?): Boolean {
@@ -165,12 +180,20 @@ object RoadNameNormalizer {
         val isOsrmHighway = osrm != null && isHighwayCodeOnly(osrm)
 
         return when {
-            // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref if any
-            osrm != null && !isHighwayCodeOnly(osrm) -> osrm to osmRef
+            // If OSM confirmed both a non-side street name and a road ref, and OSRM only has a bare highway code
+            // or a residential side street (e.g. "52" in Chocznia/Inwałd, or "Podlesie" in Bujaków), prefer OSM!
+            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() && !isKnownSideStreet(osmStreet) &&
+                (osrm == null || isOsrmHighway || isKnownSideStreet(osrm)) ->
+                osmStreet.trim() to osmRef
 
-            // If OSM itself confirmed both the named street and the road ref on the same way:
-            // ALWAYS coalesce them! (e.g. "Tadeusza Kościuszki" on DK52 in Chocznia, "Wadowicka" on DK52 in Inwałd)
-            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() -> osmStreet to osmRef
+            // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref
+            // only if OSRM is not a side street and is a corridor local name (or matches osmStreet).
+            osrm != null && !isHighwayCodeOnly(osrm) -> {
+                val safeRef = if (!isKnownSideStreet(osrm) &&
+                    (isLikelyCorridorLocalName(osrm) || (!osmStreet.isNullOrBlank() && streetsMatch(osrm, osmStreet)))
+                ) osmRef else null
+                osrm to safeRef
+            }
 
             // Named street is a known side street (e.g. "Szkolna", "Cicha") while on a highway corridor:
             // Discard the side street! Show canonical highway code.

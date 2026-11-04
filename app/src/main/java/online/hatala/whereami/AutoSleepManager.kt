@@ -326,7 +326,9 @@ class AutoSleepManager private constructor(private val context: Context) {
         if (!isAutoPaused) return
         val appStateMgr = AppStateManager.getInstance(context)
         val isSleeping = appStateMgr.isStandbySleeping.value
-        val isBedtimeOrDnd = isCurrentTimeInBedtimeWindow() || isDndActive()
+        val isMorning = isMorningTime(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
+        val alarmFired = _followAlarm.value && isAlarmFiredRecently()
+        val isBedtimeOrDnd = (isCurrentTimeInBedtimeWindow() || isDndActive()) && !(isMorning && alarmFired)
         if (!isSleeping && !isBedtimeOrDnd) {
             TelemetryLogger.log("POWER", "AutoSleep: Recovering auto-paused Live Sharing outside sleep window; resuming session.")
             onSleepWoken()
@@ -521,6 +523,8 @@ class AutoSleepManager private constructor(private val context: Context) {
     }
 
     fun isCurrentTimeInBedtimeWindow(): Boolean {
+        if (wasManuallyWokenThisCycle) return false
+        if (_followAlarm.value && isAlarmFiredRecently()) return false
         val cal = Calendar.getInstance()
         val hour = cal.get(Calendar.HOUR_OF_DAY)
         val minute = cal.get(Calendar.MINUTE)

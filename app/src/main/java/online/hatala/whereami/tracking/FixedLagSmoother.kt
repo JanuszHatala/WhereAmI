@@ -52,7 +52,11 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
         if (steps.size < 2) return emptyList()
         val cutoff = step.tElapsedMs - lagMs
         var emitCount = 0
-        while (emitCount < steps.size - 1 && steps[emitCount].tElapsedMs <= cutoff) emitCount++
+        if (step.isStationary) {
+            emitCount = steps.size - 1
+        } else {
+            while (emitCount < steps.size - 1 && steps[emitCount].tElapsedMs <= cutoff) emitCount++
+        }
         if (emitCount == 0) return emptyList()
         val smoothed = smoothWindow()
         val out = ArrayList<SmoothedPoint>(emitCount)

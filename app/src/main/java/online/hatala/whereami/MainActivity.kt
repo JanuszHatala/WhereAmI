@@ -392,6 +392,10 @@ fun LocationScreen(viewModel: MainViewModel) {
     var selectedGuestDetails by remember { mutableStateOf<LiveGuest?>(null) }
     var returnToLiveViewsOnGuestDismiss by remember { mutableStateOf(false) }
     var returnToLiveQuickShareOnDismiss by remember { mutableStateOf(false) }
+    var showStopLiveShareConfirmDialog by remember { mutableStateOf(false) }
+    var liveViewsSelectedTab by remember { mutableStateOf(0) }
+    val liveVisitorsListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val liveHistoryListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
 
@@ -422,6 +426,7 @@ fun LocationScreen(viewModel: MainViewModel) {
         selectedGuestDetails = null
         returnToLiveViewsOnGuestDismiss = false
         returnToLiveQuickShareOnDismiss = false
+        showStopLiveShareConfirmDialog = false
         viewModel.dismissCacheManager()
     }
 
@@ -6139,9 +6144,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     ) {
                         Button(
                             onClick = {
-                                returnToLiveQuickShareOnDismiss = false
-                                liveSharingManager.stopSession()
-                                android.widget.Toast.makeText(context, "Live sharing stopped", android.widget.Toast.LENGTH_SHORT).show()
+                                showStopLiveShareConfirmDialog = true
                             },
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -7192,13 +7195,47 @@ fun LocationScreen(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(14.dp))
 
                 val liveViewEvents by liveSharingManager.viewEvents.collectAsState()
-                val allUniqueVisitorsCount = remember(activeGuests, liveViewEvents) {
-                    val ids = activeGuests.map { it.id }.toMutableSet()
-                    liveViewEvents.forEach { ev ->
-                        val vid = ev.guestId.ifBlank { ev.guestName }
-                        if (vid.isNotBlank()) ids.add(vid)
+                val (allUniqueVisitorsCount, verifiedTotalViews) = remember(activeGuests, liveViewEvents, session.viewCount) {
+                    val list = activeGuests.toMutableList()
+                    val existingIds = list.map { it.id }.toMutableSet()
+                    val existingNames = list.map { it.name.lowercase(Locale.ROOT) }.toMutableSet()
+                    val grouped = liveViewEvents.groupBy { it.guestId.ifBlank { it.guestName } }
+                    grouped.forEach { (key, events) ->
+                        if (key.isNotBlank()) {
+                            val sample = events.first()
+                            val name = sample.guestName.ifBlank { "Guest ${list.size + 1}" }
+                            val matchIdx = list.indexOfFirst { it.id == key || it.name.equals(name, ignoreCase = true) }
+                            if (matchIdx >= 0) {
+                                val g = list[matchIdx]
+                                if (events.size > g.viewCount) {
+                                    list[matchIdx] = g.copy(viewCount = events.size)
+                                }
+                            } else if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
+                                list.add(
+                                    LiveGuest(
+                                        id = key,
+                                        name = name,
+                                        lat = sample.lat ?: 0.0,
+                                        lng = sample.lng ?: 0.0,
+                                        accuracy = sample.accuracy,
+                                        lastUpdated = events.maxOfOrNull { it.timestamp } ?: sample.timestamp,
+                                        colorIndex = kotlin.math.abs(key.hashCode()) % 8,
+                                        rawIsInactive = true,
+                                        firstSeen = events.minOfOrNull { it.timestamp } ?: sample.timestamp,
+                                        viewCount = events.size
+                                    )
+                                )
+                                existingIds.add(key)
+                                existingNames.add(name.lowercase(Locale.ROOT))
+                            }
+                        }
                     }
-                    maxOf(activeGuests.size, ids.size)
+                    val totalViews = if (list.isNotEmpty()) {
+                        list.sumOf { it.viewCount.coerceAtLeast(1) }
+                    } else {
+                        session.viewCount
+                    }
+                    Pair(list.size, totalViews)
                 }
 
                 // Telemetry stats summary card (Unique Guests & Total Views) - Clickable to open Views & Visitors modal
@@ -7257,7 +7294,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 EmojiText(emoji = "👁️", fontSize = 14.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "${session.viewCount} Views",
+                                    text = "$verifiedTotalViews Views",
                                     color = Color.White,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
@@ -7390,9 +7427,7 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                     TextButton(
                         onClick = {
-                            liveSharingManager.stopSession()
-                            showLiveQuickShareModal = false
-                            Toast.makeText(context, "Live sharing stopped", Toast.LENGTH_SHORT).show()
+                            showStopLiveShareConfirmDialog = true
                         }
                     ) {
                         Text("Stop Sharing", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -7404,6 +7439,62 @@ fun LocationScreen(viewModel: MainViewModel) {
     }
     LocationScreenHost15()
 
+    @Composable fun LocationScreenHost15a() {
+        if (showStopLiveShareConfirmDialog && liveSession != null && liveSession!!.isActive) {
+            val session = liveSession!!
+            AlertDialog(
+                onDismissRequest = { showStopLiveShareConfirmDialog = false },
+                title = {
+                    Text(
+                        text = "Stop Live Sharing?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Are you sure you want to stop active Live Sharing session \"${session.title}\" (${session.id})? Viewers will see that the session has ended.",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showStopLiveShareConfirmDialog = false }) {
+                            Text("Cancel", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                showStopLiveShareConfirmDialog = false
+                                returnToLiveQuickShareOnDismiss = false
+                                showLiveQuickShareModal = false
+                                showLiveShareDialog = false
+                                liveSharingManager.stopSession()
+                                Toast.makeText(context, "Live sharing stopped", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFEF4444),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Stop Sharing", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                dismissButton = null,
+                containerColor = Color(0xFF0F172A)
+            )
+        }
+    }
+    LocationScreenHost15a()
+
     @Composable fun LocationScreenHost15b() {
         if (showLiveViewsDetailsModal && liveSession != null && liveSession!!.isActive) {
             val viewEvents by liveSharingManager.viewEvents.collectAsState()
@@ -7413,6 +7504,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                 guests = activeGuests,
                 viewEvents = viewEvents,
                 currentLatLng = currentLatLng,
+                selectedTab = liveViewsSelectedTab,
+                onSelectTab = { liveViewsSelectedTab = it },
+                visitorsListState = liveVisitorsListState,
+                historyListState = liveHistoryListState,
                 onRefresh = {
                     viewsScope.launch {
                         liveSharingManager.fetchSessionViews()
@@ -7507,22 +7602,33 @@ fun LocationScreen(viewModel: MainViewModel) {
     @Composable fun LocationScreenHost17() {
     if (selectedGuestDetails != null) {
         val currentGuest = activeGuests.find { it.id == selectedGuestDetails!!.id } ?: selectedGuestDetails!!
+        val viewEvents by liveSharingManager.viewEvents.collectAsState()
         val guestSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+        val hasValidGps = currentGuest.hasValidLocation
+        val guestDevice = remember(currentGuest, viewEvents) {
+            viewEvents.firstOrNull { ev ->
+                !ev.device.isNullOrBlank() && (
+                    (ev.guestId.isNotBlank() && ev.guestId == currentGuest.id) ||
+                        ev.guestName.equals(currentGuest.name, ignoreCase = true)
+                    )
+            }?.device
+        }
+
         val hostLoc = currentLatLng
-        val distMeters = if (hostLoc != null) {
+        val distMeters = if (hostLoc != null && hasValidGps) {
             val results = FloatArray(1)
             android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, currentGuest.lat, currentGuest.lng, results)
             results[0]
         } else null
 
-        val (cardinal, arrow) = if (hostLoc != null) {
+        val (cardinal, arrow) = if (hostLoc != null && hasValidGps) {
             currentGuest.getDirectionCompass(hostLoc.first, hostLoc.second)
         } else ("" to "")
-        val bearingDeg = if (hostLoc != null) Math.round(currentGuest.getBearingFrom(hostLoc.first, hostLoc.second)) else null
+        val bearingDeg = if (hostLoc != null && hasValidGps) Math.round(currentGuest.getBearingFrom(hostLoc.first, hostLoc.second)) else null
 
         val guestColor = Color(LiveGuest.getColor(currentGuest.colorIndex))
-        val coordsStr = String.format(Locale.US, "%.5f, %.5f", currentGuest.lat, currentGuest.lng)
+        val coordsStr = if (hasValidGps) String.format(Locale.US, "%.5f, %.5f", currentGuest.lat, currentGuest.lng) else ""
 
         val dismissGuestDetails = {
             selectedGuestDetails = null
@@ -7641,65 +7747,90 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Distance to Host Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                if (hasValidGps) {
+                    // Distance to Host Card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(14.dp)
                     ) {
-                        Column {
-                            Text(
-                                text = "DISTANCE TO YOU",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF94A3B8),
-                                letterSpacing = 0.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = distMeters?.let { LiveGuest.formatDistance(it) } ?: "Unavailable",
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF38BDF8)
-                            )
-                        }
-                        if (bearingDeg != null && cardinal.isNotBlank()) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF334155))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = arrow,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "$cardinal ($bearingDeg°)",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "DISTANCE TO YOU",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = distMeters?.let { LiveGuest.formatDistance(it) } ?: "Unavailable",
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                            }
+                            if (bearingDeg != null && cardinal.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF334155))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = arrow,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "$cardinal ($bearingDeg°)",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF1E293B),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            EmojiText(emoji = "🌐", fontSize = 14.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Visitor has not shared GPS location",
+                                fontSize = 12.sp,
+                                color = Color(0xFF94A3B8),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Metrics Grid (2 columns x 2 rows)
+                // Metrics Grid (Row 1: Views & First Viewed)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -7765,155 +7896,220 @@ fun LocationScreen(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Last Update
-                    Card(
-                        modifier = Modifier.weight(1f),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = "LAST GPS FIX",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF94A3B8),
-                                letterSpacing = 0.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = LiveGuest.formatTimeAgo(currentGuest.lastUpdated),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Last position report",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                    }
-
-                    // Accuracy
-                    Card(
-                        modifier = Modifier.weight(1f),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = "GPS ACCURACY",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF94A3B8),
-                                letterSpacing = 0.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = currentGuest.accuracy?.let { "±${Math.round(it)} m" } ?: "Not reported",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Reported by browser",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Coordinates Row with Copy Action
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF1E293B),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                if (hasValidGps) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Last Update
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "LAST GPS FIX",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = LiveGuest.formatTimeAgo(currentGuest.lastUpdated),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Last position report",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        // Accuracy
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "GPS ACCURACY",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = currentGuest.accuracy?.let { "±${Math.round(it)} m" } ?: "Not reported",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Reported by browser",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Coordinates Row with Copy Action
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF1E293B),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "COORDINATES",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8)
+                                )
+                                Text(
+                                    text = coordsStr,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFFE2E8F0),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Guest Coordinates", coordsStr))
+                                    Toast.makeText(context, "Coordinates copied to clipboard!", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Coordinates",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Actions: Open in Google Maps
+                    Button(
+                        onClick = {
+                            try {
+                                val uri = android.net.Uri.parse("geo:${currentGuest.lat},${currentGuest.lng}?q=${currentGuest.lat},${currentGuest.lng}(${android.net.Uri.encode(currentGuest.name)})")
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Cannot open external maps app", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(46.dp)
                     ) {
-                        Column {
-                            Text(
-                                text = "COORDINATES",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF94A3B8)
-                            )
-                            Text(
-                                text = coordsStr,
-                                fontSize = 13.sp,
-                                color = Color(0xFFE2E8F0),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Guest Coordinates", coordsStr))
-                                Toast.makeText(context, "Coordinates copied to clipboard!", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(32.dp)
+                        Icon(
+                            imageVector = Icons.Default.Map,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Open in Google Maps",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Last Viewed
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy Coordinates",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "LAST VIEWED",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = LiveGuest.formatTimeAgo(currentGuest.lastUpdated),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Most recent visit",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        // Device
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "DEVICE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = guestDevice ?: "Web Browser",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Viewer platform",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Actions: Open in Google Maps
-                Button(
-                    onClick = {
-                        try {
-                            val uri = android.net.Uri.parse("geo:${currentGuest.lat},${currentGuest.lng}?q=${currentGuest.lat},${currentGuest.lng}(${android.net.Uri.encode(currentGuest.name)})")
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Cannot open external maps app", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF0284C7),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Map,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Open in Google Maps",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-
-                // Inactive Guest Removal Button (User rule: for dimmed/inactive guest, allow removal)
-                if (currentGuest.isInactive) {
+                // Inactive Guest Removal Button (only when guest is actually on the map with valid coordinates)
+                if (currentGuest.isInactive && hasValidGps) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Button(
                         onClick = {
@@ -11842,9 +12038,13 @@ fun TripDetailDialog(
         movingSec > 0 -> String.format(Locale.getDefault(), "%ds", movingSec)
         else -> "N/A"
     }
+    val overallAvgSpeedKmh = if (durationMs > 5000L && trip.distanceMeters > 50.0) {
+        (trip.distanceMeters / (durationMs / 1000.0)) * 3.6
+    } else trip.avgSpeedKmh.toDouble()
     val movingAvgSpeedKmh = if (movingDurationMs > 5000L && trip.distanceMeters > 50.0) {
         (trip.distanceMeters / (movingDurationMs / 1000.0)) * 3.6
-    } else 0.0
+    } else overallAvgSpeedKmh
+    val displayMaxSpeedKmh = maxOf(trip.maxSpeedKmh.toDouble(), movingAvgSpeedKmh)
 
     var showProfileMenu by remember { mutableStateOf(false) }
     var pauseToDeleteIndex by remember { mutableStateOf<Int?>(null) }
@@ -12124,7 +12324,7 @@ fun TripDetailDialog(
                                 Text("SPEED (MAX / AVG)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), letterSpacing = 0.5.sp)
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", trip.maxSpeedKmh, trip.avgSpeedKmh),
+                                    text = String.format(Locale.getDefault(), "%.1f / %.1f km/h", displayMaxSpeedKmh, overallAvgSpeedKmh),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFFBBF24),
@@ -13434,6 +13634,10 @@ private fun LiveViewsDetailsDialog(
     guests: List<LiveGuest>,
     viewEvents: List<LiveViewEvent>,
     currentLatLng: Triple<Double, Double, Float?>?,
+    selectedTab: Int,
+    onSelectTab: (Int) -> Unit,
+    visitorsListState: androidx.compose.foundation.lazy.LazyListState,
+    historyListState: androidx.compose.foundation.lazy.LazyListState,
     onRefresh: () -> Unit,
     onGuestClick: (LiveGuest) -> Unit,
     onDismiss: () -> Unit
@@ -13462,7 +13666,13 @@ private fun LiveViewsDetailsDialog(
                     if (key.isNotBlank()) {
                         val sample = events.first()
                         val name = sample.guestName.ifBlank { "Guest ${list.size + 1}" }
-                        if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
+                        val matchIdx = list.indexOfFirst { it.id == key || it.name.equals(name, ignoreCase = true) }
+                        if (matchIdx >= 0) {
+                            val g = list[matchIdx]
+                            if (events.size > g.viewCount) {
+                                list[matchIdx] = g.copy(viewCount = events.size)
+                            }
+                        } else if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
                             val maxTime = events.maxOfOrNull { it.timestamp } ?: sample.timestamp
                             val synth = LiveGuest(
                                 id = key,
@@ -13483,6 +13693,13 @@ private fun LiveViewsDetailsDialog(
                     }
                 }
                 list
+            }
+            val verifiedTotalViews = remember(allVisitors, session.viewCount) {
+                if (allVisitors.isNotEmpty()) {
+                    allVisitors.sumOf { it.viewCount.coerceAtLeast(1) }
+                } else {
+                    session.viewCount
+                }
             }
 
             Column(
@@ -13509,7 +13726,7 @@ private fun LiveViewsDetailsDialog(
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${session.viewCount} total views • ${allVisitors.size} visitors",
+                            text = "$verifiedTotalViews total views • ${allVisitors.size} visitors",
                             fontSize = 12.sp,
                             color = Color(0xFF94A3B8)
                         )
@@ -13569,7 +13786,7 @@ private fun LiveViewsDetailsDialog(
                         ) {
                             Text("VIEWS", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, softWrap = false)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("${session.viewCount}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
+                            Text("$verifiedTotalViews", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
                         }
                         Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color(0xFF334155)))
                         // Unique Visitors
@@ -13599,10 +13816,9 @@ private fun LiveViewsDetailsDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Segmented Tab Bar: Grouped Visitors vs Detailed Chronological History
-                var selectedTab by remember { mutableStateOf(0) } // 0 = Visitors, 1 = Detailed History
-                val totalLogCount = remember(viewEvents, guests, session.viewCount) {
+                val totalLogCount = remember(viewEvents, allVisitors, verifiedTotalViews) {
                     if (viewEvents.isNotEmpty()) viewEvents.size
-                    else guests.sumOf { it.viewCount }.coerceAtLeast(session.viewCount)
+                    else verifiedTotalViews
                 }
 
                 Row(
@@ -13615,7 +13831,7 @@ private fun LiveViewsDetailsDialog(
                 ) {
                     // Tab 0: Visitors (unique)
                     Surface(
-                        onClick = { selectedTab = 0 },
+                        onClick = { onSelectTab(0) },
                         modifier = Modifier
                             .weight(1f)
                             .height(34.dp),
@@ -13642,7 +13858,7 @@ private fun LiveViewsDetailsDialog(
 
                     // Tab 1: Detailed Log (chronological events)
                     Surface(
-                        onClick = { selectedTab = 1 },
+                        onClick = { onSelectTab(1) },
                         modifier = Modifier
                             .weight(1f)
                             .height(34.dp),
@@ -13701,6 +13917,7 @@ private fun LiveViewsDetailsDialog(
                     } else {
                         val sortedGuests = remember(allVisitors) { allVisitors.sortedByDescending { it.lastUpdated } }
                         LazyColumn(
+                            state = visitorsListState,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f, fill = false),
@@ -13961,17 +14178,21 @@ private fun LiveViewsDetailsDialog(
                         }
                     } else {
                         LazyColumn(
+                            state = historyListState,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f, fill = false),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(displayEvents, key = { it.id }) { event ->
-                                val matchingGuest = guests.find { it.id == event.guestId }
+                                val matchingGuest = allVisitors.find {
+                                    (event.guestId.isNotBlank() && it.id == event.guestId) ||
+                                        it.name.equals(event.guestName, ignoreCase = true)
+                                }
                                 val guestColor = Color(LiveGuest.getColor(matchingGuest?.colorIndex ?: event.colorIndex))
-                                val hasLocation = event.hasLocation || (matchingGuest != null && matchingGuest.lat != 0.0)
-                                val guestLat = event.lat ?: matchingGuest?.lat
-                                val guestLng = event.lng ?: matchingGuest?.lng
+                                val hasLocation = event.hasLocation || (matchingGuest != null && matchingGuest.hasValidLocation)
+                                val guestLat = (event.lat?.takeIf { it != 0.0 }) ?: (matchingGuest?.lat?.takeIf { it != 0.0 })
+                                val guestLng = (event.lng?.takeIf { it != 0.0 }) ?: (matchingGuest?.lng?.takeIf { it != 0.0 })
 
                                 val distanceStr = if (currentLatLng != null && guestLat != null && guestLng != null) {
                                     val results = FloatArray(1)

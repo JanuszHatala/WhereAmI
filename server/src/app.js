@@ -59,11 +59,6 @@ function createApp({ repo, pool }) {
   app.get('/live/:id', async (req, res, next) => {
     try {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      const targetId = await repo.resolveSessionId(req.params.id);
-      const session = await repo.getSessionRow(targetId);
-      if (session) {
-        await repo.incrementViewCount(targetId);
-      }
       res.sendFile(path.join(__dirname, '../public', 'index.html'));
     } catch (err) {
       next(err);

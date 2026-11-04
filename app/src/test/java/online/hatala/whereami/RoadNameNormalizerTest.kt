@@ -279,6 +279,28 @@ class RoadNameNormalizerTest {
         assertEquals("Wadowicka", inwaldStreet)
         assertEquals("52", inwaldRef)
         assertEquals("Wadowicka (DK52)", RoadNameNormalizer.formatStreetDisplay(inwaldStreet, inwaldRef, "PL"))
+
+        // In Bujaków: OSRM snaps perpendicular side street "Podlesie" (no ref), while OSM confirms "Bielska" + ref "52"
+        val (bujakowStreet, bujakowRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "Podlesie",
+            osmStreet = "Bielska",
+            osmRoadRef = "52"
+        )
+        assertEquals("Bielska", bujakowStreet)
+        assertEquals("52", bujakowRef)
+        assertEquals("Bielska (DK52)", RoadNameNormalizer.formatStreetDisplay(bujakowStreet, bujakowRef, "PL"))
+
+        // And shouldShieldMajorCorridor must shield "Bielska (DK52)" against OSRM side street "Podlesie" even when osmRoadRef="52"
+        assertTrue(
+            RoadNameNormalizer.shouldShieldMajorCorridor(
+                speedKmh = 68f,
+                isCommittedMajor = true,
+                osrmStreet = "Podlesie",
+                osmRoadRef = "52",
+                osmStreet = "Bielska"
+            )
+        )
+        assertTrue(RoadNameNormalizer.isKnownSideStreet("Podlesie"))
     }
 }
 
