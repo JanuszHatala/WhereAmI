@@ -89,22 +89,46 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
         val xs = ArrayList<DoubleArray>(n)
         for (i in 0 until n) xs.add(steps[i].xf.copyOf())
         for (k in n - 2 downTo 0) {
+            val curr = steps[k]
             val next = steps[k + 1]
+            // Decouple RTS smoother across multi-second stationary gaps or when current step is stationary
+            val dtMs = next.tElapsedMs - curr.tElapsedMs
+            if (dtMs > 4_000L || curr.isStationary) continue
+
             val f = next.f
             val pPred = next.pPred
             val xPred = next.xPred
             if (f == null || pPred == null || xPred == null) continue
             val inv = invert(pPred) ?: continue
             // C = Pf[k] * F^T * inv(PPred[k+1])
-            val pf = steps[k].pf
+            val pf = curr.pf
             val pft = matMul(pf, transpose(f))
             val c = matMul(pft, inv)
             val dx = DoubleArray(KinematicEkf.N) { xs[k + 1][it] - xPred[it] }
             dx[KinematicEkf.HEADING] = wrapRad(dx[KinematicEkf.HEADING])
+
+            val corr = DoubleArray(KinematicEkf.N)
             for (i in 0 until KinematicEkf.N) {
-                var corr = 0.0
-                for (j in 0 until KinematicEkf.N) corr += c[i][j] * dx[j]
-                xs[k][i] += corr
+                var sum = 0.0
+                for (j in 0 until KinematicEkf.N) sum += c[i][j] * dx[j]
+                corr[i] = sum
+            }
+
+            // Bound position correction by 3-sigma position uncertainty (max 5.0m)
+            var corrEast = corr[KinematicEkf.EAST]
+            var corrNorth = corr[KinematicEkf.NORTH]
+            val corrDist = kotlin.math.hypot(corrEast, corrNorth)
+            val maxCorrM = minOf(5.0, 3.0 * sqrt(max(0.0, pf[0][0] + pf[1][1])))
+            if (corrDist > maxCorrM && corrDist > 1e-6) {
+                val scale = maxCorrM / corrDist
+                corrEast *= scale
+                corrNorth *= scale
+            }
+            corr[KinematicEkf.EAST] = corrEast
+            corr[KinematicEkf.NORTH] = corrNorth
+
+            for (i in 0 until KinematicEkf.N) {
+                xs[k][i] += corr[i]
             }
             xs[k][KinematicEkf.HEADING] = wrapRad(xs[k][KinematicEkf.HEADING])
             if (xs[k][KinematicEkf.SPEED] < 0.0) xs[k][KinematicEkf.SPEED] = 0.0

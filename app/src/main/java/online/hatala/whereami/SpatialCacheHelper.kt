@@ -27,6 +27,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         private const val COL_CITY = "city"
         private const val COL_STREET = "street"
         private const val COL_ROAD_REF = "road_ref"
+        private const val COL_HIGHWAY_TYPE = "highway_type"
         private const val COL_EN_JSON = "en_json"
         private const val COL_PL_JSON = "pl_json"
         private const val COL_NATIVE_JSON = "native_json"
@@ -59,6 +60,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 put("voivodeship", place.voivodeship)
                 put("country", place.country)
                 put("countryCode", place.countryCode)
+                put("highwayType", place.highwayType)
             }.toString()
         }
 
@@ -98,7 +100,8 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
                     voivodeship = resolvedVoivodeship,
                     country = resolvedCountry,
-                    countryCode = cc
+                    countryCode = cc,
+                    highwayType = obj.optString("highwayType").takeIf { it.isNotBlank() }
                 )
             } catch (_: Exception) {
                 null
@@ -115,6 +118,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 $COL_CITY TEXT,
                 $COL_STREET TEXT,
                 $COL_ROAD_REF TEXT,
+                $COL_HIGHWAY_TYPE TEXT,
                 $COL_EN_JSON TEXT,
                 $COL_PL_JSON TEXT,
                 $COL_NATIVE_JSON TEXT,
@@ -131,6 +135,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
+        ensureHighwayTypeColumn(db)
         migrateLegacyKeys(db)
         sanitizeKnownMismatches(db)
         sanitizePolishHighwayCodesOutsidePoland(db)
@@ -138,6 +143,24 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizeFalseHighwayOnLocalNames(db)
         sanitizeCorruptedPolishMunicipalities(db)
         sanitizePoisonedSideStreets(db)
+        sanitizeCorruptedRoczynyDw781(db)
+    }
+
+    private fun ensureHighwayTypeColumn(db: SQLiteDatabase) {
+        try {
+            db.execSQL("ALTER TABLE $TABLE_CACHE ADD COLUMN $COL_HIGHWAY_TYPE TEXT")
+        } catch (_: Exception) {}
+    }
+
+    fun sanitizeCorruptedRoczynyDw781(db: SQLiteDatabase = writableDatabase) {
+        try {
+            db.execSQL("""
+                UPDATE $TABLE_CACHE 
+                SET $COL_STREET = 'Bielska', $COL_ROAD_REF = NULL 
+                WHERE ($COL_CITY = 'Roczyny' OR $COL_CITY = 'Czaniec') 
+                  AND ($COL_STREET LIKE 'Bielska (%781%)' OR $COL_ROAD_REF LIKE '%781%')
+            """.trimIndent())
+        } catch (_: Exception) {}
     }
 
     /**
@@ -288,13 +311,14 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val street = it.getString(1) ?: continue
                     val roadRef = it.getString(2)
                     val base = RoadNameNormalizer.stripParenHighwayRef(street) ?: street
-                    if (RoadNameNormalizer.isLikelyCorridorLocalName(base)) continue
+                    val pl = deserializePlaceInfo(it.getString(4))
+                    val highwayType = pl?.highwayType
+                    if (RoadNameNormalizer.isMajorHighway(highwayType, roadRef) || RoadNameNormalizer.isMajorRoad(base, roadRef)) continue
                     val hasParen = street.contains('(')
                     val hasHighwayRef = !roadRef.isNullOrBlank() &&
                         RoadNameNormalizer.isHighwayCodeOnly(roadRef.trim())
                     if (!hasParen && !hasHighwayRef) continue
                     val en = deserializePlaceInfo(it.getString(3))
-                    val pl = deserializePlaceInfo(it.getString(4))
                     val native = deserializePlaceInfo(it.getString(5))
                     fun PlaceInfo.cleaned(): PlaceInfo {
                         val s = RoadNameNormalizer.stripParenHighwayRef(this.street) ?: this.street
@@ -891,6 +915,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             put(COL_CITY, toStore.pl.city)
             put(COL_STREET, toStore.pl.street)
             put(COL_ROAD_REF, toStore.pl.roadRef)
+            put(COL_HIGHWAY_TYPE, toStore.pl.highwayType ?: toStore.en.highwayType)
             put(COL_EN_JSON, serializePlaceInfo(toStore.en))
             put(COL_PL_JSON, serializePlaceInfo(toStore.pl))
             put(COL_NATIVE_JSON, serializePlaceInfo(toStore.native))

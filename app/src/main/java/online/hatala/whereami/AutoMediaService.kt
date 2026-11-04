@@ -225,6 +225,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
     private var lastQueueKey: String = ""
     private var lastQueueUpdateTime: Long = 0L
+    private var lastVisitedCount: Int = -1
 
     private fun updateMediaQueue(place: PlaceInfo?) {
         if (place == null || place.city == "Unknown City") return
@@ -232,6 +233,11 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         val now = System.currentTimeMillis()
         val activeTrip = TripManager.getInstance(this).activeTrip.value
         val visitedCount = activeTrip?.placesVisited?.size ?: 0
+
+        if (visitedCount != lastVisitedCount) {
+            lastVisitedCount = visitedCount
+            notifyChildrenChanged("root")
+        }
 
         // Strip building numbers from street for queue stability (keeps list from jumping on every house passed)
         val baseStreet = place.street?.replace(Regex("\\s+\\d+[a-zA-Z]?(-\\d+)?"), "") ?: ""
@@ -335,6 +341,18 @@ class AutoMediaService : MediaBrowserServiceCompat() {
                         addBrowserItem("item_road", "Road", listOfNotNull(lastPlace.street, lastPlace.roadRef).joinToString(" "))
                     }
                     addBrowserItem("item_country", "Country: ${lastPlace.country}", lastPlace.voivodeship)
+                }
+
+                val activeTrip = TripManager.getInstance(this@AutoMediaService).activeTrip.value
+                if (activeTrip != null && activeTrip.placesVisited.isNotEmpty()) {
+                    activeTrip.placesVisited.reversed().forEachIndexed { idx, vp ->
+                        val visitNum = activeTrip.placesVisited.size - idx
+                        addBrowserItem(
+                            "visited_$visitNum",
+                            "$visitNum. ${vp.placeName}",
+                            vp.hierarchySubtitle
+                        )
+                    }
                 }
 
                 result.sendResult(items)

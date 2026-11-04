@@ -119,12 +119,10 @@ object TrackSpikeGuard {
     }
 
     /**
-     * Three-point lateral V/Z: B sticks out beside a short A→C chord with a sharp turn at B.
-     * Unlike [isReversalSpike], no gap is required — urban 1 Hz multipath on a straight corridor
-     * (trip 248 Głęboka / Piłsudskiego) returns within a couple of seconds.
-     * When true, the caller should drop B (the middle), not C.
+     * Needle out-and-back spike: B shoots out away from A and then immediately returns to C near A
+     * with an acute reversal turn (>= 135°). The middle point B is an artifact and must be dropped.
      */
-    fun isLateralVSpike(
+    fun isNeedleSpike(
         aLat: Double,
         aLng: Double,
         bLat: Double,
@@ -135,11 +133,35 @@ object TrackSpikeGuard {
         val ab = distanceM(aLat, aLng, bLat, bLng)
         val bc = distanceM(bLat, bLng, cLat, cLng)
         val ac = distanceM(aLat, aLng, cLat, cLng)
+        if (ab < 8.0 || bc < 8.0) return false
+        val turn = courseDeltaDeg(
+            bearingDeg(aLat, aLng, bLat, bLng),
+            bearingDeg(bLat, bLng, cLat, cLng)
+        )
+        return turn >= 135.0 && ac < maxOf(ab, bc) * 0.5
+    }
+
+    /**
+     * Three-point lateral V/Z: B sticks out beside a short A→C chord with a sharp turn at B.
+     * Unlike [isReversalSpike], no gap is required — urban 1 Hz multipath on a straight corridor
+     * returns within a couple of seconds.
+     * When true, the caller should drop B (the middle), not C.
+     */
+    fun isLateralVSpike(
+        aLat: Double,
+        aLng: Double,
+        bLat: Double,
+        bLng: Double,
+        cLat: Double,
+        cLng: Double
+    ): Boolean {
+        if (isNeedleSpike(aLat, aLng, bLat, bLng, cLat, cLng)) return true
+        val ab = distanceM(aLat, aLng, bLat, bLng)
+        val bc = distanceM(bLat, bLng, cLat, cLng)
+        val ac = distanceM(aLat, aLng, cLat, cLng)
         if (ab < LATERAL_V_LEG_M || bc < LATERAL_V_LEG_M || ac < LATERAL_V_CHORD_M) return false
-        // Forward progress along the corridor: detour must be a side excursion, not a U-turn nest.
         val detour = ab + bc - ac
         if (detour < LATERAL_V_XT_M) return false
-        if (ac < ab * 0.35 && ac < bc * 0.35) return false
         val turn = courseDeltaDeg(
             bearingDeg(aLat, aLng, bLat, bLng),
             bearingDeg(bLat, bLng, cLat, cLng)

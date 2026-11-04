@@ -55,7 +55,8 @@ data class PlaceInfo(
     val powiat: String? = null,// Powiat / County / District
     val voivodeship: String,   // Województwo / State / Province
     val country: String,       // Kraj / Country
-    val countryCode: String = "" // ISO 2-letter country code
+    val countryCode: String = "", // ISO 2-letter country code
+    val highwayType: String? = null // OSM highway tag (motorway, trunk, primary, etc.)
 ) {
     fun isValid(): Boolean = city.isNotBlank() && city != "Unknown City" && city != "--"
 }
@@ -140,7 +141,8 @@ private data class OsmPlaceResult(
     val state: String?,
     val country: String?,
     val countryCode: String?,
-    val houseNumber: String? = null // Specific house number if returned by Nominatim
+    val houseNumber: String? = null, // Specific house number if returned by Nominatim
+    val highwayType: String? = null  // OSM highway classification (motorway, trunk, primary, etc.)
 )
 
 class LocationManager private constructor(private val context: Context) {
@@ -1642,7 +1644,17 @@ class LocationManager private constructor(private val context: Context) {
         val rawOsrmStreet = nearest?.name
         val committedStreet = committedPlace?.pl?.street
         val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreet, committedPlace?.pl?.roadRef)
-        val osrmStreet = if (RoadNameNormalizer.shouldShieldMajorCorridor(speedKmh, isCommittedMajor, rawOsrmStreet, sharedOsm?.roadRef, sharedOsm?.street)) {
+        val osrmStreet = if (RoadNameNormalizer.shouldShieldMajorCorridor(
+                speedKmh = speedKmh,
+                isCommittedMajor = isCommittedMajor,
+                osrmStreet = rawOsrmStreet,
+                osmRoadRef = sharedOsm?.roadRef,
+                osmStreet = sharedOsm?.street,
+                candidateHighwayType = sharedOsm?.highwayType,
+                vehicleHeadingDeg = effectiveBearing,
+                roadBearingDeg = null
+            )
+        ) {
             TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreet' from non-major OSRM snap '$rawOsrmStreet' at ${speedKmh?.toInt()} km/h")
             null
         } else {
@@ -1801,7 +1813,8 @@ class LocationManager private constructor(private val context: Context) {
                 gmina = effectiveGmina,
                 powiat = effectivePowiat,
                 voivodeship = effectiveVoivodeship,
-                country = resolvedCountry
+                country = resolvedCountry,
+                highwayType = osm?.highwayType
             )
         }
 
@@ -1856,7 +1869,8 @@ class LocationManager private constructor(private val context: Context) {
                     powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
                     voivodeship = effectiveVoivodeship,
                     country = resolvedCountry,
-                    countryCode = cc
+                    countryCode = cc,
+                    highwayType = osm.highwayType
                 )
             }
         }
@@ -1923,6 +1937,12 @@ class LocationManager private constructor(private val context: Context) {
                         nd.optString("name").takeIf { it.isNotEmpty() } to nd.optString("ref").takeIf { it.isNotEmpty() }
                     })
                 val osmCountryCode = str("country_code")?.uppercase()
+                val rawHighwayType = if (root.optString("class") == "highway") {
+                    root.optString("type").takeIf { it.isNotEmpty() }
+                } else {
+                    root.optJSONObject("extratags")?.optString("highway")?.takeIf { it.isNotEmpty() }
+                        ?: root.optString("type").takeIf { it.isNotEmpty() }
+                }
 
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
                 val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true, countryCode = osmCountryCode)
@@ -1967,7 +1987,8 @@ class LocationManager private constructor(private val context: Context) {
                     state = str("state"),
                     country = str("country"),
                     countryCode = str("country_code"),
-                    houseNumber = houseNum
+                    houseNumber = houseNum,
+                    highwayType = rawHighwayType
                 )
                 osmResponseCache[osmKey] = CachedOsmResult(System.currentTimeMillis(), osmResult)
                 osmResult

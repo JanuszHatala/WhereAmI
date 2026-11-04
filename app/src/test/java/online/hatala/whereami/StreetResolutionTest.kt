@@ -294,6 +294,7 @@ class StreetResolutionTest {
     private class LocalityStreetHysteresisModel {
         var committedStreetPl: String? = null
         var committedStreetBase: String? = null
+        var committedRoadRef: String? = null
         var lastCommittedStreetLocality: String? = null
         var candidateStreetPl: String? = null
         var candidateStreetBase: String? = null
@@ -314,6 +315,7 @@ class StreetResolutionTest {
             if (committedStreetPl == null || committedStreetBase == null) {
                 committedStreetPl = rawStreetPl
                 committedStreetBase = rawBase
+                committedRoadRef = roadRef
                 lastCommittedStreetLocality = city
                 candidateStreetPl = null
                 candidateStreetBase = null
@@ -370,7 +372,7 @@ class StreetResolutionTest {
                 return committedStreetPl
             }
 
-            val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, roadRef)
+            val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, committedRoadRef ?: roadRef)
             val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase)
 
             val isRecentTurn = false // simulation default

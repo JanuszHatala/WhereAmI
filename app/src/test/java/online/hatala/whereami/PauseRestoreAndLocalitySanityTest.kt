@@ -94,12 +94,15 @@ class PauseRestoreAndLocalitySanityTest {
 
     @Test
     fun testCorridorShieldRecognizesExpresswayCorridors() {
-        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino"))
-        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Bohaterów Monte Cassino"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Bohaterów Monte Cassino", "S52"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("ul. Bohaterów Monte Cassino", "S52"))
         assertTrue(RoadNameNormalizer.isMajorRoad("Aleja Generała Władysława Andersa"))
-        assertTrue(RoadNameNormalizer.isMajorRoad("Niepodległości"))
+        assertTrue(RoadNameNormalizer.isMajorRoad("Trasa Niepodległości"))
         assertTrue(RoadNameNormalizer.isMajorRoad("S52"))
         assertTrue(RoadNameNormalizer.isMajorRoad("DK52"))
+        assertTrue(RoadNameNormalizer.isMajorHighway("motorway"))
+        assertTrue(RoadNameNormalizer.isMajorHighway("trunk"))
+        assertTrue(RoadNameNormalizer.isMajorHighway("primary"))
 
         // Residential streets must NOT be major
         assertFalse(RoadNameNormalizer.isMajorRoad("Sabały"))

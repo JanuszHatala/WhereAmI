@@ -28,7 +28,10 @@ object RoadNameNormalizer {
     fun isMajorRoad(name: String?, roadRef: String? = null): Boolean {
         if (!roadRef.isNullOrBlank()) {
             val refTrimmed = roadRef.trim().uppercase(Locale.ROOT)
-            if (refTrimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) || refTrimmed.matches(Regex("""^\d{1,3}$"""))) {
+            if (refTrimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
+                refTrimmed.matches(Regex("""^\d{1,3}$""")) ||
+                refTrimmed.matches(Regex("""^(I|II)/\d+.*"""))
+            ) {
                 return true
             }
         }
@@ -44,9 +47,6 @@ object RoadNameNormalizer {
                 trimmed.startsWith("AUTOSTRADA") ||
                 trimmed.startsWith("DROGA EKSPRESOWA") ||
                 trimmed.startsWith("EKSPRESOWA") ||
-                trimmed.contains("NIEPODLEGŁOŚCI") ||
-                trimmed.contains("MONTE CASSINO") ||
-                trimmed.contains("ANDERSA") ||
                 trimmed.startsWith("ALEJA") ||
                 trimmed.startsWith("ALEJE") ||
                 trimmed.startsWith("AL.") ||
@@ -55,11 +55,43 @@ object RoadNameNormalizer {
     }
 
     /**
-     * At speed on a major corridor, a non-major OSRM snap is usually a parallel or crossing street and is
-     * ignored. Not when the OSM way at the fix carries a road number ([osmRoadRef]): then the snap is the
-     * corridor's own local name (DK52 through Bujaków is "Bielska"), and rejecting it showed the bare
-     * number in every village the corridor passes.
+     * Data-driven highway classification based on standard OpenStreetMap tags.
+     * Evaluates highway tags: motorway, trunk, primary, secondary, tertiary (and their links)
+     * or explicit national/international highway reference codes.
      */
+    fun isMajorHighway(highwayType: String?, roadRef: String? = null): Boolean {
+        if (!roadRef.isNullOrBlank()) {
+            val refTrimmed = roadRef.trim().uppercase(Locale.ROOT)
+            if (refTrimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
+                refTrimmed.matches(Regex("""^\d{1,3}$""")) ||
+                refTrimmed.matches(Regex("""^(I|II)/\d+.*"""))
+            ) {
+                return true
+            }
+        }
+        val ht = highwayType?.trim()?.lowercase(Locale.ROOT)
+        if (ht != null) {
+            return ht == "motorway" || ht == "motorway_link" ||
+                   ht == "trunk" || ht == "trunk_link" ||
+                   ht == "primary" || ht == "primary_link" ||
+                   ht == "secondary" || ht == "secondary_link" ||
+                   ht == "tertiary" || ht == "tertiary_link"
+        }
+        return false
+    }
+
+    /**
+     * Determines whether the angle between vehicle trajectory heading and candidate road bearing
+     * exceeds 45 degrees relative to the bidirectional axis (crossing/perpendicular road).
+     */
+    fun isPerpendicularCrossing(vehicleHeadingDeg: Float?, roadBearingDeg: Float?): Boolean {
+        if (vehicleHeadingDeg == null || roadBearingDeg == null) return false
+        var diff = kotlin.math.abs(vehicleHeadingDeg - roadBearingDeg) % 360f
+        if (diff > 180f) diff = 360f - diff
+        val lineDiff = if (diff > 90f) 180f - diff else diff
+        return lineDiff > 45f
+    }
+
     /**
      * Road number of the reverse-geocoded way. Nominatim's `address` has no `ref`; `namedetails` has the
      * result object's own name and ref, which belong to [road] only when that object is the road itself.
@@ -75,16 +107,29 @@ object RoadNameNormalizer {
         isCommittedMajor: Boolean,
         osrmStreet: String?,
         osmRoadRef: String?,
-        osmStreet: String? = null
+        osmStreet: String? = null,
+        candidateHighwayType: String? = null,
+        vehicleHeadingDeg: Float? = null,
+        roadBearingDeg: Float? = null
     ): Boolean {
         if (speedKmh == null || speedKmh <= 35f || !isCommittedMajor || osrmStreet == null) return false
         if (isMajorRoad(osrmStreet, null)) return false
-        if (isKnownSideStreet(osrmStreet)) return true
+        if (isPerpendicularCrossing(vehicleHeadingDeg, roadBearingDeg)) return true
+
+        val isCandidateMajor = isMajorHighway(candidateHighwayType, osmRoadRef)
+        if (!isCandidateMajor && candidateHighwayType != null &&
+            (candidateHighwayType == "residential" || candidateHighwayType == "service" ||
+             candidateHighwayType == "track" || candidateHighwayType == "living_street" ||
+             candidateHighwayType == "unclassified" || candidateHighwayType == "path")
+        ) {
+            return true
+        }
+
         // osmRoadRef comes from Nominatim's osmStreet, NOT from OSRM. It only exempts osrmStreet when
-        // osrmStreet is the same road as osmStreet (or osmStreet is absent/code-only and osrmStreet is a corridor name).
+        // osrmStreet is the same road as osmStreet (or osmStreet is absent/bare highway code).
         val osrmMatchesOsm = !osmStreet.isNullOrBlank() && streetsMatch(osrmStreet, osmStreet)
         val refAppliesToOsrm = !osmRoadRef.isNullOrBlank() &&
-            (osrmMatchesOsm || ((osmStreet.isNullOrBlank() || isHighwayCodeOnly(osmStreet)) && isLikelyCorridorLocalName(osrmStreet)))
+            (osrmMatchesOsm || osmStreet.isNullOrBlank() || isHighwayCodeOnly(osmStreet))
         return !isMajorRoad(osrmStreet, if (refAppliesToOsrm) osmRoadRef else null)
     }
 
@@ -124,45 +169,13 @@ object RoadNameNormalizer {
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
 
-    val SIDE_STREET_NAMES = setOf(
-        "graniczna", "cicha", "polna", "leśna", "lesna", "ogrodowa", "szkolna", "kościelna", "koscielna",
-        "krótka", "krotka", "słoneczna", "sloneczna", "kwiatowa", "lipowa", "brzozowa", "dębowa", "debowa",
-        "akacjowa", "sosnowa", "zielona", "boczna", "przecznia", "jasna", "spokojna", "wąska", "waska",
-        "łąkowa", "lakowa", "piaskowa", "krzywa", "prosta", "młyńska", "mlynska", "wesoła", "wesola",
-        "wiejska", "starowiejska", "gminna", "rolna", "spacerowa", "stawowa", "kolejowa", "dworska",
-        "osiedlowa", "widokowa", "spacerowa", "kamienna", "zacisze", "parkowa", "podgórska", "podgorska",
-        "podlesie", "podleśna", "podlesna", "zarzecze", "zagrody", "potokowa", "granica"
-    )
-
-    fun isKnownSideStreet(street: String?): Boolean {
-        if (street.isNullOrBlank()) return false
-        val stripped = stripParenHighwayRef(street) ?: return false
-        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim().lowercase(Locale.ROOT)
-        return SIDE_STREET_NAMES.contains(base)
-    }
-
-    fun isCommemorativeStreet(street: String?): Boolean {
-        if (street.isNullOrBlank()) return false
-        val stripped = stripParenHighwayRef(street) ?: return false
-        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim().lowercase(Locale.ROOT)
-        if (base.contains("jana pawła") || base.contains("jana pawla")) return false
-        return base.startsWith("kardynał") || base.startsWith("kardynal") ||
-                base.startsWith("księdz") || base.startsWith("ksiedz") ||
-                base.startsWith("ks.") || base.startsWith("św.") || base.startsWith("sw.") ||
-                base.startsWith("święt") || base.startsWith("swiet") ||
-                base.startsWith("gen.") || base.startsWith("marsz") ||
-                base.startsWith("pluton") || base.startsWith("por.")
-    }
-
     /**
      * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
      * OSM name (`Krakowska`). Prefer the local name; attach the code only when OSM confirms [osmRoadRef]
      * (or when a later bare-code cache coalesce upgrades a committed `DK*`).
      *
-     * Never glue an OSRM-only code onto an unrelated named way: trip 249 Czaniec showed
-     * `Kardynała Karola Wojtyły (DK52)` because OSRM snapped to DK52 while Nominatim named Wojtyły.
-     * Never glue a highway code onto a side street: trip 272 Bujaków showed `Szkolna (DK52)` because
-     * OSRM snapped to DK52 while Nominatim resolved the side street at the junction.
+     * Purely data-driven: Never glue an OSRM-only code onto an unrelated named way unless OSM explicitly
+     * confirms matching roadRef or matching street geometry.
      *
      * @return pair of (streetForNormalize, refForNormalize)
      */
@@ -180,63 +193,27 @@ object RoadNameNormalizer {
         val isOsrmHighway = osrm != null && isHighwayCodeOnly(osrm)
 
         return when {
-            // If OSM confirmed both a non-side street name and a road ref, and OSRM only has a bare highway code
-            // or a residential side street (e.g. "52" in Chocznia/Inwałd, or "Podlesie" in Bujaków), prefer OSM!
-            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() && !isKnownSideStreet(osmStreet) &&
-                (osrm == null || isOsrmHighway || isKnownSideStreet(osrm)) ->
+            // If OSM confirmed both a named street and a valid road ref, prefer OSM confirmed name and ref.
+            !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() ->
                 osmStreet.trim() to osmRef
 
             // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref
-            // only if OSRM is not a side street and is a corridor local name (or matches osmStreet).
-            osrm != null && !isHighwayCodeOnly(osrm) -> {
-                val safeRef = if (!isKnownSideStreet(osrm) &&
-                    (isLikelyCorridorLocalName(osrm) || (!osmStreet.isNullOrBlank() && streetsMatch(osrm, osmStreet)))
-                ) osmRef else null
-                osrm to safeRef
-            }
+            osrm != null && !isHighwayCodeOnly(osrm) ->
+                osrm to osmRef
 
-            // Named street is a known side street (e.g. "Szkolna", "Cicha") while on a highway corridor:
-            // Discard the side street! Show canonical highway code.
-            named != null && isKnownSideStreet(named) && isOsrmHighway -> osrm to osmRef
+            // Named street is present and OSRM is a bare highway code:
+            // Prefer the named local street, attach confirmed osmRef only if confirmed by OSM
+            named != null && isOsrmHighway ->
+                named to osmRef
 
-            // Named street is a genuine corridor name (e.g. "Krakowska", "Bielska", "3 Maja"):
-            // Attach confirmed osmRef (never glue bare OSRM-only code onto Krakowska unless confirmed by OSM)
-            named != null && isLikelyCorridorLocalName(named) -> named to osmRef
+            // Named street without confirmed highway ref: keep local name, never attach stray highway ref
+            named != null && osmRef == null ->
+                named to null
 
-            // Named street is not a corridor name (e.g. "Kardynała Karola Wojtyły"): keep local name, never attach highway ref
-            named != null && osmRef == null -> named to null
-
-            // Fallback: highway code or whatever was available
+            // Fallback
             osrm != null -> osrm to osmRef
             else -> named to osmRef
         }
-    }
-
-    /**
-     * Local names that commonly alias a numbered corridor (`Krakowska`, `Bielska`, `3 Maja`).
-     * Long commemorative names (`Kardynała Karola Wojtyły`) must not inherit a nearby highway code.
-     */
-    fun isLikelyCorridorLocalName(street: String?): Boolean {
-        if (street.isNullOrBlank() || isHighwayCodeOnly(street)) return false
-        val stripped = stripParenHighwayRef(street) ?: return false
-        val base = cleanStreetPrefix(extractBaseStreet(stripped)).trim()
-        if (base.isEmpty()) return false
-        val lower = base.lowercase(Locale.ROOT)
-        if (lower.startsWith("kardynał") || lower.startsWith("księdz") || lower.startsWith("święt") ||
-            lower.startsWith("św.") || lower.startsWith("sw.") || lower.startsWith("gen.") ||
-            lower.startsWith("marsz") || lower.startsWith("pluton") || lower.startsWith("por.")
-        ) {
-            return false
-        }
-        if (SIDE_STREET_NAMES.contains(lower)) return false
-        val genericRuralAdjectives = setOf("wiejska", "starowiejska", "gminna", "rolna", "dworska", "osiedlowa", "kolejowa", "stawowa")
-        if (genericRuralAdjectives.contains(lower)) return false
-
-        val isDirectional = lower.endsWith("ska") || lower.endsWith("cka") || lower.endsWith("dzka")
-        val isArterialKeyword = lower.contains("obwodnica") || lower.contains("główna") || lower.contains("glowna") ||
-                lower.contains("trasa") || lower.contains("trakt") || lower.contains("aleja") || lower.contains("3 maja")
-        val words = base.split(Regex("\\s+")).filter { it.isNotBlank() }
-        return (isDirectional || isArterialKeyword) && words.size <= 2
     }
 
     /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
@@ -257,9 +234,10 @@ object RoadNameNormalizer {
 
     /**
      * When the committed display is a bare highway code (DK52) and the spatial cache has the corridor's
-     * local name (Krakowska), prefer `Krakowska (DK52)`. Field screenshot 2026-10-21 14:15 kept bare DK52
-     * because the viaduct shield treated every non-major cache hit as a side street whenever committed
-     * was already major.
+     * local name (Krakowska), prefer `Krakowska (DK52)`.
+     *
+     * Verification is strictly data-driven: The cached entry MUST confirm connection to this highway
+     * corridor via matching roadRef or parenthesized highway code. Never coalesces based on language patterns.
      */
     fun coalesceBareCodeWithCachedName(
         committedStreet: String?,
@@ -275,9 +253,6 @@ object RoadNameNormalizer {
         val cached = cachedStreet?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         if (isHighwayCodeOnly(cached) || isResidentialSideStreet(cached)) return null
 
-        // Verification: The cached entry MUST confirm connection to this highway corridor.
-        // It must have a matching roadRef, already contain the parenthesized highway code,
-        // or be an unmistakable arterial corridor local name (e.g. Krakowska).
         val normalizedCommitted = committedCode.replace(" ", "").uppercase(Locale.ROOT)
         val cachedRefNormalized = cachedRoadRef?.trim()?.replace(" ", "")?.uppercase(Locale.ROOT)
         val hasMatchingRef = cachedRefNormalized != null && (
@@ -289,9 +264,11 @@ object RoadNameNormalizer {
         val hasParenRef = cached.contains("($committedCode)", ignoreCase = true) ||
             (extractHighwayCode(committedCode)?.let { cached.contains("($it)", ignoreCase = true) } == true)
 
+        // Strict verification: cached record MUST explicitly confirm connection to this highway code
+        if (!hasMatchingRef && !hasParenRef) return null
+
         val local = stripParenHighwayRef(extractBaseStreet(cached))?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
-        if (!isLikelyCorridorLocalName(local)) return null
 
         val ref = cachedRoadRef?.trim()?.takeIf { it.isNotEmpty() } ?: committedCode
         return local to ref
@@ -589,14 +566,6 @@ object RoadNameNormalizer {
             }
         }
 
-        // Special handling for key Polish expressway / national highway urban corridors where road name is used
-        if (normalizedHighway == null && road.isNotEmpty()) {
-            val upper = road.uppercase(Locale.ROOT)
-            if (upper.contains("ŚWIĘTEGO JANA PAWŁA II") || upper.contains("SWIETEGO JANA PAWLA II")) {
-                normalizedHighway = "S1"
-            }
-        }
-
         // Extract house number if available
         val effectiveHouseNumber = houseNumber?.trim()?.takeIf { it.isNotEmpty() }
             ?: extractHouseNumber(road)
@@ -604,8 +573,7 @@ object RoadNameNormalizer {
         // If it's a major highway:
         if (normalizedHighway != null) {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
-            val shouldAttachRef = !isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road) &&
-                    !isKnownSideStreet(road) && !isCommemorativeStreet(road)
+            val shouldAttachRef = !isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)
             val combined = if (shouldAttachRef) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
                 if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
