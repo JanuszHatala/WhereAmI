@@ -78,8 +78,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 117** | Overnight Sleep Extension to Morning Alarm & Motion Wake Deduplication (2026-10-26) | 4 | 4 | 0 | 0 |
 | **Round 118** | Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27) | 12 | 12 | 0 | 0 |
 | **Round 119** | Trip Details End Tile Leg Line Elimination, Screen-Adaptive Avatar Spiderfy & Outer Altitude Collision Clearance (2026-10-27) | 3 | 3 | 0 | 0 |
+| **Round 130** | Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10) | 8 | 8 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **353** | **345** | **0** | **8** |
+| **Total** | | **361** | **353** | **0** | **8** |
 
 
 ---
@@ -1685,25 +1686,29 @@ Evidence & Diagnostics:
 
 ---
 
-## Round 127: Field Testing (2026-11-01) Timeline Chronology, Panel Spacing, Cache Prefetch Unblock & Screen-Space Guest Collision Avoidance
+## Round 130: Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10)
 
 Evidence & Diagnostics:
-- User field feedback and telemetry analyzed on 2026-11-01:
-  - Route timeline chronological sequence: preserved full chronological order with rest pauses positioned exactly between pre-pause and post-pause legs (not displaced to end of trip).
-  - Visited places count in header (`ROUTE TIMELINE (5 places, 1 pause)`) and breadcrumbs strictly follow leave-and-reenter rule via consecutive deduplication.
-  - Trip detail panels relocated: Row 1 Right = Total / Moving Time; Row 2 Right = Activity Profile. Spacing between title and subtitle minimized with normalized font metrics (`PlatformTextStyle(includeFontPadding = false)`). Schedule & Timing lines condensed to `Arrangement.spacedBy(2.dp)` with multi-day date detection.
-  - Permanent cache deficit fix: `CacheManager` unblocked auto-prefetch during live sharing when the device is stationary, on Wi-Fi, or charging.
-  - Screen-space guest avatar collision avoidance: `computeSpiderfyOffsets` operates in screen DP bounding boxes. When uncollided at high zoom, offset is 0.0 (stays at exact GPS position, no leader line); when colliding on screen, shifts by minimal clean screen distance away from controls and altitude badge.
-  - Broken trip 278: reconstructed missing 2321.3m trajectory along Skotnica -> DK52 Krakowska -> Biała Droga matching OSRM centerline and telemetry checkpoints; updated database and phone.
+- Morning alarm wake Live Sharing recovery: `AutoSleepManager` and `AppStateManager` check morning alarm trigger, clearing sleep restrictions and waking Live Sharing immediately.
+- Android Auto instant speed & auto-start: `AutoMediaService` ensures `isGpsStopped = false` and registers 1s unbatched cadence; `AppStateManager` listens for `ACTION_ENTER_CAR_MODE` to boost location engine.
+- Polyline corner fillet smoothing: lowered `MIN_CORNER_DEG` to 2.5°, increased corner fillet ratio to 0.46, and raised steps to prevent stepped staircase artifacts on straight-to-curved transitions.
+- Czaniec multipath needle loop rejection: tightened low-speed accuracy gate for `CAR` profile to 16.0m and hardened 2-strike moving point recovery in `TripManager.kt` (`acc <= 16f`, sustained speed >= 1.5 m/s).
+- Overnight battery drain: enforced complete screen-off stationary GNSS shutdown; eliminated recurrent confirmation bursts.
+- Guest avatars collision clearance: removed saved place pins from avatar obstacle set, capped radial search to 20-32dp with West bias, clamped viewport overflow.
+- Cache missing points verification: verified 0 missing points across all completed trips in device SQLite.
+- CursorWindow 2MB crash fix: projected `TRIP_SUMMARY_COLUMNS` in `getAllTrips()` and `queryTrips()`, avoiding full table JSON blob scans; purged obsolete `points_json` blobs for `points_store = 1`.
 
 | Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
 | :--- | :--- | :--- | :---: | :--- |
-| **TIM127-01** | Route timeline chronological order and leave-and-reenter place counting. | `MainActivity.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Pauses stay between legs; header counts 5 places and 1 pause. |
-| **PAN127-02** | Panel swapping, font normalization, and condensed Schedule & Timing. | `MainActivity.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Total/Moving time swapped to Row 1; line spacing reduced to 2dp. |
-| **CAC127-03** | Unblock background cache prefetch during live sharing when stationary/wifi/charging. | `CacheManager.kt`, `FieldTestFeedbackNov01Test.kt` | Implemented | Auto-prefetch runs without being blocked by continuous live sharing. |
-| **SPI127-04** | Screen-space bounding-box guest avatar collision avoidance. | `OsmMapView.kt`, `FieldTestFeedbackNov01Test.kt`, `LiveGuestTest.kt` | Implemented | Avatars stay at exact GPS position when clear; shift away when colliding. |
-| **TRP127-05** | Reconstruct broken trip 278 geometry along DK52 Krakowska. | `scripts/reconstruct_trip_278.py`, `where_am_i_trips.db` | Implemented | 59 points synthesized, distance recalculated from 3.7km to 4.5km on phone. |
-| **VER-127** | Bump to versionCode 174 / 2.0.4. | `app/build.gradle.kts` | Implemented | All unit tests pass, assembleDebug passes. |
+| **SLP130-01** | Morning alarm Live Sharing recovery on resume. | `AutoSleepManager.kt`, `AppStateManager.kt` | Implemented | Automatically exits sleep mode and resumes Live Sharing when morning alarm fires. |
+| **AA130-02** | Android Auto instant 1 Hz speed & car mode broadcast receiver. | `AutoMediaService.kt`, `AppStateManager.kt` | Implemented | Clears GPS stopped flag on startup, registers 1s cadence on Android Auto connect. |
+| **CRV130-03** | Smooth polyline corner fillets without staircase / square stepping. | `CurvedPolyline.kt` | Implemented | Lowered fillet threshold to 2.5°, increased fillet ratio and step count. |
+| **FLT130-04** | Low-speed multipath spike rejection in CAR profile. | `TrackingEngine.kt`, `TripManager.kt` | Implemented | Gated CAR fixes < 2 m/s to 16m accuracy; hardened 2-strike recovery rule. |
+| **BAT130-05** | Screen-off stationary GNSS shutdown in Standby / Live-only. | `LocationManager.kt`, `AppStateManager.kt` | Implemented | Powers down GPS completely when stationary with screen off. |
+| **GST130-06** | Guest avatars collision avoidance without off-screen drift. | `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Excluded saved places from avatar collision grid; capped radial offset to 32dp. |
+| **DB130-07** | CursorWindow 2MB query fix & obsolete points_json purge. | `TripDatabaseHelper.kt` | Implemented | Summaries query projected columns only; eliminates CursorWindow allocation failure. |
+| **VER-130** | Bump to versionCode 180 / 2.0.10. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` and `assembleDebug` passed; installed on phone. |
+
 
 
 
