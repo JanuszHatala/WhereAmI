@@ -1074,7 +1074,13 @@ fun OsmMapView(
                                             pencilTrail.add(it.tMs, it.lat, it.lng, it.speedMps, vehicle = vehiclePencil)
                                         } > 0
                                 val added = !pose.isStationary && (!pose.isPredicted || pose.speedMps >= 1.5) &&
-                                    pencilTrail.add(pose.renderTimeMs, pose.lat, pose.lng, pose.speedMps, vehicle = vehiclePencil)
+                                    pencilTrail.add(
+                                        pose.renderTimeMs,
+                                        if (vehiclePencil) pose.rawLat else pose.lat,
+                                        if (vehiclePencil) pose.rawLng else pose.lng,
+                                        pose.speedMps,
+                                        vehicle = vehiclePencil
+                                    )
                                 if (pose.isStationary && pencilTrail.size > 0 && committedThroughMs >= pose.renderTimeMs - 1_500L) {
                                     pencilTrail.clear()
                                 }
