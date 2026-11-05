@@ -45,7 +45,10 @@ class RenderPipeline(
         /** Time the pose represents (`now - latencyMs`, elapsedRealtime ms). */
         val renderTimeMs: Long,
         /** Direction of the rendered path itself at this pose, when the cursor is on an interpolated curve. */
-        val pathHeadingDeg: Double? = null
+        val pathHeadingDeg: Double? = null,
+        /** Unperturbed kinematic trajectory coordinates (without spring-decay offsets). */
+        val rawLat: Double = lat,
+        val rawLng: Double = lng
     )
 
     private class Raw(
@@ -242,7 +245,9 @@ class RenderPipeline(
             accuracyM = latest.accuracyM,
             isPredicted = raw.predicted,
             renderTimeMs = renderT.toLong(),
-            pathHeadingDeg = pathHeading
+            pathHeadingDeg = pathHeading,
+            rawLat = raw.lat,
+            rawLng = raw.lng
         )
     }
 

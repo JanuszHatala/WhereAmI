@@ -181,7 +181,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val dbHelper = TripDatabaseHelper(context)
+    private val dbHelper = TripDatabaseHelper.getInstance(context)
 
     private val _currentSession = MutableStateFlow<LiveSession?>(null)
     val currentSession: StateFlow<LiveSession?> = _currentSession.asStateFlow()
@@ -1308,16 +1308,26 @@ class LiveSharingManager private constructor(private val context: Context) {
 
                     val guestsArr = json.optJSONArray("guests")
                     if (guestsArr != null && session.followGuests) {
-                        val parsed = mutableListOf<LiveGuest>()
+                        val parsedMap = LinkedHashMap<String, LiveGuest>()
                         for (i in 0 until guestsArr.length()) {
                             val gObj = guestsArr.optJSONObject(i) ?: continue
                             LiveGuest.fromJson(gObj)?.let { g ->
                                 if (!dismissedGuestIds.contains(g.id)) {
-                                    parsed.add(g)
+                                    val key = if (g.name.isNotBlank() && !g.name.startsWith("Guest ", ignoreCase = true)) {
+                                        "name:" + g.name.trim().lowercase(java.util.Locale.ROOT)
+                                    } else {
+                                        "id:" + g.id
+                                    }
+                                    val existing = parsedMap[key]
+                                    if (existing != null) {
+                                        parsedMap[key] = existing.merge(g)
+                                    } else {
+                                        parsedMap[key] = g
+                                    }
                                 }
                             }
                         }
-                        _activeGuests.value = parsed
+                        _activeGuests.value = parsedMap.values.toList()
                     } else if (!session.followGuests) {
                         _activeGuests.value = emptyList()
                     }

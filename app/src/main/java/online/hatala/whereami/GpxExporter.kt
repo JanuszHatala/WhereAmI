@@ -1,4 +1,4 @@
-﻿package online.hatala.whereami
+package online.hatala.whereami
 
 import android.content.Context
 import android.content.Intent
@@ -13,7 +13,7 @@ object GpxExporter {
 
     fun exportTripToGpx(context: Context, trip: TripRecord): File {
         val rows = try {
-            TripDatabaseHelper(context).getTrackPointRows(trip.id)
+            TripDatabaseHelper.getInstance(context).getTrackPointRows(trip.id)
         } catch (_: Exception) { emptyList() }
         val gpx = buildGpx(trip, rows.takeIf { it.size == trip.points.size })
         val gpxDir = File(context.cacheDir, "gpx_exports").apply { mkdirs() }

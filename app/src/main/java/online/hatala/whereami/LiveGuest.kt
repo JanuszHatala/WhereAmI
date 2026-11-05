@@ -57,6 +57,38 @@ data class LiveGuest(
         }
     }
 
+    fun merge(other: LiveGuest): LiveGuest {
+        val newest = if (other.lastUpdated >= this.lastUpdated) other else this
+        val validLoc = when {
+            newest.hasValidLocation -> newest.lat to newest.lng
+            this.hasValidLocation -> this.lat to this.lng
+            other.hasValidLocation -> other.lat to other.lng
+            else -> 0.0 to 0.0
+        }
+        val acc = when {
+            newest.hasValidLocation -> newest.accuracy
+            this.hasValidLocation -> this.accuracy
+            else -> other.accuracy
+        }
+        val mergedName = when {
+            newest.name.isNotBlank() && !newest.name.startsWith("Guest ", ignoreCase = true) -> newest.name
+            this.name.isNotBlank() && !this.name.startsWith("Guest ", ignoreCase = true) -> this.name
+            other.name.isNotBlank() && !other.name.startsWith("Guest ", ignoreCase = true) -> other.name
+            else -> newest.name
+        }
+        return newest.copy(
+            id = newest.id,
+            name = mergedName,
+            lat = validLoc.first,
+            lng = validLoc.second,
+            accuracy = acc,
+            lastUpdated = maxOf(this.lastUpdated, other.lastUpdated),
+            firstSeen = minOf(this.firstSeen, other.firstSeen),
+            viewCount = this.viewCount + other.viewCount,
+            rawIsInactive = newest.rawIsInactive
+        )
+    }
+
     companion object {
         const val INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000L
 

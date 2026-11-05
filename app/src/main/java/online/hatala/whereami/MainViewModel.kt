@@ -255,7 +255,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Saved Places State
-    private val dbHelper = TripDatabaseHelper(application)
+    private val dbHelper = TripDatabaseHelper.getInstance(application)
     private val _savedPlaces = MutableStateFlow<List<SavedPlace>>(emptyList())
     val savedPlaces: StateFlow<List<SavedPlace>> = _savedPlaces.asStateFlow()
 

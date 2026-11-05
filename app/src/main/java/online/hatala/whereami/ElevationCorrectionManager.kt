@@ -83,7 +83,7 @@ object ElevationCorrectionManager {
         )
 
         job = scope.launch {
-            val dbHelper = TripDatabaseHelper(appCtx)
+            val dbHelper = TripDatabaseHelper.getInstance(appCtx)
             val trip = dbHelper.getTripsByIds(listOf(tripId)).firstOrNull()
             if (trip == null) {
                 stop()
@@ -154,7 +154,7 @@ object ElevationCorrectionManager {
         createNotificationChannel(appCtx)
 
         job = scope.launch {
-            val dbHelper = TripDatabaseHelper(appCtx)
+            val dbHelper = TripDatabaseHelper.getInstance(appCtx)
             val allTrips = dbHelper.getAllTrips().filter { it.points.isNotEmpty() }
             val allSavedPlaces = dbHelper.getAllSavedPlaces()
 

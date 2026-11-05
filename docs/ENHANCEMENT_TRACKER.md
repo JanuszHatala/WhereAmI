@@ -1688,6 +1688,8 @@ Evidence & Diagnostics:
 
 ## Round 130: Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10)
 
+| **Round 53** | Field Testing (2026-11-05 Trip 305) Live Guest Deduplication, Maps Intent Button, EKF Cornering Process Noise Scaling & Smooth Polyline Pencil Trail | 4 | 4 | 0 | 0 |
+
 Evidence & Diagnostics:
 - Morning alarm wake Live Sharing recovery: `AutoSleepManager` and `AppStateManager` check morning alarm trigger, clearing sleep restrictions and waking Live Sharing immediately.
 - Android Auto instant speed & auto-start: `AutoMediaService` ensures `isGpsStopped = false` and registers 1s unbatched cadence; `AppStateManager` listens for `ACTION_ENTER_CAR_MODE` to boost location engine.
@@ -1708,6 +1710,25 @@ Evidence & Diagnostics:
 | **GST130-06** | Guest avatars collision avoidance without off-screen drift. | `OsmMapView.kt`, `LiveGuestTest.kt` | Implemented | Excluded saved places from avatar collision grid; capped radial offset to 32dp. |
 | **DB130-07** | CursorWindow 2MB query fix & obsolete points_json purge. | `TripDatabaseHelper.kt` | Implemented | Summaries query projected columns only; eliminates CursorWindow allocation failure. |
 | **VER-130** | Bump to versionCode 180 / 2.0.10. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` and `assembleDebug` passed; installed on phone. |
+
+---
+
+## Round 53 - Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync
+
+Evidence & Diagnostics:
+- Live Guest Deduplication: `LiveSharingManager.kt` and `MainActivity.kt` merge duplicate guest records sharing the same nickname, picking freshest GPS coordinates (Kobiernice over stale Kozy) and accumulating view counts.
+- Generic Maps App Button: Renamed `Open in Google Maps` to `Open in Maps` in `MainActivity.kt:8040` for external `geo:` URI intent.
+- Driving Cornering EKF Position Scaling: In `KinematicEkf.kt`, speed-scaled position process noise (`sp = SIGMA_POSITION + (0.05 * spd).coerceAtMost(1.5)`) tightens `offRaw p50` from 0.8m to 0.6m and `offRaw p90` from 2.6m to 2.2m during driving cornering, eliminating lag into side streets.
+- Smooth Live Polyline Pencil Trail: `OsmMapView.kt` passes `pose.rawLat` and `pose.rawLng` to `PencilTrail` for vehicle profiles, isolating the live trail from 1s spring-decay oscillations and eliminating the 2m straight-road zigzag.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GST-305-01** | Unify guest by nickname, select newest coordinates (Kobiernice vs Kozy). | `LiveGuest.kt`, `LiveSharingManager.kt`, `MainActivity.kt` | Implemented | `LiveGuest.merge` preserves newest valid coordinates and accumulated views; unit tests in `LiveGuestTest.kt` pass. |
+| **UI-305-02** | Rename "Open in Google Maps" to generic "Open in Maps". | `MainActivity.kt` | Implemented | Updated button text and content descriptions across map launch actions. |
+| **KIN-305-03** | Speed-scaled position process noise for driving profiles. | `KinematicEkf.kt` | Implemented | Replay on `track_1793884059540_trip305.jsonl` shows `offRaw p50` improved from 0.8m to 0.6m. |
+| **REN-305-04** | Eliminate straight-road live polyline zigzag behind cursor. | `RenderPipeline.kt`, `OsmMapView.kt` | Implemented | Vehicle pencil trail records unperturbed CTRA coordinates (`rawLat`, `rawLng`); `reshape p50` improved to 0.35m. |
+| **VER-305** | Bump to versionCode 183 / 2.1.2. | `app/build.gradle.kts` | Implemented | All 617 unit tests pass; `assembleDebug` clean. |
+
 
 
 

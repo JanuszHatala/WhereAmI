@@ -1927,7 +1927,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             ) {
                                                                 Icon(
                                                                     imageVector = Icons.Default.Map,
-                                                                    contentDescription = "Open in Google Maps",
+                                                                    contentDescription = "Open in Maps",
                                                                     tint = Color(0xFF10B981),
                                                                     modifier = Modifier.size(18.dp)
                                                                 )
@@ -7197,20 +7197,31 @@ fun LocationScreen(viewModel: MainViewModel) {
                 val liveViewEvents by liveSharingManager.viewEvents.collectAsState()
                 val (allUniqueVisitorsCount, verifiedTotalViews) = remember(activeGuests, liveViewEvents, session.viewCount) {
                     val list = activeGuests.toMutableList()
-                    val existingIds = list.map { it.id }.toMutableSet()
-                    val existingNames = list.map { it.name.lowercase(Locale.ROOT) }.toMutableSet()
                     val grouped = liveViewEvents.groupBy { it.guestId.ifBlank { it.guestName } }
                     grouped.forEach { (key, events) ->
                         if (key.isNotBlank()) {
                             val sample = events.first()
                             val name = sample.guestName.ifBlank { "Guest ${list.size + 1}" }
-                            val matchIdx = list.indexOfFirst { it.id == key || it.name.equals(name, ignoreCase = true) }
+                            val isNamed = name.isNotBlank() && !name.startsWith("Guest ", ignoreCase = true)
+                            val matchIdx = list.indexOfFirst {
+                                it.id == key || (isNamed && it.name.equals(name, ignoreCase = true))
+                            }
+                            val maxTime = events.maxOfOrNull { it.timestamp } ?: sample.timestamp
+                            val minTime = events.minOfOrNull { it.timestamp } ?: sample.timestamp
+                            val sampleHasLoc = (sample.lat != null && sample.lng != null && sample.lat != 0.0 && sample.lng != 0.0)
                             if (matchIdx >= 0) {
                                 val g = list[matchIdx]
-                                if (events.size > g.viewCount) {
-                                    list[matchIdx] = g.copy(viewCount = events.size)
-                                }
-                            } else if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
+                                val useSampleLoc = sampleHasLoc && (maxTime >= g.lastUpdated || !g.hasValidLocation)
+                                list[matchIdx] = g.copy(
+                                    name = if (isNamed) name else g.name,
+                                    lat = if (useSampleLoc) sample.lat!! else g.lat,
+                                    lng = if (useSampleLoc) sample.lng!! else g.lng,
+                                    accuracy = if (useSampleLoc) sample.accuracy else g.accuracy,
+                                    lastUpdated = maxOf(g.lastUpdated, maxTime),
+                                    firstSeen = minOf(g.firstSeen, minTime),
+                                    viewCount = maxOf(g.viewCount, events.size)
+                                )
+                            } else {
                                 list.add(
                                     LiveGuest(
                                         id = key,
@@ -7218,15 +7229,13 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         lat = sample.lat ?: 0.0,
                                         lng = sample.lng ?: 0.0,
                                         accuracy = sample.accuracy,
-                                        lastUpdated = events.maxOfOrNull { it.timestamp } ?: sample.timestamp,
+                                        lastUpdated = maxTime,
                                         colorIndex = kotlin.math.abs(key.hashCode()) % 8,
                                         rawIsInactive = true,
-                                        firstSeen = events.minOfOrNull { it.timestamp } ?: sample.timestamp,
+                                        firstSeen = minTime,
                                         viewCount = events.size
                                     )
                                 )
-                                existingIds.add(key)
-                                existingNames.add(name.lowercase(Locale.ROOT))
                             }
                         }
                     }
@@ -8037,7 +8046,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Open in Google Maps",
+                            text = "Open in Maps",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -9967,7 +9976,7 @@ private fun LocalityCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Map,
-                                contentDescription = "Open in Google Maps",
+                                contentDescription = "Open in Maps",
                                 tint = Color(0xFF38BDF8),
                                 modifier = Modifier.size(20.dp)
                             )
@@ -10303,7 +10312,7 @@ private fun LocalityCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Map,
-                                contentDescription = "Open in Google Maps",
+                                contentDescription = "Open in Maps",
                                 tint = Color(0xFF38BDF8),
                                 modifier = Modifier.size(22.dp)
                             )
@@ -13658,22 +13667,31 @@ private fun LiveViewsDetailsDialog(
         ) {
             val allVisitors = remember(guests, viewEvents) {
                 val list = guests.toMutableList()
-                val existingIds = list.map { it.id }.toMutableSet()
-                val existingNames = list.map { it.name.lowercase(Locale.ROOT) }.toMutableSet()
-
                 val grouped = viewEvents.groupBy { it.guestId.ifBlank { it.guestName } }
                 grouped.forEach { (key, events) ->
                     if (key.isNotBlank()) {
                         val sample = events.first()
                         val name = sample.guestName.ifBlank { "Guest ${list.size + 1}" }
-                        val matchIdx = list.indexOfFirst { it.id == key || it.name.equals(name, ignoreCase = true) }
+                        val isNamed = name.isNotBlank() && !name.startsWith("Guest ", ignoreCase = true)
+                        val matchIdx = list.indexOfFirst {
+                            it.id == key || (isNamed && it.name.equals(name, ignoreCase = true))
+                        }
+                        val maxTime = events.maxOfOrNull { it.timestamp } ?: sample.timestamp
+                        val minTime = events.minOfOrNull { it.timestamp } ?: sample.timestamp
+                        val sampleHasLoc = (sample.lat != null && sample.lng != null && sample.lat != 0.0 && sample.lng != 0.0)
                         if (matchIdx >= 0) {
                             val g = list[matchIdx]
-                            if (events.size > g.viewCount) {
-                                list[matchIdx] = g.copy(viewCount = events.size)
-                            }
-                        } else if (!existingIds.contains(key) && !existingNames.contains(name.lowercase(Locale.ROOT))) {
-                            val maxTime = events.maxOfOrNull { it.timestamp } ?: sample.timestamp
+                            val useSampleLoc = sampleHasLoc && (maxTime >= g.lastUpdated || !g.hasValidLocation)
+                            list[matchIdx] = g.copy(
+                                name = if (isNamed) name else g.name,
+                                lat = if (useSampleLoc) sample.lat!! else g.lat,
+                                lng = if (useSampleLoc) sample.lng!! else g.lng,
+                                accuracy = if (useSampleLoc) sample.accuracy else g.accuracy,
+                                lastUpdated = maxOf(g.lastUpdated, maxTime),
+                                firstSeen = minOf(g.firstSeen, minTime),
+                                viewCount = maxOf(g.viewCount, events.size)
+                            )
+                        } else {
                             val synth = LiveGuest(
                                 id = key,
                                 name = name,
@@ -13683,12 +13701,10 @@ private fun LiveViewsDetailsDialog(
                                 lastUpdated = maxTime,
                                 colorIndex = kotlin.math.abs(key.hashCode()) % 8,
                                 rawIsInactive = true,
-                                firstSeen = events.minOfOrNull { it.timestamp } ?: sample.timestamp,
+                                firstSeen = minTime,
                                 viewCount = events.size
                             )
                             list.add(synth)
-                            existingIds.add(key)
-                            existingNames.add(name.lowercase(Locale.ROOT))
                         }
                     }
                 }

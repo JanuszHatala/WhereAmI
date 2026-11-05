@@ -82,7 +82,7 @@ class TripManager private constructor(private val context: Context) {
         )
     }
 
-    private val dbHelper = TripDatabaseHelper(context)
+    private val dbHelper = TripDatabaseHelper.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.IO)
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 

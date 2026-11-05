@@ -187,7 +187,12 @@ class KinematicEkf(var profile: TrackingProfile) {
         }
         // While zero-velocity is asserted the target is physically at rest: no random walk, so the
         // filter converges to the mean of the measurements (a spatial anchor, derived not hard-coded).
-        val sp = if (stationaryMode) 0.01 else SIGMA_POSITION
+        val spd = measuredSpeedMps ?: x[SPEED]
+        val sp = if (stationaryMode) 0.01 else if (profile.maxSpeedMps > 10.0 && spd > 3.0) {
+            (SIGMA_POSITION + (0.05 * spd).coerceAtMost(1.5))
+        } else {
+            SIGMA_POSITION
+        }
         val sv = if (stationaryMode) 0.05 else SIGMA_SPEED
         val sy = if (stationaryMode) 0.05 else profile.sigmaYawAccel
         p[EAST][EAST] += sp * sp * dt

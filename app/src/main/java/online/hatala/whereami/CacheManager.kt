@@ -211,7 +211,7 @@ class CacheManager private constructor(private val context: Context) {
 
         // 1. From Trips placesVisited
         try {
-            val dbHelper = TripDatabaseHelper(context)
+            val dbHelper = TripDatabaseHelper.getInstance(context)
             val allTrips = dbHelper.getAllTrips()
             for (trip in allTrips) {
                 for (p in trip.placesVisited) {
@@ -437,7 +437,7 @@ class CacheManager private constructor(private val context: Context) {
             }
 
             try {
-                val dbHelper = TripDatabaseHelper(context)
+                val dbHelper = TripDatabaseHelper.getInstance(context)
                 val allTrips = dbHelper.getAllTrips()
                 val spatialHelper = SpatialCacheHelper.getInstance(context)
                 val locManager = LocationManager.getInstance(context)
@@ -791,7 +791,7 @@ class CacheManager private constructor(private val context: Context) {
         if (_prefetchState.value !is PrefetchState.Idle && _prefetchState.value !is PrefetchState.Completed) return
         managerScope.launch {
             try {
-                val dbHelper = TripDatabaseHelper(context)
+                val dbHelper = TripDatabaseHelper.getInstance(context)
                 val allTrips = dbHelper.getAllTrips()
                 val spatialHelper = SpatialCacheHelper.getInstance(context)
 

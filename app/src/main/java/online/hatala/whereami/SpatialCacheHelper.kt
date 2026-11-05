@@ -147,9 +147,26 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     }
 
     private fun ensureHighwayTypeColumn(db: SQLiteDatabase) {
-        try {
-            db.execSQL("ALTER TABLE $TABLE_CACHE ADD COLUMN $COL_HIGHWAY_TYPE TEXT")
-        } catch (_: Exception) {}
+        val hasCol = try {
+            db.rawQuery("PRAGMA table_info($TABLE_CACHE)", null).use { c ->
+                val nameIdx = c.getColumnIndex("name")
+                var found = false
+                if (nameIdx >= 0) {
+                    while (c.moveToNext()) {
+                        if (c.getString(nameIdx) == COL_HIGHWAY_TYPE) {
+                            found = true
+                            break
+                        }
+                    }
+                }
+                found
+            }
+        } catch (_: Exception) { false }
+        if (!hasCol) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_CACHE ADD COLUMN $COL_HIGHWAY_TYPE TEXT")
+            } catch (_: Exception) {}
+        }
     }
 
     fun sanitizeCorruptedRoczynyDw781(db: SQLiteDatabase = writableDatabase) {

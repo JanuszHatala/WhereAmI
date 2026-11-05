@@ -500,5 +500,73 @@ class LiveGuestTest {
         // Second guest ("niki") must not be shifted further West off the left edge of the screen
         assertTrue("Second guest near left screen edge must not be shifted further West: p2.lng=${p2.longitude}, g2.lng=${g2.lng}", p2.longitude >= g2.lng - 1e-6)
     }
+
+    @Test
+    fun `test LiveGuest merge prefers freshest valid coordinates and accumulates views`() {
+        // Older guest fix from 6 days ago in Kozy
+        val older = LiveGuest(
+            id = "g_kozy",
+            name = "Niki",
+            lat = 49.842812,
+            lng = 19.135640,
+            accuracy = 15f,
+            lastUpdated = 1793362103128L,
+            firstSeen = 1793360000000L,
+            viewCount = 3
+        )
+        // Newer guest fix from today in Kobiernice
+        val newer = LiveGuest(
+            id = "g_kobiernice",
+            name = "Niki",
+            lat = 49.848668,
+            lng = 19.218143,
+            accuracy = 8f,
+            lastUpdated = 1793884576632L,
+            firstSeen = 1793884000000L,
+            viewCount = 2
+        )
+
+        val merged = older.merge(newer)
+        assertEquals("Niki", merged.name)
+        // Must select the newer Kobiernice coordinates, not stale Kozy
+        assertEquals(49.848668, merged.lat, 1e-6)
+        assertEquals(19.218143, merged.lng, 1e-6)
+        assertEquals(8f, merged.accuracy ?: 0f, 0.1f)
+        assertEquals(1793884576632L, merged.lastUpdated)
+        assertEquals(1793360000000L, merged.firstSeen)
+        assertEquals(5, merged.viewCount)
+    }
+
+    @Test
+    fun `test LiveGuest merge retains older coordinates when newer fix has no GPS location`() {
+        val olderWithGps = LiveGuest(
+            id = "g_old",
+            name = "Niki",
+            lat = 49.848668,
+            lng = 19.218143,
+            accuracy = 10f,
+            lastUpdated = 1000L,
+            firstSeen = 500L,
+            viewCount = 1
+        )
+        val newerWithoutGps = LiveGuest(
+            id = "g_new",
+            name = "Niki",
+            lat = 0.0,
+            lng = 0.0,
+            accuracy = null,
+            lastUpdated = 2000L,
+            firstSeen = 2000L,
+            viewCount = 4
+        )
+
+        val merged = olderWithGps.merge(newerWithoutGps)
+        assertEquals(49.848668, merged.lat, 1e-6)
+        assertEquals(19.218143, merged.lng, 1e-6)
+        assertEquals(10f, merged.accuracy ?: 0f, 0.1f)
+        assertEquals(2000L, merged.lastUpdated)
+        assertEquals(500L, merged.firstSeen)
+        assertEquals(5, merged.viewCount)
+    }
 }
 
