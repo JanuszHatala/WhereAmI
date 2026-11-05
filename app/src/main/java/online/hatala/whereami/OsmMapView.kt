@@ -1969,6 +1969,225 @@ fun OsmMapView(
             update = { }
         )
 
+        MapFloatingControlsColumn(
+            mapView = mapView,
+            minZoom = minZoom,
+            maxZoom = maxZoom,
+            currentZoom = currentZoom,
+            onZoomChange = { currentZoom = it },
+            isFollowing = isFollowing,
+            onFollowingChange = { isFollowing = it },
+            destinationPoint = destinationPoint,
+            selectedSavedPlace = selectedSavedPlace,
+            onClearDestination = onClearDestination,
+            hikingProviderRef = hikingProviderRef,
+            orientationMode = orientationMode,
+            effectiveLatLng = effectiveLatLng,
+            lastFrozenBearing = lastFrozenBearing,
+            effectiveOpticalOffsetY = effectiveOpticalOffsetY,
+            effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+            onInstantShare = onInstantShare,
+            onOpenCacheManager = onOpenCacheManager,
+            allShownPoints = allShownPoints,
+            selectedTrips = selectedTrips,
+            onClearSelectedTrips = onClearSelectedTrips,
+            pinnedBoundaryPoints = pinnedBoundaryPoints,
+            prePinZoom = prePinZoom,
+            prePinCenter = prePinCenter,
+            onRestorePrePin = {
+                prePinZoom = null
+                prePinCenter = null
+            },
+            onViewportScrollIncrement = { viewportScrollBucket++ },
+            density = density,
+            isLandscape = isLandscape,
+            isCompact = isCompact,
+            measuredTopInsetPx = measuredTopInsetPx,
+            measuredBottomInsetPx = measuredBottomInsetPx,
+            isRecording = isRecording,
+            isAutoStandby = isAutoStandby,
+            context = context
+        )
+
+        MapRecenterPill(
+            isFollowing = isFollowing,
+            destinationPoint = destinationPoint,
+            selectedSavedPlace = selectedSavedPlace,
+            isLandscape = isLandscape,
+            showHeatMap = showHeatMap,
+            isRecording = isRecording,
+            isAutoStandby = isAutoStandby,
+            onClick = {
+                isFollowing = true
+                effectiveLatLng?.let { pos ->
+                    val gp = GeoPoint(pos.first, pos.second)
+                    val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
+                    mapView?.controller?.setCenter(centerGp)
+                }
+                mapView?.invalidate()
+            }
+        )
+
+        MapHeatMapFloatingToolbar(
+            showHeatMap = showHeatMap,
+            isLandscape = isLandscape,
+            isRecording = isRecording,
+            heatMapFilterActive = heatMapFilterActive,
+            onOpenHeatMapSettings = onOpenHeatMapSettings,
+            allHeatMapPoints = allHeatMapPoints,
+            heatMapTracks = heatMapTracks,
+            mapView = mapView,
+            pinnedBoundaryPoints = pinnedBoundaryPoints,
+            prePinZoom = prePinZoom,
+            prePinCenter = prePinCenter,
+            onRestorePrePin = {
+                prePinZoom = null
+                prePinCenter = null
+            },
+            onToggleHeatMap = onToggleHeatMap,
+            onFollowingChange = { isFollowing = it }
+        )
+
+        // Floating Left-Side Thermal Color Legend (in portrait only; in landscape it is docked beneath LocalityCard)
+        if (showHeatMap && !isLandscape) {
+            HeatMapLegend(
+                onOpenHeatMapSettings = onOpenHeatMapSettings,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp)
+            )
+        }
+    }
+
+    if (showSettingsDialog) {
+        MapSettingsDialogHost(
+            activityProfile = activityProfile,
+            baseLayer = baseLayer,
+            onBaseLayerChange = { baseLayer = it },
+            showHikingOverlay = showHikingOverlay,
+            onHikingOverlayToggle = { showHikingOverlay = it },
+            showBorders = showBorders,
+            onToggleBorders = onToggleBorders,
+            showHeatMap = showHeatMap,
+            onToggleHeatMap = onToggleHeatMap,
+            showInactiveGuests = showInactiveGuests,
+            onShowInactiveGuestsToggle = {
+                showInactiveGuests = it
+                MapProfileConfigHelper.setShowInactiveGuests(context, it)
+            },
+            compassArrowEnabled = compassArrowEnabled,
+            onCompassArrowToggle = {
+                compassArrowEnabled = it
+                MapProfileConfigHelper.setCompassArrow(context, it)
+            },
+            showAltitudeOnMap = showAltitudeOnMap,
+            onShowAltitudeToggle = {
+                showAltitudeOnMap = it
+                altitudeOverlay.isEnabled = it
+                MapProfileConfigHelper.setShowAltitudeOnMap(context, it)
+                mapView?.invalidate()
+                mapView?.postInvalidate()
+            },
+            showFilteredPolyline = showFilteredPolyline,
+            onShowFilteredPolylineToggle = {
+                showFilteredPolyline = it
+                MapProfileConfigHelper.setShowFilteredPolyline(context, it)
+                mapView?.invalidate()
+            },
+            showRawPolyline = showRawPolyline,
+            onShowRawPolylineToggle = {
+                showRawPolyline = it
+                MapProfileConfigHelper.setShowRawPolyline(context, it)
+                mapView?.invalidate()
+            },
+            altitudeSourceMode = altitudeSourceMode,
+            onAltitudeSourceModeChange = onAltitudeSourceModeChange,
+            fontScale = fontScale,
+            onFontScaleChange = { fontScale = it },
+            orientationMode = orientationMode,
+            onOrientationModeChange = { nextMode ->
+                currentOnOrientationChange?.invoke(nextMode)
+                when (nextMode) {
+                    MapOrientationMode.NORTH -> mapView?.mapOrientation = 0f
+                    MapOrientationMode.EAST -> mapView?.mapOrientation = 270f
+                    MapOrientationMode.SOUTH -> mapView?.mapOrientation = 180f
+                    MapOrientationMode.WEST -> mapView?.mapOrientation = 90f
+                    MapOrientationMode.COURSE_UP -> {
+                        val b = effectiveLatLng?.third ?: lastFrozenBearing
+                        b?.let { mapView?.mapOrientation = -it }
+                    }
+                }
+                mapView?.invalidate()
+            },
+            effectiveLatLng = effectiveLatLng,
+            lastFrozenBearing = lastFrozenBearing,
+            mapView = mapView,
+            hikingProviderRef = hikingProviderRef,
+            trackColorHex = trackColorHex,
+            onTrackColorChange = { newColor ->
+                MapProfileConfigHelper.setTrackColor(context, activityProfile, newColor)
+                trackColorHex = newColor
+            },
+            onOpenCacheManager = {
+                showSettingsDialog = false
+                onOpenCacheManager?.invoke()
+            },
+            onDismiss = {
+                showSettingsDialog = false
+                mapView?.invalidate()
+                onDismissMapSettings?.invoke()
+            },
+            altitudeOverlay = altitudeOverlay,
+            context = context
+        )
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            hikingProviderRef?.clearTileCache()
+            mapView?.onDetach()
+        }
+    }
+}
+
+
+@Composable
+private fun BoxScope.MapFloatingControlsColumn(
+    mapView: MapView?,
+    minZoom: Double,
+    maxZoom: Double,
+    currentZoom: Double,
+    onZoomChange: (Double) -> Unit,
+    isFollowing: Boolean,
+    onFollowingChange: (Boolean) -> Unit,
+    destinationPoint: GeoPoint?,
+    selectedSavedPlace: SavedPlace?,
+    onClearDestination: (() -> Unit)?,
+    hikingProviderRef: org.osmdroid.tileprovider.MapTileProviderBasic?,
+    orientationMode: MapOrientationMode,
+    effectiveLatLng: Triple<Double, Double, Float?>?,
+    lastFrozenBearing: Float?,
+    effectiveOpticalOffsetY: Int,
+    effectiveOpticalOffsetX: Int,
+    onInstantShare: (() -> Unit)?,
+    onOpenCacheManager: (() -> Unit)?,
+    allShownPoints: List<GeoPoint>,
+    selectedTrips: List<TripRecord>,
+    onClearSelectedTrips: (() -> Unit)?,
+    pinnedBoundaryPoints: List<GeoPoint>?,
+    prePinZoom: Double?,
+    prePinCenter: GeoPoint?,
+    onRestorePrePin: () -> Unit,
+    onViewportScrollIncrement: () -> Unit,
+    density: Float,
+    isLandscape: Boolean,
+    isCompact: Boolean,
+    measuredTopInsetPx: Int?,
+    measuredBottomInsetPx: Int?,
+    isRecording: Boolean,
+    isAutoStandby: Boolean,
+    context: Context
+) {
         // Floating Zoom Controls & Map Tools:
         // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
         // Each control is an exact 42dp Box with 4dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
@@ -1990,10 +2209,10 @@ fun OsmMapView(
                         val map = mapView ?: return@clickable
                         val targetZoom = (map.zoomLevelDouble + 1.0).coerceAtMost(maxZoom)
                         map.controller.zoomIn()
-                        currentZoom = targetZoom
+                        onZoomChange(targetZoom)
                         map.postDelayed({
-                            currentZoom = map.zoomLevelDouble
-                            viewportScrollBucket++
+                            onZoomChange(map.zoomLevelDouble)
+                            onViewportScrollIncrement()
                         }, 360L)
                     },
                 contentAlignment = Alignment.Center
@@ -2016,10 +2235,10 @@ fun OsmMapView(
                         val map = mapView ?: return@clickable
                         val targetZoom = (map.zoomLevelDouble - 1.0).coerceAtLeast(minZoom)
                         map.controller.zoomOut()
-                        currentZoom = targetZoom
+                        onZoomChange(targetZoom)
                         map.postDelayed({
-                            currentZoom = map.zoomLevelDouble
-                            viewportScrollBucket++
+                            onZoomChange(map.zoomLevelDouble)
+                            onViewportScrollIncrement()
                         }, 360L)
                     },
                 contentAlignment = Alignment.Center
@@ -2039,7 +2258,7 @@ fun OsmMapView(
                     .clip(CircleShape)
                     .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
                     .clickable {
-                        isFollowing = true
+                        onFollowingChange(true)
                         onClearDestination?.invoke()
                         mapView?.tileProvider?.clearTileCache()
                         hikingProviderRef?.clearTileCache()
@@ -2268,7 +2487,7 @@ fun OsmMapView(
                         .background(ComposeColor(0xCC1E293B))
                         .clickable {
                             val map = mapView ?: return@clickable
-                            isFollowing = false
+                            onFollowingChange(false)
                             fitPointsToUnobstructedViewport(
                                 map = map,
                                 points = allShownPoints,
@@ -2279,7 +2498,7 @@ fun OsmMapView(
                                 measuredBottomInsetPx = measuredBottomInsetPx,
                                 isRecording = isRecording,
                                 isAutoStandby = isAutoStandby,
-                                onZoomCalculated = { currentZoom = it }
+                                onZoomCalculated = { onZoomChange(it) }
                             )
                         },
                     contentAlignment = Alignment.Center
@@ -2351,8 +2570,7 @@ fun OsmMapView(
                             map.controller.stopAnimation(false)
                             map.controller.setZoom(zoom)
                             map.controller.setCenter(center)
-                            prePinZoom = null
-                            prePinCenter = null
+                            onRestorePrePin()
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -2365,57 +2583,78 @@ fun OsmMapView(
                 }
             }
         }
+}
 
-        // Floating "📍 Recenter" Pill when user has panned away (Option B)
-        if (!isFollowing && destinationPoint == null && selectedSavedPlace == null) {
-            val recenterBottomPadding = if (isLandscape) {
-                68.dp
-            } else {
-                when {
-                    showHeatMap && (isRecording || isAutoStandby) -> 180.dp
-                    showHeatMap                                   -> 136.dp
-                    isRecording || isAutoStandby                  -> 136.dp
-                    else                                          -> 78.dp
-                }
-            }
-            Surface(
-                onClick = {
-                    isFollowing = true
-                    effectiveLatLng?.let { pos ->
-                        val gp = GeoPoint(pos.first, pos.second)
-                        val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
-                        mapView?.controller?.setCenter(centerGp)
-                    }
-                    mapView?.invalidate()
-                },
-                shape = RoundedCornerShape(20.dp),
-                color = ComposeColor(0xEE0284C7),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = recenterBottomPadding)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MyLocation,
-                        contentDescription = null,
-                        tint = ComposeColor.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Recenter",
-                        color = ComposeColor.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+@Composable
+private fun BoxScope.MapRecenterPill(
+    isFollowing: Boolean,
+    destinationPoint: GeoPoint?,
+    selectedSavedPlace: SavedPlace?,
+    isLandscape: Boolean,
+    showHeatMap: Boolean,
+    isRecording: Boolean,
+    isAutoStandby: Boolean,
+    onClick: () -> Unit
+) {
+    if (!isFollowing && destinationPoint == null && selectedSavedPlace == null) {
+        val recenterBottomPadding = if (isLandscape) {
+            68.dp
+        } else {
+            when {
+                showHeatMap && (isRecording || isAutoStandby) -> 180.dp
+                showHeatMap                                   -> 136.dp
+                isRecording || isAutoStandby                  -> 136.dp
+                else                                          -> 78.dp
             }
         }
+        Surface(
+            onClick = onClick,
+            shape = RoundedCornerShape(20.dp),
+            color = ComposeColor(0xEE0284C7),
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = recenterBottomPadding)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MyLocation,
+                    contentDescription = null,
+                    tint = ComposeColor.White,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Recenter",
+                    color = ComposeColor.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
 
+@Composable
+private fun BoxScope.MapHeatMapFloatingToolbar(
+    showHeatMap: Boolean,
+    isLandscape: Boolean,
+    isRecording: Boolean,
+    heatMapFilterActive: Boolean,
+    onOpenHeatMapSettings: (() -> Unit)?,
+    allHeatMapPoints: List<GeoPoint>,
+    heatMapTracks: List<List<GeoPoint>>,
+    mapView: MapView?,
+    pinnedBoundaryPoints: List<GeoPoint>?,
+    prePinZoom: Double?,
+    prePinCenter: GeoPoint?,
+    onRestorePrePin: () -> Unit,
+    onToggleHeatMap: (() -> Unit)?,
+    onFollowingChange: (Boolean) -> Unit
+) {
         // Floating Heat Map Controls — only in portrait (in landscape, it is merged into the bottom app toolbar)
         if (showHeatMap && !isLandscape) {
             val heatMapBottomPadding = if (isRecording) 134.dp else 84.dp
@@ -2497,7 +2736,7 @@ fun OsmMapView(
                     Surface(
                         onClick = {
                             val map = mapView ?: return@Surface
-                            isFollowing = false
+                            onFollowingChange(false)
                             val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
                             if (pts.isNotEmpty()) {
                                 try {
@@ -2606,8 +2845,7 @@ fun OsmMapView(
                             map.controller.stopAnimation(false)
                             map.controller.setZoom(zoom)
                             map.controller.setCenter(center)
-                            prePinZoom = null
-                            prePinCenter = null
+                            onRestorePrePin()
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -2620,129 +2858,106 @@ fun OsmMapView(
                 }
             }
         }
-
-        // Floating Left-Side Thermal Color Legend (in portrait only; in landscape it is docked beneath LocalityCard)
-        if (showHeatMap && !isLandscape) {
-            HeatMapLegend(
-                onOpenHeatMapSettings = onOpenHeatMapSettings,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 12.dp)
-            )
-        }
-    }
-
-    if (showSettingsDialog) {
-        MapSettingsDialog(
-            activityProfile = activityProfile,
-            currentBaseLayer = baseLayer,
-            onBaseLayerChange = { baseLayer = it },
-            hikingOverlayEnabled = showHikingOverlay,
-            onHikingOverlayToggle = { showHikingOverlay = it },
-            showBorders = showBorders,
-            onToggleBorders = { onToggleBorders?.invoke() },
-            showHeatMap = showHeatMap,
-            onToggleHeatMap = { onToggleHeatMap?.invoke() },
-            showInactiveGuests = showInactiveGuests,
-            onShowInactiveGuestsToggle = {
-                showInactiveGuests = it
-                MapProfileConfigHelper.setShowInactiveGuests(context, it)
-            },
-            compassArrowEnabled = compassArrowEnabled,
-            onCompassArrowToggle = {
-                compassArrowEnabled = it
-                MapProfileConfigHelper.setCompassArrow(context, it)
-            },
-            showAltitudeEnabled = showAltitudeOnMap,
-            onShowAltitudeToggle = {
-                showAltitudeOnMap = it
-                altitudeOverlay.isEnabled = it
-                MapProfileConfigHelper.setShowAltitudeOnMap(context, it)
-                mapView?.invalidate()
-                mapView?.postInvalidate()
-            },
-            showFilteredPolylineEnabled = showFilteredPolyline,
-            onShowFilteredPolylineToggle = {
-                showFilteredPolyline = it
-                MapProfileConfigHelper.setShowFilteredPolyline(context, it)
-                mapView?.invalidate()
-            },
-            showRawPolylineEnabled = showRawPolyline,
-            onShowRawPolylineToggle = {
-                showRawPolyline = it
-                MapProfileConfigHelper.setShowRawPolyline(context, it)
-                mapView?.invalidate()
-            },
-            currentAltitudeSourceMode = altitudeSourceMode,
-            onAltitudeSourceModeChange = { onAltitudeSourceModeChange?.invoke(it) },
-            currentFontScale = fontScale,
-            onFontScaleChange = { fontScale = it },
-            currentOrientationMode = orientationMode,
-            onOrientationModeChange = { nextMode ->
-                currentOnOrientationChange?.invoke(nextMode)
-                when (nextMode) {
-                    MapOrientationMode.NORTH -> mapView?.mapOrientation = 0f
-                    MapOrientationMode.EAST -> mapView?.mapOrientation = 270f
-                    MapOrientationMode.SOUTH -> mapView?.mapOrientation = 180f
-                    MapOrientationMode.WEST -> mapView?.mapOrientation = 90f
-                    MapOrientationMode.COURSE_UP -> {
-                        val b = effectiveLatLng?.third ?: lastFrozenBearing
-                        b?.let { mapView?.mapOrientation = -it }
-                    }
-                }
-                mapView?.invalidate()
-            },
-            currentLatLng = effectiveLatLng,
-            onClearCache = {
-                mapView?.tileProvider?.clearTileCache()
-                hikingProviderRef?.clearTileCache()
-                mapView?.invalidate()
-                Toast.makeText(context, "Map tile cache cleared", Toast.LENGTH_SHORT).show()
-            },
-            onOpenCacheManager = {
-                showSettingsDialog = false
-                onOpenCacheManager?.invoke()
-            },
-            onResetProfileDefaults = {
-                MapProfileConfigHelper.resetProfileDefaults(context, activityProfile)
-                val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
-                baseLayer = cfg.baseLayer
-                showHikingOverlay = cfg.showHikingOverlay
-                fontScale = cfg.fontScale
-                trackColorHex = cfg.trackColorHex
-                currentOnOrientationChange?.invoke(cfg.orientationMode)
-                Toast.makeText(context, "Reset defaults for ${activityProfile.displayName}", Toast.LENGTH_SHORT).show()
-            },
-            onResetAllProfileDefaults = {
-                MapProfileConfigHelper.resetAllProfileDefaults(context)
-                val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
-                baseLayer = cfg.baseLayer
-                showHikingOverlay = cfg.showHikingOverlay
-                fontScale = cfg.fontScale
-                trackColorHex = cfg.trackColorHex
-                currentOnOrientationChange?.invoke(cfg.orientationMode)
-                Toast.makeText(context, "Reset all profile defaults", Toast.LENGTH_SHORT).show()
-            },
-            currentTrackColorHex = trackColorHex,
-            onTrackColorChange = { newColor ->
-                MapProfileConfigHelper.setTrackColor(context, activityProfile, newColor)
-                trackColorHex = newColor
-            },
-            onDismiss = {
-                showSettingsDialog = false
-                mapView?.invalidate()
-                onDismissMapSettings?.invoke()
-            }
-        )
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            hikingProviderRef?.clearTileCache()
-            mapView?.onDetach()
-        }
-    }
 }
+
+@Composable
+private fun MapSettingsDialogHost(
+    activityProfile: ActivityProfile,
+    baseLayer: MapBaseLayer,
+    onBaseLayerChange: (MapBaseLayer) -> Unit,
+    showHikingOverlay: Boolean,
+    onHikingOverlayToggle: (Boolean) -> Unit,
+    showBorders: Boolean,
+    onToggleBorders: (() -> Unit)?,
+    showHeatMap: Boolean,
+    onToggleHeatMap: (() -> Unit)?,
+    showInactiveGuests: Boolean,
+    onShowInactiveGuestsToggle: (Boolean) -> Unit,
+    compassArrowEnabled: Boolean,
+    onCompassArrowToggle: (Boolean) -> Unit,
+    showAltitudeOnMap: Boolean,
+    onShowAltitudeToggle: (Boolean) -> Unit,
+    showFilteredPolyline: Boolean,
+    onShowFilteredPolylineToggle: (Boolean) -> Unit,
+    showRawPolyline: Boolean,
+    onShowRawPolylineToggle: (Boolean) -> Unit,
+    altitudeSourceMode: AltitudeSourceMode,
+    onAltitudeSourceModeChange: ((AltitudeSourceMode) -> Unit)?,
+    fontScale: MapFontScale,
+    onFontScaleChange: (MapFontScale) -> Unit,
+    orientationMode: MapOrientationMode,
+    onOrientationModeChange: ((MapOrientationMode) -> Unit)?,
+    effectiveLatLng: Triple<Double, Double, Float?>?,
+    lastFrozenBearing: Float?,
+    mapView: MapView?,
+    hikingProviderRef: org.osmdroid.tileprovider.MapTileProviderBasic?,
+    trackColorHex: String,
+    onTrackColorChange: (String) -> Unit,
+    onOpenCacheManager: (() -> Unit)?,
+    onDismiss: () -> Unit,
+    altitudeOverlay: AltitudeCursorBadgeOverlay,
+    context: Context
+) {
+    MapSettingsDialog(
+        activityProfile = activityProfile,
+        currentBaseLayer = baseLayer,
+        onBaseLayerChange = onBaseLayerChange,
+        hikingOverlayEnabled = showHikingOverlay,
+        onHikingOverlayToggle = onHikingOverlayToggle,
+        showBorders = showBorders,
+        onToggleBorders = { onToggleBorders?.invoke() },
+        showHeatMap = showHeatMap,
+        onToggleHeatMap = { onToggleHeatMap?.invoke() },
+        showInactiveGuests = showInactiveGuests,
+        onShowInactiveGuestsToggle = onShowInactiveGuestsToggle,
+        compassArrowEnabled = compassArrowEnabled,
+        onCompassArrowToggle = onCompassArrowToggle,
+        showAltitudeEnabled = showAltitudeOnMap,
+        onShowAltitudeToggle = onShowAltitudeToggle,
+        showFilteredPolylineEnabled = showFilteredPolyline,
+        onShowFilteredPolylineToggle = onShowFilteredPolylineToggle,
+        showRawPolylineEnabled = showRawPolyline,
+        onShowRawPolylineToggle = onShowRawPolylineToggle,
+        currentAltitudeSourceMode = altitudeSourceMode,
+        onAltitudeSourceModeChange = { onAltitudeSourceModeChange?.invoke(it) },
+        currentFontScale = fontScale,
+        onFontScaleChange = onFontScaleChange,
+        currentOrientationMode = orientationMode,
+        onOrientationModeChange = { onOrientationModeChange?.invoke(it) },
+        currentLatLng = effectiveLatLng,
+        onClearCache = {
+            mapView?.tileProvider?.clearTileCache()
+            hikingProviderRef?.clearTileCache()
+            mapView?.invalidate()
+            android.widget.Toast.makeText(context, "Map tile cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+        },
+        onOpenCacheManager = { onOpenCacheManager?.invoke() },
+        onResetProfileDefaults = {
+            MapProfileConfigHelper.resetProfileDefaults(context, activityProfile)
+            val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
+            onBaseLayerChange(cfg.baseLayer)
+            onHikingOverlayToggle(cfg.showHikingOverlay)
+            onFontScaleChange(cfg.fontScale)
+            onTrackColorChange(cfg.trackColorHex)
+            onOrientationModeChange?.invoke(cfg.orientationMode)
+            android.widget.Toast.makeText(context, "Reset defaults for ${activityProfile.displayName}", android.widget.Toast.LENGTH_SHORT).show()
+        },
+        onResetAllProfileDefaults = {
+            MapProfileConfigHelper.resetAllProfileDefaults(context)
+            val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
+            onBaseLayerChange(cfg.baseLayer)
+            onHikingOverlayToggle(cfg.showHikingOverlay)
+            onFontScaleChange(cfg.fontScale)
+            onTrackColorChange(cfg.trackColorHex)
+            onOrientationModeChange?.invoke(cfg.orientationMode)
+            android.widget.Toast.makeText(context, "Reset all profile defaults", android.widget.Toast.LENGTH_SHORT).show()
+        },
+        currentTrackColorHex = trackColorHex,
+        onTrackColorChange = onTrackColorChange,
+        onDismiss = onDismiss
+    )
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

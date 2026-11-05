@@ -20,6 +20,15 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         const val DATABASE_NAME = StorageMigrationHelper.CANONICAL_DB_NAME
         private const val DATABASE_VERSION = 11
 
+        @Volatile
+        private var instance: TripDatabaseHelper? = null
+
+        fun getInstance(context: Context): TripDatabaseHelper {
+            return instance ?: synchronized(this) {
+                instance ?: TripDatabaseHelper(context.applicationContext).also { instance = it }
+            }
+        }
+
         private const val TABLE_TRIPS = "trips"
         private const val COL_ID = "id"
         private const val COL_TITLE = "title"
@@ -743,13 +752,25 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     private fun ensureSavedPlacesColumns(db: SQLiteDatabase) {
         try {
-            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_COLOR TEXT DEFAULT ''")
-        } catch (_: Exception) {}
-        try {
-            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
-        } catch (_: Exception) {}
-        try {
-            db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE_SOURCE TEXT DEFAULT NULL")
+            val existingCols = mutableSetOf<String>()
+            val cursor = db.rawQuery("PRAGMA table_info($TABLE_SAVED_PLACES)", null)
+            cursor.use { c ->
+                val nameIdx = c.getColumnIndex("name")
+                if (nameIdx != -1) {
+                    while (c.moveToNext()) {
+                        existingCols.add(c.getString(nameIdx))
+                    }
+                }
+            }
+            if (!existingCols.contains(COL_SP_COLOR)) {
+                db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_COLOR TEXT DEFAULT ''")
+            }
+            if (!existingCols.contains(COL_SP_ALTITUDE)) {
+                db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE REAL DEFAULT NULL")
+            }
+            if (!existingCols.contains(COL_SP_ALTITUDE_SOURCE)) {
+                db.execSQL("ALTER TABLE $TABLE_SAVED_PLACES ADD COLUMN $COL_SP_ALTITUDE_SOURCE TEXT DEFAULT NULL")
+            }
         } catch (_: Exception) {}
         try {
             createElevationCacheTable(db)

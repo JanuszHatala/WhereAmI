@@ -319,6 +319,9 @@ class AutoSleepManager private constructor(private val context: Context) {
                 TelemetryLogger.log("POWER", "AutoSleep: Resumed Live Sharing session (${session.id}) on sleep wake.")
             }
         }
+        if (_autoSleepEnabled.value) {
+            scheduleBoundaryAlarm()
+        }
     }
 
     fun checkAndRecoverAutoPausedLiveShare() {

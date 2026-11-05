@@ -181,7 +181,7 @@ class LiveSharingManager private constructor(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val dbHelper = TripDatabaseHelper(context)
+    private val dbHelper = TripDatabaseHelper.getInstance(context)
 
     private val _currentSession = MutableStateFlow<LiveSession?>(null)
     val currentSession: StateFlow<LiveSession?> = _currentSession.asStateFlow()

@@ -36,7 +36,7 @@ object PostTripMatcher {
             try {
                 lastRunMs = System.currentTimeMillis()
                 if (!isOnline(appContext) || isRecording(appContext)) return@launch
-                runPending(TripDatabaseHelper(appContext), OsmMapMatcher, { !isRecording(appContext) && isOnline(appContext) })
+                runPending(TripDatabaseHelper.getInstance(appContext), OsmMapMatcher, { !isRecording(appContext) && isOnline(appContext) })
             } catch (e: Exception) {
                 TelemetryLogger.log("OSRM", "post-trip match run failed: ${e.message}")
             } finally {
