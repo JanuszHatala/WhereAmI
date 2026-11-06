@@ -24,21 +24,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Whatshot
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -225,6 +229,176 @@ fun calculateOpticalCenter(
     return GeoPoint(camLat, camLon)
 }
 
+fun formatGuestControlBadge(activeCount: Int, inactiveCount: Int): String? {
+    val total = activeCount + inactiveCount
+    if (total == 0) return null
+    return if (inactiveCount == 0) "$activeCount" else "$activeCount/$total"
+}
+
+fun extractRecentTrackSection(
+    trackPoints: List<GeoPoint>,
+    currentPos: GeoPoint?,
+    targetDistanceMeters: Double
+): List<GeoPoint> {
+    val fullPoints = mutableListOf<GeoPoint>()
+    fullPoints.addAll(trackPoints)
+    if (currentPos != null) {
+        val last = fullPoints.lastOrNull()
+        if (last == null || last.latitude != currentPos.latitude || last.longitude != currentPos.longitude) {
+            fullPoints.add(currentPos)
+        }
+    }
+    if (fullPoints.size <= 1) return fullPoints
+    if (targetDistanceMeters <= 0.0) return listOf(fullPoints.last())
+
+    var accumulated = 0.0
+    val tail = mutableListOf<GeoPoint>()
+    tail.add(fullPoints.last())
+
+    for (i in fullPoints.size - 1 downTo 1) {
+        val pEnd = fullPoints[i]
+        val pStart = fullPoints[i - 1]
+        val segDist = SearchHelper.computeDistanceMeters(
+            pStart.latitude, pStart.longitude,
+            pEnd.latitude, pEnd.longitude
+        ).toDouble()
+        if (accumulated + segDist >= targetDistanceMeters) {
+            val remain = targetDistanceMeters - accumulated
+            val fraction = (remain / segDist).coerceIn(0.0, 1.0)
+            val interpLat = pEnd.latitude - (pEnd.latitude - pStart.latitude) * fraction
+            val interpLng = pEnd.longitude - (pEnd.longitude - pStart.longitude) * fraction
+            tail.add(GeoPoint(interpLat, interpLng))
+            break
+        } else {
+            accumulated += segDist
+            tail.add(pStart)
+        }
+    }
+
+    return tail.reversed()
+}
+
+fun calculateViewportInsets(
+    mapWidth: Int,
+    mapHeight: Int,
+    density: Float,
+    isLandscape: Boolean,
+    isCompact: Boolean,
+    measuredTopInsetPx: Int?,
+    measuredBottomInsetPx: Int?,
+    isRecording: Boolean,
+    isAutoStandby: Boolean
+): List<Int> {
+    return if (isLandscape) {
+        val leftCardPx = (mapWidth * 0.36f).toInt()
+        val rightControlsPx = (68f * density).toInt()
+        val bottomToolbarPx = (64f * density).toInt()
+        val marginPx = (12f * density).toInt()
+        listOf(
+            leftCardPx + marginPx,
+            rightControlsPx,
+            marginPx,
+            bottomToolbarPx
+        )
+    } else {
+        val topCardDp = if (isCompact) 160f else 240f
+        val statusBarDp = 36f
+        val rightControlsDp = 68f
+        val clearancePx = (12f * density).toInt()
+
+        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 128f
+        val minBottomInsetPx = (minBottomInsetDp * density).toInt()
+
+        val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
+            measuredTopInsetPx + clearancePx
+        } else {
+            ((topCardDp + statusBarDp) * density).toInt() + clearancePx
+        }
+
+        val measuredBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
+            (mapHeight - measuredBottomInsetPx) + clearancePx
+        } else {
+            minBottomInsetPx
+        }
+        val resolvedBottomInset = maxOf(measuredBottomInset, minBottomInsetPx)
+
+        listOf(
+            clearancePx,
+            (rightControlsDp * density).toInt(),
+            resolvedTopInset,
+            resolvedBottomInset
+        )
+    }
+}
+
+fun isPointInUnobstructedViewport(
+    point: GeoPoint,
+    mapCenter: GeoPoint,
+    zoomLevel: Double,
+    mapOrientationDeg: Float,
+    tilesScaleFactor: Float,
+    mapWidth: Int,
+    mapHeight: Int,
+    leftInset: Int,
+    rightInset: Int,
+    topInset: Int,
+    bottomInset: Int
+): Boolean {
+    if (mapWidth <= 0 || mapHeight <= 0) return false
+    val scale = if (tilesScaleFactor > 0f) tilesScaleFactor else 1.0f
+    val metersPerPixel = ((156543.03392 / scale) * kotlin.math.cos(Math.toRadians(mapCenter.latitude))) / Math.pow(2.0, zoomLevel)
+    if (metersPerPixel <= 0.0) return false
+
+    val rEarth = 6378137.0
+    val dNorth = Math.toRadians(point.latitude - mapCenter.latitude) * rEarth
+    val dEast = Math.toRadians(point.longitude - mapCenter.longitude) * rEarth * kotlin.math.cos(Math.toRadians(mapCenter.latitude))
+
+    val alpha = Math.toRadians(mapOrientationDeg.toDouble())
+    val cosA = kotlin.math.cos(alpha)
+    val sinA = kotlin.math.sin(alpha)
+
+    // Projected to screen axes relative to physical screen center
+    val uCam = dEast * cosA - dNorth * sinA
+    val vCam = dEast * sinA + dNorth * cosA
+
+    val screenX = (mapWidth / 2.0) + (uCam / metersPerPixel)
+    val screenY = (mapHeight / 2.0) - (vCam / metersPerPixel)
+
+    val minX = leftInset.toDouble()
+    val maxX = (mapWidth - rightInset).toDouble()
+    val minY = topInset.toDouble()
+    val maxY = (mapHeight - bottomInset).toDouble()
+
+    return screenX in minX..maxX && screenY in minY..maxY
+}
+
+fun shouldTriggerAutoRecenter(
+    autoRecenterEnabled: Boolean,
+    isAppInForeground: Boolean,
+    isFollowing: Boolean,
+    destinationPoint: GeoPoint?,
+    selectedSavedPlace: SavedPlace?,
+    isRecording: Boolean,
+    selectedTripsEmpty: Boolean,
+    showHeatMap: Boolean,
+    isUserTouchingMap: Boolean,
+    isCursorInsideViewport: Boolean,
+    nowElapsedMs: Long,
+    lastInteractionElapsedMs: Long,
+    outsideViewportSinceElapsedMs: Long,
+    timeoutMs: Long
+): Boolean {
+    if (!autoRecenterEnabled || !isAppInForeground) return false
+    if (isFollowing) return false
+    if (destinationPoint != null || selectedSavedPlace != null) return false
+    if (!isRecording && (!selectedTripsEmpty || showHeatMap)) return false
+    if (isUserTouchingMap || isCursorInsideViewport) return false
+    if (nowElapsedMs - lastInteractionElapsedMs < timeoutMs) return false
+    if (outsideViewportSinceElapsedMs <= 0L) return false
+    val minOffscreenMs = minOf(timeoutMs, 10_000L)
+    return (nowElapsedMs - outsideViewportSinceElapsedMs) >= minOffscreenMs
+}
+
 /**
  * Fits a set of GeoPoints comfortably into the unobstructed viewport area between
  * the top LocalityCard and bottom controls, taking map orientation (rotation) and screen insets into account.
@@ -251,53 +425,17 @@ fun fitPointsToUnobstructedViewport(
     val sinA = kotlin.math.sin(alpha)
 
     // 1. Calculate unobstructed viewport insets (in pixels)
-    // Map controls: 42dp width + 12dp end padding = 54dp minimum.
-    // Adding 14dp safe boundary clearance = 68dp rightControls.
-    // In portrait, use actual measured composable bounds when available (topCardBottomPx, bottomControlsTopPx)
-    // with fallback to density-scaled dp estimates.
-    val (leftInset, rightInset, topInset, bottomInset) = if (isLandscape) {
-        val leftCardPx = (mapWidth * 0.36f).toInt()
-        val rightControlsPx = (68f * density).toInt()
-        val bottomToolbarPx = (64f * density).toInt()
-        val marginPx = (12f * density).toInt()
-        listOf(
-            leftCardPx + marginPx,
-            rightControlsPx,
-            marginPx,
-            bottomToolbarPx
-        )
-    } else {
-        val topCardDp = if (isCompact) 160f else 240f
-        val statusBarDp = 36f
-        val rightControlsDp = 68f // 42dp button + 12dp margin + 14dp clearance
-        val clearancePx = (12f * density).toInt()
-
-        // Minimum bottom clearance must guarantee clear space above bottom toolbar and floating Recenter pill
-        // Recenter button top is at 172dp when isRecording or isAutoStandby; 114dp otherwise.
-        // Adding 14dp clearance gives 186dp / 128dp minimum bottom clearance.
-        val minBottomInsetDp = if (isRecording || isAutoStandby) 186f else 128f
-        val minBottomInsetPx = (minBottomInsetDp * density).toInt()
-
-        val resolvedTopInset = if (measuredTopInsetPx != null && measuredTopInsetPx > 0) {
-            measuredTopInsetPx + clearancePx
-        } else {
-            ((topCardDp + statusBarDp) * density).toInt() + clearancePx
-        }
-
-        val measuredBottomInset = if (measuredBottomInsetPx != null && measuredBottomInsetPx > 0 && mapHeight > measuredBottomInsetPx) {
-            (mapHeight - measuredBottomInsetPx) + clearancePx
-        } else {
-            minBottomInsetPx
-        }
-        val resolvedBottomInset = maxOf(measuredBottomInset, minBottomInsetPx)
-
-        listOf(
-            clearancePx,
-            (rightControlsDp * density).toInt(),
-            resolvedTopInset,
-            resolvedBottomInset
-        )
-    }
+    val (leftInset, rightInset, topInset, bottomInset) = calculateViewportInsets(
+        mapWidth = mapWidth,
+        mapHeight = mapHeight,
+        density = density,
+        isLandscape = isLandscape,
+        isCompact = isCompact,
+        measuredTopInsetPx = measuredTopInsetPx,
+        measuredBottomInsetPx = measuredBottomInsetPx,
+        isRecording = isRecording,
+        isAutoStandby = isAutoStandby
+    )
 
     val availWidth = (mapWidth - leftInset - rightInset).coerceAtLeast(100)
     val availHeight = (mapHeight - topInset - bottomInset).coerceAtLeast(100)
@@ -502,6 +640,9 @@ fun OsmMapView(
     activeGuests: List<LiveGuest> = emptyList(),
     showGuestDistanceBadge: Boolean = true,
     onGuestClick: ((LiveGuest) -> Unit)? = null,
+    isLiveSharingActive: Boolean = false,
+    onToggleShowGuestDistanceBadge: ((Boolean) -> Unit)? = null,
+    onOpenLiveVisitorsDetails: (() -> Unit)? = null,
     activityProfile: ActivityProfile = ActivityProfile.CAR,
     isCompact: Boolean = true,
     opticalOffsetY: Int? = null,
@@ -530,6 +671,31 @@ fun OsmMapView(
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val density = androidx.compose.ui.platform.LocalDensity.current.density
+
+    // Deduplicate all active session guests with valid locations for status counters
+    val dedupedSessionGuests = remember(activeGuests) {
+        activeGuests.groupBy { it.name.trim().lowercase(Locale.ROOT) }
+            .values
+            .mapNotNull { group -> group.maxByOrNull { it.lastUpdated } }
+    }
+    val sessionActiveGuestCount = remember(dedupedSessionGuests) {
+        dedupedSessionGuests.count { !it.isInactive }
+    }
+    val sessionInactiveGuestCount = remember(dedupedSessionGuests) {
+        dedupedSessionGuests.count { it.isInactive }
+    }
+
+    var autoRecenterEnabled by remember {
+        mutableStateOf(MapProfileConfigHelper.getAutoRecenterEnabled(context))
+    }
+    var autoRecenterTimeoutSec by remember {
+        mutableStateOf(MapProfileConfigHelper.getAutoRecenterTimeoutSec(context))
+    }
+    var isUserTouchingMap by remember { mutableStateOf(false) }
+    var lastMapInteractionElapsedMs by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+    var cursorOutsideViewportSinceMs by remember { mutableStateOf(0L) }
 
     // Viewport-aware optical offsets (supporting both vertical and horizontal camera centering)
     val effectiveOpticalOffsetX = remember(opticalOffsetX, isLandscape) {
@@ -855,6 +1021,95 @@ fun OsmMapView(
         ).declination.toDouble()
     }
     DisposableEffect(compassSensor) { onDispose { compassSensor.stop() } }
+
+    // Auto-Recenter: automatically re-engage tracking if the map was panned away and left untouched
+    LaunchedEffect(
+        autoRecenterEnabled,
+        autoRecenterTimeoutSec,
+        isFollowing,
+        destinationPoint,
+        selectedSavedPlace,
+        isRecording,
+        selectedTrips.size,
+        showHeatMap,
+        isAppInForeground
+    ) {
+        if (!autoRecenterEnabled || !isAppInForeground) {
+            cursorOutsideViewportSinceMs = 0L
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            kotlinx.coroutines.delay(1_000L)
+            val map = mapView ?: continue
+            val nowMs = android.os.SystemClock.elapsedRealtime()
+
+            val effectivePoint = marker?.position
+                ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
+                ?: latLng?.let { GeoPoint(it.first, it.second) }
+
+            if (effectivePoint == null) {
+                cursorOutsideViewportSinceMs = 0L
+                continue
+            }
+
+            val insets = calculateViewportInsets(
+                mapWidth = map.width,
+                mapHeight = map.height,
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
+                isAutoStandby = isAutoStandby
+            )
+
+            val isInside = isPointInUnobstructedViewport(
+                point = effectivePoint,
+                mapCenter = map.mapCenter as GeoPoint,
+                zoomLevel = map.zoomLevelDouble,
+                mapOrientationDeg = map.mapOrientation,
+                tilesScaleFactor = map.tilesScaleFactor,
+                mapWidth = map.width,
+                mapHeight = map.height,
+                leftInset = insets[0],
+                rightInset = insets[1],
+                topInset = insets[2],
+                bottomInset = insets[3]
+            )
+
+            if (isInside || isUserTouchingMap || isFollowing) {
+                cursorOutsideViewportSinceMs = 0L
+            } else if (cursorOutsideViewportSinceMs == 0L) {
+                cursorOutsideViewportSinceMs = nowMs
+            }
+
+            val shouldRecenter = shouldTriggerAutoRecenter(
+                autoRecenterEnabled = autoRecenterEnabled,
+                isAppInForeground = isAppInForeground,
+                isFollowing = isFollowing,
+                destinationPoint = destinationPoint,
+                selectedSavedPlace = selectedSavedPlace,
+                isRecording = isRecording,
+                selectedTripsEmpty = selectedTrips.isEmpty(),
+                showHeatMap = showHeatMap,
+                isUserTouchingMap = isUserTouchingMap,
+                isCursorInsideViewport = isInside,
+                nowElapsedMs = nowMs,
+                lastInteractionElapsedMs = lastMapInteractionElapsedMs,
+                outsideViewportSinceElapsedMs = cursorOutsideViewportSinceMs,
+                timeoutMs = autoRecenterTimeoutSec * 1_000L
+            )
+
+            if (shouldRecenter) {
+                isFollowing = true
+                val centerGp = getOpticalCenter(map, effectivePoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setCenter(centerGp)
+                map.invalidate()
+                cursorOutsideViewportSinceMs = 0L
+            }
+        }
+    }
 
     // Continuous Frame Loop: render pipeline sampled on every display VSYNC while moving, so the marker,
     // camera, rotation and polyline tip share one clock (SystemClock.elapsedRealtime, same base as fixes).
@@ -1914,16 +2169,20 @@ fun OsmMapView(
 
                     var isUserDragging = false
                     setOnTouchListener { _, event ->
+                        lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
                         when (event.actionMasked) {
                             android.view.MotionEvent.ACTION_DOWN -> {
                                 isUserDragging = true
+                                isUserTouchingMap = true
                             }
                             android.view.MotionEvent.ACTION_MOVE -> {
                                 isUserDragging = true
+                                isUserTouchingMap = true
                                 isFollowing = false
                             }
                             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                                 isUserDragging = false
+                                isUserTouchingMap = false
                             }
                         }
                         false
@@ -2012,6 +2271,25 @@ fun OsmMapView(
             measuredBottomInsetPx = measuredBottomInsetPx,
             isRecording = isRecording,
             isAutoStandby = isAutoStandby,
+            isLiveSharingActive = isLiveSharingActive,
+            activeGuestCount = sessionActiveGuestCount,
+            inactiveGuestCount = sessionInactiveGuestCount,
+            visibleGuests = visibleGuests,
+            showInactiveGuests = showInactiveGuests,
+            onToggleShowInactiveGuests = {
+                showInactiveGuests = it
+                MapProfileConfigHelper.setShowInactiveGuests(context, it)
+            },
+            showVisitorLabels = showGuestDistanceBadge,
+            onToggleShowVisitorLabels = { enabled ->
+                onToggleShowGuestDistanceBadge?.invoke(enabled)
+            },
+            onOpenLiveVisitorsDetails = onOpenLiveVisitorsDetails,
+            activityProfile = activityProfile,
+            trackPoints = trackPoints,
+            onUserInteracted = {
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+            },
             context = context
         )
 
@@ -2076,11 +2354,6 @@ fun OsmMapView(
             onToggleBorders = onToggleBorders,
             showHeatMap = showHeatMap,
             onToggleHeatMap = onToggleHeatMap,
-            showInactiveGuests = showInactiveGuests,
-            onShowInactiveGuestsToggle = {
-                showInactiveGuests = it
-                MapProfileConfigHelper.setShowInactiveGuests(context, it)
-            },
             compassArrowEnabled = compassArrowEnabled,
             onCompassArrowToggle = {
                 compassArrowEnabled = it
@@ -2138,6 +2411,25 @@ fun OsmMapView(
                 showSettingsDialog = false
                 onOpenCacheManager?.invoke()
             },
+            showInactiveGuests = showInactiveGuests,
+            onShowInactiveGuestsToggle = {
+                showInactiveGuests = it
+                MapProfileConfigHelper.setShowInactiveGuests(context, it)
+            },
+            showVisitorLabels = showGuestDistanceBadge,
+            onShowVisitorLabelsToggle = { enabled ->
+                onToggleShowGuestDistanceBadge?.invoke(enabled)
+            },
+            autoRecenterEnabled = autoRecenterEnabled,
+            onAutoRecenterToggle = { enabled ->
+                autoRecenterEnabled = enabled
+                MapProfileConfigHelper.setAutoRecenterEnabled(context, enabled)
+            },
+            autoRecenterTimeoutSec = autoRecenterTimeoutSec,
+            onAutoRecenterTimeoutSecChange = { sec ->
+                autoRecenterTimeoutSec = sec
+                MapProfileConfigHelper.setAutoRecenterTimeoutSec(context, sec)
+            },
             onDismiss = {
                 showSettingsDialog = false
                 mapView?.invalidate()
@@ -2156,6 +2448,12 @@ fun OsmMapView(
     }
 }
 
+
+private data class FitTargetOption(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val points: List<GeoPoint>
+)
 
 @Composable
 private fun BoxScope.MapFloatingControlsColumn(
@@ -2192,8 +2490,23 @@ private fun BoxScope.MapFloatingControlsColumn(
     measuredBottomInsetPx: Int?,
     isRecording: Boolean,
     isAutoStandby: Boolean,
+    isLiveSharingActive: Boolean,
+    activeGuestCount: Int,
+    inactiveGuestCount: Int,
+    visibleGuests: List<LiveGuest>,
+    showInactiveGuests: Boolean,
+    onToggleShowInactiveGuests: (Boolean) -> Unit,
+    showVisitorLabels: Boolean,
+    onToggleShowVisitorLabels: (Boolean) -> Unit,
+    onOpenLiveVisitorsDetails: (() -> Unit)?,
+    activityProfile: ActivityProfile,
+    trackPoints: List<GeoPoint>,
+    onUserInteracted: () -> Unit,
     context: Context
 ) {
+        var showGuestMenu by remember { mutableStateOf(false) }
+        var showFitMenu by remember { mutableStateOf(false) }
+
         // Floating Zoom Controls & Map Tools:
         // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
         // Each control is an exact 42dp Box with 4dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
@@ -2212,6 +2525,7 @@ private fun BoxScope.MapFloatingControlsColumn(
                     .clip(CircleShape)
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
+                        onUserInteracted()
                         val map = mapView ?: return@clickable
                         val targetZoom = (map.zoomLevelDouble + 1.0).coerceAtMost(maxZoom)
                         map.controller.zoomIn()
@@ -2238,6 +2552,7 @@ private fun BoxScope.MapFloatingControlsColumn(
                     .clip(CircleShape)
                     .background(ComposeColor(0xCC1E293B))
                     .clickable {
+                        onUserInteracted()
                         val map = mapView ?: return@clickable
                         val targetZoom = (map.zoomLevelDouble - 1.0).coerceAtLeast(minZoom)
                         map.controller.zoomOut()
@@ -2264,6 +2579,7 @@ private fun BoxScope.MapFloatingControlsColumn(
                     .clip(CircleShape)
                     .background(if (isFollowing && destinationPoint == null && selectedSavedPlace == null) ComposeColor(0xEE0284C7) else ComposeColor(0xCC1E293B))
                     .clickable {
+                        onUserInteracted()
                         onFollowingChange(true)
                         onClearDestination?.invoke()
                         mapView?.tileProvider?.clearTileCache()
@@ -2305,7 +2621,10 @@ private fun BoxScope.MapFloatingControlsColumn(
                         .size(42.dp)
                         .clip(CircleShape)
                         .background(ComposeColor(0xCC1E293B))
-                        .clickable { onInstantShare.invoke() },
+                        .clickable {
+                            onUserInteracted()
+                            onInstantShare.invoke()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -2314,6 +2633,231 @@ private fun BoxScope.MapFloatingControlsColumn(
                         tint = ComposeColor(0xFF38BDF8),
                         modifier = Modifier.size(22.dp)
                     )
+                }
+            }
+
+            // Guests Control Button & Context Menu (Visible when Live Sharing is ON)
+            if (isLiveSharingActive) {
+                val badgeText = formatGuestControlBadge(activeGuestCount, inactiveGuestCount)
+                val badgeColor = when {
+                    activeGuestCount > 0 && inactiveGuestCount == 0 -> ComposeColor(0xFF10B981)
+                    activeGuestCount > 0                            -> ComposeColor(0xFF0284C7)
+                    else                                            -> ComposeColor(0xFF64748B)
+                }
+
+                Box(contentAlignment = Alignment.TopEnd) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC1E293B))
+                            .clickable {
+                                onUserInteracted()
+                                showGuestMenu = !showGuestMenu
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Group,
+                            contentDescription = "Live Guests Menu",
+                            tint = if (activeGuestCount > 0) ComposeColor(0xFF38BDF8) else ComposeColor(0xFF94A3B8),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    if (badgeText != null) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .sizeIn(minWidth = 18.dp, minHeight = 16.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(badgeColor)
+                                .border(1.2.dp, ComposeColor(0xFF0F172A), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 3.5.dp, vertical = 0.5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = badgeText,
+                                color = ComposeColor.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(
+                                        includeFontPadding = false
+                                    )
+                                )
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showGuestMenu,
+                        onDismissRequest = { showGuestMenu = false },
+                        modifier = Modifier
+                            .background(ComposeColor(0xF00F172A))
+                            .border(1.dp, ComposeColor(0xFF334155), RoundedCornerShape(8.dp))
+                            .widthIn(min = 230.dp, max = 280.dp)
+                    ) {
+                        // Header
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Visitors: $activeGuestCount active • $inactiveGuestCount inactive",
+                                    color = ComposeColor(0xFF94A3B8),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            onClick = { },
+                            enabled = false
+                        )
+
+                        HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                        // Show Guests on Map (Fit)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Show Guests on Map (Fit)",
+                                    color = if (visibleGuests.isNotEmpty()) ComposeColor.White else ComposeColor(0xFF64748B),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.CropFree,
+                                    contentDescription = null,
+                                    tint = if (visibleGuests.isNotEmpty()) ComposeColor(0xFF38BDF8) else ComposeColor(0xFF64748B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                onUserInteracted()
+                                showGuestMenu = false
+                                val map = mapView ?: return@DropdownMenuItem
+                                if (visibleGuests.isNotEmpty()) {
+                                    onFollowingChange(false)
+                                    fitPointsToUnobstructedViewport(
+                                        map = map,
+                                        points = visibleGuests.map { it.geoPoint },
+                                        density = density,
+                                        isLandscape = isLandscape,
+                                        isCompact = isCompact,
+                                        measuredTopInsetPx = measuredTopInsetPx,
+                                        measuredBottomInsetPx = measuredBottomInsetPx,
+                                        isRecording = isRecording,
+                                        isAutoStandby = isAutoStandby,
+                                        onZoomCalculated = { onZoomChange(it) }
+                                    )
+                                }
+                            },
+                            enabled = visibleGuests.isNotEmpty()
+                        )
+
+                        // Visitor Details
+                        if (onOpenLiveVisitorsDetails != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Visitor Details",
+                                        color = ComposeColor.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = ComposeColor(0xFF38BDF8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                onClick = {
+                                    onUserInteracted()
+                                    showGuestMenu = false
+                                    onOpenLiveVisitorsDetails()
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                        // Show Inactive Visitors Toggle
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Show Inactive Visitors",
+                                        color = ComposeColor.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = showInactiveGuests,
+                                        onCheckedChange = {
+                                            onUserInteracted()
+                                            onToggleShowInactiveGuests(it)
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = ComposeColor.White,
+                                            checkedTrackColor = ComposeColor(0xFF38BDF8),
+                                            uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                                            uncheckedTrackColor = ComposeColor(0xFF334155)
+                                        )
+                                    )
+                                }
+                            },
+                            onClick = {
+                                onUserInteracted()
+                                onToggleShowInactiveGuests(!showInactiveGuests)
+                            }
+                        )
+
+                        // Show Visitor Labels Toggle
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Show Visitor Labels",
+                                        color = ComposeColor.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = showVisitorLabels,
+                                        onCheckedChange = {
+                                            onUserInteracted()
+                                            onToggleShowVisitorLabels(it)
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = ComposeColor.White,
+                                            checkedTrackColor = ComposeColor(0xFF38BDF8),
+                                            uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                                            uncheckedTrackColor = ComposeColor(0xFF334155)
+                                        )
+                                    )
+                                }
+                            },
+                            onClick = {
+                                onUserInteracted()
+                                onToggleShowVisitorLabels(!showVisitorLabels)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -2484,37 +3028,173 @@ private fun BoxScope.MapFloatingControlsColumn(
                 }
             }
 
-            // Fit Shown Trips
-            if (allShownPoints.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(ComposeColor(0xCC1E293B))
-                        .clickable {
-                            val map = mapView ?: return@clickable
-                            onFollowingChange(false)
-                            fitPointsToUnobstructedViewport(
-                                map = map,
-                                points = allShownPoints,
-                                density = density,
-                                isLandscape = isLandscape,
-                                isCompact = isCompact,
-                                measuredTopInsetPx = measuredTopInsetPx,
-                                measuredBottomInsetPx = measuredBottomInsetPx,
-                                isRecording = isRecording,
-                                isAutoStandby = isAutoStandby,
-                                onZoomCalculated = { onZoomChange(it) }
+            // Fit Options Resolution
+            val fitOptions = remember(
+                selectedTrips,
+                isRecording,
+                trackPoints,
+                visibleGuests,
+                effectiveLatLng,
+                activityProfile
+            ) {
+                val list = mutableListOf<FitTargetOption>()
+                if (selectedTrips.isNotEmpty() && !isRecording) {
+                    val pts = selectedTrips.flatMap { it.points }
+                    if (pts.isNotEmpty()) {
+                        list.add(FitTargetOption("Selected Trips", Icons.Default.CropFree, pts))
+                    }
+                } else {
+                    val currentHostGp = effectiveLatLng?.let { GeoPoint(it.first, it.second) }
+                    val tripPts = mutableListOf<GeoPoint>().apply {
+                        addAll(trackPoints)
+                        if (currentHostGp != null) add(currentHostGp)
+                    }
+
+                    if (isRecording || trackPoints.isNotEmpty()) {
+                        list.add(FitTargetOption("Current Trip", Icons.Default.Route, tripPts))
+                        val recentPts = extractRecentTrackSection(
+                            trackPoints = trackPoints,
+                            currentPos = currentHostGp,
+                            targetDistanceMeters = activityProfile.recentSectionMeters
+                        )
+                        if (recentPts.isNotEmpty()) {
+                            list.add(
+                                FitTargetOption(
+                                    "Recent Section (${activityProfile.recentSectionLabel})",
+                                    Icons.Default.Timeline,
+                                    recentPts
+                                )
                             )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CropFree,
-                        contentDescription = "Fit Shown Trips",
-                        tint = ComposeColor(0xFF38BDF8),
-                        modifier = Modifier.size(22.dp)
-                    )
+                        }
+                    }
+
+                    if ((isRecording || trackPoints.isNotEmpty()) && visibleGuests.isNotEmpty()) {
+                        val combined = mutableListOf<GeoPoint>().apply {
+                            addAll(tripPts)
+                            addAll(visibleGuests.map { it.geoPoint })
+                        }
+                        list.add(FitTargetOption("Trip & Guests", Icons.Default.Groups, combined))
+                    } else if (visibleGuests.isNotEmpty() && currentHostGp != null) {
+                        val combined = mutableListOf<GeoPoint>().apply {
+                            add(currentHostGp)
+                            addAll(visibleGuests.map { it.geoPoint })
+                        }
+                        list.add(FitTargetOption("My Position & Guests", Icons.Default.Groups, combined))
+                    }
+
+                    if (visibleGuests.isNotEmpty()) {
+                        list.add(FitTargetOption("Guests", Icons.Default.Group, visibleGuests.map { it.geoPoint }))
+                    }
+                }
+                list
+            }
+
+            // Fit Shown Trips (Single-click immediate or multi-option popup menu)
+            if (fitOptions.isNotEmpty()) {
+                Box(contentAlignment = Alignment.TopEnd) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(ComposeColor(0xCC1E293B))
+                            .clickable {
+                                onUserInteracted()
+                                val map = mapView ?: return@clickable
+                                if (fitOptions.size == 1) {
+                                    val opt = fitOptions.first()
+                                    onFollowingChange(false)
+                                    fitPointsToUnobstructedViewport(
+                                        map = map,
+                                        points = opt.points,
+                                        density = density,
+                                        isLandscape = isLandscape,
+                                        isCompact = isCompact,
+                                        measuredTopInsetPx = measuredTopInsetPx,
+                                        measuredBottomInsetPx = measuredBottomInsetPx,
+                                        isRecording = isRecording,
+                                        isAutoStandby = isAutoStandby,
+                                        onZoomCalculated = { onZoomChange(it) }
+                                    )
+                                } else {
+                                    showFitMenu = !showFitMenu
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CropFree,
+                            contentDescription = "Fit to Screen",
+                            tint = ComposeColor(0xFF38BDF8),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    if (fitOptions.size > 1) {
+                        DropdownMenu(
+                            expanded = showFitMenu,
+                            onDismissRequest = { showFitMenu = false },
+                            modifier = Modifier
+                                .background(ComposeColor(0xF00F172A))
+                                .border(1.dp, ComposeColor(0xFF334155), RoundedCornerShape(8.dp))
+                                .widthIn(min = 210.dp, max = 280.dp)
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Fit Viewport",
+                                        color = ComposeColor(0xFF94A3B8),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                onClick = { },
+                                enabled = false
+                            )
+
+                            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+                            fitOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = option.label,
+                                            color = ComposeColor.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = option.icon,
+                                            contentDescription = null,
+                                            tint = ComposeColor(0xFF38BDF8),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        onUserInteracted()
+                                        showFitMenu = false
+                                        val map = mapView ?: return@DropdownMenuItem
+                                        onFollowingChange(false)
+                                        fitPointsToUnobstructedViewport(
+                                            map = map,
+                                            points = option.points,
+                                            density = density,
+                                            isLandscape = isLandscape,
+                                            isCompact = isCompact,
+                                            measuredTopInsetPx = measuredTopInsetPx,
+                                            measuredBottomInsetPx = measuredBottomInsetPx,
+                                            isRecording = isRecording,
+                                            isAutoStandby = isAutoStandby,
+                                            onZoomCalculated = { onZoomChange(it) }
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2879,6 +3559,12 @@ private fun MapSettingsDialogHost(
     onToggleHeatMap: (() -> Unit)?,
     showInactiveGuests: Boolean,
     onShowInactiveGuestsToggle: (Boolean) -> Unit,
+    showVisitorLabels: Boolean,
+    onShowVisitorLabelsToggle: (Boolean) -> Unit,
+    autoRecenterEnabled: Boolean,
+    onAutoRecenterToggle: (Boolean) -> Unit,
+    autoRecenterTimeoutSec: Int,
+    onAutoRecenterTimeoutSecChange: (Int) -> Unit,
     compassArrowEnabled: Boolean,
     onCompassArrowToggle: (Boolean) -> Unit,
     showAltitudeOnMap: Boolean,
@@ -2916,6 +3602,12 @@ private fun MapSettingsDialogHost(
         onToggleHeatMap = { onToggleHeatMap?.invoke() },
         showInactiveGuests = showInactiveGuests,
         onShowInactiveGuestsToggle = onShowInactiveGuestsToggle,
+        showVisitorLabels = showVisitorLabels,
+        onShowVisitorLabelsToggle = onShowVisitorLabelsToggle,
+        autoRecenterEnabled = autoRecenterEnabled,
+        onAutoRecenterToggle = onAutoRecenterToggle,
+        autoRecenterTimeoutSec = autoRecenterTimeoutSec,
+        onAutoRecenterTimeoutSecChange = onAutoRecenterTimeoutSecChange,
         compassArrowEnabled = compassArrowEnabled,
         onCompassArrowToggle = onCompassArrowToggle,
         showAltitudeEnabled = showAltitudeOnMap,
@@ -2979,6 +3671,12 @@ private fun MapSettingsDialog(
     onToggleHeatMap: () -> Unit = {},
     showInactiveGuests: Boolean = true,
     onShowInactiveGuestsToggle: (Boolean) -> Unit = {},
+    showVisitorLabels: Boolean = true,
+    onShowVisitorLabelsToggle: (Boolean) -> Unit = {},
+    autoRecenterEnabled: Boolean = true,
+    onAutoRecenterToggle: (Boolean) -> Unit = {},
+    autoRecenterTimeoutSec: Int = 60,
+    onAutoRecenterTimeoutSecChange: (Int) -> Unit = {},
     compassArrowEnabled: Boolean = true,
     onCompassArrowToggle: (Boolean) -> Unit = {},
     showAltitudeEnabled: Boolean = true,
@@ -3531,6 +4229,141 @@ private fun MapSettingsDialog(
                         uncheckedTrackColor = ComposeColor(0xFF334155)
                     )
                 )
+            }
+
+            // Show Visitor Labels
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShowVisitorLabelsToggle(!showVisitorLabels) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Visitor Labels",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Attach name, distance, and time pill badge below visitor avatars",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showVisitorLabels,
+                    onCheckedChange = { onShowVisitorLabelsToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF38BDF8),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
+            // Auto-Recenter Section
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onAutoRecenterToggle(!autoRecenterEnabled) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Auto-Recenter",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Automatically recenter map when your position is off-screen and map is untouched",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = autoRecenterEnabled,
+                    onCheckedChange = { onAutoRecenterToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            if (autoRecenterEnabled) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp)
+                ) {
+                    Text(
+                        text = "Inactivity Timeout",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            30 to "30s",
+                            60 to "60s (Default)",
+                            120 to "2 min"
+                        ).forEach { (seconds, label) ->
+                            val isSelected = autoRecenterTimeoutSec == seconds
+                            Button(
+                                onClick = { onAutoRecenterTimeoutSecChange(seconds) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ComposeColor.White,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))

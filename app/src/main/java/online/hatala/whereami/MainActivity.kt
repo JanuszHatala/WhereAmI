@@ -373,6 +373,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     var isMapFollowing by remember { mutableStateOf(true) }
     var recenterTrigger by remember { mutableStateOf(0L) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
+    val scope = rememberCoroutineScope()
     val liveSession by liveSharingManager.currentSession.collectAsState()
     val staticLiveId by liveSharingManager.staticLiveId.collectAsState()
     val activeGuests by liveSharingManager.activeGuests.collectAsState()
@@ -697,6 +698,17 @@ fun LocationScreen(viewModel: MainViewModel) {
             activeGuests = activeGuests,
             showGuestDistanceBadge = showGuestDistanceBadge,
             onGuestClick = { guest -> selectedGuestDetails = guest },
+            isLiveSharingActive = (liveSession?.isActive == true),
+            onToggleShowGuestDistanceBadge = { enabled ->
+                liveSharingManager.setShowGuestDistanceBadge(enabled)
+            },
+            onOpenLiveVisitorsDetails = {
+                scope.launch {
+                    liveSharingManager.fetchSessionViews()
+                }
+                liveViewsSelectedTab = 0
+                showLiveViewsDetailsModal = true
+            },
             // Mute live GPS borders while pin borders are shown so Czaniec ≠ pin area.
             boundaryPoints = if (pinnedBoundaryPoints != null) null else boundaryPoints,
             pinnedBoundaryPoints = pinnedBoundaryPoints,
@@ -6692,8 +6704,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Show distance badges on map", fontSize = 12.sp, color = Color.White)
-                                        Text("Attach distance pill to guest pins", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                        Text("Show visitor labels on map", fontSize = 12.sp, color = Color.White)
+                                        Text("Attach name, distance & time pill to guest pins", fontSize = 10.sp, color = Color(0xFF94A3B8))
                                     }
                                     Switch(
                                         checked = showGuestDistanceBadge,
