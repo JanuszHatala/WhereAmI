@@ -161,7 +161,7 @@ class SpeedKinematicsTest {
     fun testProfileBasedCommitThresholds() {
         fun getCommitThreshold(profile: ActivityProfile): Double {
             return when (profile) {
-                ActivityProfile.WALKING, ActivityProfile.HIKING -> 3.0
+                ActivityProfile.WALKING, ActivityProfile.HIKING, ActivityProfile.KAYAKING -> 3.0
                 ActivityProfile.RUNNING, ActivityProfile.MTB, ActivityProfile.CYCLING -> 4.0
                 ActivityProfile.CAR -> 5.0
             }

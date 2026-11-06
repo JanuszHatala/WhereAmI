@@ -213,7 +213,7 @@ class BearingSmootherTest {
     fun `CAR mode accuracy gate is 55m not 75m`() {
         // Model the GpsFilterEngine accuracy gate selection:
         val carMaxAccuracy = when (ActivityProfile.CAR) {
-            ActivityProfile.WALKING, ActivityProfile.HIKING -> 40.0f
+            ActivityProfile.WALKING, ActivityProfile.HIKING, ActivityProfile.KAYAKING -> 40.0f
             ActivityProfile.RUNNING -> 45.0f
             ActivityProfile.MTB, ActivityProfile.CYCLING -> 55.0f
             ActivityProfile.CAR -> 55.0f  // Changed from 75m → 55m

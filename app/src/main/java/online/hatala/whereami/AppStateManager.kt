@@ -169,7 +169,7 @@ class AppStateManager private constructor(private val context: Context) {
             }
 
             if (isCarProfile) {
-                if (isSpeedStationary && elapsedMs >= 25_000L && displacementMeters < 10.0) {
+                if (isPhysicallyStationary && isSpeedStationary && elapsedMs >= 25_000L && displacementMeters < 10.0) {
                     return true
                 }
                 if (elapsedMs < 35_000L) return false

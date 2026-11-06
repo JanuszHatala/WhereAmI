@@ -1,0 +1,357 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "beskid_maly",
+      "properties": {
+        "id": "beskid_maly",
+        "name": "Beskid Mały",
+        "name_en": "Little Beskids",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422001
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.040, 49.830], [19.080, 49.855], [19.160, 49.875], [19.250, 49.870],
+            [19.340, 49.865], [19.450, 49.840], [19.560, 49.815], [19.585, 49.780],
+            [19.530, 49.750], [19.450, 49.740], [19.380, 49.755], [19.280, 49.750],
+            [19.200, 49.730], [19.150, 49.745], [19.090, 49.770], [19.040, 49.800],
+            [19.040, 49.830]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "pk_beskidu_malego",
+      "properties": {
+        "id": "pk_beskidu_malego",
+        "name": "Park Krajobrazowy Beskidu Małego",
+        "name_en": "Little Beskids Landscape Park",
+        "kind": "LANDSCAPE_PARK",
+        "osm_relation_id": 2690985
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.070, 49.825], [19.140, 49.855], [19.240, 49.850], [19.330, 49.845],
+            [19.430, 49.825], [19.530, 49.805], [19.560, 49.780], [19.480, 49.755],
+            [19.390, 49.765], [19.270, 49.760], [19.180, 49.750], [19.110, 49.775],
+            [19.070, 49.825]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "beskid_slaski",
+      "properties": {
+        "id": "beskid_slaski",
+        "name": "Beskid Śląski",
+        "name_en": "Silesian Beskids",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422002
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [18.820, 49.750], [18.910, 49.785], [19.030, 49.780], [19.080, 49.730],
+            [19.100, 49.650], [19.080, 49.570], [18.980, 49.510], [18.880, 49.530],
+            [18.800, 49.580], [18.780, 49.660], [18.820, 49.750]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "pk_beskidu_slaskiego",
+      "properties": {
+        "id": "pk_beskidu_slaskiego",
+        "name": "Park Krajobrazowy Beskidu Śląskiego",
+        "name_en": "Silesian Beskids Landscape Park",
+        "kind": "LANDSCAPE_PARK",
+        "osm_relation_id": 2690986
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [18.850, 49.730], [18.930, 49.760], [19.020, 49.755], [19.060, 49.710],
+            [19.070, 49.630], [19.040, 49.560], [18.950, 49.530], [18.860, 49.550],
+            [18.810, 49.620], [18.850, 49.730]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "beskid_zywiecki",
+      "properties": {
+        "id": "beskid_zywiecki",
+        "name": "Beskid Żywiecki",
+        "name_en": "Żywiec Beskids",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422003
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.050, 49.600], [19.180, 49.650], [19.330, 49.680], [19.520, 49.640],
+            [19.640, 49.600], [19.600, 49.520], [19.450, 49.460], [19.280, 49.420],
+            [19.120, 49.440], [19.020, 49.510], [19.050, 49.600]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "babiogorski_pn",
+      "properties": {
+        "id": "babiogorski_pn",
+        "name": "Babiogórski Park Narodowy",
+        "name_en": "Babia Góra National Park",
+        "kind": "NATIONAL_PARK",
+        "osm_relation_id": 2690987
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.460, 49.595], [19.530, 49.605], [19.590, 49.590], [19.600, 49.560],
+            [19.550, 49.550], [19.490, 49.555], [19.460, 49.575], [19.460, 49.595]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tatry_zachodnie",
+      "properties": {
+        "id": "tatry_zachodnie",
+        "name": "Tatry Zachodnie",
+        "name_en": "Western Tatras",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422004
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.680, 49.270], [19.820, 49.290], [19.950, 49.275], [20.000, 49.245],
+            [19.980, 49.190], [19.850, 49.170], [19.720, 49.190], [19.650, 49.230],
+            [19.680, 49.270]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tatry_wysokie",
+      "properties": {
+        "id": "tatry_wysokie",
+        "name": "Tatry Wysokie",
+        "name_en": "High Tatras",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422005
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [20.000, 49.245], [20.100, 49.270], [20.250, 49.250], [20.300, 49.200],
+            [20.220, 49.150], [20.080, 49.140], [19.980, 49.190], [20.000, 49.245]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tpn",
+      "properties": {
+        "id": "tpn",
+        "name": "Tatrzański Park Narodowy",
+        "name_en": "Tatra National Park (PL)",
+        "kind": "NATIONAL_PARK",
+        "osm_relation_id": 2690988
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.800, 49.285], [19.920, 49.295], [20.050, 49.285], [20.160, 49.260],
+            [20.140, 49.190], [20.070, 49.180], [19.980, 49.210], [19.850, 49.215],
+            [19.780, 49.240], [19.800, 49.285]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "gorce",
+      "properties": {
+        "id": "gorce",
+        "name": "Gorce",
+        "name_en": "Gorce Mountains",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422006
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.950, 49.600], [20.080, 49.640], [20.220, 49.620], [20.350, 49.560],
+            [20.300, 49.490], [20.150, 49.480], [20.000, 49.510], [19.950, 49.600]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "pieniny",
+      "properties": {
+        "id": "pieniny",
+        "name": "Pieniny",
+        "name_en": "Pieniny Mountains",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422007
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [20.300, 49.440], [20.420, 49.460], [20.550, 49.430], [20.520, 49.380],
+            [20.400, 49.390], [20.320, 49.410], [20.300, 49.440]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bieszczady",
+      "properties": {
+        "id": "bieszczady",
+        "name": "Bieszczady Zachodnie",
+        "name_en": "Bieszczady Mountains",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422008
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [22.250, 49.350], [22.450, 49.400], [22.650, 49.360], [22.850, 49.250],
+            [22.900, 49.120], [22.750, 49.030], [22.550, 49.070], [22.350, 49.150],
+            [22.200, 49.250], [22.250, 49.350]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bieszczadzki_pn",
+      "properties": {
+        "id": "bieszczadzki_pn",
+        "name": "Bieszczadzki Park Narodowy",
+        "name_en": "Bieszczady National Park",
+        "kind": "NATIONAL_PARK",
+        "osm_relation_id": 2690989
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [22.500, 49.220], [22.650, 49.250], [22.800, 49.210], [22.880, 49.130],
+            [22.780, 49.060], [22.620, 49.090], [22.500, 49.220]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "karkonosze",
+      "properties": {
+        "id": "karkonosze",
+        "name": "Karkonosze",
+        "name_en": "Giant Mountains (Karkonosze)",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422009
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [15.420, 50.840], [15.600, 50.860], [15.820, 50.820], [15.900, 50.750],
+            [15.780, 50.680], [15.550, 50.700], [15.400, 50.760], [15.420, 50.840]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "karkonoski_pn",
+      "properties": {
+        "id": "karkonoski_pn",
+        "name": "Karkonoski Park Narodowy",
+        "name_en": "Karkonosze National Park",
+        "kind": "NATIONAL_PARK",
+        "osm_relation_id": 2690990
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [15.480, 50.820], [15.650, 50.840], [15.800, 50.790], [15.820, 50.730],
+            [15.680, 50.730], [15.520, 50.770], [15.480, 50.820]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "jura_krakowsko_czestochowska",
+      "properties": {
+        "id": "jura_krakowsko_czestochowska",
+        "name": "Wyżyna Krakowsko-Częstochowska (Jura)",
+        "name_en": "Kraków-Częstochowa Upland (Jura)",
+        "kind": "LANDSCAPE_PARK",
+        "osm_relation_id": 9422010
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.100, 50.850], [19.350, 50.750], [19.550, 50.500], [19.850, 50.200],
+            [19.980, 50.120], [19.820, 50.100], [19.450, 50.350], [19.200, 50.600],
+            [19.050, 50.800], [19.100, 50.850]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "gory_swietokrzyskie",
+      "properties": {
+        "id": "gory_swietokrzyskie",
+        "name": "Góry Świętokrzyskie",
+        "name_en": "Holy Cross Mountains",
+        "kind": "MOUNTAIN_RANGE",
+        "osm_relation_id": 9422011
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [20.500, 50.950], [20.800, 51.020], [21.150, 50.950], [21.250, 50.800],
+            [20.950, 50.750], [20.600, 50.820], [20.500, 50.950]
+          ]
+        ]
+      }
+    }
+  ]
+}

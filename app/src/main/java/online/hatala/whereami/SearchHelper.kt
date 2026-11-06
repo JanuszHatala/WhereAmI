@@ -6,11 +6,32 @@ import android.location.Geocoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
+
+enum class SearchCategory(val label: String, val emoji: String) {
+    ALL("All", "🔍"),
+    PEAKS_PASSES("Peaks & Passes", "⛰️"),
+    TRAILS("Trails & Routes", "🥾"),
+    RANGES_PARKS("Ranges & Parks", "🌲"),
+    WATER_VALLEYS("Water & Valleys", "🌊"),
+    HUTS_POIS("Huts & POIs", "🛖")
+}
+
+enum class SearchGeometryType {
+    POINT,
+    POLYGON,
+    POLYLINE
+}
+
+data class SearchResultGeometry(
+    val polygon: List<GeoPoint>? = null,
+    val polylines: List<List<GeoPoint>>? = null
+)
 
 data class SearchResultItem(
     val title: String,
@@ -23,7 +44,13 @@ data class SearchResultItem(
     val placeType: String? = null,
     val source: String? = null,
     val importance: Double = 0.0,
-    val rankScore: Double = 0.0
+    val rankScore: Double = 0.0,
+    val geometryType: SearchGeometryType = SearchGeometryType.POINT,
+    val osmType: String? = null,
+    val osmId: Long? = null,
+    val elevationMeters: Int? = null,
+    val trailColor: TrailColor? = null,
+    val outdoorAreaId: String? = null
 )
 
 data class TouristicPoi(
@@ -52,15 +79,44 @@ object SearchHelper {
         originLon: Double? = null,
         countryCode: String? = null,
         savedPlaces: List<SavedPlace> = emptyList(),
-        recentPlaces: List<SearchResultItem> = emptyList()
+        recentPlaces: List<SearchResultItem> = emptyList(),
+        category: SearchCategory = SearchCategory.ALL
     ): List<SearchResultItem> = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
+        OfflineOutdoorRegionIndex.initIfNeeded(context)
 
         val candidates = mutableListOf<PlaceSearchRanker.Candidate>()
 
         fun addCandidate(c: PlaceSearchRanker.Candidate) {
             candidates.add(c)
+        }
+
+        // 1. Match offline regions (mountain ranges, landscape parks, national parks)
+        if (category == SearchCategory.ALL || category == SearchCategory.RANGES_PARKS) {
+            val offlineRegions = OfflineOutdoorRegionIndex.getAllRegions()
+            for (r in offlineRegions) {
+                if (SearchNormalizer.matchesQuery(trimmed, r.area.name, r.area.nameEn, r.area.kind.displayName)) {
+                    val centerLat = (r.minLat + r.maxLat) / 2.0
+                    val centerLon = (r.minLon + r.maxLon) / 2.0
+                    addCandidate(
+                        PlaceSearchRanker.Candidate(
+                            item = SearchResultItem(
+                                title = r.area.name,
+                                subtitle = r.area.nameEn?.let { "$it · ${r.area.kind.displayName}" } ?: r.area.kind.displayName,
+                                geoPoint = GeoPoint(centerLat, centerLon),
+                                placeType = r.area.kind.name.lowercase(Locale.ROOT),
+                                source = "offline_regions",
+                                importance = 0.88,
+                                geometryType = SearchGeometryType.POLYGON,
+                                outdoorAreaId = r.area.id
+                            ),
+                            placeType = r.area.kind.name.lowercase(Locale.ROOT),
+                            importance = 0.88
+                        )
+                    )
+                }
+            }
         }
 
         // Instant local hits (diacritic-insensitive via SearchNormalizer)
@@ -109,6 +165,20 @@ object SearchHelper {
                     importance = hit.importance
                 )
             )
+        }
+
+        // Overpass outdoor search for trails, peaks, passes, valleys, waters when specific category chosen
+        if (category != SearchCategory.ALL && trimmed.length >= 3) {
+            val overpassHits = searchOverpassOutdoor(trimmed, category, originLat, originLon)
+            for (hit in overpassHits) {
+                addCandidate(
+                    PlaceSearchRanker.Candidate(
+                        item = hit,
+                        placeType = hit.placeType,
+                        importance = 0.75
+                    )
+                )
+            }
         }
 
         // Fallback when Photon is empty/unavailable
@@ -217,6 +287,15 @@ object SearchHelper {
                 .takeIf { it.isNotBlank() }?.lowercase(Locale.ROOT)
             val osmKey = props.optString("osm_key", "")
             val osmValue = props.optString("osm_value", "")
+            val osmId = props.optLong("osm_id").takeIf { it > 0 }
+            val osmType = props.optString("osm_type", "").takeIf { it.isNotBlank() }
+            val extraTags = props.optJSONObject("extra_tags")
+            val ele = extraTags?.optString("ele")?.toIntOrNull() ?: props.optString("ele").toIntOrNull()
+            val geomType = when {
+                osmKey in listOf("waterway", "route") -> SearchGeometryType.POLYLINE
+                osmKey in listOf("boundary", "leisure", "landuse") || osmValue in listOf("mountain_range", "valley", "water", "national_park", "protected_area", "nature_reserve") -> SearchGeometryType.POLYGON
+                else -> SearchGeometryType.POINT
+            }
             val type = props.optString("type", "").takeIf { it.isNotBlank() }
                 ?: osmValue.takeIf { it.isNotBlank() }
                 ?: osmKey.takeIf { it.isNotBlank() }
@@ -224,7 +303,7 @@ object SearchHelper {
 
             val title = when {
                 street != null && house != null -> "$street $house"
-                name != null -> name
+                name != null -> if (ele != null && (osmValue == "peak" || type == "peak")) "$name (${ele}m)" else name
                 street != null -> street
                 city != null -> city
                 else -> continue
@@ -246,7 +325,11 @@ object SearchHelper {
                     countryCode = countryCode,
                     placeType = type,
                     source = "photon",
-                    importance = importance
+                    importance = importance,
+                    geometryType = geomType,
+                    osmType = osmType,
+                    osmId = osmId,
+                    elevationMeters = ele
                 )
             )
         }
@@ -686,6 +769,258 @@ object SearchHelper {
         "viewpoint" -> 2
         "shelter" -> 3
         else -> 9
+    }
+
+    suspend fun discoverNearbyByCategory(
+        context: Context,
+        category: SearchCategory,
+        originLat: Double?,
+        originLon: Double?
+    ): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        if (originLat == null || originLon == null) return@withContext emptyList()
+        OfflineOutdoorRegionIndex.initIfNeeded(context)
+        when (category) {
+            SearchCategory.ALL -> emptyList()
+            SearchCategory.RANGES_PARKS -> {
+                OfflineOutdoorRegionIndex.getAllRegions().map { r ->
+                    val cLat = (r.minLat + r.maxLat) / 2.0
+                    val cLon = (r.minLon + r.maxLon) / 2.0
+                    val dist = computeDistanceMeters(originLat, originLon, cLat, cLon)
+                    val kindDisplay = r.area.kind.displayName
+                    SearchResultItem(
+                        title = r.area.name,
+                        subtitle = r.area.nameEn?.let { "$it · $kindDisplay" } ?: kindDisplay,
+                        geoPoint = GeoPoint(cLat, cLon),
+                        distanceMeters = dist,
+                        placeType = r.area.kind.name.lowercase(Locale.ROOT),
+                        source = "offline_regions",
+                        geometryType = SearchGeometryType.POLYGON,
+                        outdoorAreaId = r.area.id,
+                        importance = 0.85
+                    )
+                }.sortedBy { it.distanceMeters ?: Float.MAX_VALUE }.take(15)
+            }
+            SearchCategory.PEAKS_PASSES -> fetchNearbyOutdoorNodes(originLat, originLon, "peak|saddle|volcano")
+            SearchCategory.TRAILS -> fetchNearbyOutdoorTrails(originLat, originLon)
+            SearchCategory.WATER_VALLEYS -> fetchNearbyWaterAndValleys(originLat, originLon)
+            SearchCategory.HUTS_POIS -> fetchNearbyHutsAndPois(originLat, originLon)
+        }
+    }
+
+    suspend fun fetchResultGeometry(context: Context, item: SearchResultItem): SearchResultGeometry? = withContext(Dispatchers.IO) {
+        if (item.outdoorAreaId != null) {
+            OfflineOutdoorRegionIndex.initIfNeeded(context)
+            val poly = OfflineOutdoorRegionIndex.getPolygonByIdOrName(item.outdoorAreaId)?.polygon
+            if (poly != null && poly.size >= 3) {
+                return@withContext SearchResultGeometry(polygon = poly)
+            }
+        }
+        val osmId = item.osmId ?: return@withContext null
+        val osmType = item.osmType ?: "relation"
+
+        if (item.geometryType == SearchGeometryType.POLYGON) {
+            val typeChar = if (osmType.startsWith("w", ignoreCase = true)) "W" else "R"
+            val url = "https://nominatim.openstreetmap.org/details?osmtype=$typeChar&osmid=$osmId&format=json&polygon_geojson=1"
+            try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.connectTimeout = 6000
+                conn.readTimeout = 6000
+                if (conn.responseCode == 200) {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val obj = JSONObject(body)
+                    val geojson = obj.optJSONObject("geometry") ?: obj.optJSONObject("geojson")
+                    if (geojson != null) {
+                        val poly = BoundaryHelper.parseGeoJsonPolygon(geojson)
+                        if (poly != null && poly.size >= 3) {
+                            return@withContext SearchResultGeometry(polygon = poly)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        } else if (item.geometryType == SearchGeometryType.POLYLINE) {
+            try {
+                val ql = if (osmType.startsWith("w", ignoreCase = true)) {
+                    "[out:json][timeout:10]; way($osmId); (._; >;); out skel qt;"
+                } else {
+                    "[out:json][timeout:12]; relation($osmId); (._; >;); out skel qt;"
+                }
+                val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.connectTimeout = 6000
+                conn.readTimeout = 10000
+                if (conn.responseCode == 200) {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val parsedTrails = TrailVectorRepository.parseOverpassTrails(body)
+                    if (parsedTrails.isNotEmpty()) {
+                        val lines = parsedTrails.map { it.points }
+                        return@withContext SearchResultGeometry(polylines = lines)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        null
+    }
+
+    private fun searchOverpassOutdoor(
+        query: String,
+        category: SearchCategory,
+        originLat: Double?,
+        originLon: Double?
+    ): List<SearchResultItem> {
+        return try {
+            val qEscaped = query.replace("\"", "")
+            val areaClause = if (originLat != null && originLon != null) "(around:80000,$originLat,$originLon)" else ""
+            val filter = when (category) {
+                SearchCategory.PEAKS_PASSES -> "node[natural~\"^(peak|saddle|volcano)$\"]$areaClause[name~\"$qEscaped\",i]; out center 12;"
+                SearchCategory.TRAILS -> "rel[type=route][route~\"^(hiking|foot|mtb|bicycle|canoe|kayak)$\"]$areaClause[name~\"$qEscaped\",i]; out center 12;"
+                SearchCategory.RANGES_PARKS -> "(rel[boundary~\"^(national_park|protected_area)$\"]$areaClause[name~\"$qEscaped\",i]; rel[natural~\"^(mountain_range|valley)$\"]$areaClause[name~\"$qEscaped\",i];); out center 12;"
+                SearchCategory.WATER_VALLEYS -> "(way[waterway=river]$areaClause[name~\"$qEscaped\",i]; rel[waterway=river]$areaClause[name~\"$qEscaped\",i]; way[natural=water]$areaClause[name~\"$qEscaped\",i]; rel[natural=water]$areaClause[name~\"$qEscaped\",i]; way[natural=valley]$areaClause[name~\"$qEscaped\",i]; rel[natural=valley]$areaClause[name~\"$qEscaped\",i];); out center 12;"
+                SearchCategory.HUTS_POIS -> "(node[tourism~\"^(alpine_hut|wilderness_hut|viewpoint)$\"]$areaClause[name~\"$qEscaped\",i]; way[tourism~\"^(alpine_hut|wilderness_hut)$\"]$areaClause[name~\"$qEscaped\",i];); out center 12;"
+                else -> return emptyList()
+            }
+            val ql = "[out:json][timeout:8]; $filter"
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseOverpassSearchResults(body, originLat, originLon)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchNearbyOutdoorNodes(lat: Double, lon: Double, naturalFilter: String): List<SearchResultItem> {
+        return try {
+            val ql = "[out:json][timeout:8]; node(around:25000,$lat,$lon)[natural~\"^($naturalFilter)$\\\"][name]; out 15;"
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseOverpassSearchResults(body, lat, lon)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun fetchNearbyOutdoorTrails(lat: Double, lon: Double): List<SearchResultItem> {
+        return try {
+            val ql = "[out:json][timeout:8]; rel(around:15000,$lat,$lon)[type=route][route~\"^(hiking|foot|mtb|bicycle|canoe|kayak)$\\\"][name]; out center 15;"
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseOverpassSearchResults(body, lat, lon)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun fetchNearbyWaterAndValleys(lat: Double, lon: Double): List<SearchResultItem> {
+        return try {
+            val ql = "[out:json][timeout:8]; (way(around:15000,$lat,$lon)[natural~\"^(water|valley)$\\\"][name]; way(around:15000,$lat,$lon)[waterway=river][name];); out center 15;"
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseOverpassSearchResults(body, lat, lon)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun fetchNearbyHutsAndPois(lat: Double, lon: Double): List<SearchResultItem> {
+        return try {
+            val ql = "[out:json][timeout:8]; (node(around:20000,$lat,$lon)[tourism~\"^(alpine_hut|wilderness_hut|viewpoint)$\\\"][name]; way(around:20000,$lat,$lon)[tourism~\"^(alpine_hut|wilderness_hut)$\\\"][name];); out center 15;"
+            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.connectTimeout = 5000
+            conn.readTimeout = 8000
+            if (conn.responseCode != 200) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            parseOverpassSearchResults(body, lat, lon)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun parseOverpassSearchResults(body: String, originLat: Double?, originLon: Double?): List<SearchResultItem> {
+        val root = JSONObject(body)
+        val elements = root.optJSONArray("elements") ?: return emptyList()
+        val list = mutableListOf<SearchResultItem>()
+
+        for (i in 0 until elements.length()) {
+            val el = elements.optJSONObject(i) ?: continue
+            val id = el.optLong("id")
+            val type = el.optString("type")
+            val tags = el.optJSONObject("tags") ?: continue
+            val name = tags.optString("name").takeIf { it.isNotBlank() } ?: continue
+
+            val lat = if (el.has("lat")) el.optDouble("lat", Double.NaN)
+                      else el.optJSONObject("center")?.optDouble("lat", Double.NaN) ?: Double.NaN
+            val lon = if (el.has("lon")) el.optDouble("lon", Double.NaN)
+                      else el.optJSONObject("center")?.optDouble("lon", Double.NaN) ?: Double.NaN
+            if (lat.isNaN() || lon.isNaN()) continue
+
+            val dist = if (originLat != null && originLon != null) computeDistanceMeters(originLat, originLon, lat, lon) else null
+            val ele = tags.optString("ele").toIntOrNull()
+
+            val geomType = when {
+                tags.has("route") || tags.optString("waterway") == "river" -> SearchGeometryType.POLYLINE
+                tags.has("boundary") || tags.optString("natural") in listOf("water", "valley", "mountain_range") -> SearchGeometryType.POLYGON
+                else -> SearchGeometryType.POINT
+            }
+
+            val natural = tags.optString("natural")
+            val tourism = tags.optString("tourism")
+            val route = tags.optString("route")
+            val waterway = tags.optString("waterway")
+
+            val kindLabel = when {
+                natural == "peak" -> "Peak"
+                natural == "saddle" || tags.optString("mountain_pass") == "yes" -> "Pass"
+                natural == "valley" -> "Valley"
+                natural == "water" -> "Lake / Water"
+                waterway == "river" -> "River"
+                tourism in listOf("alpine_hut", "wilderness_hut") -> "Mountain Hut"
+                tourism == "viewpoint" -> "Viewpoint"
+                route.isNotBlank() -> "Trail (${route.uppercase(Locale.ROOT)})"
+                tags.optString("boundary") == "national_park" -> "National Park"
+                tags.optString("boundary") == "protected_area" -> "Landscape Park"
+                else -> "Outdoor POI"
+            }
+
+            val title = if (ele != null && (natural == "peak" || natural == "saddle")) "$name (${ele}m)" else name
+            val subtitle = dist?.let { "$kindLabel · ${LiveGuest.formatDistance(it)}" } ?: kindLabel
+
+            val trailColor = if (tags.has("osmc:symbol") || tags.has("colour")) {
+                OutdoorContextResolver.parseTrailColor(tags.optString("osmc:symbol"), tags.optString("colour"))
+            } else null
+
+            list.add(
+                SearchResultItem(
+                    title = title,
+                    subtitle = subtitle,
+                    geoPoint = GeoPoint(lat, lon),
+                    distanceMeters = dist,
+                    placeType = kindLabel.lowercase(Locale.ROOT),
+                    source = "overpass",
+                    importance = 0.75,
+                    geometryType = geomType,
+                    osmType = type,
+                    osmId = id,
+                    elevationMeters = ele,
+                    trailColor = trailColor
+                )
+            )
+        }
+        return list.sortedBy { it.distanceMeters ?: Float.MAX_VALUE }
     }
 
     private fun fetchNearbyTouristicPoi(lat: Double, lon: Double): TouristicPoi? {

@@ -7,7 +7,9 @@ data class ProfileMapConfig(
     val orientationMode: MapOrientationMode,
     val showHikingOverlay: Boolean,
     val fontScale: MapFontScale,
-    val trackColorHex: String = "#EF4444"
+    val trackColorHex: String = "#EF4444",
+    val showOutdoorAreasOverlay: Boolean = false,
+    val trailThickness: TrailThickness = TrailThickness.NORMAL
 )
 
 object MapProfileConfigHelper {
@@ -37,14 +39,18 @@ object MapProfileConfigHelper {
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = true,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#10B981"
+            trackColorHex = "#10B981",
+            showOutdoorAreasOverlay = true,
+            trailThickness = TrailThickness.THICK
         )
         ActivityProfile.HIKING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.FREEMAP_OUTDOOR,
             orientationMode = MapOrientationMode.COURSE_UP,
             showHikingOverlay = true,
             fontScale = MapFontScale.NORMAL,
-            trackColorHex = "#F59E0B"
+            trackColorHex = "#F59E0B",
+            showOutdoorAreasOverlay = true,
+            trailThickness = TrailThickness.THICK
         )
         ActivityProfile.RUNNING -> ProfileMapConfig(
             baseLayer = MapBaseLayer.STANDARD,
@@ -60,6 +66,15 @@ object MapProfileConfigHelper {
             fontScale = MapFontScale.NORMAL,
             trackColorHex = "#EF4444"
         )
+        ActivityProfile.KAYAKING -> ProfileMapConfig(
+            baseLayer = MapBaseLayer.FREEMAP_OUTDOOR,
+            orientationMode = MapOrientationMode.COURSE_UP,
+            showHikingOverlay = true,
+            fontScale = MapFontScale.NORMAL,
+            trackColorHex = "#06B6D4",
+            showOutdoorAreasOverlay = true,
+            trailThickness = TrailThickness.THICK
+        )
     }
 
     fun getConfig(context: Context, profile: ActivityProfile): ProfileMapConfig {
@@ -73,6 +88,10 @@ object MapProfileConfigHelper {
         } else default.showHikingOverlay
         val fontScaleName = prefs.getString("profile_${profile.name}_font_scale", null)
         val trackColorHex = prefs.getString("profile_${profile.name}_track_color", null) ?: default.trackColorHex
+        val outdoorAreasOverlay = if (prefs.contains("profile_${profile.name}_outdoor_areas")) {
+            prefs.getBoolean("profile_${profile.name}_outdoor_areas", default.showOutdoorAreasOverlay)
+        } else default.showOutdoorAreasOverlay
+        val trailThicknessName = prefs.getString("profile_${profile.name}_trail_thickness", null)
 
         val baseLayer = baseLayerName?.let {
             try { MapBaseLayer.valueOf(it) } catch (_: Exception) { null }
@@ -86,7 +105,11 @@ object MapProfileConfigHelper {
             try { MapFontScale.valueOf(it) } catch (_: Exception) { null }
         } ?: default.fontScale
 
-        return ProfileMapConfig(baseLayer, orientation, hikingOverlay, fontScale, trackColorHex)
+        val trailThickness = trailThicknessName?.let {
+            try { TrailThickness.valueOf(it) } catch (_: Exception) { null }
+        } ?: default.trailThickness
+
+        return ProfileMapConfig(baseLayer, orientation, hikingOverlay, fontScale, trackColorHex, outdoorAreasOverlay, trailThickness)
     }
 
     fun setBaseLayer(context: Context, profile: ActivityProfile, layer: MapBaseLayer) {
@@ -102,6 +125,16 @@ object MapProfileConfigHelper {
     fun setHikingOverlay(context: Context, profile: ActivityProfile, enabled: Boolean) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean("profile_${profile.name}_hiking_overlay", enabled).apply()
+    }
+
+    fun setOutdoorAreasOverlay(context: Context, profile: ActivityProfile, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("profile_${profile.name}_outdoor_areas", enabled).apply()
+    }
+
+    fun setTrailThickness(context: Context, profile: ActivityProfile, thickness: TrailThickness) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_${profile.name}_trail_thickness", thickness.name).apply()
     }
 
     fun setFontScale(context: Context, profile: ActivityProfile, scale: MapFontScale) {

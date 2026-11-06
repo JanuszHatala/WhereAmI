@@ -129,15 +129,16 @@ class BatteryOptimizationAndAutoStartTest {
 
     @Test
     fun testIndependentProfileManagementCoverage() {
-        // Verify all 6 activity profiles exist and possess distinct identity and defaults
+        // Verify all 7 activity profiles exist and possess distinct identity and defaults
         val allProfiles = ActivityProfile.values()
-        assertEquals(6, allProfiles.size)
+        assertEquals(7, allProfiles.size)
         assertTrue(allProfiles.contains(ActivityProfile.CAR))
         assertTrue(allProfiles.contains(ActivityProfile.CYCLING))
         assertTrue(allProfiles.contains(ActivityProfile.MTB))
         assertTrue(allProfiles.contains(ActivityProfile.HIKING))
         assertTrue(allProfiles.contains(ActivityProfile.RUNNING))
         assertTrue(allProfiles.contains(ActivityProfile.WALKING))
+        assertTrue(allProfiles.contains(ActivityProfile.KAYAKING))
 
         // Ensure each profile has distinct emoji and valid timeout presets
         for (profile in allProfiles) {

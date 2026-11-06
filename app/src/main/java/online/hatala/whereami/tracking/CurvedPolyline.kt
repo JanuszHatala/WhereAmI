@@ -20,7 +20,7 @@ object CurvedPolyline {
     const val MAX_FILLET_M = 16.0
     const val MAX_SAGITTA_M = 0.85
     const val MIN_CORNER_DEG = 2.5
-    const val MAX_CORNER_DEG = 150.0
+    const val MAX_CORNER_DEG = 120.0
 
     /**
      * Emits segments [fromSeg, toSeg) of the [n] vertices: for each segment its interior curve points and then

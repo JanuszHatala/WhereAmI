@@ -336,6 +336,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pinnedBoundaryPoints = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
     val pinnedBoundaryPoints: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _pinnedBoundaryPoints.asStateFlow()
 
+    // Outdoor Area & Route States for Map View
+    private val _selectedOutdoorAreaBoundary = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
+    val selectedOutdoorAreaBoundary: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _selectedOutdoorAreaBoundary.asStateFlow()
+
+    private val _selectedOutdoorAreaKind = MutableStateFlow<OutdoorAreaKind?>(null)
+    val selectedOutdoorAreaKind: StateFlow<OutdoorAreaKind?> = _selectedOutdoorAreaKind.asStateFlow()
+
+    private val _searchRoutePolylines = MutableStateFlow<List<List<org.osmdroid.util.GeoPoint>>?>(null)
+    val searchRoutePolylines: StateFlow<List<List<org.osmdroid.util.GeoPoint>>?> = _searchRoutePolylines.asStateFlow()
+
+    // Search Category Filter
+    private val _searchCategory = MutableStateFlow<SearchCategory>(SearchCategory.ALL)
+    val searchCategory: StateFlow<SearchCategory> = _searchCategory.asStateFlow()
+
     // Search Results State
     private val _searchResults = MutableStateFlow<List<SearchResultItem>>(emptyList())
     val searchResults: StateFlow<List<SearchResultItem>> = _searchResults.asStateFlow()
@@ -439,6 +453,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _destinationItem.value = item
         _destinationPoint.value = item?.geoPoint
         _pinnedBoundaryPoints.value = null
+        if (item == null) {
+            clearOutdoorAreaBoundary()
+        }
         resolveDestinationAltitude(item?.geoPoint)
         if (item != null) {
             rememberRecentSearch(item)
@@ -450,6 +467,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pinnedBoundaryPoints.value = null
         if (point == null) {
             _destinationItem.value = null
+            clearOutdoorAreaBoundary()
         }
         resolveDestinationAltitude(point)
     }
@@ -570,12 +588,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val recentSearchPrefsKey = "recent_place_searches_v1"
     private val maxRecentSearches = 12
 
-    fun search(query: String) {
+    fun setSearchCategory(category: SearchCategory, currentQuery: String = "") {
+        _searchCategory.value = category
+        val trimmed = currentQuery.trim()
+        if (trimmed.length >= 2) {
+            search(trimmed, category)
+        } else if (category != SearchCategory.ALL) {
+            discoverNearby(category)
+        } else {
+            clearSearch()
+        }
+    }
+
+    fun discoverNearby(category: SearchCategory) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            val coords = _currentLatLng.value
+            val lat = coords?.first ?: 49.8
+            val lon = coords?.second ?: 19.2
+            val results = SearchHelper.discoverNearbyByCategory(getApplication(), category, lat, lon)
+            if (!isActive) return@launch
+            _searchResults.value = results
+            _isSearching.value = false
+        }
+    }
+
+    fun search(query: String, category: SearchCategory = _searchCategory.value) {
         searchJob?.cancel()
         val trimmed = query.trim()
         if (trimmed.length < 2) {
-            _searchResults.value = emptyList()
-            _isSearching.value = false
+            if (category != SearchCategory.ALL) {
+                discoverNearby(category)
+            } else {
+                _searchResults.value = emptyList()
+                _isSearching.value = false
+            }
             return
         }
         searchJob = viewModelScope.launch {
@@ -594,12 +642,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 originLon = coords?.second,
                 countryCode = countryCode,
                 savedPlaces = _savedPlaces.value,
-                recentPlaces = loadRecentSearches()
+                recentPlaces = loadRecentSearches(),
+                category = category
             )
             if (!isActive) return@launch
             _searchResults.value = results
             _isSearching.value = false
         }
+    }
+
+    fun selectSearchResult(item: SearchResultItem) {
+        setDestination(item)
+        viewModelScope.launch(Dispatchers.IO) {
+            val geom = SearchHelper.fetchResultGeometry(getApplication(), item)
+            withContext(Dispatchers.Main) {
+                if (geom != null) {
+                    if (geom.polygon != null && geom.polygon.size >= 3) {
+                        _selectedOutdoorAreaBoundary.value = geom.polygon
+                        _selectedOutdoorAreaKind.value = when (item.placeType?.lowercase(java.util.Locale.ROOT)) {
+                            "mountain_range" -> OutdoorAreaKind.MOUNTAIN_RANGE
+                            "national_park" -> OutdoorAreaKind.NATIONAL_PARK
+                            "landscape_park" -> OutdoorAreaKind.LANDSCAPE_PARK
+                            "nature_reserve" -> OutdoorAreaKind.NATURE_RESERVE
+                            else -> null
+                        }
+                        _searchRoutePolylines.value = null
+                    } else if (geom.polylines != null && geom.polylines.isNotEmpty()) {
+                        _searchRoutePolylines.value = geom.polylines
+                        _selectedOutdoorAreaBoundary.value = null
+                        _selectedOutdoorAreaKind.value = null
+                    } else {
+                        _selectedOutdoorAreaBoundary.value = null
+                        _selectedOutdoorAreaKind.value = null
+                        _searchRoutePolylines.value = null
+                    }
+                } else {
+                    _selectedOutdoorAreaBoundary.value = null
+                    _selectedOutdoorAreaKind.value = null
+                    _searchRoutePolylines.value = null
+                }
+            }
+        }
+    }
+
+    fun selectOutdoorArea(area: OutdoorArea) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val boundary = BoundaryHelper.getOutdoorAreaBoundary(getApplication(), area)
+            withContext(Dispatchers.Main) {
+                _selectedOutdoorAreaBoundary.value = boundary
+                _selectedOutdoorAreaKind.value = area.kind
+                _destinationPoint.value = org.osmdroid.util.GeoPoint(area.centerLat, area.centerLon)
+            }
+        }
+    }
+
+    fun clearOutdoorAreaBoundary() {
+        _selectedOutdoorAreaBoundary.value = null
+        _selectedOutdoorAreaKind.value = null
+        _searchRoutePolylines.value = null
     }
 
     fun clearSearch() {

@@ -3,6 +3,7 @@ package online.hatala.whereami
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RoadNameNormalizerTest {
@@ -304,6 +305,40 @@ class RoadNameNormalizerTest {
         assertTrue(RoadNameNormalizer.isMajorHighway("primary", null))
         assertTrue(RoadNameNormalizer.isMajorHighway("secondary", null))
         assertFalse(RoadNameNormalizer.isMajorHighway("residential", null))
+    }
+
+    @Test
+    fun testCoalesceOsrmWithHighwayClassificationGating() {
+        // Residential side street in Roczyny: OSRM erroneously snaps to DW781, OSM has "Bielska" residential
+        val (bielskaStreet, bielskaRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DW781",
+            osmStreet = "Bielska",
+            osmRoadRef = null,
+            candidateHighwayType = "residential"
+        )
+        assertEquals("Bielska", bielskaStreet)
+        assertNull("Residential street must never receive DW781 code", bielskaRef)
+
+        // Wiedeńska in Roczyny: unclassified side street must never receive DW781 code
+        val (wiedenskaStreet, wiedenskaRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DW781",
+            osmStreet = "Wiedeńska",
+            osmRoadRef = null,
+            candidateHighwayType = "unclassified"
+        )
+        assertEquals("Wiedeńska", wiedenskaStreet)
+        assertNull("Unclassified street must never receive DW781 code", wiedenskaRef)
+
+        // Beskidzka in Andrychów (actual DW781): OSM has "Beskidzka" secondary, Nominatim has no ref, OSRM has DW781
+        val (beskidzkaStreet, beskidzkaRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "DW781",
+            osmStreet = "Beskidzka",
+            osmRoadRef = null,
+            candidateHighwayType = "secondary"
+        )
+        assertEquals("Beskidzka", beskidzkaStreet)
+        assertEquals("DW781", beskidzkaRef)
+        assertEquals("Beskidzka (DW781)", RoadNameNormalizer.formatStreetDisplay(beskidzkaStreet, beskidzkaRef, "PL"))
     }
 }
 

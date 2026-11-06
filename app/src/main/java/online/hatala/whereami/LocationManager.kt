@@ -79,7 +79,8 @@ data class LocationData(
     val error: String? = null,
     val isLoading: Boolean = false,
     val altitude: Double? = null,
-    val accuracy: Float? = null
+    val accuracy: Float? = null,
+    val outdoorContext: OutdoorContext? = null
 )
 
 /** Unified location snapshot broadcast to all consumers (Single Source of Truth). */
@@ -97,7 +98,8 @@ data class MultiLocationSnapshot(
     val isLoading: Boolean = false,
     val fixSeqId: Long = 0L,
     /** Filtered kinematic state (position, velocity, turn rate, uncertainty) from the tracking engine. */
-    val track: TrackState? = null
+    val track: TrackState? = null,
+    val outdoorContext: OutdoorContext? = null
 ) {
     fun toLocationData(displayLanguage: DisplayLanguage): LocationData {
         val place = when (displayLanguage) {
@@ -117,7 +119,8 @@ data class MultiLocationSnapshot(
             altitude = altitude,
             accuracy = accuracy,
             error = error,
-            isLoading = isLoading
+            isLoading = isLoading,
+            outdoorContext = outdoorContext
         )
     }
 }
@@ -322,6 +325,8 @@ class LocationManager private constructor(private val context: Context) {
     private var lastFixRealtimeMs: Long = 0L
     @Volatile
     private var lastSubscriptionRealtimeMs: Long = 0L
+    @Volatile
+    private var lastOutdoorContext: OutdoorContext? = null
 
     init {
         registerSystemReceivers()
@@ -1239,7 +1244,8 @@ class LocationManager private constructor(private val context: Context) {
                     accuracy = fixAccuracy,
                     timestamp = fixTimestamp,
                     fixSeqId = seqId,
-                    track = state
+                    track = state,
+                    outdoorContext = lastOutdoorContext
                 )
                 lastLocationSnapshot = fastSnapshot
                 trySend(fastSnapshot)
@@ -1257,6 +1263,24 @@ class LocationManager private constructor(private val context: Context) {
                             speedKmh = speedKmh,
                             accuracyMeters = fixAccuracy
                         )
+                        val outdoorCtx = try {
+                            val isScreenOffNow = run {
+                                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                                val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
+                                pm?.isInteractive == false && !isAuto
+                            }
+                            OutdoorContextResolver.resolveOutdoorContext(
+                                lat = lat,
+                                lng = lng,
+                                context = context,
+                                allowNetwork = !isScreenOffNow
+                            )
+                        } catch (_: Exception) { null }
+
+                        if (outdoorCtx != null) {
+                            lastOutdoorContext = outdoorCtx
+                        }
+
                         synchronized(geocodeLock) {
                             // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
                             if (fixTimestamp < latestEnrichedTimestamp) {
@@ -1271,8 +1295,8 @@ class LocationManager private constructor(private val context: Context) {
                         // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
                         committedPlace = stabilizedMultiData
 
-                        // Update TripManager with verified locality hierarchy without injecting duplicate points
-                        TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl)
+                        // Update TripManager with verified locality hierarchy and outdoor context without injecting duplicate points
+                        TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl, outdoorCtx ?: lastOutdoorContext)
 
                         // Enriched snapshot MUST carry the CURRENT (latest) kinematic coordinates to prevent backward teleports!
                         val currentSnap = lastLocationSnapshot
@@ -1287,7 +1311,8 @@ class LocationManager private constructor(private val context: Context) {
                             accuracy = currentSnap?.accuracy ?: fixAccuracy,
                             timestamp = currentSnap?.timestamp ?: fixTimestamp,
                             fixSeqId = currentSnap?.fixSeqId ?: seqId,
-                            track = currentSnap?.track ?: state
+                            track = currentSnap?.track ?: state,
+                            outdoorContext = outdoorCtx ?: lastOutdoorContext
                         )
                         lastLocationSnapshot = enrichedSnapshot
                         trySend(enrichedSnapshot)
@@ -1822,7 +1847,8 @@ class LocationManager private constructor(private val context: Context) {
                 osrmStreet = osrmStreet,
                 osmStreet = osm?.street,
                 osmRoadRef = osm?.roadRef,
-                geocoderStreet = address.thoroughfare
+                geocoderStreet = address.thoroughfare,
+                candidateHighwayType = osm?.highwayType
             )
             val canonicalStreet = when {
                 // 1. OSRM + OSM/Geocoder coalesced street/ref (prefers local name over bare highway code)
@@ -2145,13 +2171,17 @@ class LocationManager private constructor(private val context: Context) {
 
     fun resolveLocationData(lat: Double, lng: Double, speedMs: Float?, displayLanguage: DisplayLanguage): LocationData {
         val multiData = resolveMultiLanguageData(lat, lng)
-        return buildLocationData(multiData, speedMs ?: lastValidSpeedMs, displayLanguage)
+        val outdoorCtx = try {
+            OutdoorContextResolver.resolveOffline(lat, lng, context)
+        } catch (_: Exception) { null }
+        return buildLocationData(multiData, speedMs ?: lastValidSpeedMs, displayLanguage, outdoorCtx ?: lastOutdoorContext)
     }
 
     private fun buildLocationData(
         multiData: MultiLanguagePlaceInfo,
         speedMs: Float?,
-        displayLanguage: DisplayLanguage
+        displayLanguage: DisplayLanguage,
+        outdoorContext: OutdoorContext? = lastOutdoorContext
     ): LocationData {
         val (primaryPlace, secondaryPlace) = when (displayLanguage) {
             DisplayLanguage.EN     -> multiData.en     to multiData.native
@@ -2169,7 +2199,8 @@ class LocationManager private constructor(private val context: Context) {
             secondaryPlace = filteredSecondary,
             speedMs = speedMs ?: lastValidSpeedMs,
             error = null,
-            isLoading = false
+            isLoading = false,
+            outdoorContext = outdoorContext
         )
     }
 

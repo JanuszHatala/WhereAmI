@@ -169,7 +169,7 @@ class TripManager private constructor(private val context: Context) {
         }
         return when (profile) {
             ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> TripMode.AUTO
-            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING -> TripMode.MANUAL
+            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING, ActivityProfile.KAYAKING -> TripMode.MANUAL
         }
     }
 
@@ -408,7 +408,7 @@ class TripManager private constructor(private val context: Context) {
         val (requiredDist, requiredSpeed, requiredSpeedDuration) = when (profile) {
             ActivityProfile.CAR -> Triple(400.0, 20.0f, 45_000L)
             ActivityProfile.CYCLING, ActivityProfile.MTB -> Triple(250.0, 12.0f, 45_000L)
-            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING -> Triple(150.0, 4.0f, 180_000L)
+            ActivityProfile.HIKING, ActivityProfile.RUNNING, ActivityProfile.WALKING, ActivityProfile.KAYAKING -> Triple(150.0, 4.0f, 180_000L)
         }
 
         val isDistanceMet = distSinceResume >= requiredDist
@@ -1503,7 +1503,7 @@ class TripManager private constructor(private val context: Context) {
         dbHelper.deleteTrip(id)
     }
 
-    fun onLocalityEnriched(currentPlace: PlaceInfo?) {
+    fun onLocalityEnriched(currentPlace: PlaceInfo?, outdoorContext: OutdoorContext? = null) {
         val current = _activeTrip.value ?: return
         val lastLoc = lastLocation ?: return
         val now = System.currentTimeMillis()
@@ -1513,6 +1513,7 @@ class TripManager private constructor(private val context: Context) {
             lng = lastLoc.longitude,
             currentDistance = current.distanceMeters,
             currentPlace = currentPlace,
+            outdoorContext = outdoorContext,
             placesList = placesList,
             tripId = current.id,
             now = now
@@ -1524,17 +1525,6 @@ class TripManager private constructor(private val context: Context) {
         }
     }
 
-    private fun detectOutdoorPlaceKind(name: String): PlaceKind {
-        val lower = name.lowercase(java.util.Locale.ROOT)
-        return when {
-            lower.contains("przełęcz") || lower.contains("pass") || lower.contains("siodło") || lower.contains("karb") -> PlaceKind.MOUNTAIN_PASS
-            lower.contains("szczyt") || lower.contains("wierch") || lower.contains("turnia") || lower.contains("kopa") || lower.contains("góra") || lower.contains("peak") -> PlaceKind.PEAK
-            lower.contains("perć") || lower.contains("szlak") || lower.contains("ścieżka") || lower.contains("trail") -> PlaceKind.TRAIL
-            lower.contains("dolina") || lower.contains("polana") || lower.contains("hala") || lower.contains("schronisko") || lower.contains("staw") || lower.contains("betlejemka") -> PlaceKind.POI
-            else -> PlaceKind.LOCALITY
-        }
-    }
-
     private fun updateVisitedPlaces(
         lat: Double,
         lng: Double,
@@ -1542,40 +1532,85 @@ class TripManager private constructor(private val context: Context) {
         currentPlace: PlaceInfo?,
         placesList: MutableList<VisitedPlace>,
         tripId: Long,
-        now: Long
+        now: Long,
+        outdoorContext: OutdoorContext? = null
     ): Boolean {
         if (currentPlace == null) return false
+        var listModified = false
 
-        val isOutdoorProfile = _activityProfile.value in setOf(ActivityProfile.HIKING, ActivityProfile.WALKING, ActivityProfile.MTB)
-        val streetCandidate = currentPlace.street?.trim()?.takeIf {
-            it.isNotBlank() &&
-            !it.startsWith("ul. ") && !it.startsWith("al. ") && !it.startsWith("pl. ") && !it.startsWith("os. ") &&
-            detectOutdoorPlaceKind(it) != PlaceKind.LOCALITY
+        // 1. Structured Outdoor Waypoint detection (Peaks, Passes, Mountain Huts, Valleys)
+        if (_activityProfile.value.isOutdoorProfile && outdoorContext != null) {
+            val nearest = outdoorContext.nearestFeatures.firstOrNull { it.distanceMeters <= 70f }
+            if (nearest != null && nearest.kind in setOf(PlaceKind.PEAK, PlaceKind.MOUNTAIN_PASS, PlaceKind.MOUNTAIN_HUT)) {
+                val outdoorName = if (nearest.kind == PlaceKind.PEAK && nearest.elevationMeters != null) {
+                    "${nearest.name} (${nearest.elevationMeters}m)"
+                } else {
+                    nearest.name
+                }
+
+                val alreadyVisitedRecent = placesList.takeLast(6).any {
+                    it.placeName.equals(outdoorName, ignoreCase = true) ||
+                    (it.placeKind == nearest.kind && Math.abs(it.distanceAtEntryMeters - currentDistance) < 500.0)
+                }
+
+                if (!alreadyVisitedRecent) {
+                    val subtitleParts = listOfNotNull(
+                        outdoorContext.mountainRange?.name,
+                        currentPlace.city.takeIf { it != "Unknown City" && it != "--" }
+                    )
+                    val outdoorSubtitle = subtitleParts.joinToString(" • ")
+
+                    TelemetryLogger.logTrip(
+                        "OUTDOOR_POI_COMMITTED",
+                        tripId,
+                        "Committed outdoor feature $outdoorName (${nearest.kind}) at dist=${nearest.distanceMeters.toInt()}m"
+                    )
+
+                    placesList.add(
+                        VisitedPlace(
+                            placeName = outdoorName,
+                            hierarchySubtitle = outdoorSubtitle,
+                            timestamp = now,
+                            latitude = nearest.latitude,
+                            longitude = nearest.longitude,
+                            distanceAtEntryMeters = currentDistance,
+                            placeKind = nearest.kind
+                        )
+                    )
+                    listModified = true
+                }
+            }
         }
 
-        val candidateName: String
-        val candidateKind: PlaceKind
-        if (isOutdoorProfile && streetCandidate != null) {
-            candidateName = streetCandidate
-            candidateKind = detectOutdoorPlaceKind(streetCandidate)
-        } else {
-            if (currentPlace.city == "Unknown City" || currentPlace.city == "--") return false
-            candidateName = currentPlace.city
-            candidateKind = detectOutdoorPlaceKind(currentPlace.city)
-        }
+        // 2. Administrative Locality (Town / Village / City) detection
+        if (currentPlace.city == "Unknown City" || currentPlace.city == "--") return listModified
+        val candidateName = currentPlace.city
+        val candidateKind = PlaceKind.LOCALITY
 
-        val isImmediateLast = placesList.lastOrNull()?.placeName.equals(candidateName, ignoreCase = true)
+        val isImmediateLast = placesList.lastOrNull()?.let {
+            it.placeKind == PlaceKind.LOCALITY && it.placeName.equals(candidateName, ignoreCase = true)
+        } == true
 
         if (isImmediateLast) {
             pendingCandidate = null
-            return false
+            return listModified
         }
+
+        val hierarchyWithRange = buildString {
+            append(LocationManager.formatHierarchy(currentPlace))
+            val rangeName = outdoorContext?.mountainRange?.name
+            if (!rangeName.isNullOrBlank() && !contains(rangeName)) {
+                if (isNotEmpty()) append(" • ")
+                append(rangeName)
+            }
+        }
+
         if (placesList.isEmpty()) {
             TelemetryLogger.logTrip("LOCALITY_INITIAL", tripId, "Initial trip start at $candidateName ($candidateKind)")
             placesList.add(
                 VisitedPlace(
                     placeName = candidateName,
-                    hierarchySubtitle = LocationManager.formatHierarchy(currentPlace),
+                    hierarchySubtitle = hierarchyWithRange,
                     timestamp = now,
                     latitude = lat,
                     longitude = lng,
@@ -1601,7 +1636,7 @@ class TripManager private constructor(private val context: Context) {
                 if (distKm > 25.0) {
                     TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected candidate $candidateName: $distKm km from city centroid")
                     pendingCandidate = null
-                    return false
+                    return listModified
                 }
             }
 
@@ -1610,12 +1645,10 @@ class TripManager private constructor(private val context: Context) {
             if (candidateName.equals("kraków", ignoreCase = true) && candidatePowiat?.contains("bielsko", ignoreCase = true) == true) {
                 TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected Kraków due to contradictory powiat: $candidatePowiat")
                 pendingCandidate = null
-                return false
+                return listModified
             }
 
             // Rule 3: Speed-dependent intentional visit threshold
-            // When moving at speed (CAR, CYCLING, MTB), 150m is traversed in ~7s.
-            // Require sustained dwell (>= 30s) OR (displacement >= 300m AND duration >= 15s)
             val isFastMode = _activityProfile.value in setOf(ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB)
             val isPenetrated = if (isFastMode) {
                 displacementMeters >= 300f && durationMs >= 15_000L
@@ -1624,7 +1657,9 @@ class TripManager private constructor(private val context: Context) {
             }
             val isSustainedStay = durationMs >= (if (isFastMode) 30_000L else 45_000L)
 
-            val recentMatch = placesList.takeLast(4).find { it.placeName.equals(candidateName, ignoreCase = true) }
+            val recentMatch = placesList.takeLast(4).find {
+                it.placeKind == PlaceKind.LOCALITY && it.placeName.equals(candidateName, ignoreCase = true)
+            }
             val isRecentPingPong = recentMatch != null && (
                 (now - recentMatch.timestamp < 5 * 60 * 1000L) ||
                 (currentDistance - recentMatch.distanceAtEntryMeters < 2500.0)
@@ -1652,7 +1687,7 @@ class TripManager private constructor(private val context: Context) {
                 placesList.add(
                     VisitedPlace(
                         placeName = candidateName,
-                        hierarchySubtitle = LocationManager.formatHierarchy(candidate.place),
+                        hierarchySubtitle = hierarchyWithRange,
                         timestamp = candidate.firstSeenTimestamp,
                         latitude = candidate.entryLatitude,
                         longitude = candidate.entryLongitude,
@@ -1664,7 +1699,7 @@ class TripManager private constructor(private val context: Context) {
                 return true
             } else if (isRecentPingPong) {
                 pendingCandidate = null
-                return false
+                return listModified
             }
         } else {
             pendingCandidate = PendingPlaceCandidate(
@@ -1677,7 +1712,7 @@ class TripManager private constructor(private val context: Context) {
                 entryDistanceMeters = currentDistance
             )
         }
-        return false
+        return listModified
     }
 
     private fun distanceBetweenKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

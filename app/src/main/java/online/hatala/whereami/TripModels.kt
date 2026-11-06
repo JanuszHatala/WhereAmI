@@ -4,9 +4,14 @@ import org.osmdroid.util.GeoPoint
 
 enum class PlaceKind(val iconEmoji: String, val displayName: String) {
     LOCALITY("🏙️", "Locality"),
-    TRAIL("🥾", "Trail"),
-    MOUNTAIN_PASS("🏔️", "Mountain Pass"),
     PEAK("⛰️", "Peak"),
+    MOUNTAIN_PASS("🏔️", "Mountain Pass"),
+    MOUNTAIN_HUT("🛖", "Mountain Hut"),
+    VALLEY("🌾", "Valley"),
+    MOUNTAIN_RANGE("⛰️", "Mountain Range"),
+    PROTECTED_AREA("🌲", "Protected Area"),
+    TRAIL("🥾", "Trail"),
+    WATER_BODY("🌊", "Water Body"),
     POI("📍", "Point of Interest")
 }
 
@@ -259,7 +264,8 @@ enum class ActivityProfile(
     MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 60, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_500.0, recentSectionLabel = "1.5 km"),
     HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m"),
     RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 30, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km"),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m");
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m"),
+    KAYAKING("Kayaking", "🛶", 3.0f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 10.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km");
 
     /** CAR / CYCLING / MTB — indoor multipath scribble discard applies only here. */
     val isVehicleProfile: Boolean
@@ -268,4 +274,8 @@ enum class ActivityProfile(
     /** On-foot profiles often out-and-back near home; never treat as indoor GPS nests. */
     val isFootProfile: Boolean
         get() = this == WALKING || this == HIKING || this == RUNNING
+
+    /** Outdoor profiles show detailed trail, peak, pass, hut, and water features. */
+    val isOutdoorProfile: Boolean
+        get() = this != CAR
 }
