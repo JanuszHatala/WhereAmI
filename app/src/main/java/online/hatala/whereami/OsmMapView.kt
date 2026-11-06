@@ -392,11 +392,9 @@ fun shouldTriggerAutoRecenter(
     if (isFollowing) return false
     if (destinationPoint != null || selectedSavedPlace != null) return false
     if (!isRecording && (!selectedTripsEmpty || showHeatMap)) return false
-    if (isUserTouchingMap || isCursorInsideViewport) return false
-    if (nowElapsedMs - lastInteractionElapsedMs < timeoutMs) return false
-    if (outsideViewportSinceElapsedMs <= 0L) return false
-    val minOffscreenMs = minOf(timeoutMs, 10_000L)
-    return (nowElapsedMs - outsideViewportSinceElapsedMs) >= minOffscreenMs
+    if (isUserTouchingMap) return false
+    if (lastInteractionElapsedMs <= 0L || (nowElapsedMs - lastInteractionElapsedMs) < timeoutMs) return false
+    return true
 }
 
 /**
@@ -661,9 +659,14 @@ fun OsmMapView(
     onOpenCacheManager: (() -> Unit)? = null,
     showMapSettingsExternal: Boolean = false,
     onDismissMapSettings: (() -> Unit)? = null,
+    outdoorAreaBoundaryPoints: List<GeoPoint>? = null,
+    outdoorAreaKind: OutdoorAreaKind? = null,
+    searchRoutePolylines: List<List<GeoPoint>>? = null,
+    onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val currentOnMapClick by rememberUpdatedState(onMapClick)
     val currentOnOrientationChange by rememberUpdatedState(onOrientationModeChange)
     val currentOnGuestClick by rememberUpdatedState(onGuestClick)
@@ -774,6 +777,14 @@ fun OsmMapView(
         mutableStateOf(initialProfileConfig.showHikingOverlay)
     }
 
+    var showOutdoorAreasOverlay by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.showOutdoorAreasOverlay)
+    }
+
+    var trailThickness by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.trailThickness)
+    }
+
     var fontScale by remember(activityProfile) {
         mutableStateOf(initialProfileConfig.fontScale)
     }
@@ -781,6 +792,10 @@ fun OsmMapView(
     var trackColorHex by remember(activityProfile) {
         mutableStateOf(initialProfileConfig.trackColorHex)
     }
+
+    var vectorTrailOverlayRef by remember { mutableStateOf<VectorTrailOverlay?>(null) }
+    var outdoorBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
+    var searchRouteOverlays by remember { mutableStateOf<List<Polyline>>(emptyList()) }
 
     var prePinZoom by remember { mutableStateOf<Double?>(null) }
     var prePinCenter by remember { mutableStateOf<GeoPoint?>(null) }
@@ -904,6 +919,8 @@ fun OsmMapView(
         val config = MapProfileConfigHelper.getConfig(context, activityProfile)
         baseLayer = config.baseLayer
         showHikingOverlay = config.showHikingOverlay
+        showOutdoorAreasOverlay = config.showOutdoorAreasOverlay
+        trailThickness = config.trailThickness
         fontScale = config.fontScale
         trackColorHex = config.trackColorHex
         if (orientationMode != config.orientationMode) {
@@ -927,9 +944,10 @@ fun OsmMapView(
     }
 
     // Dynamic Hiking / Tourist Trail Overlay
-    LaunchedEffect(showHikingOverlay, mapView) {
+    LaunchedEffect(showHikingOverlay, trailThickness, mapView) {
         val map = mapView ?: return@LaunchedEffect
         MapProfileConfigHelper.setHikingOverlay(context, activityProfile, showHikingOverlay)
+        MapProfileConfigHelper.setTrailThickness(context, activityProfile, trailThickness)
         if (showHikingOverlay) {
             if (hikingOverlayRef == null) {
                 val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
@@ -946,10 +964,26 @@ fun OsmMapView(
                     map.overlays.add(insertIdx, it)
                 }
             }
-        } else {
-            hikingOverlayRef?.let {
-                map.overlays.remove(it)
+
+            if (vectorTrailOverlayRef == null) {
+                val vOverlay = VectorTrailOverlay(
+                    context = context,
+                    scope = scope,
+                    trailThickness = trailThickness,
+                    onTrailSelected = onTrailSelected
+                )
+                vectorTrailOverlayRef = vOverlay
             }
+            vectorTrailOverlayRef?.let {
+                it.trailThickness = trailThickness
+                it.onTrailSelected = onTrailSelected
+                if (!map.overlays.contains(it)) {
+                    map.overlays.add(it)
+                }
+            }
+        } else {
+            hikingOverlayRef?.let { map.overlays.remove(it) }
+            vectorTrailOverlayRef?.let { map.overlays.remove(it) }
         }
         map.invalidate()
     }
@@ -1331,8 +1365,8 @@ fun OsmMapView(
                                 val added = !pose.isStationary && (!pose.isPredicted || pose.speedMps >= 1.5) &&
                                     pencilTrail.add(
                                         pose.renderTimeMs,
-                                        if (vehiclePencil) pose.rawLat else pose.lat,
-                                        if (vehiclePencil) pose.rawLng else pose.lng,
+                                        pose.lat,
+                                        pose.lng,
                                         pose.speedMps,
                                         vehicle = vehiclePencil
                                     )
@@ -1850,6 +1884,59 @@ fun OsmMapView(
         map.invalidate()
     }
 
+    // Render Outdoor Area Boundary Polygon (Mountain Ranges in Amber #F59E0B, Parks/Reserves in Emerald #10B981)
+    LaunchedEffect(outdoorAreaBoundaryPoints, outdoorAreaKind, showOutdoorAreasOverlay) {
+        val map = mapView ?: return@LaunchedEffect
+        outdoorBoundaryPolygon?.let { map.overlays.remove(it) }
+        outdoorBoundaryPolygon = null
+
+        if (showOutdoorAreasOverlay && outdoorAreaBoundaryPoints != null && outdoorAreaBoundaryPoints.size >= 3) {
+            val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
+            val strokeCol = if (isRange) Color.parseColor("#F59E0B") else Color.parseColor("#10B981")
+            val fillCol = if (isRange) Color.parseColor("#14F59E0B") else Color.parseColor("#1810B981")
+            val dashArray = if (isRange) floatArrayOf(24f, 12f) else floatArrayOf(18f, 10f)
+
+            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                outlinePaint.color = strokeCol
+                outlinePaint.strokeWidth = if (isRange) 6f else 5.5f
+                outlinePaint.pathEffect = android.graphics.DashPathEffect(dashArray, 0f)
+                fillPaint.color = fillCol
+                points = outdoorAreaBoundaryPoints
+                infoWindow = null
+                setOnClickListener { _, _, _ -> true }
+            }
+            map.overlays.add(0, poly)
+            outdoorBoundaryPolygon = poly
+        }
+        map.invalidate()
+    }
+
+    // Render Search Route Polylines (Full trail routes or rivers)
+    LaunchedEffect(searchRoutePolylines) {
+        val map = mapView ?: return@LaunchedEffect
+        searchRouteOverlays.forEach { map.overlays.remove(it) }
+        searchRouteOverlays = emptyList()
+
+        if (!searchRoutePolylines.isNullOrEmpty()) {
+            val newPolys = mutableListOf<Polyline>()
+            val density = context.resources.displayMetrics.density
+            for (linePoints in searchRoutePolylines) {
+                if (linePoints.size < 2) continue
+                val poly = Polyline(map).apply {
+                    outlinePaint.color = Color.parseColor("#EF4444")
+                    outlinePaint.strokeWidth = 6.0f * density
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    setPoints(linePoints)
+                }
+                map.overlays.add(poly)
+                newPolys.add(poly)
+            }
+            searchRouteOverlays = newPolys
+        }
+        map.invalidate()
+    }
+
     // Render Selected Past Trips with Distinct Colors (Filtered & Raw)
     // Invariant: When an active trip is actively recording or trackPoints is present,
     // NEVER render past trips on the map.
@@ -2350,6 +2437,16 @@ fun OsmMapView(
             onBaseLayerChange = { baseLayer = it },
             showHikingOverlay = showHikingOverlay,
             onHikingOverlayToggle = { showHikingOverlay = it },
+            showOutdoorAreasOverlay = showOutdoorAreasOverlay,
+            onOutdoorAreasOverlayToggle = { enabled ->
+                showOutdoorAreasOverlay = enabled
+                MapProfileConfigHelper.setOutdoorAreasOverlay(context, activityProfile, enabled)
+            },
+            trailThickness = trailThickness,
+            onTrailThicknessChange = { thickness ->
+                trailThickness = thickness
+                MapProfileConfigHelper.setTrailThickness(context, activityProfile, thickness)
+            },
             showBorders = showBorders,
             onToggleBorders = onToggleBorders,
             showHeatMap = showHeatMap,
@@ -3553,6 +3650,10 @@ private fun MapSettingsDialogHost(
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     showHikingOverlay: Boolean,
     onHikingOverlayToggle: (Boolean) -> Unit,
+    showOutdoorAreasOverlay: Boolean = false,
+    onOutdoorAreasOverlayToggle: (Boolean) -> Unit = {},
+    trailThickness: TrailThickness = TrailThickness.NORMAL,
+    onTrailThicknessChange: (TrailThickness) -> Unit = {},
     showBorders: Boolean,
     onToggleBorders: (() -> Unit)?,
     showHeatMap: Boolean,
@@ -3596,6 +3697,10 @@ private fun MapSettingsDialogHost(
         onBaseLayerChange = onBaseLayerChange,
         hikingOverlayEnabled = showHikingOverlay,
         onHikingOverlayToggle = onHikingOverlayToggle,
+        showOutdoorAreasOverlay = showOutdoorAreasOverlay,
+        onOutdoorAreasOverlayToggle = onOutdoorAreasOverlayToggle,
+        trailThickness = trailThickness,
+        onTrailThicknessChange = onTrailThicknessChange,
         showBorders = showBorders,
         onToggleBorders = { onToggleBorders?.invoke() },
         showHeatMap = showHeatMap,
@@ -3635,6 +3740,8 @@ private fun MapSettingsDialogHost(
             val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
             onBaseLayerChange(cfg.baseLayer)
             onHikingOverlayToggle(cfg.showHikingOverlay)
+            onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
+            onTrailThicknessChange(cfg.trailThickness)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -3645,6 +3752,8 @@ private fun MapSettingsDialogHost(
             val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
             onBaseLayerChange(cfg.baseLayer)
             onHikingOverlayToggle(cfg.showHikingOverlay)
+            onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
+            onTrailThicknessChange(cfg.trailThickness)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -3665,6 +3774,10 @@ private fun MapSettingsDialog(
     onBaseLayerChange: (MapBaseLayer) -> Unit,
     hikingOverlayEnabled: Boolean,
     onHikingOverlayToggle: (Boolean) -> Unit,
+    showOutdoorAreasOverlay: Boolean = false,
+    onOutdoorAreasOverlayToggle: (Boolean) -> Unit = {},
+    trailThickness: TrailThickness = TrailThickness.NORMAL,
+    onTrailThicknessChange: (TrailThickness) -> Unit = {},
     showBorders: Boolean = false,
     onToggleBorders: () -> Unit = {},
     showHeatMap: Boolean = false,
@@ -3936,6 +4049,94 @@ private fun MapSettingsDialog(
                         uncheckedTrackColor = ComposeColor(0xFF334155)
                     )
                 )
+            }
+
+            // Outdoor & Protected Areas (Mountain Ranges, National & Landscape Parks, Reserves)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onOutdoorAreasOverlayToggle(!showOutdoorAreasOverlay) }
+                    .padding(vertical = 4.dp, horizontal = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Outdoor & Protected Areas",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ComposeColor.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 15.sp
+                        )
+                    )
+                    Text(
+                        text = "Mountain ranges (Beskidy, Tatry), national/landscape parks & nature reserves",
+                        fontSize = 11.sp,
+                        color = ComposeColor(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 14.sp
+                        )
+                    )
+                }
+                Switch(
+                    checked = showOutdoorAreasOverlay,
+                    onCheckedChange = { onOutdoorAreasOverlayToggle(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ComposeColor.White,
+                        checkedTrackColor = ComposeColor(0xFF10B981),
+                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                        uncheckedTrackColor = ComposeColor(0xFF334155)
+                    )
+                )
+            }
+
+            // Trail Line Thickness (Standard, Thick, Bold)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "Trail Line Thickness",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TrailThickness.values().forEach { thickness ->
+                        val isSelected = trailThickness == thickness
+                        Button(
+                            onClick = { onTrailThicknessChange(thickness) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = when (thickness) {
+                                    TrailThickness.NORMAL -> "Standard"
+                                    TrailThickness.THICK -> "Thick"
+                                    TrailThickness.EXTRA_THICK -> "Bold"
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = ComposeColor.White,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))

@@ -49,6 +49,68 @@ object BoundaryHelper {
      * Live GPS / prefetch borders: name-first for [cityName]; never overwrite a named
      * locality cache with a smaller reverse hit (regression: Kobiernice card + wrong sub-area border).
      */
+    suspend fun getOutdoorAreaBoundary(
+        context: Context,
+        area: OutdoorArea
+    ): List<GeoPoint>? = withContext(Dispatchers.IO) {
+        OfflineOutdoorRegionIndex.initIfNeeded(context)
+        val offlineHit = OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.id)
+            ?: OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.name)
+        if (offlineHit != null && offlineHit.polygon.size >= 3) {
+            return@withContext subsamplePoints(offlineHit.polygon, 160)
+        }
+
+        val cacheKey = sanitizeKey("outdoor_${area.kind.name.lowercase(Locale.ROOT)}_${area.id.lowercase(Locale.ROOT)}_$CACHE_GEN")
+        memoryCache[cacheKey]?.let { return@withContext it }
+
+        val disk = loadFromDiskCache(context, cacheKey)
+        if (disk != null && disk.size >= 3) {
+            memoryCache[cacheKey] = disk
+            return@withContext disk
+        }
+
+        val relId = area.osmRelationId
+        if (relId != null && relId > 0) {
+            val fetched = fetchOsmRelationBoundary(relId)
+            if (fetched != null && fetched.size >= 3) {
+                val simplified = subsamplePoints(fetched, 160)
+                memoryCache[cacheKey] = simplified
+                saveToDiskCache(context, cacheKey, simplified)
+                return@withContext simplified
+            }
+        }
+
+        val named = fetchFromNetwork(area.name, "")
+        if (named != null && named.size >= 3) {
+            val simplified = subsamplePoints(named, 160)
+            memoryCache[cacheKey] = simplified
+            saveToDiskCache(context, cacheKey, simplified)
+            return@withContext simplified
+        }
+        null
+    }
+
+    private fun fetchOsmRelationBoundary(relId: Long): List<GeoPoint>? {
+        return try {
+            val urlStr = "https://nominatim.openstreetmap.org/details?osmtype=R&osmid=$relId&format=json&polygon_geojson=1"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().readText()
+                val obj = JSONObject(body)
+                val geojson = obj.optJSONObject("geometry") ?: obj.optJSONObject("geojson")
+                if (geojson != null) {
+                    return parseGeoJsonPolygon(geojson)
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     suspend fun getLocalityBoundary(
         context: Context,
         cityName: String?,

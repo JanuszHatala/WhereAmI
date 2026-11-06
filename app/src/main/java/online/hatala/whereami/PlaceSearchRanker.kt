@@ -183,6 +183,8 @@ object PlaceSearchRanker {
                 if (shortQuery) 0.22 else 0.10
             t in listOf("street", "highway", "road", "residential", "pedestrian", "path") ->
                 if (shortQuery) 0.24 else 0.14
+            t in listOf("peak", "pass", "mountain_range", "mountain_pass", "national_park", "landscape_park", "nature_reserve", "valley", "lake / water", "river", "mountain hut", "trail") ->
+                if (shortQuery) 0.26 else 0.15
             t in listOf("house", "building", "address") -> 0.10
             t == "saved" || t == "recent" -> 0.20
             else -> if (shortQuery) 0.0 else 0.05

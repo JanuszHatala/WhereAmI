@@ -14,6 +14,7 @@ object TrackingBridge {
         ActivityProfile.RUNNING -> TrackingProfile.RUNNING
         ActivityProfile.HIKING -> TrackingProfile.HIKING
         ActivityProfile.WALKING -> TrackingProfile.WALKING
+        ActivityProfile.KAYAKING -> TrackingProfile.HIKING
     }
 
     /**

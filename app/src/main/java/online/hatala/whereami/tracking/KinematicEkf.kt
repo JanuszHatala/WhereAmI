@@ -155,8 +155,10 @@ class KinematicEkf(var profile: TrackingProfile) {
         if (!initialized) return null
         val dt = (tNewMs - tMs) / 1000.0
         if (dt <= 0.0) return null
-        // A turn rate older than a few seconds carries no information: do not arc through gaps.
-        if (dt > 3.0) x[YAW] = 0.0
+        // A turn rate during multi-second gaps carries decaying information: accelerate decay so the
+        // vehicle does not arc across corners or into buildings during GNSS gaps.
+        if (dt > 2.0) x[YAW] = 0.0
+        else if (dt > 0.8) x[YAW] *= exp(-(dt - 0.8) / 0.6)
         // Near-zero speed carries no valid yaw rate: prevent stationary multipath spin
         if (x[SPEED] < 1.5) x[YAW] = 0.0
 
@@ -189,7 +191,8 @@ class KinematicEkf(var profile: TrackingProfile) {
         // filter converges to the mean of the measurements (a spatial anchor, derived not hard-coded).
         val spd = measuredSpeedMps ?: x[SPEED]
         val sp = if (stationaryMode) 0.01 else if (profile.maxSpeedMps > 10.0 && spd > 3.0) {
-            (SIGMA_POSITION + (0.05 * spd).coerceAtMost(1.5))
+            val gapScale = if (dt > 1.0) (1.0 + (dt - 1.0) * 1.5).coerceAtMost(3.0) else 1.0
+            (SIGMA_POSITION + (0.05 * spd).coerceAtMost(1.5)) * gapScale
         } else {
             SIGMA_POSITION
         }

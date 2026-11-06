@@ -180,7 +180,27 @@ class MapFitAndAutoRecenterTest {
             )
         )
 
-        // Disabled if cursor is already inside viewport
+        // Inactivity timeout triggers auto-recenter even when cursor is inside viewport
+        assertTrue(
+            shouldTriggerAutoRecenter(
+                autoRecenterEnabled = true,
+                isAppInForeground = true,
+                isFollowing = false,
+                destinationPoint = null,
+                selectedSavedPlace = null,
+                isRecording = true,
+                selectedTripsEmpty = true,
+                showHeatMap = false,
+                isUserTouchingMap = false,
+                isCursorInsideViewport = true,
+                nowElapsedMs = now,
+                lastInteractionElapsedMs = lastInteraction, // 65s ago (> 60s timeout)
+                outsideViewportSinceElapsedMs = 0L,
+                timeoutMs = timeout
+            )
+        )
+
+        // Inside viewport before timeout expires does NOT trigger
         assertFalse(
             shouldTriggerAutoRecenter(
                 autoRecenterEnabled = true,
@@ -194,8 +214,8 @@ class MapFitAndAutoRecenterTest {
                 isUserTouchingMap = false,
                 isCursorInsideViewport = true,
                 nowElapsedMs = now,
-                lastInteractionElapsedMs = lastInteraction,
-                outsideViewportSinceElapsedMs = outsideSince,
+                lastInteractionElapsedMs = now - 20_000L, // only 20s ago (< 60s)
+                outsideViewportSinceElapsedMs = 0L,
                 timeoutMs = timeout
             )
         )

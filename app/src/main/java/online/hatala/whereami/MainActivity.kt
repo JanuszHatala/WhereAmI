@@ -284,6 +284,10 @@ fun LocationScreen(viewModel: MainViewModel) {
     val showBorders by viewModel.showBorders.collectAsState()
     val boundaryPoints by viewModel.boundaryPoints.collectAsState()
     val pinnedBoundaryPoints by viewModel.pinnedBoundaryPoints.collectAsState()
+    val selectedOutdoorAreaBoundary by viewModel.selectedOutdoorAreaBoundary.collectAsState()
+    val selectedOutdoorAreaKind by viewModel.selectedOutdoorAreaKind.collectAsState()
+    val searchRoutePolylines by viewModel.searchRoutePolylines.collectAsState()
+    val searchCategory by viewModel.searchCategory.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
     val fitPlacesTrigger by viewModel.fitPlacesTrigger.collectAsState()
     val destinationPoint by viewModel.destinationPoint.collectAsState()
@@ -768,6 +772,22 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             showMapSettingsExternal = showMapSettingsDialog,
             onDismissMapSettings = { showMapSettingsDialog = false },
+            outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary,
+            outdoorAreaKind = selectedOutdoorAreaKind,
+            searchRoutePolylines = searchRoutePolylines,
+            onTrailSelected = { trail ->
+                viewModel.selectSearchResult(
+                    SearchResultItem(
+                        title = trail.name,
+                        subtitle = "Trail (${trail.kind.displayName})",
+                        geoPoint = trail.points.firstOrNull() ?: org.osmdroid.util.GeoPoint(0.0, 0.0),
+                        placeType = "trail",
+                        geometryType = SearchGeometryType.POLYLINE,
+                        osmId = trail.id,
+                        trailColor = trail.color
+                    )
+                )
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -817,6 +837,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                             onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                            onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
                             modifier = Modifier.widthIn(max = 410.dp)
                         )
                     }
@@ -937,6 +958,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                     onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                    onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
@@ -1492,6 +1514,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         ActivityProfile.RUNNING -> trip.maxSpeedKmh in 6f..16f
                         ActivityProfile.HIKING -> trip.maxSpeedKmh <= 9f
                         ActivityProfile.WALKING -> trip.maxSpeedKmh <= 7f
+                        ActivityProfile.KAYAKING -> trip.maxSpeedKmh in 2f..20f
                         null -> true
                     }
 
@@ -4532,7 +4555,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             title = {
                 Text(
-                    text = "Find Place or Street",
+                    text = "Find Place, Mountain or Trail",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
@@ -4544,19 +4567,67 @@ fun LocationScreen(viewModel: MainViewModel) {
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                 ) {
+                    // Search Category Filter Chips (All, Ranges & Parks, Peaks & Passes, Trails, Water & Valleys, Huts & POIs)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SearchCategory.values().forEach { cat ->
+                            val isSelected = searchCategory == cat
+                            Surface(
+                                onClick = {
+                                    viewModel.setSearchCategory(cat, searchField.text)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                border = BorderStroke(1.dp, if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155)),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    EmojiText(emoji = cat.emoji, fontSize = 11.sp, yOffsetDp = 0.dp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = cat.label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = Color.White,
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = searchField,
                         onValueChange = {
                             searchField = it
                             searchQuery = it.text
-                            viewModel.search(it.text)
+                            viewModel.search(it.text, searchCategory)
                         },
-                        label = { Text("Search city, street or address") },
+                        label = { Text("Search city, street, peak or trail") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
-                                viewModel.search(searchField.text)
+                                viewModel.search(searchField.text, searchCategory)
                             }
                         ),
                         modifier = Modifier
@@ -4597,7 +4668,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            viewModel.setDestination(item)
+                                            viewModel.selectSearchResult(item)
                                             showSearchDialog = false
                                             viewModel.clearSearch()
                                         }
@@ -4608,15 +4679,36 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = item.title,
-                                            color = Color(0xFF38BDF8),
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 14.sp,
+                                        Row(
                                             modifier = Modifier.weight(1f, fill = false),
-                                            maxLines = 1,
-                                            softWrap = false
-                                        )
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (item.trailColor != null) {
+                                                val dotCol = when (item.trailColor) {
+                                                    TrailColor.RED -> Color(0xFFEF4444)
+                                                    TrailColor.BLUE -> Color(0xFF3B82F6)
+                                                    TrailColor.GREEN -> Color(0xFF10B981)
+                                                    TrailColor.YELLOW -> Color(0xFFF59E0B)
+                                                    TrailColor.BLACK -> Color(0xFFCBD5E1)
+                                                    else -> Color(0xFF38BDF8)
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(dotCol)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                            }
+                                            Text(
+                                                text = item.title,
+                                                color = Color(0xFF38BDF8),
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
                                         if (distanceLabel != null) {
                                             Text(
                                                 text = distanceLabel,
@@ -4638,9 +4730,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 HorizontalDivider(color = Color(0x22FFFFFF))
                             }
                         }
-                    } else if (searchQuery.trim().length >= 2) {
+                    } else if (searchQuery.trim().length >= 2 || searchCategory != SearchCategory.ALL) {
                         Text(
-                            text = "No places found. Try another search term.",
+                            text = if (searchCategory != SearchCategory.ALL) "No outdoor POIs found in this category nearby." else "No places found. Try another search term.",
                             color = Color.LightGray,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(vertical = 8.dp)
@@ -8394,6 +8486,7 @@ private fun ProfileConfigSheet(
             ActivityProfile.RUNNING -> listOf(3.0f to "3 km/h", 4.0f to "4 km/h", 5.0f to "5 km/h (Default)", 6.0f to "6 km/h", 8.0f to "8 km/h", 10.0f to "10 km/h")
             ActivityProfile.HIKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
             ActivityProfile.WALKING -> listOf(1.5f to "1.5 km/h", 2.0f to "2.0 km/h", 2.5f to "2.5 km/h (Default)", 3.0f to "3.0 km/h", 4.0f to "4.0 km/h", 5.0f to "5.0 km/h")
+            ActivityProfile.KAYAKING -> listOf(2.0f to "2 km/h", 3.0f to "3 km/h (Default)", 4.0f to "4 km/h", 5.0f to "5 km/h", 6.0f to "6 km/h")
         }
     }
     val isCustomSpeed = speedPresetOptions.none { kotlin.math.abs(it.first - autoStartSpeed) < 0.05f }
@@ -9800,6 +9893,193 @@ fun computeRealisticVisitCounts(trips: List<TripRecord>): List<Pair<String, Int>
 }
 
 @Composable
+private fun OutdoorContextRow(
+    outdoor: OutdoorContext,
+    isCompact: Boolean,
+    onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    if (!outdoor.hasAnyOutdoor) return
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = if (isCompact) Arrangement.Start else Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 1. Mountain Range Pill
+        outdoor.primaryRange?.let { range ->
+            Surface(
+                onClick = { onOutdoorAreaClick?.invoke(range) },
+                shape = RoundedCornerShape(6.dp),
+                color = Color(0x28F59E0B),
+                border = BorderStroke(1.dp, Color(0x66F59E0B)),
+                modifier = Modifier.height(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EmojiText(emoji = "⛰️", fontSize = 11.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = range.name,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFBBF24),
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 11.sp
+                        )
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+
+        // 2. Protected Area / Park Pill
+        outdoor.parkOrReserve?.let { park ->
+            Surface(
+                onClick = { onOutdoorAreaClick?.invoke(park) },
+                shape = RoundedCornerShape(6.dp),
+                color = Color(0x2810B981),
+                border = BorderStroke(1.dp, Color(0x6610B981)),
+                modifier = Modifier.height(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val icon = if (park.kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
+                    EmojiText(emoji = icon, fontSize = 11.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = park.name,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF34D399),
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 11.sp
+                        )
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+
+        // 3. Active Trail Pill
+        outdoor.activeTrail?.let { trail ->
+            val trailBadgeColor = when (trail.color) {
+                TrailColor.RED -> Color(0xFFEF4444)
+                TrailColor.BLUE -> Color(0xFF3B82F6)
+                TrailColor.GREEN -> Color(0xFF10B981)
+                TrailColor.YELLOW -> Color(0xFFF59E0B)
+                TrailColor.BLACK -> Color(0xFFCBD5E1)
+                else -> Color(0xFF38BDF8)
+            }
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = Color(0x280284C7),
+                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.5f)),
+                modifier = Modifier.height(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EmojiText(emoji = trail.kind.iconEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = trail.name,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = trailBadgeColor,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 11.sp
+                        )
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+
+        // 4. Nearest Peak or Pass or Hut or Water Body
+        val feature = outdoor.nearestPeak ?: outdoor.nearestHut ?: outdoor.nearestPass ?: outdoor.nearestWater
+        if (feature != null) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = Color(0x28475569),
+                border = BorderStroke(1.dp, Color(0x6694A3B8)),
+                modifier = Modifier.height(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val featureEmoji = when (feature.kind) {
+                        PlaceKind.PEAK -> "🏔️"
+                        PlaceKind.MOUNTAIN_PASS -> "⛰️"
+                        PlaceKind.MOUNTAIN_HUT -> "🛖"
+                        PlaceKind.VALLEY -> "🏞️"
+                        PlaceKind.WATER_BODY -> "🌊"
+                        else -> "📍"
+                    }
+                    EmojiText(emoji = featureEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    val distLabel = if (feature.distanceMeters > 0f) LiveGuest.formatDistance(feature.distanceMeters) else null
+                    val label = buildString {
+                        append(feature.name)
+                        if (feature.elevationMeters != null) append(" (${feature.elevationMeters}m)")
+                        if (distLabel != null) append(" • $distLabel")
+                    }
+                    Text(
+                        text = label,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFE2E8F0),
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 11.sp
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LocalityCard(
     locationData: LocationData,
     activeTrip: TripRecord?,
@@ -9817,6 +10097,7 @@ private fun LocalityCard(
     onOpenSavedPlaces: () -> Unit = {},
     onSetLocalityCardStyle: (LocalityCardStyle) -> Unit,
     onSetActivityProfile: (ActivityProfile) -> Unit,
+    onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -10138,6 +10419,16 @@ private fun LocalityCard(
                     }
                 }
 
+                // ── Compact Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                    OutdoorContextRow(
+                        outdoor = outdoor,
+                        isCompact = true,
+                        onOutdoorAreaClick = onOutdoorAreaClick,
+                        modifier = Modifier.padding(vertical = 1.dp)
+                    )
+                }
+
                 // ── Row 3: Administrative Hierarchy & Country on Left, Profile + Speed Pill on Right ──
                 val fullHierarchyText = buildString {
                     if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
@@ -10222,7 +10513,7 @@ private fun LocalityCard(
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             val metricText = when (activityProfile) {
-                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB -> speedStr
+                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB, ActivityProfile.KAYAKING -> speedStr
                                 ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> paceStr
                             }
                             Text(
@@ -10686,6 +10977,17 @@ private fun LocalityCard(
                     )
                 }
 
+                // ── Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutdoorContextRow(
+                        outdoor = outdoor,
+                        isCompact = false,
+                        onOutdoorAreaClick = onOutdoorAreaClick,
+                        modifier = Modifier.padding(vertical = 1.dp)
+                    )
+                }
+
                 // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
                 val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
                 val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
@@ -10843,7 +11145,7 @@ private fun LocalityCard(
                                 )
                             )
                         }
-                        ActivityProfile.CYCLING, ActivityProfile.MTB -> {
+                        ActivityProfile.CYCLING, ActivityProfile.MTB, ActivityProfile.KAYAKING -> {
                             Text(
                                 text = speedStr,
                                 fontSize = 15.sp,
@@ -11749,6 +12051,7 @@ fun TripFilterDropdowns(
                     ActivityProfile.CAR to "Driving",
                     ActivityProfile.CYCLING to "Cycling",
                     ActivityProfile.MTB to "MTB",
+                    ActivityProfile.KAYAKING to "Kayaking",
                     ActivityProfile.HIKING to "Hiking",
                     ActivityProfile.RUNNING to "Running",
                     ActivityProfile.WALKING to "Walking"

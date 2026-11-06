@@ -57,6 +57,23 @@ class AppStateManagerBurstTest {
     }
 
     @Test
+    fun testCarBurstDoesNotEarlyAbortAt25SecondsWhenEngineVibrating() {
+        val canAbort = AppStateManager.shouldEarlyAbortBurst(
+            elapsedMs = 26_000L,
+            minDurationMs = 15_000L,
+            currentSpeedMs = 0.5f,
+            targetCandidateSpeedMs = 5.0f,
+            displacementMeters = 8.0,
+            isPhysicallyStationary = false,
+            isCarProfile = true
+        )
+        assertFalse(
+            "CAR profile with engine vibration (isPhysicallyStationary = false) must not early abort at 25s",
+            canAbort
+        )
+    }
+
+    @Test
     fun testCarBurstAbortsAt35SecondsWhenBelowDisplacementThreshold() {
         // After 35s in CAR profile with no real speed or net displacement (< 15m)
         val canAbort = AppStateManager.shouldEarlyAbortBurst(

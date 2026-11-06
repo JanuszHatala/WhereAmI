@@ -169,6 +169,27 @@ object RoadNameNormalizer {
             ?: normalize(null, r, null, includeHouseNumber = false, countryCode = countryCode)
     }
 
+    private val MAJOR_HIGHWAY_TYPES = setOf(
+        "motorway", "motorway_link",
+        "trunk", "trunk_link",
+        "primary", "primary_link",
+        "secondary", "secondary_link"
+    )
+
+    private val RESIDENTIAL_HIGHWAY_TYPES = setOf(
+        "residential", "living_street", "service", "unclassified", "track", "footway", "path"
+    )
+
+    fun isMajorHighwayType(type: String?): Boolean {
+        if (type == null) return false
+        return type.trim().lowercase(Locale.ROOT) in MAJOR_HIGHWAY_TYPES
+    }
+
+    fun isResidentialHighwayType(type: String?): Boolean {
+        if (type == null) return false
+        return type.trim().lowercase(Locale.ROOT) in RESIDENTIAL_HIGHWAY_TYPES
+    }
+
     /**
      * OSRM `/nearest` often returns only the highway code (`DW948`) on corridors that also have a local
      * OSM name (`Krakowska`). Prefer the local name; attach the code only when OSM confirms [osmRoadRef]
@@ -183,7 +204,8 @@ object RoadNameNormalizer {
         osrmStreet: String?,
         osmStreet: String?,
         osmRoadRef: String?,
-        geocoderStreet: String? = null
+        geocoderStreet: String? = null,
+        candidateHighwayType: String? = null
     ): Pair<String?, String?> {
         val osrm = osrmStreet?.trim()?.takeIf { it.isNotEmpty() }
         val named = sequenceOf(osmStreet, geocoderStreet)
@@ -191,8 +213,14 @@ object RoadNameNormalizer {
             .firstOrNull()
         val osmRef = osmRoadRef?.trim()?.takeIf { it.isNotEmpty() }
         val isOsrmHighway = osrm != null && isHighwayCodeOnly(osrm)
+        val isResidential = isResidentialHighwayType(candidateHighwayType)
+        val isMajor = isMajorHighwayType(candidateHighwayType)
 
         return when {
+            // Residential / service / unclassified roads must NEVER carry a major highway code
+            named != null && isResidential ->
+                named to null
+
             // If OSM confirmed both a named street and a valid road ref, prefer OSM confirmed name and ref.
             !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() ->
                 osmStreet.trim() to osmRef
@@ -200,6 +228,11 @@ object RoadNameNormalizer {
             // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref
             osrm != null && !isHighwayCodeOnly(osrm) ->
                 osrm to osmRef
+
+            // Named street is present and OSRM is a bare highway code:
+            // If OSM confirms major corridor classification, coalesce named street with the OSRM highway code (e.g. "Beskidzka (DW781)")
+            named != null && isOsrmHighway && isMajor ->
+                named to osrm
 
             // Named street is present and OSRM is a bare highway code:
             // Prefer the named local street, attach confirmed osmRef only if confirmed by OSM

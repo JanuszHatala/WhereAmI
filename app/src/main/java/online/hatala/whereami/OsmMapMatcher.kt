@@ -80,6 +80,8 @@ object OsmMapMatcher : online.hatala.whereami.tracking.RouteMatchApi {
                     if (snapLat.isNaN() || snapLng.isNaN()) return null
                     val name = waypoint.optString("name").takeIf { it.isNotBlank() }
                     val dist = waypoint.optDouble("distance", Double.NaN).takeIf { !it.isNaN() } ?: 0.0
+                    // Reject waypoints beyond 30m to prevent snapping onto distant highways from side streets
+                    if (dist > 30.0) return null
                     return OsrmNearest(name, snapLat, snapLng, dist)
                 }
             }

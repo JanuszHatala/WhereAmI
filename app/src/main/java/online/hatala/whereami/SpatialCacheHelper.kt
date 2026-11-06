@@ -21,6 +21,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         private const val DATABASE_VERSION = 1
 
         private const val TABLE_CACHE = "spatial_cache"
+        private const val TABLE_OUTDOOR_CACHE = "outdoor_context_cache"
         private const val COL_GRID_KEY = "grid_key"
         private const val COL_LAT = "latitude"
         private const val COL_LNG = "longitude"
@@ -32,6 +33,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         private const val COL_PL_JSON = "pl_json"
         private const val COL_NATIVE_JSON = "native_json"
         private const val COL_TIMESTAMP = "timestamp"
+        private const val COL_CONTEXT_JSON = "context_json"
 
         @Volatile
         private var instance: SpatialCacheHelper? = null
@@ -127,6 +129,16 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         """.trimIndent()
         db.execSQL(createTable)
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_spatial_coords ON $TABLE_CACHE ($COL_LAT, $COL_LNG)")
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_OUTDOOR_CACHE (
+                $COL_GRID_KEY TEXT PRIMARY KEY,
+                $COL_LAT REAL NOT NULL,
+                $COL_LNG REAL NOT NULL,
+                $COL_CONTEXT_JSON TEXT NOT NULL,
+                $COL_TIMESTAMP INTEGER NOT NULL
+            )
+        """.trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_outdoor_coords ON $TABLE_OUTDOOR_CACHE ($COL_LAT, $COL_LNG)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -136,6 +148,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         ensureHighwayTypeColumn(db)
+        ensureOutdoorTable(db)
         migrateLegacyKeys(db)
         sanitizeKnownMismatches(db)
         sanitizePolishHighwayCodesOutsidePoland(db)
@@ -171,12 +184,48 @@ class SpatialCacheHelper private constructor(private val context: Context) :
 
     fun sanitizeCorruptedRoczynyDw781(db: SQLiteDatabase = writableDatabase) {
         try {
-            db.execSQL("""
-                UPDATE $TABLE_CACHE 
-                SET $COL_STREET = 'Bielska', $COL_ROAD_REF = NULL 
-                WHERE ($COL_CITY = 'Roczyny' OR $COL_CITY = 'Czaniec') 
-                  AND ($COL_STREET LIKE 'Bielska (%781%)' OR $COL_ROAD_REF LIKE '%781%')
-            """.trimIndent())
+            // Roczyny / Czaniec: neither village is traversed by DW781 (DW781 runs in Andrychów).
+            // Strip any DW781 from residential streets in Roczyny and Czaniec.
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE ($COL_CITY = 'Roczyny' OR $COL_CITY = 'Czaniec')
+                  AND ($COL_STREET LIKE '%(DW781)%' OR $COL_STREET LIKE '%(DW 781)%' OR $COL_ROAD_REF LIKE '%781%')
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val rawStreet = it.getString(1)
+                    val cleanStreet = RoadNameNormalizer.stripParenHighwayRef(rawStreet)?.trim() ?: rawStreet
+                    val en = deserializePlaceInfo(it.getString(2))
+                    val pl = deserializePlaceInfo(it.getString(3))
+                    val native = deserializePlaceInfo(it.getString(4))
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_STREET, cleanStreet)
+                        put(COL_ROAD_REF, null as String?)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = cleanStreet, roadRef = null)))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = cleanStreet, roadRef = null)))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = cleanStreet, roadRef = null)))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         } catch (_: Exception) {}
     }
 
@@ -890,9 +939,9 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 )
             )
         } else if (incomingNamedWins) {
+            // Incoming named street replaces bare highway code: never inherit stray highway ref from existing cell
             val ref = info.pl.roadRef
                 ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
-                ?: existing!!.pl.roadRef
             val streetPl = RoadNameNormalizer.dedupeParenHighwayRef(
                 RoadNameNormalizer.formatStreetDisplay(info.pl.street, ref, info.pl.countryCode)
             ) ?: info.pl.street
@@ -965,5 +1014,219 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     fun clearAll() {
         val db = writableDatabase
         db.delete(TABLE_CACHE, null, null)
+        db.delete(TABLE_OUTDOOR_CACHE, null, null)
+    }
+
+    private fun ensureOutdoorTable(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_OUTDOOR_CACHE (
+                $COL_GRID_KEY TEXT PRIMARY KEY,
+                $COL_LAT REAL NOT NULL,
+                $COL_LNG REAL NOT NULL,
+                $COL_CONTEXT_JSON TEXT NOT NULL,
+                $COL_TIMESTAMP INTEGER NOT NULL
+            )
+        """.trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_outdoor_coords ON $TABLE_OUTDOOR_CACHE ($COL_LAT, $COL_LNG)")
+    }
+
+    fun getOutdoorContext(lat: Double, lng: Double, maxAgeMs: Long? = 6 * 3600 * 1000L): OutdoorContext? {
+        val key = toGridKey(lat, lng)
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT $COL_CONTEXT_JSON, $COL_TIMESTAMP FROM $TABLE_OUTDOOR_CACHE WHERE $COL_GRID_KEY = ?",
+            arrayOf(key)
+        )
+        cursor.use {
+            if (it.moveToFirst()) {
+                val json = it.getString(0)
+                val timestamp = it.getLong(1)
+                if (maxAgeMs != null && (System.currentTimeMillis() - timestamp) > maxAgeMs) {
+                    return null
+                }
+                return deserializeOutdoorContext(json)
+            }
+        }
+        return null
+    }
+
+    fun putOutdoorContext(lat: Double, lng: Double, outdoorContext: OutdoorContext) {
+        val key = toGridKey(lat, lng)
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_GRID_KEY, key)
+            put(COL_LAT, lat)
+            put(COL_LNG, lng)
+            put(COL_CONTEXT_JSON, serializeOutdoorContext(outdoorContext))
+            put(COL_TIMESTAMP, System.currentTimeMillis())
+        }
+        db.insertWithOnConflict(TABLE_OUTDOOR_CACHE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    internal fun serializeOutdoorContext(c: OutdoorContext): String {
+        val root = JSONObject()
+        c.mountainRange?.let {
+            root.put("range", JSONObject().apply {
+                put("id", it.id)
+                put("name", it.name)
+                put("nameEn", it.nameEn)
+                put("kind", it.kind.name)
+                put("osmRelId", it.osmRelationId ?: 0L)
+            })
+        }
+        val protArr = org.json.JSONArray()
+        c.protectedAreas.forEach {
+            protArr.put(JSONObject().apply {
+                put("id", it.id)
+                put("name", it.name)
+                put("nameEn", it.nameEn)
+                put("kind", it.kind.name)
+                put("osmRelId", it.osmRelationId ?: 0L)
+            })
+        }
+        root.put("protected", protArr)
+        c.valley?.let {
+            root.put("valley", JSONObject().apply {
+                put("id", it.id)
+                put("name", it.name)
+                put("nameEn", it.nameEn)
+                put("kind", it.kind.name)
+                put("osmRelId", it.osmRelationId ?: 0L)
+            })
+        }
+        val trailsArr = org.json.JSONArray()
+        c.activeTrails.forEach {
+            trailsArr.put(JSONObject().apply {
+                put("osmId", it.osmId)
+                put("name", it.name)
+                put("ref", it.ref)
+                put("kind", it.kind.name)
+                put("color", it.color.name)
+                put("network", it.network)
+                put("distanceMeters", it.distanceMeters.toDouble())
+            })
+        }
+        root.put("trails", trailsArr)
+        val featArr = org.json.JSONArray()
+        c.nearestFeatures.forEach {
+            featArr.put(JSONObject().apply {
+                put("osmId", it.osmId)
+                put("name", it.name)
+                put("kind", it.kind.name)
+                put("ele", it.elevationMeters ?: -1)
+                put("dist", it.distanceMeters.toDouble())
+                put("lat", it.latitude)
+                put("lon", it.longitude)
+            })
+        }
+        root.put("features", featArr)
+        c.waterBody?.let {
+            root.put("water", JSONObject().apply {
+                put("osmId", it.osmId)
+                put("name", it.name)
+                put("kind", it.kind.name)
+                put("ele", it.elevationMeters ?: -1)
+                put("dist", it.distanceMeters.toDouble())
+                put("lat", it.latitude)
+                put("lon", it.longitude)
+            })
+        }
+        root.put("timestamp", c.timestamp)
+        return root.toString()
+    }
+
+    internal fun deserializeOutdoorContext(jsonStr: String?): OutdoorContext? {
+        if (jsonStr.isNullOrBlank()) return null
+        return try {
+            val root = JSONObject(jsonStr)
+            val rangeObj = root.optJSONObject("range")
+            val range = rangeObj?.let {
+                OutdoorArea(
+                    id = it.optString("id"),
+                    name = it.optString("name"),
+                    nameEn = it.optString("nameEn").takeIf { s -> s.isNotBlank() },
+                    kind = try { OutdoorAreaKind.valueOf(it.optString("kind")) } catch (_: Exception) { OutdoorAreaKind.MOUNTAIN_RANGE },
+                    osmRelationId = it.optLong("osmRelId").takeIf { id -> id > 0 }
+                )
+            }
+            val protList = mutableListOf<OutdoorArea>()
+            val protArr = root.optJSONArray("protected")
+            if (protArr != null) {
+                for (i in 0 until protArr.length()) {
+                    val p = protArr.optJSONObject(i) ?: continue
+                    protList.add(
+                        OutdoorArea(
+                            id = p.optString("id"),
+                            name = p.optString("name"),
+                            nameEn = p.optString("nameEn").takeIf { s -> s.isNotBlank() },
+                            kind = try { OutdoorAreaKind.valueOf(p.optString("kind")) } catch (_: Exception) { OutdoorAreaKind.LANDSCAPE_PARK },
+                            osmRelationId = p.optLong("osmRelId").takeIf { id -> id > 0 }
+                        )
+                    )
+                }
+            }
+            val valleyObj = root.optJSONObject("valley")
+            val valley = valleyObj?.let {
+                OutdoorArea(
+                    id = it.optString("id"),
+                    name = it.optString("name"),
+                    nameEn = it.optString("nameEn").takeIf { s -> s.isNotBlank() },
+                    kind = OutdoorAreaKind.VALLEY,
+                    osmRelationId = it.optLong("osmRelId").takeIf { id -> id > 0 }
+                )
+            }
+            val trails = mutableListOf<ActiveTrailInfo>()
+            val trailsArr = root.optJSONArray("trails")
+            if (trailsArr != null) {
+                for (i in 0 until trailsArr.length()) {
+                    val t = trailsArr.optJSONObject(i) ?: continue
+                    trails.add(
+                        ActiveTrailInfo(
+                            osmId = t.optLong("osmId"),
+                            name = t.optString("name"),
+                            ref = t.optString("ref").takeIf { s -> s.isNotBlank() },
+                            kind = try { TrailRouteKind.valueOf(t.optString("kind")) } catch (_: Exception) { TrailRouteKind.HIKING },
+                            color = try { TrailColor.valueOf(t.optString("color")) } catch (_: Exception) { TrailColor.NONE },
+                            network = t.optString("network").takeIf { s -> s.isNotBlank() },
+                            distanceMeters = t.optDouble("distanceMeters", 0.0).toFloat()
+                        )
+                    )
+                }
+            }
+            val features = mutableListOf<OutdoorFeatureInfo>()
+            val featArr = root.optJSONArray("features")
+            if (featArr != null) {
+                for (i in 0 until featArr.length()) {
+                    val f = featArr.optJSONObject(i) ?: continue
+                    features.add(
+                        OutdoorFeatureInfo(
+                            osmId = f.optLong("osmId"),
+                            name = f.optString("name"),
+                            kind = try { PlaceKind.valueOf(f.optString("kind")) } catch (_: Exception) { PlaceKind.PEAK },
+                            elevationMeters = f.optInt("ele").takeIf { e -> e > 0 },
+                            distanceMeters = f.optDouble("dist", 0.0).toFloat(),
+                            latitude = f.optDouble("lat", 0.0),
+                            longitude = f.optDouble("lon", 0.0)
+                        )
+                    )
+                }
+            }
+            val waterObj = root.optJSONObject("water")
+            val water = waterObj?.let {
+                OutdoorFeatureInfo(
+                    osmId = it.optLong("osmId"),
+                    name = it.optString("name"),
+                    kind = PlaceKind.WATER_BODY,
+                    elevationMeters = it.optInt("ele").takeIf { e -> e > 0 },
+                    distanceMeters = it.optDouble("dist", 0.0).toFloat(),
+                    latitude = it.optDouble("lat", 0.0),
+                    longitude = it.optDouble("lon", 0.0)
+                )
+            }
+            val ts = root.optLong("timestamp", System.currentTimeMillis())
+            OutdoorContext(range, protList, valley, trails, features, water, ts)
+        } catch (_: Exception) {
+            null
+        }
     }
 }
