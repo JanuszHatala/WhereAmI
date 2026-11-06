@@ -211,8 +211,13 @@ class AutoSleepManager private constructor(private val context: Context) {
             // DND was active during sleep, and user turned it off in the morning
             if (followDnd && wasDndActiveInSession && !isDndActive && isMorning) return true
 
-            // When an upcoming morning alarm is scheduled, hold sleep until it rings
-            if (hasUpcomingMorningAlarm && isMorning) return false
+            // When outside the bedtime window in the morning:
+            // If the user turns the screen on (picks up/uses the phone), wake immediately.
+            // DND or upcoming alarm must not freeze the app when the user is actively using the screen.
+            if (isMorning && !isTimeInWindow && !isScreenOff) return true
+
+            // When an upcoming morning alarm is scheduled, hold sleep while still asleep (screen off or inside bedtime window)
+            if (hasUpcomingMorningAlarm && isMorning && (isTimeInWindow || isScreenOff)) return false
 
             // If bedtime window ended but user is still asleep (screen off),
             // hold sleep mode to prevent background false-motion bursts until user interacts (screen on) or alarm fires.

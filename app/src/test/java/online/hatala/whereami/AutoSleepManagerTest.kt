@@ -472,6 +472,7 @@ class AutoSleepManagerTest {
         )
 
         // Upcoming morning alarm holds sleep even after bedtime window ended
+        // Upcoming morning alarm holds sleep even after bedtime window ended while screen is off
         val shouldHoldSleepUntilAlarm = AutoSleepManager.shouldAutoWake(
             isAutoSleepEnabled = true,
             isCurrentlySleeping = true,
@@ -483,11 +484,32 @@ class AutoSleepManagerTest {
             isManualSleep = false,
             wasDndActiveInSession = false,
             wasInBedtimeWindowDuringSleep = true,
-            hasUpcomingMorningAlarm = true
+            hasUpcomingMorningAlarm = true,
+            isScreenOff = true
         )
         assertFalse(
-            "Upcoming morning alarm must hold sleep mode even if bedtime window ended",
+            "Upcoming morning alarm must hold sleep mode even if bedtime window ended while screen is off",
             shouldHoldSleepUntilAlarm
+        )
+
+        // But when user turns screen on outside bedtime window, sleep mode wakes immediately despite upcoming alarm or DND
+        val shouldWakeWhenScreenOn = AutoSleepManager.shouldAutoWake(
+            isAutoSleepEnabled = true,
+            isCurrentlySleeping = true,
+            isTimeInWindow = false,
+            isDndActive = true, // DND active
+            followDnd = true,
+            isMorning = true,
+            isAlarmFired = false,
+            isManualSleep = false,
+            wasDndActiveInSession = false,
+            wasInBedtimeWindowDuringSleep = true,
+            hasUpcomingMorningAlarm = true,
+            isScreenOff = false // User unlocked screen
+        )
+        assertTrue(
+            "Turning screen on outside bedtime window must wake sleep mode even if upcoming alarm or DND is present",
+            shouldWakeWhenScreenOn
         )
     }
 

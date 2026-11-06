@@ -1,14 +1,19 @@
 package online.hatala.whereami
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.location.Address
 import android.location.Geocoder
 import android.location.Location as AndroidLocation
 import android.os.Build
+import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -311,6 +316,17 @@ class LocationManager private constructor(private val context: Context) {
         LocationServices.getFusedLocationProviderClient(context)
     private val requestSequencer = BatchedRequestSequencer()
     private val ioScope = CoroutineScope(Dispatchers.IO)
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var lastFixRealtimeMs: Long = 0L
+    @Volatile
+    private var lastSubscriptionRealtimeMs: Long = 0L
+
+    init {
+        registerSystemReceivers()
+        startGpsWatchdog()
+    }
 
     // ── Tracking Engine v2 (CTRV EKF + fixed-lag smoother) ─────────────────────
     private val trackingLock = Any()
@@ -395,6 +411,7 @@ class LocationManager private constructor(private val context: Context) {
         currentMinIntervalMs = minIntervalMs
         currentMaxUpdateDelayMs = maxUpdateDelayMs
         isGpsStopped = false
+        lastSubscriptionRealtimeMs = SystemClock.elapsedRealtime()
         try {
             StationaryDetector.getInstance(context).startListening()
         } catch (_: Exception) {}
@@ -405,6 +422,77 @@ class LocationManager private constructor(private val context: Context) {
                     try {
                         fusedLocationClient.requestLocationUpdates(req, cb, Looper.getMainLooper())
                     } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    fun resubscribeGpsIfNeeded() {
+        if (isGpsStopped) return
+        val req = buildRequest(currentIntervalMs, currentMinIntervalMs, currentMaxUpdateDelayMs)
+        lastSubscriptionRealtimeMs = SystemClock.elapsedRealtime()
+        requestSequencer.run(isBatchedRequestActive(), ::flushBatchedFixes) {
+            synchronized(activeCallbacks) {
+                if (activeCallbacks.isEmpty()) return@run
+                for (cb in activeCallbacks) {
+                    try {
+                        fusedLocationClient.requestLocationUpdates(req, cb, Looper.getMainLooper())
+                    } catch (e: Exception) {
+                        TelemetryLogger.log("LOCATION", "Failed to refresh location callback: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun registerSystemReceivers() {
+        val filter = IntentFilter(android.location.LocationManager.PROVIDERS_CHANGED_ACTION)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == android.location.LocationManager.PROVIDERS_CHANGED_ACTION) {
+                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                    val isGpsEnabled = lm?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true
+                    TelemetryLogger.log("LOCATION", "Location provider changed: GPS_PROVIDER enabled=$isGpsEnabled (isGpsStopped=$isGpsStopped)")
+                    if (isGpsEnabled && !isGpsStopped) {
+                        resubscribeGpsIfNeeded()
+                    }
+                }
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(receiver, filter)
+            }
+        } catch (e: Exception) {
+            TelemetryLogger.log("ERROR", "Failed to register PROVIDERS_CHANGED receiver: ${e.message}")
+        }
+    }
+
+    private fun startGpsWatchdog() {
+        managerScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(10_000L)
+                if (isGpsStopped) continue
+                val hasSubscribers = synchronized(activeCallbacks) { activeCallbacks.isNotEmpty() }
+                if (!hasSubscribers) continue
+
+                val appStateMgr = AppStateManager.getInstance(context)
+                val mode = appStateMgr.currentMode.value
+                val needsContinuousGps = mode == AppLifecycleMode.FOREGROUND_VIEW ||
+                        mode == AppLifecycleMode.ANDROID_AUTO ||
+                        mode == AppLifecycleMode.TRIP_RECORDING
+                if (!needsContinuousGps) continue
+
+                val now = SystemClock.elapsedRealtime()
+                val baseline = maxOf(lastFixRealtimeMs, lastSubscriptionRealtimeMs)
+                if (baseline > 0L && (now - baseline) > 25_000L) {
+                    TelemetryLogger.log(
+                        "LOCATION",
+                        "GPS stall detected: no fix for ${(now - baseline) / 1000}s in mode $mode. Triggering soft re-subscription."
+                    )
+                    resubscribeGpsIfNeeded()
                 }
             }
         }
@@ -434,10 +522,22 @@ class LocationManager private constructor(private val context: Context) {
     /** Delivers fixes Fused is holding in a batch to the registered callbacks, then calls [onDone]. */
     @SuppressLint("MissingPermission")
     private fun flushBatchedFixes(onDone: () -> Unit) {
+        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val completeOnce: () -> Unit = {
+            if (completed.compareAndSet(false, true)) {
+                onDone()
+            }
+        }
+        val timeoutRunnable = Runnable { completeOnce() }
+        mainHandler.postDelayed(timeoutRunnable, 500L)
         try {
-            fusedLocationClient.flushLocations().addOnCompleteListener { onDone() }
+            fusedLocationClient.flushLocations().addOnCompleteListener {
+                mainHandler.removeCallbacks(timeoutRunnable)
+                completeOnce()
+            }
         } catch (_: Exception) {
-            onDone()
+            mainHandler.removeCallbacks(timeoutRunnable)
+            completeOnce()
         }
     }
 
@@ -969,8 +1069,6 @@ class LocationManager private constructor(private val context: Context) {
     }
 
     // ── Single Source of Truth (SSOT) Master Location Pipeline ────────────────
-    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     @Volatile
     private var fixSeqCounter: Long = 0L
 
@@ -1027,6 +1125,7 @@ class LocationManager private constructor(private val context: Context) {
                 val currentProfile = activeTrip?.activityProfile ?: tripManager.activityProfile.value
 
                 val rawFix = TrackingBridge.toRawFix(location)
+                lastFixRealtimeMs = SystemClock.elapsedRealtime()
                 val isPhysicallyStationary = try {
                     StationaryDetector.getInstance(context).isPhysicallyStationary.value
                 } catch (_: Exception) { false }
