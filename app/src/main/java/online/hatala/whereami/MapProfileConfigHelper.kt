@@ -204,6 +204,31 @@ object MapProfileConfigHelper {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(PREF_SHOW_RAW_POLYLINE, enabled).apply()
     }
+
+    const val PREF_AUTO_RECENTER_ENABLED = "pref_auto_recenter_enabled"
+    const val PREF_AUTO_RECENTER_TIMEOUT_SEC = "pref_auto_recenter_timeout_sec"
+    const val DEFAULT_AUTO_RECENTER_ENABLED = true
+    const val DEFAULT_AUTO_RECENTER_TIMEOUT_SEC = 60
+
+    fun getAutoRecenterEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(PREF_AUTO_RECENTER_ENABLED, DEFAULT_AUTO_RECENTER_ENABLED)
+    }
+
+    fun setAutoRecenterEnabled(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(PREF_AUTO_RECENTER_ENABLED, enabled).apply()
+    }
+
+    fun getAutoRecenterTimeoutSec(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(PREF_AUTO_RECENTER_TIMEOUT_SEC, DEFAULT_AUTO_RECENTER_TIMEOUT_SEC)
+    }
+
+    fun setAutoRecenterTimeoutSec(context: Context, seconds: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(PREF_AUTO_RECENTER_TIMEOUT_SEC, seconds).apply()
+    }
 }
 
 enum class AltitudeSourceMode(val label: String, val description: String) {

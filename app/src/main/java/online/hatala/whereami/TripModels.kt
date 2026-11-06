@@ -250,14 +250,16 @@ enum class ActivityProfile(
     val minValidDistanceMeters: Double = 50.0,
     val minValidDurationMs: Long = 20_000L,
     val chargingLiveSyncIntervalMs: Long = 6_000L,
-    val chargingBreadcrumbDisplacementMeters: Float = 12.0f
+    val chargingBreadcrumbDisplacementMeters: Float = 12.0f,
+    val recentSectionMeters: Double = 2_000.0,
+    val recentSectionLabel: String = "2 km"
 ) {
-    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 45, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 15.0f),
-    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 60, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
-    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 60, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
-    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f),
-    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 30, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f);
+    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 45, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 15.0f, recentSectionMeters = 5_000.0, recentSectionLabel = "5 km"),
+    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 60, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 2_000.0, recentSectionLabel = "2 km"),
+    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 60, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_500.0, recentSectionLabel = "1.5 km"),
+    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m"),
+    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 30, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km"),
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m");
 
     /** CAR / CYCLING / MTB — indoor multipath scribble discard applies only here. */
     val isVehicleProfile: Boolean

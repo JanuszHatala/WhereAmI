@@ -290,19 +290,20 @@ object GuestMarkerHelper {
         showDistance: Boolean,
         now: Long = System.currentTimeMillis()
     ): String {
+        if (!showDistance) return ""
         val hasCustom = hasCustomName(guest.name)
         val displayName = formatDisplayName(guest.name)
         val timeAgoText = LiveGuest.formatCompactTimeAgo(guest.lastUpdated, now)
-        val distancePart = if (showDistance && distanceMeters != null) {
+        val distancePart = if (distanceMeters != null) {
             "${LiveGuest.formatDistance(distanceMeters)} • $timeAgoText"
-        } else if (showDistance) {
+        } else {
             timeAgoText
-        } else ""
+        }
 
         return if (hasCustom) {
             if (distancePart.isNotEmpty()) "$displayName • $distancePart" else displayName
         } else {
-            if (showDistance) distancePart else ""
+            distancePart
         }
     }
 }

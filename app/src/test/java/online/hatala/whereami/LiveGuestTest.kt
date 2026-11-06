@@ -297,10 +297,11 @@ class LiveGuestTest {
         // Named permutations
         assertEquals("Niki • 1.1 km • now", GuestMarkerHelper.formatBadgeText(named, 1120f, showDistance = true, now = now))
         assertEquals("Niki • now", GuestMarkerHelper.formatBadgeText(named, null, showDistance = true, now = now))
-        assertEquals("Niki", GuestMarkerHelper.formatBadgeText(named, 1120f, showDistance = false, now = now))
+        assertEquals("", GuestMarkerHelper.formatBadgeText(named, 1120f, showDistance = false, now = now))
 
         // Truncated name permutation
         assertEquals("Aleksander-… • 1.1 km • now", GuestMarkerHelper.formatBadgeText(longNamed, 1120f, showDistance = true, now = now))
+        assertEquals("", GuestMarkerHelper.formatBadgeText(longNamed, 1120f, showDistance = false, now = now))
     }
 
     @Test
