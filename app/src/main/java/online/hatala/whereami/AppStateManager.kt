@@ -309,6 +309,11 @@ class AppStateManager private constructor(private val context: Context) {
         val carReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 TelemetryLogger.log("POWER", "Car mode broadcast received: ${intent?.action}")
+                if (intent?.action == android.app.UiModeManager.ACTION_ENTER_CAR_MODE) {
+                    if (_isStandbySleeping.value) {
+                        wakeStandbySleep(isExplicitUserAction = true)
+                    }
+                }
                 recalculateState()
             }
         }
@@ -478,14 +483,13 @@ class AppStateManager private constructor(private val context: Context) {
             online.hatala.whereami.tracking.PostTripMatcher.schedule(context)
             consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
-            // Standby sleep wakes on app resume (MainActivity.onStart) if outside Bedtime/DND sleep window
-            val autoSleepMgr = AutoSleepManager.getInstance(context)
-            val isMorning = AutoSleepManager.isMorningTime(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
-            val isAlarmFired = autoSleepMgr.isAlarmFiredRecently()
-            val isBedtimeOrDnd = (autoSleepMgr.isCurrentTimeInBedtimeWindow() || autoSleepMgr.isDndActive()) && !(isMorning && isAlarmFired)
-            if (_isStandbySleeping.value && !isBedtimeOrDnd) {
+            // Foreground view takes absolute primacy: opening the app explicitly wakes standby sleep
+            if (_isStandbySleeping.value) {
                 wakeStandbySleep(isExplicitUserAction = true)
-            } else if (!_isStandbySleeping.value) {
+            } else {
+                val autoSleepMgr = AutoSleepManager.getInstance(context)
+                val isMorning = AutoSleepManager.isMorningTime(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
+                val isAlarmFired = autoSleepMgr.isAlarmFiredRecently()
                 if (isMorning && isAlarmFired) {
                     autoSleepMgr.onSleepWoken()
                 } else {
@@ -545,6 +549,9 @@ class AppStateManager private constructor(private val context: Context) {
 
     fun setAutoMediaActive(active: Boolean) {
         isAutoMediaActive = active
+        if (active && _isStandbySleeping.value) {
+            wakeStandbySleep(isExplicitUserAction = true)
+        }
         recalculateState()
     }
 
@@ -1047,8 +1054,8 @@ class AppStateManager private constructor(private val context: Context) {
         val newMode = when {
             tripActive -> AppLifecycleMode.TRIP_RECORDING
             carActive -> AppLifecycleMode.ANDROID_AUTO
-            _isStandbySleeping.value -> AppLifecycleMode.IDLE
             isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW
+            _isStandbySleeping.value -> AppLifecycleMode.IDLE
             liveActive -> AppLifecycleMode.LIVE_ONLY
             else -> AppLifecycleMode.IDLE
         }

@@ -79,8 +79,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 118** | Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27) | 12 | 12 | 0 | 0 |
 | **Round 119** | Trip Details End Tile Leg Line Elimination, Screen-Adaptive Avatar Spiderfy & Outer Altitude Collision Clearance (2026-10-27) | 3 | 3 | 0 | 0 |
 | **Round 130** | Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10) | 8 | 8 | 0 | 0 |
+| **Round 53** | Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync (v2.1.2) | 5 | 5 | 0 | 0 |
+| **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **361** | **353** | **0** | **8** |
+| **Total** | | **372** | **364** | **0** | **8** |
 
 
 ---
@@ -1728,6 +1730,29 @@ Evidence & Diagnostics:
 | **KIN-305-03** | Speed-scaled position process noise for driving profiles. | `KinematicEkf.kt` | Implemented | Replay on `track_1793884059540_trip305.jsonl` shows `offRaw p50` improved from 0.8m to 0.6m. |
 | **REN-305-04** | Eliminate straight-road live polyline zigzag behind cursor. | `RenderPipeline.kt`, `OsmMapView.kt` | Implemented | Vehicle pencil trail records unperturbed CTRA coordinates (`rawLat`, `rawLng`); `reshape p50` improved to 0.35m. |
 | **VER-305** | Bump to versionCode 183 / 2.1.2. | `app/build.gradle.kts` | Implemented | All 617 unit tests pass; `assembleDebug` clean. |
+
+---
+
+## Round 54 - Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant
+
+Evidence & Diagnostics:
+- Trip 306 Morning Diagnostics: Device started driving at 06:31:01. Standby Sleep was active with DND scheduled until 07:00:00 and upcoming alarm at 07:30:00.
+- Upcoming Morning Alarm Trap: `AutoSleepManager.shouldAutoWake` returned `false` whenever `hasUpcomingMorningAlarm && isMorning` was true, even after bedtime schedule ended (06:30) and the user was actively using the device.
+- Standby Sleep Inverted Mode Precedence: In `AppStateManager.recalculateState()`, `_isStandbySleeping.value -> AppLifecycleMode.IDLE` evaluated before `isAppInForeground -> AppLifecycleMode.FOREGROUND_VIEW`, keeping GPS shut down (`LocationManager.stopLocationUpdates()`) on screen.
+- Foreground Resume DND Trap: `setAppForegroundState(true)` conditionally guarded `wakeStandbySleep` behind `!isBedtimeOrDnd`, refusing to wake sleep mode when DND was active.
+- Provider Resubscription & Watchdog: Added broadcast receiver for `android.location.LocationManager.PROVIDERS_CHANGED_ACTION` and 25s GPS stall watchdog in `LocationManager.kt`.
+- FusedLocationProviderClient Hang Guard: Added 500ms safety timeout runnable in `flushBatchedFixes` to prevent sequencer deadlock.
+- Active Trip Invariant: Verified and guaranteed that active trip recordings strictly block sleep mode (`hasActiveTrip -> return false`), `TRIP_RECORDING` mode has absolute first priority, and bedtime/DND transitions are evaluated only after a trip has ended.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **SLP-306-01** | Upcoming alarm must not hold sleep mode when screen is interactive outside bedtime window. | `AutoSleepManager.kt`, `AutoSleepManagerTest.kt` | Implemented | `shouldAutoWake` wakes when `!isTimeInWindow && !isScreenOff`; unit tests pass. |
+| **PWR-306-02** | Foreground view and Car/Android Auto connection take absolute primacy over Standby Sleep. | `AppStateManager.kt` | Implemented | `recalculateState` ranks `FOREGROUND_VIEW` and `ANDROID_AUTO` above `_isStandbySleeping`; `setAppForegroundState(true)` and `carReceiver` explicitly wake sleep. |
+| **GPS-306-03** | System location toggle recovery & 25s stall watchdog. | `LocationManager.kt` | Implemented | Registered `PROVIDERS_CHANGED_ACTION` receiver; added 25s continuous watchdog re-subscription. |
+| **FLX-306-04** | Atomic 500ms timeout on `flushBatchedFixes`. | `LocationManager.kt` | Implemented | Protects `BatchedRequestSequencer` from hung Play Services binder callbacks. |
+| **TRP-306-05** | Ongoing trip recording strictly protected against sleep window and DND. | `AutoSleepManager.kt`, `AppStateManager.kt` | Implemented | Active trips strictly block `enterStandbySleep`; sleep window evaluation occurs only upon trip completion. |
+| **VER-306** | Bump to versionCode 184 / 2.1.3. | `app/build.gradle.kts` | Implemented | Unit tests passed; built APK and verified on phone. |
+
 
 
 
