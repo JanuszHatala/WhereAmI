@@ -87,17 +87,53 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                         null
                     } else rawGmina
                 } else rawGmina
-                val resolvedCity = if (resolvedGmina?.contains("gm. Kozy", ignoreCase = true) == true || resolvedGmina?.contains("gmina Kozy", ignoreCase = true) == true) {
-                    if (rawCity.equals("Krzemionki", ignoreCase = true) || rawCity.equals("Małe Kozy", ignoreCase = true)) {
-                        "Kozy"
-                    } else rawCity
-                } else rawCity
+                val resolvedCity = when {
+                    (resolvedGmina?.contains("gm. Kozy", ignoreCase = true) == true || resolvedGmina?.contains("gmina Kozy", ignoreCase = true) == true) -> {
+                        if (rawCity.equals("Krzemionki", ignoreCase = true) || rawCity.equals("Małe Kozy", ignoreCase = true)) {
+                            "Kozy"
+                        } else rawCity
+                    }
+                    (resolvedGmina?.contains("Andrychów", ignoreCase = true) == true && rawCity.equals("Groń", ignoreCase = true)) -> {
+                        val st = (obj.optString("street") ?: "").lowercase(Locale.ROOT)
+                        when {
+                            st.contains("graniczn") || st.contains("kowalczyk") -> "Targanice"
+                            st.contains("leśna") || st.contains("lesna") -> "Roczyny"
+                            else -> "Brzezinka"
+                        }
+                    }
+                    else -> rawCity
+                }
                 val rawStreet = obj.optString("street").takeIf { it.isNotBlank() }
                 val rawRoadRef = obj.optString("roadRef").takeIf { it.isNotBlank() }
+                var cleanStreet = RoadNameNormalizer.sanitizeStreetForCountry(rawStreet, cc) ?: rawStreet
+                var cleanRoadRef = RoadNameNormalizer.sanitizeStreetForCountry(rawRoadRef, cc) ?: rawRoadRef
+
+                if (isPoland) {
+                    if (resolvedCity.equals("Roczyny", ignoreCase = true) || resolvedCity.equals("Czaniec", ignoreCase = true)) {
+                        if (cleanStreet?.contains("DW781", ignoreCase = true) == true || cleanStreet?.contains("DW 781", ignoreCase = true) == true || cleanRoadRef?.contains("781") == true) {
+                            cleanStreet = cleanStreet?.let { RoadNameNormalizer.stripParenHighwayRef(it) } ?: cleanStreet
+                            cleanRoadRef = null
+                        }
+                    } else if (resolvedCity.equals("Andrychów", ignoreCase = true)) {
+                        if (cleanStreet?.startsWith("Szewska", ignoreCase = true) == true) {
+                            cleanStreet = "Szewska"
+                            cleanRoadRef = null
+                        } else if (cleanStreet?.startsWith("Krakowska", ignoreCase = true) == true && cleanStreet?.contains("DW781", ignoreCase = true) == true) {
+                            cleanStreet = "Krakowska (DK52)"
+                            cleanRoadRef = "DK52"
+                        }
+                    } else if (resolvedCity.equals("Sucha Beskidzka", ignoreCase = true)) {
+                        if (cleanStreet?.startsWith("Wadowicka", ignoreCase = true) == true && cleanStreet?.contains("DW946", ignoreCase = true) == true) {
+                            cleanStreet = "Wadowicka (DK28)"
+                            cleanRoadRef = "DK28"
+                        }
+                    }
+                }
+
                 PlaceInfo(
                     city = resolvedCity,
-                    street = RoadNameNormalizer.sanitizeStreetForCountry(rawStreet, cc) ?: rawStreet,
-                    roadRef = RoadNameNormalizer.sanitizeStreetForCountry(rawRoadRef, cc) ?: rawRoadRef,
+                    street = cleanStreet,
+                    roadRef = cleanRoadRef,
                     gmina = resolvedGmina,
                     powiat = obj.optString("powiat").takeIf { it.isNotBlank() },
                     voivodeship = resolvedVoivodeship,
@@ -157,6 +193,8 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizeCorruptedPolishMunicipalities(db)
         sanitizePoisonedSideStreets(db)
         sanitizeCorruptedRoczynyDw781(db)
+        sanitizeGronInGminaAndrychow(db)
+        sanitizeAllSuspiciousHighwayAssignments(db)
     }
 
     private fun ensureHighwayTypeColumn(db: SQLiteDatabase) {
@@ -190,8 +228,12 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 """
                 SELECT $COL_GRID_KEY, $COL_STREET, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
                 FROM $TABLE_CACHE
-                WHERE ($COL_CITY = 'Roczyny' OR $COL_CITY = 'Czaniec')
-                  AND ($COL_STREET LIKE '%(DW781)%' OR $COL_STREET LIKE '%(DW 781)%' OR $COL_ROAD_REF LIKE '%781%')
+                WHERE ($COL_CITY = 'Roczyny' OR $COL_CITY = 'Czaniec'
+                       OR $COL_PL_JSON LIKE '%"city":"Roczyny"%' OR $COL_PL_JSON LIKE '%"city":"Czaniec"%')
+                  AND ($COL_STREET LIKE '%DW781%' OR $COL_STREET LIKE '%DW 781%'
+                       OR $COL_ROAD_REF LIKE '%781%'
+                       OR $COL_PL_JSON LIKE '%DW781%' OR $COL_PL_JSON LIKE '%DW 781%'
+                       OR $COL_EN_JSON LIKE '%DW781%' OR $COL_EN_JSON LIKE '%DW 781%')
                 """.trimIndent(),
                 null
             )
@@ -199,18 +241,21 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             cursor.use {
                 while (it.moveToNext()) {
                     val key = it.getString(0)
-                    val rawStreet = it.getString(1)
-                    val cleanStreet = RoadNameNormalizer.stripParenHighwayRef(rawStreet)?.trim() ?: rawStreet
                     val en = deserializePlaceInfo(it.getString(2))
                     val pl = deserializePlaceInfo(it.getString(3))
                     val native = deserializePlaceInfo(it.getString(4))
+                    val rawStreet = pl?.street ?: it.getString(1) ?: ""
+                    val cleanStreet = RoadNameNormalizer.stripParenHighwayRef(rawStreet)?.trim() ?: rawStreet
+                    val enClean = en?.street?.let { s -> RoadNameNormalizer.stripParenHighwayRef(s)?.trim() ?: s } ?: cleanStreet
+                    val plClean = pl?.street?.let { s -> RoadNameNormalizer.stripParenHighwayRef(s)?.trim() ?: s } ?: cleanStreet
+                    val natClean = native?.street?.let { s -> RoadNameNormalizer.stripParenHighwayRef(s)?.trim() ?: s } ?: cleanStreet
                     updates.add(ContentValues().apply {
                         put(COL_GRID_KEY, key)
-                        put(COL_STREET, cleanStreet)
-                        put(COL_ROAD_REF, null as String?)
-                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = cleanStreet, roadRef = null)))
-                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = cleanStreet, roadRef = null)))
-                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = cleanStreet, roadRef = null)))
+                        put(COL_STREET, plClean)
+                        putNull(COL_ROAD_REF)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = enClean, roadRef = null)))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = plClean, roadRef = null)))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = natClean, roadRef = null)))
                     })
                 }
             }
@@ -361,12 +406,14 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         try {
             val cursor = db.rawQuery(
                 """
-                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON, $COL_HIGHWAY_TYPE
                 FROM $TABLE_CACHE
                 WHERE $COL_STREET LIKE '%(DK%' OR $COL_STREET LIKE '%(DW%'
                    OR $COL_STREET LIKE '%(A%' OR $COL_STREET LIKE '%(S%'
                    OR $COL_ROAD_REF LIKE 'DK%' OR $COL_ROAD_REF LIKE 'DW%'
                    OR $COL_ROAD_REF LIKE 'A%' OR $COL_ROAD_REF LIKE 'S%'
+                   OR $COL_PL_JSON LIKE '%(DK%' OR $COL_PL_JSON LIKE '%(DW%'
+                   OR $COL_PL_JSON LIKE '%(A%' OR $COL_PL_JSON LIKE '%(S%'
                 """.trimIndent(),
                 null
             )
@@ -376,10 +423,14 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val key = it.getString(0)
                     val street = it.getString(1) ?: continue
                     val roadRef = it.getString(2)
-                    val base = RoadNameNormalizer.stripParenHighwayRef(street) ?: street
+                    val base = RoadNameNormalizer.stripParenHighwayRef(street)?.trim() ?: street
                     val pl = deserializePlaceInfo(it.getString(4))
-                    val highwayType = pl?.highwayType
-                    if (RoadNameNormalizer.isMajorHighway(highwayType, roadRef) || RoadNameNormalizer.isMajorRoad(base, roadRef)) continue
+                    val highwayType = it.getString(6) ?: pl?.highwayType
+                    val isVerifiedMajor = highwayType != null && RoadNameNormalizer.isMajorHighwayType(highwayType)
+                    val isResidential = highwayType != null && RoadNameNormalizer.isResidentialHighwayType(highwayType)
+                    if (isVerifiedMajor && !isResidential) continue
+                    if (!isResidential && roadRef != null && RoadNameNormalizer.isMajorHighway(highwayType, roadRef) && RoadNameNormalizer.isMajorRoad(base, roadRef)) continue
+
                     val hasParen = street.contains('(')
                     val hasHighwayRef = !roadRef.isNullOrBlank() &&
                         RoadNameNormalizer.isHighwayCodeOnly(roadRef.trim())
@@ -387,7 +438,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val en = deserializePlaceInfo(it.getString(3))
                     val native = deserializePlaceInfo(it.getString(5))
                     fun PlaceInfo.cleaned(): PlaceInfo {
-                        val s = RoadNameNormalizer.stripParenHighwayRef(this.street) ?: this.street
+                        val s = RoadNameNormalizer.stripParenHighwayRef(this.street)?.trim() ?: this.street
                         return copy(street = s, roadRef = null)
                     }
                     updates.add(ContentValues().apply {
@@ -398,6 +449,229 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                         if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.cleaned()))
                         if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.cleaned()))
                     })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Purges or rewrites hamlet/settlement Groń in gmina Andrychów (teryt:rm = 04, osada wsi Brzezinka)
+     * to its official enclosing administrative village:
+     * - Targanice (ul. Graniczna, ul. Tadeusza Kowalczyka, or lng >= 19.3216)
+     * - Roczyny (ul. Leśna, or lat >= 49.8275 && lng < 19.305)
+     * - Brzezinka (ul. Podgórska, ul. Pogodna, ul. Legionistów, ul. Podhalańska, etc.)
+     */
+    fun sanitizeGronInGminaAndrychow(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_LAT, $COL_LNG, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_CITY = 'Groń'
+                   OR $COL_PL_JSON LIKE '%"city":"Groń"%'
+                   OR $COL_PL_JSON LIKE '%"Groń"%'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val street = it.getString(1) ?: ""
+                    val lat = it.getDouble(2)
+                    val lng = it.getDouble(3)
+                    val en = deserializePlaceInfo(it.getString(4))
+                    val pl = deserializePlaceInfo(it.getString(5))
+                    val native = deserializePlaceInfo(it.getString(6))
+
+                    val gmina = pl?.gmina ?: en?.gmina ?: native?.gmina
+                    if (gmina != null && !gmina.contains("Andrychów", ignoreCase = true)) {
+                        continue // Skip other Groń (e.g. Groń in gmina Bukowina Tatrzańska)
+                    }
+
+                    val stLow = street.lowercase(Locale.ROOT)
+                    val newCity = when {
+                        stLow.contains("graniczn") || stLow.contains("kowalczyk") || lng >= 19.3216 -> "Targanice"
+                        stLow.contains("leśna") || stLow.contains("lesna") || (lat >= 49.8275 && lng < 19.305) -> "Roczyny"
+                        else -> "Brzezinka"
+                    }
+
+                    updates.add(ContentValues().apply {
+                        put(COL_GRID_KEY, key)
+                        put(COL_CITY, newCity)
+                        if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(city = newCity)))
+                        if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(city = newCity)))
+                        if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(city = newCity)))
+                    })
+                }
+            }
+            if (updates.isEmpty()) return
+            db.beginTransaction()
+            try {
+                for (cv in updates) {
+                    val key = cv.getAsString(COL_GRID_KEY)
+                    cv.remove(COL_GRID_KEY)
+                    db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Comprehensive database scan and sanitization:
+     * 1. Resolves split-brain states where top-level SQLite columns differ from JSON payloads.
+     * 2. Purges false highway code attachments on side streets and misattributed roads across all recorded regions.
+     * 3. Strips stray house numbers from stored street names.
+     */
+    fun sanitizeAllSuspiciousHighwayAssignments(db: SQLiteDatabase = writableDatabase) {
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_CITY, $COL_STREET, $COL_ROAD_REF, $COL_HIGHWAY_TYPE, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_STREET LIKE '%(DK%' OR $COL_STREET LIKE '%(DW%'
+                   OR $COL_STREET LIKE '%(A%' OR $COL_STREET LIKE '%(S%'
+                   OR $COL_ROAD_REF LIKE 'DK%' OR $COL_ROAD_REF LIKE 'DW%'
+                   OR $COL_ROAD_REF LIKE 'A%' OR $COL_ROAD_REF LIKE 'S%'
+                   OR $COL_ROAD_REF LIKE '9%' OR $COL_ROAD_REF LIKE '5%' OR $COL_ROAD_REF LIKE '7%' OR $COL_ROAD_REF LIKE '2%'
+                   OR $COL_PL_JSON LIKE '%(DK%' OR $COL_PL_JSON LIKE '%(DW%'
+                   OR $COL_PL_JSON LIKE '%(A%' OR $COL_PL_JSON LIKE '%(S%'
+                   OR $COL_STREET GLOB '* [0-9]*'
+                """.trimIndent(),
+                null
+            )
+            val updates = mutableListOf<ContentValues>()
+            cursor.use {
+                while (it.moveToNext()) {
+                    val key = it.getString(0)
+                    val colCity = it.getString(1) ?: ""
+                    val colStreet = it.getString(2) ?: ""
+                    val colRef = it.getString(3)
+                    val hwyType = it.getString(4)
+                    val en = deserializePlaceInfo(it.getString(5))
+                    val pl = deserializePlaceInfo(it.getString(6))
+                    val native = deserializePlaceInfo(it.getString(7))
+
+                    val city = pl?.city ?: colCity
+                    var st = pl?.street ?: colStreet
+                    var ref = pl?.roadRef ?: colRef
+
+                    var modified = false
+
+                    // Clean known false highway pairs
+                    when {
+                        city.equals("Roczyny", ignoreCase = true) || city.equals("Czaniec", ignoreCase = true) -> {
+                            if (st.contains("DW781", ignoreCase = true) || st.contains("DW 781", ignoreCase = true) || ref?.contains("781") == true) {
+                                st = RoadNameNormalizer.stripParenHighwayRef(st)?.trim() ?: st
+                                ref = null
+                                modified = true
+                            }
+                        }
+                        city.equals("Andrychów", ignoreCase = true) -> {
+                            if (st.startsWith("Szewska", ignoreCase = true)) {
+                                st = "Szewska"
+                                ref = null
+                                modified = true
+                            } else if (st.startsWith("Krakowska", ignoreCase = true) && (st.contains("DW781", ignoreCase = true) || ref?.contains("781") == true)) {
+                                st = "Krakowska (DK52)"
+                                ref = "DK52"
+                                modified = true
+                            }
+                        }
+                        city.equals("Sucha Beskidzka", ignoreCase = true) -> {
+                            if (st.startsWith("Wadowicka", ignoreCase = true) && (st.contains("DW946", ignoreCase = true) || ref?.contains("946") == true)) {
+                                st = "Wadowicka (DK28)"
+                                ref = "DK28"
+                                modified = true
+                            }
+                        }
+                        city.equals("Łękawica", ignoreCase = true) -> {
+                            if (st.contains("Alaska", ignoreCase = true) || st.startsWith("Beskidzka", ignoreCase = true)) {
+                                st = RoadNameNormalizer.stripParenHighwayRef(st)?.trim() ?: st
+                                ref = null
+                                modified = true
+                            }
+                        }
+                        city.equals("Las", ignoreCase = true) && st.startsWith("Soliska", ignoreCase = true) -> {
+                            st = "Soliska"
+                            ref = null
+                            modified = true
+                        }
+                        city.equals("Gilowice", ignoreCase = true) && st.startsWith("Starodworska", ignoreCase = true) -> {
+                            st = "Starodworska"
+                            ref = null
+                            modified = true
+                        }
+                        city.equals("Okrajnik", ignoreCase = true) && st.startsWith("Strażacka", ignoreCase = true) -> {
+                            st = "Strażacka"
+                            ref = null
+                            modified = true
+                        }
+                        city.equals("Czernichów", ignoreCase = true) && st.startsWith("Stolarska", ignoreCase = true) -> {
+                            st = "Stolarska"
+                            ref = null
+                            modified = true
+                        }
+                        city.equals("Międzybrodzie Bialskie", ignoreCase = true) && st.startsWith("Strażacka", ignoreCase = true) -> {
+                            st = "Strażacka"
+                            ref = null
+                            modified = true
+                        }
+                        city.equals("Jabłonka", ignoreCase = true) && st.startsWith("Krakowska", ignoreCase = true) && (st.contains("DW957", ignoreCase = true) || ref?.contains("957") == true) -> {
+                            st = "Krakowska (DK7)"
+                            ref = "DK7"
+                            modified = true
+                        }
+                    }
+
+                    // Check residential / non-major highway with attached highway code
+                    if (!modified && (ref != null || st.contains('('))) {
+                        val base = RoadNameNormalizer.stripParenHighwayRef(st)?.trim() ?: st
+                        val isResidential = hwyType != null && RoadNameNormalizer.isResidentialHighwayType(hwyType)
+                        if (isResidential) {
+                            st = base
+                            ref = null
+                            modified = true
+                        }
+                    }
+
+                    // Strip house numbers from stored street
+                    val cleanBase = RoadNameNormalizer.extractBaseStreet(st).trim()
+                    if (cleanBase.isNotEmpty() && cleanBase != st && !cleanBase.contains('(')) {
+                        st = cleanBase
+                        modified = true
+                    }
+
+                    // Split-brain check
+                    val isSplitBrain = (colStreet != st) || (colRef != ref)
+                    if (modified || isSplitBrain) {
+                        val newEn = en?.copy(street = st, roadRef = ref)
+                        val newPl = pl?.copy(street = st, roadRef = ref)
+                        val newNat = native?.copy(street = st, roadRef = ref)
+                        updates.add(ContentValues().apply {
+                            put(COL_GRID_KEY, key)
+                            put(COL_STREET, st)
+                            if (ref != null) put(COL_ROAD_REF, ref) else putNull(COL_ROAD_REF)
+                            if (newEn != null) put(COL_EN_JSON, serializePlaceInfo(newEn))
+                            if (newPl != null) put(COL_PL_JSON, serializePlaceInfo(newPl))
+                            if (newNat != null) put(COL_NATIVE_JSON, serializePlaceInfo(newNat))
+                        })
+                    }
                 }
             }
             if (updates.isEmpty()) return

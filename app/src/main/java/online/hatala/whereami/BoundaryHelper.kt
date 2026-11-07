@@ -234,6 +234,15 @@ object BoundaryHelper {
                     throttle()
                     fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = containGate)
                 }
+                if (fetched == null && !fallbackMunicipality.isNullOrBlank()) {
+                    val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
+                        .replace("gmina ", "", ignoreCase = true)
+                        .replace("gm. ", "", ignoreCase = true).trim()
+                    if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
+                        throttle()
+                        fetched = fetchFromNetwork("$cleanCity, $cleanMun", countryCode, mustContain = containGate)
+                    }
+                }
                 if (fetched != null && fetched.isNotEmpty()) {
                     fetchedFromNamedCity = true
                     if (!pinMode) {
@@ -298,6 +307,10 @@ object BoundaryHelper {
                 if (pinMode || cleanCity == null || fetchedFromNamedCity) {
                     memoryCache[cleanKey] = simplified
                     saveToDiskCache(context, cleanKey, simplified)
+                } else if (!pinMode && cleanCity != null && System.currentTimeMillis() >= coolDownUntil && !File(getCacheDir(context), "$cleanKey.json").exists()) {
+                    // Authoritative non-429 response had no polygon for the named locality itself (only fallback).
+                    // Cache empty array sentinel so hasBoundary() becomes true and we don't query repeatedly.
+                    saveToDiskCache(context, cleanKey, emptyList())
                 }
                 return@withContext simplified
             } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode && cleanCity != null && !File(getCacheDir(context), "$cleanKey.json").exists()) {
