@@ -459,6 +459,63 @@ fun CacheManagerDialog(
                                 )
                             )
                         }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // Max Cache Storage Budget
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Max Storage Limit",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 15.sp
+                                )
+                            )
+                            Text(
+                                text = "Entries older than 1 year are evicted via LRU only when cache exceeds this limit",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(top = 2.dp),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 13.5.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(500 to "500 MB", 1024 to "1 GB", 2048 to "2 GB", 5120 to "5 GB").forEach { (sizeMb, label) ->
+                                    val isSelected = maxCacheSizeMb == sizeMb
+                                    Surface(
+                                        onClick = {
+                                            maxCacheSizeMb = sizeMb
+                                            cacheManager.maxCacheSizeMb = sizeMb
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 13.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -688,62 +745,7 @@ fun CacheManagerDialog(
                             )
                         }
 
-                        HorizontalDivider(color = Color(0xFF1E293B))
 
-                        // Max Cache Storage Budget
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "Max Storage Limit",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeight = 15.sp
-                                )
-                            )
-                            Text(
-                                text = "Entries older than 1 year are evicted via LRU only when cache exceeds this limit",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(top = 2.dp),
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeight = 13.5.sp
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(500 to "500 MB", 1024 to "1 GB", 2048 to "2 GB", 5120 to "5 GB").forEach { (sizeMb, label) ->
-                                    val isSelected = maxCacheSizeMb == sizeMb
-                                    Surface(
-                                        onClick = {
-                                            maxCacheSizeMb = sizeMb
-                                            cacheManager.maxCacheSizeMb = sizeMb
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 6.dp),
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 13.sp
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 

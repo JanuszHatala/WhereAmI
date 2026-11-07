@@ -343,6 +343,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedOutdoorAreaKind = MutableStateFlow<OutdoorAreaKind?>(null)
     val selectedOutdoorAreaKind: StateFlow<OutdoorAreaKind?> = _selectedOutdoorAreaKind.asStateFlow()
 
+    private val _selectedOutdoorAreaName = MutableStateFlow<String?>(null)
+    val selectedOutdoorAreaName: StateFlow<String?> = _selectedOutdoorAreaName.asStateFlow()
+
+    private val _liveOutdoorAreaBoundary = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
+    val liveOutdoorAreaBoundary: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _liveOutdoorAreaBoundary.asStateFlow()
+
+    private val _liveOutdoorAreaKind = MutableStateFlow<OutdoorAreaKind?>(null)
+    val liveOutdoorAreaKind: StateFlow<OutdoorAreaKind?> = _liveOutdoorAreaKind.asStateFlow()
+
+    private val _liveOutdoorAreaName = MutableStateFlow<String?>(null)
+    val liveOutdoorAreaName: StateFlow<String?> = _liveOutdoorAreaName.asStateFlow()
+
+    private var lastOutdoorAreaId: String? = null
+
     private val _searchRoutePolylines = MutableStateFlow<List<List<org.osmdroid.util.GeoPoint>>?>(null)
     val searchRoutePolylines: StateFlow<List<List<org.osmdroid.util.GeoPoint>>?> = _searchRoutePolylines.asStateFlow()
 
@@ -666,19 +680,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "nature_reserve" -> OutdoorAreaKind.NATURE_RESERVE
                             else -> null
                         }
+                        _selectedOutdoorAreaName.value = item.title
                         _searchRoutePolylines.value = null
                     } else if (geom.polylines != null && geom.polylines.isNotEmpty()) {
                         _searchRoutePolylines.value = geom.polylines
                         _selectedOutdoorAreaBoundary.value = null
                         _selectedOutdoorAreaKind.value = null
+                        _selectedOutdoorAreaName.value = null
                     } else {
                         _selectedOutdoorAreaBoundary.value = null
                         _selectedOutdoorAreaKind.value = null
+                        _selectedOutdoorAreaName.value = null
                         _searchRoutePolylines.value = null
                     }
                 } else {
                     _selectedOutdoorAreaBoundary.value = null
                     _selectedOutdoorAreaKind.value = null
+                    _selectedOutdoorAreaName.value = null
                     _searchRoutePolylines.value = null
                 }
             }
@@ -691,6 +709,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.Main) {
                 _selectedOutdoorAreaBoundary.value = boundary
                 _selectedOutdoorAreaKind.value = area.kind
+                _selectedOutdoorAreaName.value = area.name
                 _destinationPoint.value = org.osmdroid.util.GeoPoint(area.centerLat, area.centerLon)
             }
         }
@@ -699,6 +718,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearOutdoorAreaBoundary() {
         _selectedOutdoorAreaBoundary.value = null
         _selectedOutdoorAreaKind.value = null
+        _selectedOutdoorAreaName.value = null
         _searchRoutePolylines.value = null
     }
 
@@ -1002,6 +1022,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun updateLiveOutdoorBoundary(outdoor: OutdoorContext?) {
+        val area = outdoor?.parkOrReserve ?: outdoor?.primaryRange
+        if (area == null) {
+            lastOutdoorAreaId = null
+            _liveOutdoorAreaBoundary.value = null
+            _liveOutdoorAreaKind.value = null
+            _liveOutdoorAreaName.value = null
+            return
+        }
+        if (area.id == lastOutdoorAreaId && _liveOutdoorAreaBoundary.value != null) {
+            return
+        }
+        lastOutdoorAreaId = area.id
+        _liveOutdoorAreaKind.value = area.kind
+        _liveOutdoorAreaName.value = area.name
+
+        viewModelScope.launch(Dispatchers.IO) {
+            OfflineOutdoorRegionIndex.initIfNeeded(getApplication())
+            val polyObj = OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.id)
+                ?: OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.name)
+            val points = polyObj?.polygon ?: BoundaryHelper.getOutdoorAreaBoundary(getApplication(), area)
+            withContext(Dispatchers.Main) {
+                if (lastOutdoorAreaId == area.id) {
+                    _liveOutdoorAreaBoundary.value = points
+                }
+            }
+        }
+    }
+
     fun setPowerPolicy(policy: BatteryPowerPolicy) {
         appStateManager.setPowerPolicy(policy)
     }
@@ -1043,6 +1092,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (cur != null) {
                     updatePositionAltitude(cur.first, cur.second, data.altitude, speedKmh)
                 }
+
+                updateLiveOutdoorBoundary(data.outdoorContext)
 
                 if (_showBorders.value) {
                     val newCity = data.primaryPlace?.city

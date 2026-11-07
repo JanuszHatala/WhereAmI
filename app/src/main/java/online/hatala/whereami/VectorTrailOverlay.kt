@@ -69,6 +69,8 @@ class VectorTrailOverlay(
             return
         }
 
+        if (fetchJob?.isActive == true) return
+
         // Expand query bbox by 25% to avoid fetching on small pans
         val latSpan = bbox.latNorth - bbox.latSouth
         val lonSpan = bbox.lonEast - bbox.lonWest
@@ -80,7 +82,6 @@ class VectorTrailOverlay(
         )
 
         lastQueriedBbox = expanded
-        fetchJob?.cancel()
         fetchJob = scope.launch(Dispatchers.IO) {
             val trails = TrailVectorRepository.getTrailsForBoundingBox(context, expanded)
             currentTrails.clear()

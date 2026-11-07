@@ -38,6 +38,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -286,6 +287,10 @@ fun LocationScreen(viewModel: MainViewModel) {
     val pinnedBoundaryPoints by viewModel.pinnedBoundaryPoints.collectAsState()
     val selectedOutdoorAreaBoundary by viewModel.selectedOutdoorAreaBoundary.collectAsState()
     val selectedOutdoorAreaKind by viewModel.selectedOutdoorAreaKind.collectAsState()
+    val selectedOutdoorAreaName by viewModel.selectedOutdoorAreaName.collectAsState()
+    val liveOutdoorAreaBoundary by viewModel.liveOutdoorAreaBoundary.collectAsState()
+    val liveOutdoorAreaKind by viewModel.liveOutdoorAreaKind.collectAsState()
+    val liveOutdoorAreaName by viewModel.liveOutdoorAreaName.collectAsState()
     val searchRoutePolylines by viewModel.searchRoutePolylines.collectAsState()
     val searchCategory by viewModel.searchCategory.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
@@ -772,8 +777,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             },
             showMapSettingsExternal = showMapSettingsDialog,
             onDismissMapSettings = { showMapSettingsDialog = false },
-            outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary,
-            outdoorAreaKind = selectedOutdoorAreaKind,
+            outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary ?: liveOutdoorAreaBoundary,
+            outdoorAreaKind = selectedOutdoorAreaKind ?: liveOutdoorAreaKind,
+            outdoorAreaName = selectedOutdoorAreaName ?: liveOutdoorAreaName,
             searchRoutePolylines = searchRoutePolylines,
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
@@ -2273,30 +2279,56 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 )
                             }
                         } else {
-                            // Portrait: search field, then compact dropdowns row below
-                            OutlinedTextField(
+                            // Portrait: compact search field (38dp), then compact dropdowns row below
+                            BasicTextField(
                                 value = tripSearchQuery,
                                 onValueChange = { tripSearchQuery = it },
-                                placeholder = { Text("Filter trips by name or locality...", color = Color.Gray, fontSize = 13.sp) },
                                 singleLine = true,
-                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.Gray, modifier = Modifier.size(18.dp)) },
-                                trailingIcon = {
-                                    if (tripSearchQuery.isNotEmpty()) {
-                                        IconButton(onClick = { tripSearchQuery = "" }, modifier = Modifier.size(24.dp)) {
-                                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.Gray, modifier = Modifier.size(16.dp))
+                                textStyle = TextStyle(
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 14.sp
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp),
+                                decorationBox = { innerTextField ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Search,
+                                            contentDescription = "Search",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            if (tripSearchQuery.isEmpty()) {
+                                                Text(
+                                                    "Filter trips by name or locality...",
+                                                    color = Color.Gray,
+                                                    fontSize = 12.sp,
+                                                    style = TextStyle(
+                                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                        lineHeight = 14.sp
+                                                    )
+                                                )
+                                            }
+                                            innerTextField()
+                                        }
+                                        if (tripSearchQuery.isNotEmpty()) {
+                                            IconButton(onClick = { tripSearchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.Gray, modifier = Modifier.size(14.dp))
+                                            }
                                         }
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedBorderColor = Color(0xFF38BDF8),
-                                    unfocusedBorderColor = Color(0xFF334155),
-                                    focusedContainerColor = Color(0xFF1E293B),
-                                    unfocusedContainerColor = Color(0xFF1E293B)
-                                ),
-                                shape = RoundedCornerShape(10.dp)
+                                }
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             TripFilterDropdowns(
@@ -2888,14 +2920,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                             Row(
                                                                                 modifier = Modifier
                                                                                     .fillMaxWidth()
-                                                                                    .padding(vertical = 2.dp)
+                                                                                    .padding(vertical = 1.dp)
                                                                                     .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
-                                                                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                                                    .padding(horizontal = 8.dp, vertical = 3.dp),
                                                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                                                 verticalAlignment = Alignment.CenterVertically
                                                                             ) {
                                                                                 Column(
-                                                                                    modifier = Modifier.weight(1f).padding(end = 6.dp)
+                                                                                    modifier = Modifier.weight(1f).padding(end = 6.dp),
+                                                                                    verticalArrangement = Arrangement.spacedBy(1.dp)
                                                                                 ) {
                                                                                     Row(
                                                                                         verticalAlignment = Alignment.CenterVertically,
@@ -2905,36 +2938,64 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                                             text = "#${pauseIdx + 1} at $pauseTimeStr",
                                                                                             fontSize = 11.sp,
                                                                                             fontWeight = FontWeight.SemiBold,
-                                                                                            color = Color(0xFFE2E8F0)
+                                                                                            color = Color(0xFFE2E8F0),
+                                                                                            style = TextStyle(
+                                                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                                lineHeight = 12.sp
+                                                                                            )
                                                                                         )
                                                                                         Text(
                                                                                             text = "($durMin min rest)",
                                                                                             fontSize = 11.sp,
-                                                                                            color = Color(0xFFFBBF24)
+                                                                                            color = Color(0xFFFBBF24),
+                                                                                            style = TextStyle(
+                                                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                                lineHeight = 12.sp
+                                                                                            )
                                                                                         )
                                                                                     }
                                                                                     Text(
                                                                                         text = String.format(Locale.getDefault(), "at %.2f km", pauseDistKm),
                                                                                         fontSize = 10.sp,
-                                                                                        color = Color(0xFF38BDF8)
+                                                                                        color = Color(0xFF38BDF8),
+                                                                                        style = TextStyle(
+                                                                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                            lineHeight = 11.sp
+                                                                                        )
                                                                                     )
                                                                                 }
-                                                                                TextButton(
-                                                                                    onClick = {
-                                                                                        viewModel.splitTripAtPause(trip.id, pauseIdx)
-                                                                                        android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
-                                                                                    },
-                                                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                                                                    modifier = Modifier.height(26.dp)
-                                                                                ) {
-                                                                                    Icon(
-                                                                                        imageVector = Icons.Default.ContentCut,
-                                                                                        contentDescription = "Split",
-                                                                                        tint = Color(0xFF38BDF8),
-                                                                                        modifier = Modifier.size(12.dp)
-                                                                                    )
-                                                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                                                    Text("Split Here", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                                                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                                                                    Button(
+                                                                                        onClick = {
+                                                                                            viewModel.splitTripAtPause(trip.id, pauseIdx)
+                                                                                            android.widget.Toast.makeText(context, "Split trip at pause #${pauseIdx + 1}", android.widget.Toast.LENGTH_SHORT).show()
+                                                                                        },
+                                                                                        colors = ButtonDefaults.buttonColors(
+                                                                                            containerColor = Color(0xFF0284C7),
+                                                                                            contentColor = Color.White
+                                                                                        ),
+                                                                                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp),
+                                                                                        shape = RoundedCornerShape(6.dp),
+                                                                                        modifier = Modifier.height(24.dp)
+                                                                                    ) {
+                                                                                        Icon(
+                                                                                            imageVector = Icons.Default.ContentCut,
+                                                                                            contentDescription = "Split",
+                                                                                            tint = Color.White,
+                                                                                            modifier = Modifier.size(11.dp)
+                                                                                        )
+                                                                                        Spacer(modifier = Modifier.width(3.dp))
+                                                                                        Text(
+                                                                                            text = "Split Here",
+                                                                                            fontSize = 10.sp,
+                                                                                            fontWeight = FontWeight.Bold,
+                                                                                            color = Color.White,
+                                                                                            style = TextStyle(
+                                                                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                                                lineHeight = 10.sp
+                                                                                            )
+                                                                                        )
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -9892,6 +9953,7 @@ fun computeRealisticVisitCounts(trips: List<TripRecord>): List<Pair<String, Int>
     return visitCounts.toList().sortedByDescending { it.second }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OutdoorContextRow(
     outdoor: OutdoorContext,
@@ -9901,12 +9963,10 @@ private fun OutdoorContextRow(
 ) {
     if (!outdoor.hasAnyOutdoor) return
 
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = if (isCompact) Arrangement.Start else Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = if (isCompact) Arrangement.spacedBy(4.dp) else Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         // 1. Mountain Range Pill
         outdoor.primaryRange?.let { range ->
@@ -9915,7 +9975,7 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x28F59E0B),
                 border = BorderStroke(1.dp, Color(0x66F59E0B)),
-                modifier = Modifier.height(20.dp)
+                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -9930,6 +9990,8 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFBBF24),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -9942,7 +10004,6 @@ private fun OutdoorContextRow(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(6.dp))
         }
 
         // 2. Protected Area / Park Pill
@@ -9952,7 +10013,7 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x2810B981),
                 border = BorderStroke(1.dp, Color(0x6610B981)),
-                modifier = Modifier.height(20.dp)
+                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -9968,6 +10029,8 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF34D399),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -9980,7 +10043,6 @@ private fun OutdoorContextRow(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(6.dp))
         }
 
         // 3. Active Trail Pill
@@ -9997,7 +10059,7 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x280284C7),
                 border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.5f)),
-                modifier = Modifier.height(20.dp)
+                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -10012,6 +10074,8 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = trailBadgeColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -10024,7 +10088,6 @@ private fun OutdoorContextRow(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(6.dp))
         }
 
         // 4. Nearest Peak or Pass or Hut or Water Body
@@ -10034,7 +10097,7 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x28475569),
                 border = BorderStroke(1.dp, Color(0x6694A3B8)),
-                modifier = Modifier.height(20.dp)
+                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -10063,6 +10126,8 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFFE2E8F0),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -12877,17 +12942,44 @@ fun TripDetailDialog(
 
                             AnimatedVisibility(visible = elevationExpanded) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val isRunningThisTrip = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips == 1
+                                    val pointsWithoutAlt = remember(trip.points) {
+                                        trip.points.count { it.altitude == 0.0 || it.altitude.isNaN() }
+                                    }
+                                    val nonDemPoints by produceState(0, trip.id, trip.points, isRunningThisTrip) {
+                                        value = countNonDemAltitudePoints(trip.id)
+                                    }
+
                                     if (!hasAltitude) {
-                                        Text(
-                                            text = "No altitude data recorded for this trip. Use 'Correct Altitude' to fetch DEM altitudes from Open-Elevation.",
-                                            fontSize = 12.sp,
-                                            color = Color(0xFF64748B)
-                                        )
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(
+                                                text = "No altitude data recorded for this trip. Use 'Correct Altitude' to fetch DEM altitudes from Open-Elevation.",
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF64748B)
+                                            )
+                                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                                Button(
+                                                    onClick = { showCorrectionDialog = true },
+                                                    enabled = !isRunningThisTrip,
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF0284C7),
+                                                        contentColor = Color.White
+                                                    ),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    modifier = Modifier.height(28.dp),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Correct Altitude (Open-Elevation)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                }
+                                            }
+                                        }
                                     } else {
                                         if (elevationStats != null) {
                                             Column(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
@@ -12903,18 +12995,6 @@ fun TripDetailDialog(
                                                         color = Color(0xFFF87171),
                                                         modifier = Modifier.weight(1f)
                                                     )
-                                                }
-                                                val minA = elevationStats.minAltitudeM?.toInt() ?: 0
-                                                val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    ElevationStatChip(
-                                                        label = "⛰️ Alt: $minA–$maxA m",
-                                                        color = Color(0xFFFBBF24),
-                                                        modifier = Modifier.weight(1f)
-                                                    )
                                                     if (elevationStats.peakVerticalSpeedMpm > 0.1) {
                                                         ElevationStatChip(
                                                             label = String.format(Locale.getDefault(), "▲ %.1f m/min", elevationStats.peakVerticalSpeedMpm),
@@ -12922,6 +13002,73 @@ fun TripDetailDialog(
                                                             modifier = Modifier.weight(1f)
                                                         )
                                                     }
+                                                }
+                                                val minA = elevationStats.minAltitudeM?.toInt() ?: 0
+                                                val maxA = elevationStats.maxAltitudeM?.toInt() ?: 0
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    ElevationStatChip(
+                                                        label = "⛰️ Alt: $minA–$maxA m",
+                                                        color = Color(0xFFFBBF24),
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                                        Button(
+                                                            onClick = { showCorrectionDialog = true },
+                                                            enabled = !isRunningThisTrip,
+                                                            modifier = Modifier.weight(1f).height(24.dp),
+                                                            colors = ButtonDefaults.buttonColors(
+                                                                containerColor = Color(0xFF0284C7),
+                                                                contentColor = Color.White
+                                                            ),
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.CloudDownload,
+                                                                contentDescription = null,
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                text = if (isRunningThisTrip) {
+                                                                    "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints}"
+                                                                } else {
+                                                                    "Correct Altitude"
+                                                                },
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White,
+                                                                maxLines = 1,
+                                                                softWrap = false,
+                                                                style = TextStyle(
+                                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                                    lineHeight = 11.sp
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                if (!isRunningThisTrip && trip.points.isNotEmpty()) {
+                                                    Text(
+                                                        text = when {
+                                                            pointsWithoutAlt > 0 -> "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
+                                                            nonDemPoints > 0 -> "$nonDemPoints of ${trip.points.size} points use GPS altitude"
+                                                            else -> "✓ All ${trip.points.size} points have DEM altitude"
+                                                        },
+                                                        color = if (pointsWithoutAlt > 0 || nonDemPoints > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Normal,
+                                                        modifier = Modifier.padding(start = 2.dp, top = 1.dp, bottom = 2.dp),
+                                                        style = TextStyle(
+                                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                            lineHeight = 11.sp
+                                                        )
+                                                    )
                                                 }
                                             }
                                         }
@@ -12932,66 +13079,6 @@ fun TripDetailDialog(
                                                 .fillMaxWidth()
                                                 .height(150.dp)
                                         )
-                                    }
-
-                                    val isRunningThisTrip = elevationCorrectionProgress.isRunning && elevationCorrectionProgress.totalTrips == 1
-                                    val pointsWithoutAlt = remember(trip.points) {
-                                        trip.points.count { it.altitude == 0.0 || it.altitude.isNaN() }
-                                    }
-                                    // Points whose altitude is GPS (or missing) rather than DEM: "has altitude" alone
-                                    // hid GPS profiles.
-                                    val nonDemPoints by produceState(0, trip.id, trip.points, isRunningThisTrip) {
-                                        value = countNonDemAltitudePoints(trip.id)
-                                    }
-
-                                    Button(
-                                        onClick = { showCorrectionDialog = true },
-                                        enabled = !isRunningThisTrip,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFF1E293B),
-                                            contentColor = Color.White
-                                        ),
-                                        border = BorderStroke(1.dp, Color(0xFF0284C7)),
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CloudDownload,
-                                                contentDescription = null,
-                                                tint = Color(0xFF38BDF8),
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Column(horizontalAlignment = Alignment.Start) {
-                                                Text(
-                                                    text = if (isRunningThisTrip) {
-                                                        "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints} pts"
-                                                    } else {
-                                                        "Correct Altitude (Open-Elevation)"
-                                                    },
-                                                    color = Color.White,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                if (!isRunningThisTrip && trip.points.isNotEmpty()) {
-                                                    Text(
-                                                        text = when {
-                                                            pointsWithoutAlt > 0 -> "⚠️ $pointsWithoutAlt of ${trip.points.size} points missing altitude"
-                                                            nonDemPoints > 0 -> "$nonDemPoints of ${trip.points.size} points use GPS altitude"
-                                                            else -> "✓ All ${trip.points.size} points have DEM altitude"
-                                                        },
-                                                        color = if (pointsWithoutAlt > 0 || nonDemPoints > 0) Color(0xFFFBBF24) else Color(0xFF94A3B8),
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Normal
-                                                    )
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }

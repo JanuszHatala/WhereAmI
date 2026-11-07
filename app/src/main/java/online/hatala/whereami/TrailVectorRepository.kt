@@ -28,7 +28,7 @@ data class TrailVectorSegment(
 
 object TrailVectorRepository {
 
-    private const val USER_AGENT = "WhereAmIPersonalApp/2.2 (vector-trails)"
+    private const val USER_AGENT = "WhereAmI-Android/2.3 (https://github.com/jh/WhereAmI)"
     private const val TILE_SIZE_DEG = 0.08
     private val memoryCache = ConcurrentHashMap<String, List<TrailVectorSegment>>()
     private val fetchMutex = Mutex()
@@ -109,22 +109,24 @@ object TrailVectorRepository {
                 memoryCache[key]?.let { return it }
 
                 val ql = """
-                    [out:json][timeout:12];
+                    [out:json][timeout:15];
                     (
-                      relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e);
                       way["highway"~"^(path|footway|track|cycleway)$"]["osmc:symbol"]($s,$w,$n,$e);
+                      way["highway"~"^(path|footway|track|cycleway)$"]["sac_scale"]($s,$w,$n,$e);
                       way["highway"~"^(path|footway|track|cycleway)$"]["educational"="yes"]($s,$w,$n,$e);
+                      relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e);
+                      way(r)($s,$w,$n,$e);
                     );
-                    out body;
-                    >;
-                    out skel qt;
+                    out tags geom;
                 """.trimIndent().replace("\n", "")
 
                 val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
                 val conn = URL(urlStr).openConnection() as HttpURLConnection
                 conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.connectTimeout = 6000
-                conn.readTimeout = 10000
+                conn.setRequestProperty("Accept", "application/json")
+                conn.setRequestProperty("Accept-Charset", "utf-8")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 15000
 
                 if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().readText()
@@ -143,12 +145,27 @@ object TrailVectorRepository {
         }
     }
 
+    private fun extractPointsFromGeometry(geomArray: JSONArray?): List<GeoPoint> {
+        if (geomArray == null || geomArray.length() < 2) return emptyList()
+        val pts = ArrayList<GeoPoint>(geomArray.length())
+        for (i in 0 until geomArray.length()) {
+            val obj = geomArray.optJSONObject(i) ?: continue
+            val lat = obj.optDouble("lat", Double.NaN)
+            val lon = obj.optDouble("lon", Double.NaN)
+            if (!lat.isNaN() && !lon.isNaN()) {
+                pts.add(GeoPoint(lat, lon))
+            }
+        }
+        return pts
+    }
+
     fun parseOverpassTrails(jsonStr: String): List<TrailVectorSegment> {
         val root = JSONObject(jsonStr)
         val elements = root.optJSONArray("elements") ?: return emptyList()
 
         val nodesMap = mutableMapOf<Long, GeoPoint>()
         val waysMap = mutableMapOf<Long, List<Long>>()
+        val waysGeomMap = mutableMapOf<Long, List<GeoPoint>>()
         val standaloneWays = mutableListOf<JSONObject>()
         val relations = mutableListOf<JSONObject>()
 
@@ -166,6 +183,10 @@ object TrailVectorRepository {
                     }
                 }
                 "way" -> {
+                    val geomArray = el.optJSONArray("geometry")
+                    if (geomArray != null && geomArray.length() >= 2) {
+                        waysGeomMap[id] = extractPointsFromGeometry(geomArray)
+                    }
                     val nodeIds = el.optJSONArray("nodes")
                     if (nodeIds != null) {
                         val nList = mutableListOf<Long>()
@@ -209,8 +230,12 @@ object TrailVectorRepository {
                 val member = members.optJSONObject(m) ?: continue
                 if (member.optString("type") == "way") {
                     val wayId = member.optLong("ref")
-                    val nIds = waysMap[wayId] ?: continue
-                    val pts = nIds.mapNotNull { nodesMap[it] }
+                    val memberGeom = member.optJSONArray("geometry")
+                    val pts = if (memberGeom != null && memberGeom.length() >= 2) {
+                        extractPointsFromGeometry(memberGeom)
+                    } else {
+                        waysGeomMap[wayId] ?: waysMap[wayId]?.mapNotNull { nodesMap[it] } ?: emptyList()
+                    }
                     if (pts.size >= 2) {
                         segments.add(
                             TrailVectorSegment(
@@ -228,7 +253,7 @@ object TrailVectorRepository {
             }
         }
 
-        // 2. Process Standalone ways with osmc:symbol or educational
+        // 2. Process Standalone ways with osmc:symbol, educational, or sac_scale
         for (way in standaloneWays) {
             val wayId = way.optLong("id")
             val tags = way.optJSONObject("tags") ?: continue
@@ -237,10 +262,15 @@ object TrailVectorRepository {
             val colour = tags.optString("colour").ifEmpty { tags.optString("color") }
             val color = OutdoorContextResolver.parseTrailColor(osmc, colour)
             val isEdu = tags.optString("educational") == "yes" || tags.has("information")
-            if (color == TrailColor.NONE && !isEdu && !tags.has("route")) continue
+            val hasSac = tags.has("sac_scale")
+            if (color == TrailColor.NONE && !isEdu && !tags.has("route") && !hasSac) continue
 
-            val nIds = waysMap[wayId] ?: continue
-            val pts = nIds.mapNotNull { nodesMap[it] }
+            val geomArray = way.optJSONArray("geometry")
+            val pts = if (geomArray != null && geomArray.length() >= 2) {
+                extractPointsFromGeometry(geomArray)
+            } else {
+                waysGeomMap[wayId] ?: waysMap[wayId]?.mapNotNull { nodesMap[it] } ?: emptyList()
+            }
             if (pts.size >= 2) {
                 segments.add(
                     TrailVectorSegment(

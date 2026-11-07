@@ -100,6 +100,6 @@ data class OutdoorContext(
 
 enum class TrailThickness(val label: String, val widthMultiplier: Float) {
     NORMAL("Normal", 1.0f),
-    THICK("Thick", 1.5f),
-    EXTRA_THICK("Extra Thick", 2.0f)
+    THICK("Thick", 1.6f),
+    EXTRA_THICK("Extra Thick", 2.4f)
 }
