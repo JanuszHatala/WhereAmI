@@ -506,6 +506,8 @@ class LocationManager private constructor(private val context: Context) {
     fun stopLocationUpdates(preserveStationaryState: Boolean = false) {
         val wasBatched = isBatchedRequestActive()
         isGpsStopped = true
+        lastValidSpeedMs = 0f
+        lastValidRawSpeedTimestamp = 0L
         persistLastFix(force = true)
         try {
             StationaryDetector.getInstance(context).stopListening(preserveStationaryState)

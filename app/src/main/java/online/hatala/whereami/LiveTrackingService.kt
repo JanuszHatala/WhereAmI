@@ -70,6 +70,11 @@ class LiveTrackingService : Service() {
                     try {
                         AppStateManager.getInstance(this@LiveTrackingService).recalculateState()
                     } catch (_: Exception) {}
+                    if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                        try {
+                            AutoSleepManager.getInstance(this@LiveTrackingService).evaluateAutoSleep()
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         }

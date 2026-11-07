@@ -43,6 +43,7 @@ class AutoSleepManager private constructor(private val context: Context) {
         const val DEFAULT_END_TIME = "06:30"
 
         const val ACTION_BEDTIME_TRANSITION = "online.hatala.whereami.ACTION_BEDTIME_TRANSITION"
+        const val BEDTIME_RETRY_INTERVAL_MS = 15 * 60_000L
         private const val REQUEST_CODE_BEDTIME_ALARM = 8821
 
         fun computeNextBoundaryTriggerMillis(
@@ -51,17 +52,48 @@ class AutoSleepManager private constructor(private val context: Context) {
             startH: Int,
             startM: Int,
             endH: Int,
-            endM: Int
+            endM: Int,
+            allowBedtimeRetry: Boolean = true
         ): Long {
-            val (targetH, targetM) = if (isCurrentlySleeping) {
-                Pair(endH, endM)
-            } else {
-                Pair(startH, startM)
+            if (isCurrentlySleeping) {
+                val cal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    set(Calendar.HOUR_OF_DAY, endH)
+                    set(Calendar.MINUTE, endM)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (cal.timeInMillis <= nowMillis) {
+                    cal.add(Calendar.DAY_OF_YEAR, 1)
+                }
+                return cal.timeInMillis
             }
+
+            val calNow = Calendar.getInstance().apply { timeInMillis = nowMillis }
+            val nowH = calNow.get(Calendar.HOUR_OF_DAY)
+            val nowM = calNow.get(Calendar.MINUTE)
+            val inWindow = isTimeInWindow(nowH, nowM, startH, startM, endH, endM)
+
+            // When inside bedtime window at night (not morning wake window) and not sleeping:
+            // Retry in 15 minutes rather than skipping to tomorrow night.
+            if (inWindow && allowBedtimeRetry && !isMorningTime(nowH)) {
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    set(Calendar.HOUR_OF_DAY, endH)
+                    set(Calendar.MINUTE, endM)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (endCal.timeInMillis <= nowMillis) {
+                    endCal.add(Calendar.DAY_OF_YEAR, 1)
+                }
+                return minOf(nowMillis + BEDTIME_RETRY_INTERVAL_MS, endCal.timeInMillis)
+            }
+
             val cal = Calendar.getInstance().apply {
                 timeInMillis = nowMillis
-                set(Calendar.HOUR_OF_DAY, targetH)
-                set(Calendar.MINUTE, targetM)
+                set(Calendar.HOUR_OF_DAY, startH)
+                set(Calendar.MINUTE, startM)
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
             }
@@ -456,13 +488,15 @@ class AutoSleepManager private constructor(private val context: Context) {
         val (startH, startM) = parseHourMinute(_startTime.value, 22, 30)
         val (endH, endM) = parseHourMinute(_endTime.value, 6, 30)
         val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
+        val allowRetry = !wasManuallyWokenThisCycle && !isAlarmFiredRecently()
         val triggerAtMs = computeNextBoundaryTriggerMillis(
             nowMillis = System.currentTimeMillis(),
             isCurrentlySleeping = isCurrentlySleeping,
             startH = startH,
             startM = startM,
             endH = endH,
-            endM = endM
+            endM = endM,
+            allowBedtimeRetry = allowRetry
         )
 
         if (triggerAtMs == lastScheduledBoundaryTriggerMs) return
@@ -595,6 +629,10 @@ class AutoSleepManager private constructor(private val context: Context) {
                 val reason = if (dndActive && _followDnd.value) "DND active in night/bedtime window" else "Bedtime schedule ($startH:$startM-$endH:$endM)"
                 TelemetryLogger.log("POWER", "AutoSleep triggered: $reason. Entering standby sleep mode.")
                 appStateMgr.enterStandbySleep()
+            } else if (inWindow && !wasManuallyWokenThisCycle) {
+                // Inside bedtime window but sleep blocked (e.g. screen on or moving):
+                // Ensure boundary retry alarm is set so we re-evaluate periodically until screen off or window ends
+                scheduleBoundaryAlarm()
             }
         } else {
             if (dndActive) {

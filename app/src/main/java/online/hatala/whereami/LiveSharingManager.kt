@@ -157,16 +157,19 @@ class LiveSharingManager private constructor(private val context: Context) {
 
         fun shouldRequestSleepGnssFix(
             isSleeping: Boolean,
-            isStationary: Boolean,
             hasValidCachedLocation: Boolean
         ): Boolean {
             if (!isSleeping) return false
-            // When physically motionless and valid coordinates are already known,
-            // unpowering GNSS completely saves 100% of overnight satellite drain.
-            if (isStationary && hasValidCachedLocation) {
-                return false
-            }
-            return true
+            // During Sleep Mode, cached coordinates are always sufficient: zero GNSS hardware drain!
+            return !hasValidCachedLocation
+        }
+
+        fun shouldRequestSleepGnssFix(
+            isSleeping: Boolean,
+            isStationary: Boolean,
+            hasValidCachedLocation: Boolean
+        ): Boolean {
+            return shouldRequestSleepGnssFix(isSleeping, hasValidCachedLocation)
         }
 
         fun computePausedStatusRetryDelayMs(attempt: Int): Long {
@@ -492,11 +495,11 @@ class LiveSharingManager private constructor(private val context: Context) {
                 val isCurrentlySleeping = AppStateManager.getInstance(context).isStandbySleeping.value
                 val baseIntervalMs = (session.syncIntervalMinutes * 60_000L).coerceAtLeast(60_000L)
                 val screenOff = !AppStateManager.getInstance(context).isAppInForegroundFlow.value
-                // Sleep: 60 min. Screen-off Live-Only: at least 15 min even if the session is set to 1 min
+                // Sleep: 60 min. Screen-off Live-Only: at least 30 min even if the session is set to 1 min
                 // (overnight visitors presence must not ping the radio every minute).
                 val intervalMs = when {
                     isCurrentlySleeping -> 60 * 60_000L
-                    screenOff -> baseIntervalMs.coerceAtLeast(15 * 60_000L)
+                    screenOff -> baseIntervalMs.coerceAtLeast(30 * 60_000L)
                     else -> baseIntervalMs
                 }
                 delay(intervalMs)
@@ -519,11 +522,9 @@ class LiveSharingManager private constructor(private val context: Context) {
                 }
 
                 if (isCurrentlySleeping) {
-                    val isStationary = StationaryDetector.getInstance(context).isPhysicallyStationary.value
                     val hasCached = lastRecordedLat != 0.0 && lastRecordedLng != 0.0
                     val needGnss = shouldRequestSleepGnssFix(
                         isSleeping = true,
-                        isStationary = isStationary,
                         hasValidCachedLocation = hasCached
                     )
 
