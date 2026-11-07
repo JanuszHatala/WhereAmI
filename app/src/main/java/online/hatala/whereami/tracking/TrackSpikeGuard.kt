@@ -167,7 +167,11 @@ object TrackSpikeGuard {
             bearingDeg(bLat, bLng, cLat, cLng)
         )
         if (turn < LATERAL_V_TURN_DEG) return false
-        return crossTrackM(aLat, aLng, cLat, cLng, bLat, bLng) >= LATERAL_V_XT_M
+        val xt = crossTrackM(aLat, aLng, cLat, cLng, bLat, bLng)
+        if (xt >= LATERAL_V_XT_M) return true
+        // Also catch longitudinal overshoot-and-reverse hooks where point B shoots past C along line A->C
+        // and reverses sharply (turn >= 120°), adding a large detour (> 2.5m) despite low perpendicular cross-track.
+        return turn >= 120.0 && ab >= 2.5 && bc >= 2.0 && detour >= 2.5 && maxOf(ab, bc) > ac
     }
 
     /**

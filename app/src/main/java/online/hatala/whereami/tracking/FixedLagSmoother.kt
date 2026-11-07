@@ -91,9 +91,9 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
         for (k in n - 2 downTo 0) {
             val curr = steps[k]
             val next = steps[k + 1]
-            // Decouple RTS smoother across multi-second stationary gaps or when current step is stationary
+            // Decouple RTS smoother across multi-second stationary gaps or when either step is stationary
             val dtMs = next.tElapsedMs - curr.tElapsedMs
-            if (dtMs > 4_000L || curr.isStationary) continue
+            if (dtMs > 4_000L || curr.isStationary || next.isStationary) continue
 
             val f = next.f
             val pPred = next.pPred
@@ -114,18 +114,20 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
                 corr[i] = sum
             }
 
-            // Bound position correction by 3-sigma position uncertainty (max 5.0m)
-            var corrEast = corr[KinematicEkf.EAST]
-            var corrNorth = corr[KinematicEkf.NORTH]
-            val corrDist = kotlin.math.hypot(corrEast, corrNorth)
-            val maxCorrM = minOf(5.0, 3.0 * sqrt(max(0.0, pf[0][0] + pf[1][1])))
+            // Bound position correction by dynamic covariance uncertainty (max 2.5m)
+            val corrDist = kotlin.math.hypot(corr[KinematicEkf.EAST], corr[KinematicEkf.NORTH])
+            val posCovSigma = kotlin.math.hypot(sqrt(max(0.0, pf[0][0])), sqrt(max(0.0, pf[1][1])))
+            val maxCorrM = minOf(2.5, maxOf(0.8, 1.2 * posCovSigma))
             if (corrDist > maxCorrM && corrDist > 1e-6) {
                 val scale = maxCorrM / corrDist
-                corrEast *= scale
-                corrNorth *= scale
+                for (i in 0 until KinematicEkf.N) {
+                    corr[i] *= scale
+                }
             }
-            corr[KinematicEkf.EAST] = corrEast
-            corr[KinematicEkf.NORTH] = corrNorth
+
+            // Bound velocity and acceleration corrections so RTS pass cannot induce backward velocity explosions
+            corr[KinematicEkf.SPEED] = corr[KinematicEkf.SPEED].coerceIn(-2.0, 2.0)
+            corr[KinematicEkf.ACCEL] = corr[KinematicEkf.ACCEL].coerceIn(-1.5, 1.5)
 
             for (i in 0 until KinematicEkf.N) {
                 xs[k][i] += corr[i]

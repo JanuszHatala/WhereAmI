@@ -166,10 +166,16 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     val kind = try { PlaceKind.valueOf(kindStr) } catch (_: Exception) { PlaceKind.LOCALITY }
                     val rawName = obj.getString("name")
                     val rawSub = obj.optString("sub", "")
-                    val resolvedName = if (rawName.equals("Krzemionki", ignoreCase = true) &&
-                        (rawSub.contains("gm. Kozy", ignoreCase = true) || rawSub.contains("gmina Kozy", ignoreCase = true))) {
-                        "Kozy"
-                    } else rawName
+                    val resolvedName = when {
+                        rawName.equals("Krzemionki", ignoreCase = true) &&
+                            (rawSub.contains("gm. Kozy", ignoreCase = true) || rawSub.contains("gmina Kozy", ignoreCase = true)) -> "Kozy"
+                        rawName.equals("Groń", ignoreCase = true) &&
+                            (rawSub.contains("gm. Andrychów", ignoreCase = true) || rawSub.contains("gmina Andrychów", ignoreCase = true)) -> {
+                            val lng = obj.optDouble("lng", 0.0)
+                            if (lng >= 19.3216) "Targanice" else "Brzezinka"
+                        }
+                        else -> rawName
+                    }
 
                     val place = VisitedPlace(
                         placeName = resolvedName,
@@ -718,7 +724,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     private fun sanitizeStoredPlaces(db: SQLiteDatabase) {
         try {
             val cursor = db.rawQuery(
-                "SELECT $COL_ID, $COL_PLACES_JSON FROM $TABLE_TRIPS WHERE $COL_PLACES_JSON LIKE '%Krzemionki%'",
+                "SELECT $COL_ID, $COL_PLACES_JSON FROM $TABLE_TRIPS WHERE $COL_PLACES_JSON LIKE '%Krzemionki%' OR $COL_PLACES_JSON LIKE '%Groń%'",
                 null
             )
             val updates = mutableListOf<Pair<Long, String>>()

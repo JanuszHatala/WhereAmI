@@ -474,13 +474,13 @@ class CacheManager private constructor(private val context: Context) {
                 // ── PASS 1: Macro Corridor Coverage (~50m spacing) ───────────────────
                 // Guarantees zero blank offline spots along all recorded route corridors rapidly
                 val pass1Candidates = mutableListOf<org.osmdroid.util.GeoPoint>()
-                for (trip in allTrips) {
+                for (trip in completedTrips) {
                     var lastPt: org.osmdroid.util.GeoPoint? = null
                     for (pt in trip.points) {
                         if (lastPt == null || lastPt.distanceToAsDouble(pt) >= 50.0) {
                             lastPt = pt
                             val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
-                            if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                            if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
                                 pass1Candidates.add(pt)
                             }
                         }
@@ -505,7 +505,7 @@ class CacheManager private constructor(private val context: Context) {
 
                     // Skip if now cached by an adjacent query
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
-                    if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 40.0)) {
+                    if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
                         val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
@@ -582,14 +582,14 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    val boundary = BoundaryHelper.getLocalityBoundary(
+                    BoundaryHelper.getLocalityBoundary(
                         context = context,
                         cityName = target.name,
                         countryCode = target.countryCode,
                         fallbackMunicipality = target.municipality,
                         geoPoint = if (target.lat != null && target.lng != null) org.osmdroid.util.GeoPoint(target.lat, target.lng) else null
                     )
-                    if (boundary != null && boundary.isNotEmpty()) {
+                    if (BoundaryHelper.hasBoundary(context, target.name, target.countryCode)) {
                         addedBoundaries++
                     }
                     pass3Current++
@@ -652,6 +652,9 @@ class CacheManager private constructor(private val context: Context) {
                 spatialHelper.sanitizePolishHighwayCodesOutsidePoland(db)
                 spatialHelper.sanitizeDupeParenStreets(db)
                 spatialHelper.sanitizeFalseHighwayOnLocalNames(db)
+                spatialHelper.sanitizeCorruptedRoczynyDw781(db)
+                spatialHelper.sanitizeGronInGminaAndrychow(db)
+                spatialHelper.sanitizeAllSuspiciousHighwayAssignments(db)
                 // Clean orphan/unknown entries
                 val cursor = db.rawQuery("SELECT count(*) FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'", null)
                 if (cursor.moveToFirst()) {

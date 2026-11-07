@@ -959,23 +959,16 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         // High-Speed Corridor Shield:
-        // While driving at high speed (> 35 km/h) along a confirmed corridor without having made a physical turn:
-        // Strictly reject parallel residential streets and building parcel addresses (e.g. "Sabały", "Piechurów", "Braterska 144").
+        // While driving at high speed (> 30 km/h) along a confirmed corridor without having made a physical turn:
+        // Strictly reject building parcel addresses with house numbers (e.g. "Braterska 144", "Lipowa 6").
         val hasCandidateHouseNumber = rawStreetPl.any { it.isDigit() }
-        if (speedKmh > 35f && isCommittedMajor && !isCandidateMajor && !isRecentTurn) {
-            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from non-major candidate '$rawStreetPl' at ${speedKmh.toInt()} km/h")
-            return multiData.copy(
-                en = multiData.en.copy(street = committedStreetPl),
-                pl = multiData.pl.copy(street = committedStreetPl),
-                native = multiData.native.copy(street = committedStreetPl)
-            )
-        }
         if (speedKmh > 30f && isCommittedMajor && hasCandidateHouseNumber && !isRecentTurn) {
             TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreetPl' from house-numbered side street '$rawStreetPl' at ${speedKmh.toInt()} km/h")
+            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl)
             return multiData.copy(
-                en = multiData.en.copy(street = committedStreetPl),
-                pl = multiData.pl.copy(street = committedStreetPl),
-                native = multiData.native.copy(street = committedStreetPl)
+                en = multiData.en.copy(street = committedStreetPl, roadRef = committedRef),
+                pl = multiData.pl.copy(street = committedStreetPl, roadRef = committedRef),
+                native = multiData.native.copy(street = committedStreetPl, roadRef = committedRef)
             )
         }
 
@@ -1046,10 +1039,11 @@ class LocationManager private constructor(private val context: Context) {
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
+            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl)
             return multiData.copy(
-                en = multiData.en.copy(street = committedStreetPl),
-                pl = multiData.pl.copy(street = committedStreetPl),
-                native = multiData.native.copy(street = committedStreetPl)
+                en = multiData.en.copy(street = committedStreetPl, roadRef = committedRef),
+                pl = multiData.pl.copy(street = committedStreetPl, roadRef = committedRef),
+                native = multiData.native.copy(street = committedStreetPl, roadRef = committedRef)
             )
         } else {
             // If crossing into a new locality and candidate street is pending confirmation,
@@ -1067,10 +1061,11 @@ class LocationManager private constructor(private val context: Context) {
                 )
             }
             // Keep current committed street (filter out momentary cross-street and side-street jitter)
+            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl)
             return multiData.copy(
-                en = multiData.en.copy(street = committedStreetPl),
-                pl = multiData.pl.copy(street = committedStreetPl),
-                native = multiData.native.copy(street = committedStreetPl)
+                en = multiData.en.copy(street = committedStreetPl, roadRef = committedRef),
+                pl = multiData.pl.copy(street = committedStreetPl, roadRef = committedRef),
+                native = multiData.native.copy(street = committedStreetPl, roadRef = committedRef)
             )
         }
     }
@@ -1768,24 +1763,9 @@ class LocationManager private constructor(private val context: Context) {
             )
         }
         val rawOsrmStreet = nearest?.name
-        val committedStreet = committedPlace?.pl?.street
-        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreet, committedPlace?.pl?.roadRef)
-        val osrmStreet = if (RoadNameNormalizer.shouldShieldMajorCorridor(
-                speedKmh = speedKmh,
-                isCommittedMajor = isCommittedMajor,
-                osrmStreet = rawOsrmStreet,
-                osmRoadRef = sharedOsm?.roadRef,
-                osmStreet = sharedOsm?.street,
-                candidateHighwayType = sharedOsm?.highwayType,
-                vehicleHeadingDeg = effectiveBearing,
-                roadBearingDeg = null
-            )
-        ) {
-            TelemetryLogger.log("STREET", "Shielding major corridor '$committedStreet' from non-major OSRM snap '$rawOsrmStreet' at ${speedKmh?.toInt()} km/h")
-            null
-        } else {
-            rawOsrmStreet
-        }
+        // Use intrinsic OSRM street for cell coordinates directly.
+        // Never shield OSRM before geocoding or spatial caching: corridor shielding belongs strictly in applyStreetHysteresis.
+        val osrmStreet = rawOsrmStreet
 
         val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
         val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
@@ -1807,7 +1787,9 @@ class LocationManager private constructor(private val context: Context) {
         if (nativePlace.city != "Unknown City") saveLastGood(prefs, "native", lat, lng, nativePlace)
 
         val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
-        if (enPlace.city != "Unknown City" || plPlace.city != "Unknown City" || forceCache) {
+        val lastGoodPl = loadLastGood(prefs, "pl")
+        val isFallbackToLastGood = lastGoodPl != null && plPlace.street == lastGoodPl.street && plPlace.city == lastGoodPl.city && enAddress == null && plAddress == null && sharedOsm == null
+        if ((enPlace.city != "Unknown City" || plPlace.city != "Unknown City" || forceCache) && !isFallbackToLastGood) {
             spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
             try {
                 SpatialCacheHelper.getInstance(context).put(lat, lng, result)
@@ -1836,7 +1818,7 @@ class LocationManager private constructor(private val context: Context) {
         } else Float.MAX_VALUE
 
         val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang, speedKmh)
-        val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() } ?: committedPlace?.pl?.street ?: lastGood?.street
+        val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() }
         val isHighwayTrajectory = trajectoryStreet != null && RoadNameNormalizer.isHighwayCodeOnly(trajectoryStreet)
         val osmMatchesTrajectory = trajectoryStreet == null || isHighwayTrajectory || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
         val thoroughfareMatchesTrajectory = trajectoryStreet == null || isHighwayTrajectory || RoadNameNormalizer.streetsMatch(address?.thoroughfare, trajectoryStreet)
@@ -1945,12 +1927,7 @@ class LocationManager private constructor(private val context: Context) {
             )
         }
 
-        // Tier 2a – Close to last known good
-        if (lastGood != null && distToLastGood < 45f) {
-            return lastGood
-        }
-
-        // Tier 2b – OpenStreetMap Nominatim
+        // Tier 2a – OpenStreetMap Nominatim
         if (osm != null) {
             val city = osm.city ?: osm.municipality ?: osm.county
             if (city != null) {
@@ -2002,6 +1979,11 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
+        // Tier 2b – Close to last known good (memory fallback when both Geocoder and OSM lack locality)
+        if (lastGood != null && distToLastGood < 45f) {
+            return lastGood
+        }
+
         // Tier 3 – Last known good
         if (lastGood != null) return lastGood
 
@@ -2038,7 +2020,7 @@ class LocationManager private constructor(private val context: Context) {
 
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
-                    "&accept-language=$language&zoom=$zoom&addressdetails=1&namedetails=1"
+                    "&accept-language=$language&zoom=$zoom&addressdetails=1&namedetails=1&extratags=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -2094,7 +2076,19 @@ class LocationManager private constructor(private val context: Context) {
                 // Hamlets/przysiółki (e.g. "Krzemionki", "Małe Kozy") must NOT override the genuine village or gmina name.
                 val isPolishGmina = rawMunicipality != null && rawMunicipality.startsWith("gmina ", ignoreCase = true)
                 val gminaName = if (isPolishGmina) rawMunicipality.removePrefix("gmina ").trim() else null
-                val villageOrTown = str("village") ?: str("town")
+                var villageOrTown = str("village") ?: str("town")
+
+                // Groń in gmina Andrychów is an osada wsi Brzezinka (teryt:rm = 04), not an administrative village.
+                if (isPoland && gminaName?.equals("Andrychów", ignoreCase = true) == true &&
+                    villageOrTown?.equals("Groń", ignoreCase = true) == true
+                ) {
+                    val stLow = (rawRoad ?: "").lowercase(Locale.ROOT)
+                    villageOrTown = when {
+                        stLow.contains("graniczn") || stLow.contains("kowalczyk") || lng >= 19.3216 -> "Targanice"
+                        stLow.contains("leśna") || stLow.contains("lesna") || (lat >= 49.8275 && lng < 19.305) -> "Roczyny"
+                        else -> "Brzezinka"
+                    }
+                }
 
                 val resolvedCity = if (isPolishGmina && !villageOrTown.isNullOrBlank()) {
                     villageOrTown

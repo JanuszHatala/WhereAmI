@@ -71,11 +71,7 @@ object RoadNameNormalizer {
         }
         val ht = highwayType?.trim()?.lowercase(Locale.ROOT)
         if (ht != null) {
-            return ht == "motorway" || ht == "motorway_link" ||
-                   ht == "trunk" || ht == "trunk_link" ||
-                   ht == "primary" || ht == "primary_link" ||
-                   ht == "secondary" || ht == "secondary_link" ||
-                   ht == "tertiary" || ht == "tertiary_link"
+            return isMajorHighwayType(ht)
         }
         return false
     }
@@ -177,7 +173,7 @@ object RoadNameNormalizer {
     )
 
     private val RESIDENTIAL_HIGHWAY_TYPES = setOf(
-        "residential", "living_street", "service", "unclassified", "track", "footway", "path"
+        "residential", "living_street", "service", "unclassified", "tertiary", "tertiary_link", "track", "footway", "path"
     )
 
     fun isMajorHighwayType(type: String?): Boolean {
