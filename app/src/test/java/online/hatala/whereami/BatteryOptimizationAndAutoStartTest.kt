@@ -877,38 +877,25 @@ class BatteryOptimizationAndAutoStartTest {
         assertFalse(
             LiveSharingManager.shouldRequestSleepGnssFix(
                 isSleeping = false,
-                isStationary = true,
                 hasValidCachedLocation = true
             )
         )
 
-        // When sleeping, physically stationary, and has valid cached coords: GNSS fix is SKIPPED
+        // When sleeping and has valid cached coords: GNSS fix is SKIPPED (zero battery drain)
         assertFalse(
-            "Motionless sleep with cached coords must not wake GNSS chip",
+            "Sleep with cached coords must not wake GNSS chip even if StationaryDetector stopped",
             LiveSharingManager.shouldRequestSleepGnssFix(
                 isSleeping = true,
-                isStationary = true,
                 hasValidCachedLocation = true
             )
         )
 
-        // When sleeping, physically stationary, but NO cached coords exist: GNSS fix is REQUESTED
+        // When sleeping, but NO cached coords exist: GNSS fix is REQUESTED
         assertTrue(
             "Sleeping without cached coords must request initial GNSS snapshot",
             LiveSharingManager.shouldRequestSleepGnssFix(
                 isSleeping = true,
-                isStationary = true,
                 hasValidCachedLocation = false
-            )
-        )
-
-        // When sleeping but motion detected (not stationary): GNSS fix is REQUESTED
-        assertTrue(
-            "Sleeping with locomotion must request fresh GNSS fix",
-            LiveSharingManager.shouldRequestSleepGnssFix(
-                isSleeping = true,
-                isStationary = false,
-                hasValidCachedLocation = true
             )
         )
     }

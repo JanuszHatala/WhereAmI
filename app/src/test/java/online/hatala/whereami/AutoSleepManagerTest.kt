@@ -349,6 +349,32 @@ class AutoSleepManagerTest {
     }
 
     @Test
+    fun testComputeNextBoundaryTriggerMillisWhenInsideBedtimeWindowRetriesIn15Minutes() {
+        // At 23:45 (inside bedtime window 22:30 -> 06:30), user is NOT sleeping (e.g. screen on).
+        // Boundary scheduler must NOT skip to tomorrow night; it must retry in 15 minutes!
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 45)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val triggerAt = AutoSleepManager.computeNextBoundaryTriggerMillis(
+            nowMillis = cal.timeInMillis,
+            isCurrentlySleeping = false,
+            startH = 22,
+            startM = 30,
+            endH = 6,
+            endM = 30,
+            allowBedtimeRetry = true
+        )
+        val triggerCal = java.util.Calendar.getInstance().apply { timeInMillis = triggerAt }
+        // 23:45 + 15m = 00:00 midnight next day
+        assertEquals(0, triggerCal.get(java.util.Calendar.HOUR_OF_DAY))
+        assertEquals(0, triggerCal.get(java.util.Calendar.MINUTE))
+        assertEquals(cal.get(java.util.Calendar.DAY_OF_YEAR) + 1, triggerCal.get(java.util.Calendar.DAY_OF_YEAR))
+    }
+
+    @Test
     fun testOnSleepWokenReschedulesBoundaryToNextBedtime() {
         // At 06:20 (morning alarm fires during sleep window 22:30 -> 06:30)
         // Upon waking, isCurrentlySleeping becomes false. Next scheduled boundary must be 22:30 tonight!
