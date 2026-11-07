@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -661,6 +662,7 @@ fun OsmMapView(
     onDismissMapSettings: (() -> Unit)? = null,
     outdoorAreaBoundaryPoints: List<GeoPoint>? = null,
     outdoorAreaKind: OutdoorAreaKind? = null,
+    outdoorAreaName: String? = null,
     searchRoutePolylines: List<List<GeoPoint>>? = null,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -2428,6 +2430,45 @@ fun OsmMapView(
                     .padding(start = 12.dp)
             )
         }
+
+        // Floating On-Map Outdoor Area Watermark / Badge
+        if (showOutdoorAreasOverlay && outdoorAreaBoundaryPoints != null && !outdoorAreaName.isNullOrBlank()) {
+            val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
+            val accentColor = if (isRange) ComposeColor(0xFFF59E0B) else ComposeColor(0xFF10B981)
+            val icon = if (isRange) "⛰️" else if (outdoorAreaKind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = ComposeColor(0xE60F172A),
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.7f)),
+                shadowElevation = 3.dp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(
+                        start = if (isLandscape) 16.dp else 12.dp,
+                        top = if (isLandscape) 16.dp else (if (isCompact) 115.dp else 155.dp)
+                    )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EmojiText(emoji = icon, fontSize = 11.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = outdoorAreaName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ComposeColor.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                            lineHeight = 12.sp
+                        )
+                    )
+                }
+            }
+        }
     }
 
     if (showSettingsDialog) {
@@ -4051,6 +4092,67 @@ private fun MapSettingsDialog(
                 )
             }
 
+            // Trail Line Thickness (Standard, Thick, Bold) directly under Hiking Trails & Peaks
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Trail Line Thickness",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (hikingOverlayEnabled) ComposeColor(0xFF94A3B8) else ComposeColor(0xFF64748B)
+                    )
+                    if (!hikingOverlayEnabled) {
+                        Text(
+                            text = "(Hiking Trails OFF)",
+                            fontSize = 10.sp,
+                            color = ComposeColor(0xFFFBBF24)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TrailThickness.values().forEach { thickness ->
+                        val isSelected = trailThickness == thickness
+                        Button(
+                            onClick = { onTrailThicknessChange(thickness) },
+                            enabled = hikingOverlayEnabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B),
+                                disabledContainerColor = if (isSelected) ComposeColor(0xFF0284C7).copy(alpha = 0.4f) else ComposeColor(0xFF1E293B).copy(alpha = 0.4f)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = when (thickness) {
+                                    TrailThickness.NORMAL -> "Standard"
+                                    TrailThickness.THICK -> "Thick"
+                                    TrailThickness.EXTRA_THICK -> "Bold"
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = ComposeColor.White,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = ComposeColor(0xFF334155))
+
             // Outdoor & Protected Areas (Mountain Ranges, National & Landscape Parks, Reserves)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -4093,50 +4195,6 @@ private fun MapSettingsDialog(
                         uncheckedTrackColor = ComposeColor(0xFF334155)
                     )
                 )
-            }
-
-            // Trail Line Thickness (Standard, Thick, Bold)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = "Trail Line Thickness",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ComposeColor(0xFF94A3B8)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    TrailThickness.values().forEach { thickness ->
-                        val isSelected = trailThickness == thickness
-                        Button(
-                            onClick = { onTrailThicknessChange(thickness) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = when (thickness) {
-                                    TrailThickness.NORMAL -> "Standard"
-                                    TrailThickness.THICK -> "Thick"
-                                    TrailThickness.EXTRA_THICK -> "Bold"
-                                },
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = ComposeColor.White,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
