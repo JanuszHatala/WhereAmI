@@ -262,6 +262,19 @@ class AutoSleepManager private constructor(private val context: Context) {
 
             return false
         }
+
+        fun shouldPauseLiveShareOnSleepEntry(
+            pauseLiveSharePref: Boolean,
+            isManualSleep: Boolean,
+            isBedtimeAutoSleep: Boolean,
+            isInBedtimeWindow: Boolean
+        ): Boolean {
+            if (!pauseLiveSharePref) return false
+            // Manual sleep or bedtime auto-sleep schedule/DND pauses live share
+            if (isManualSleep || isBedtimeAutoSleep || isInBedtimeWindow) return true
+            // Daytime 90-minute standby hibernation outside bedtime window must NEVER pause live sharing
+            return false
+        }
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -319,25 +332,28 @@ class AutoSleepManager private constructor(private val context: Context) {
         isManualSleep = true
         wasDndActiveInSession = isDndActive()
         wasInBedtimeWindowDuringSleep = isCurrentTimeInBedtimeWindow()
-        handleSleepEnteredLiveSharePause()
+        handleSleepEnteredLiveSharePause(isManualSleep = true, isBedtimeAutoSleep = false)
         TelemetryLogger.log("POWER", "AutoSleepManager: Manual sleep registered (will not auto-wake on bedtime window end)")
     }
 
-    fun onSleepEntered() {
+    fun onSleepEntered(isBedtimeAutoSleep: Boolean = false) {
         wasInBedtimeWindowDuringSleep = isCurrentTimeInBedtimeWindow()
-        handleSleepEnteredLiveSharePause()
+        handleSleepEnteredLiveSharePause(isManualSleep = false, isBedtimeAutoSleep = isBedtimeAutoSleep)
     }
 
-    private fun handleSleepEnteredLiveSharePause() {
-        if (_pauseLiveShare.value) {
+    private fun handleSleepEnteredLiveSharePause(isManualSleep: Boolean, isBedtimeAutoSleep: Boolean) {
+        val inBedtime = isCurrentTimeInBedtimeWindow()
+        if (shouldPauseLiveShareOnSleepEntry(_pauseLiveShare.value, isManualSleep, isBedtimeAutoSleep, inBedtime)) {
             val liveMgr = LiveSharingManager.getInstance(context)
             val session = liveMgr.currentSession.value
             if (session != null && session.isActive && !session.isPaused) {
                 wasLiveShareAutoPaused = true
                 prefs.edit().putBoolean(KEY_AUTO_SLEEP_WAS_LIVE_SHARE_PAUSED, true).apply()
                 liveMgr.pauseSession()
-                TelemetryLogger.log("POWER", "AutoSleep: Paused Live Sharing session (${session.id}) during sleep.")
+                TelemetryLogger.log("POWER", "AutoSleep: Paused Live Sharing session (${session.id}) during sleep (bedtime=$isBedtimeAutoSleep, manual=$isManualSleep).")
             }
+        } else {
+            TelemetryLogger.log("POWER", "AutoSleep: Standby hibernation entered outside bedtime window: Live Sharing remains active (not paused).")
         }
     }
 
@@ -628,7 +644,7 @@ class AutoSleepManager private constructor(private val context: Context) {
                 wasDndActiveInSession = dndActive
                 val reason = if (dndActive && _followDnd.value) "DND active in night/bedtime window" else "Bedtime schedule ($startH:$startM-$endH:$endM)"
                 TelemetryLogger.log("POWER", "AutoSleep triggered: $reason. Entering standby sleep mode.")
-                appStateMgr.enterStandbySleep()
+                appStateMgr.enterStandbySleep(isManual = false, isBedtimeAutoSleep = true)
             } else if (inWindow && !wasManuallyWokenThisCycle) {
                 // Inside bedtime window but sleep blocked (e.g. screen on or moving):
                 // Ensure boundary retry alarm is set so we re-evaluate periodically until screen off or window ends

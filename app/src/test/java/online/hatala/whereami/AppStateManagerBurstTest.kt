@@ -101,4 +101,72 @@ class AppStateManagerBurstTest {
         )
         assertFalse("Burst must never abort when candidate speed reached", canAbort)
     }
+
+    @Test
+    fun testCarBurstIndoorZeroSpeedAbortAt20Seconds() {
+        // Field Day 60 False Burst #3: holding phone indoors (isPhysicallyStationary = false),
+        // speed = 0.0, displacement = 4.07m. Must abort at 20s instead of holding GPS for 36s.
+        val canAbort = AppStateManager.shouldEarlyAbortBurst(
+            elapsedMs = 20_000L,
+            minDurationMs = 15_000L,
+            currentSpeedMs = 0.0f,
+            targetCandidateSpeedMs = 5.0f,
+            displacementMeters = 4.07,
+            isPhysicallyStationary = false,
+            isCarProfile = true
+        )
+        assertTrue("CAR profile at 20s with zero speed and displacement < 6m must abort early", canAbort)
+    }
+
+    @Test
+    fun testCarBurstIndoorLowSpeedDoesNotAbortAt20SecondsWhenCrawling() {
+        val canAbort = AppStateManager.shouldEarlyAbortBurst(
+            elapsedMs = 20_000L,
+            minDurationMs = 15_000L,
+            currentSpeedMs = 0.8f,
+            targetCandidateSpeedMs = 5.0f,
+            displacementMeters = 8.0,
+            isPhysicallyStationary = false,
+            isCarProfile = true
+        )
+        assertFalse("CAR profile crawling in traffic with speed >= 0.25 m/s or displacement >= 6m must not abort at 20s", canAbort)
+    }
+
+    @Test
+    fun testShouldAbortPreBurstBeforeGps() {
+        // Screen off + verified physically stationary (bump on nightstand/desk) -> abort before GPS power on
+        assertTrue(
+            "Stationary screen-off motion trigger must abort before starting GNSS",
+            AppStateManager.shouldAbortPreBurstBeforeGps(isPhysicallyStationary = true, isAppInForeground = false)
+        )
+        // Screen off + vibrating/moving (in car or walking) -> do not abort
+        assertFalse(
+            "Moving screen-off motion trigger must proceed to GNSS burst",
+            AppStateManager.shouldAbortPreBurstBeforeGps(isPhysicallyStationary = false, isAppInForeground = false)
+        )
+        // Screen on (foreground) -> never abort pre-burst
+        assertFalse(
+            "Foreground motion trigger must proceed",
+            AppStateManager.shouldAbortPreBurstBeforeGps(isPhysicallyStationary = true, isAppInForeground = true)
+        )
+    }
+
+    @Test
+    fun testShouldActivateForegroundOnStart() {
+        // Unlocked and interactive -> activate
+        assertTrue(
+            "Interactive and unlocked must activate foreground tracking",
+            AppStateManager.shouldActivateForegroundOnStart(isInteractive = true, isKeyguardLocked = false)
+        )
+        // Alarm ringing over lockscreen (interactive screen on, but keyguard locked) -> DO NOT activate!
+        assertFalse(
+            "Keyguard locked during alarm must NOT activate foreground tracking",
+            AppStateManager.shouldActivateForegroundOnStart(isInteractive = true, isKeyguardLocked = true)
+        )
+        // Screen off -> DO NOT activate
+        assertFalse(
+            "Screen off must NOT activate foreground tracking",
+            AppStateManager.shouldActivateForegroundOnStart(isInteractive = false, isKeyguardLocked = false)
+        )
+    }
 }
