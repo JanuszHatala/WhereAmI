@@ -52,10 +52,33 @@ class AppStateManager private constructor(private val context: Context) {
         private const val KEY_POWER_POLICY = "power_policy"
 
         const val MOTION_BURST_MIN_DURATION_MS = 15_000L
+        const val PRE_BURST_STATIONARY_CHECK_MS = 3_000L
         const val MOTION_BURST_COOLDOWN_BASE_MS = 60_000L
         const val STANDBY_HIBERNATION_TIMEOUT_MS = 90 * 60 * 1000L // 90 minutes stationary inactivity
         const val STANDBY_INACTIVITY_CHECK_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes polling cadence for 90m hibernation
         const val SLEEP_STATE_TRANSITION_DEBOUNCE_MS = 3_000L
+
+        fun shouldAbortPreBurstBeforeGps(
+            isPhysicallyStationary: Boolean,
+            isAppInForeground: Boolean
+        ): Boolean {
+            return !isAppInForeground && isPhysicallyStationary
+        }
+
+        fun shouldActivateForegroundOnStart(
+            isInteractive: Boolean,
+            isKeyguardLocked: Boolean
+        ): Boolean {
+            return isInteractive && !isKeyguardLocked
+        }
+
+        fun isDeviceInteractiveAndUnlocked(context: Context): Boolean {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            val isInteractive = pm?.isInteractive ?: true
+            val isKeyguardLocked = km?.isKeyguardLocked ?: false
+            return shouldActivateForegroundOnStart(isInteractive, isKeyguardLocked)
+        }
 
         fun shouldRecalculateOnChargingChange(previousCharging: Boolean, newCharging: Boolean): Boolean {
             return previousCharging != newCharging
@@ -169,6 +192,11 @@ class AppStateManager private constructor(private val context: Context) {
             }
 
             if (isCarProfile) {
+                // If speed is zero/near-zero (< 0.25 m/s) and displacement < 6m after 20s,
+                // abort early without waiting for 35s window (avoids 36s false indoor bursts)
+                if (elapsedMs >= 20_000L && currentSpeedMs < 0.25f && displacementMeters < 6.0) {
+                    return true
+                }
                 if (isPhysicallyStationary && isSpeedStationary && elapsedMs >= 25_000L && displacementMeters < 10.0) {
                     return true
                 }
@@ -345,7 +373,7 @@ class AppStateManager private constructor(private val context: Context) {
         TelemetryLogger.log("POWER", "ActivityProfile changed to ${profile.displayName}: cleared burst backoff streak")
     }
 
-    fun enterStandbySleep(isManual: Boolean = false) {
+    fun enterStandbySleep(isManual: Boolean = false, isBedtimeAutoSleep: Boolean = false) {
         if (_isStandbySleeping.value) return
         val now = SystemClock.elapsedRealtime()
         if (!isManual && (now - lastSleepStateTransitionMs < SLEEP_STATE_TRANSITION_DEBOUNCE_MS)) {
@@ -366,12 +394,12 @@ class AppStateManager private constructor(private val context: Context) {
         if (isManual) {
             AutoSleepManager.getInstance(context).onManualSleepEntered()
         } else {
-            AutoSleepManager.getInstance(context).onSleepEntered()
+            AutoSleepManager.getInstance(context).onSleepEntered(isBedtimeAutoSleep = isBedtimeAutoSleep)
         }
         stopStandbyInactivityWatcher()
         motionRearmJob?.cancel()
         MotionWakeManager.getInstance(context).disarm()
-        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS, manual=$isManual).")
+        TelemetryLogger.log("POWER", "Entering standby sleep mode (motion sensor disarmed, stopping GPS/standby FGS, manual=$isManual, bedtime=$isBedtimeAutoSleep).")
 
         recalculateState()
     }
@@ -461,7 +489,7 @@ class AppStateManager private constructor(private val context: Context) {
                         // AGENTS.md: after 90 minutes verified stationary rest, hibernate (any time of day).
                         if (inactiveDuration >= STANDBY_HIBERNATION_TIMEOUT_MS) {
                             TelemetryLogger.log("POWER", "Stationary inactivity reached ${inactiveDuration / 60_000}m. Auto-entering standby sleep.")
-                            enterStandbySleep()
+                            enterStandbySleep(isManual = false, isBedtimeAutoSleep = false)
                             stationarySinceMs = 0L
                             break
                         }
@@ -481,7 +509,6 @@ class AppStateManager private constructor(private val context: Context) {
         _isAppInForegroundFlow.value = inForeground
         if (inForeground) {
             online.hatala.whereami.tracking.PostTripMatcher.schedule(context)
-            consecutiveFalseBursts = 0
             motionRearmJob?.cancel()
             // Foreground view takes absolute primacy: opening the app explicitly wakes standby sleep
             if (_isStandbySleeping.value) {
@@ -656,32 +683,14 @@ class AppStateManager private constructor(private val context: Context) {
         isForegroundStationaryVerified = false
         StationaryDetector.getInstance(context).unlatchStationary()
 
-        if (currentMode == AppLifecycleMode.LIVE_ONLY) {
-            TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
-            LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
-            if (tripManager.tripMode.value != TripMode.AUTO || tripManager.activeTrip.value != null) {
-                startLiveOnlyWatcher(isLocomotionActive = true)
-                return
-            }
-        }
-
         val hasActiveTrip = tripManager.activeTrip.value != null
         val isTripPaused = tripManager.isPaused.value
 
-        if (tripManager.tripMode.value != TripMode.AUTO) return
+        if (tripManager.tripMode.value != TripMode.AUTO && currentMode != AppLifecycleMode.LIVE_ONLY) return
         if (hasActiveTrip && !isTripPaused) return
 
         val profile = tripManager.activityProfile.value
         val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
-
-        TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
-        online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
-            "MOTION_BURST_START",
-            mapOf("profile" to profile.name, "durationMs" to burstDurationMs)
-        )
-
-        // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
-        LocationManager.getInstance(context).resetTracking()
 
         // Acquire scoped wake lock for confirmation burst so CPU doesn't suspend while screen is off
         try {
@@ -698,11 +707,64 @@ class AppStateManager private constructor(private val context: Context) {
         }
 
         val locManager = LocationManager.getInstance(context)
-        // Request GPS updates during confirmation window
-        locManager.updateSamplingInterval(2500L, 1000L)
 
         motionBurstJob?.cancel()
         motionBurstJob = scope.launch {
+            if (!isAppInForeground) {
+                StationaryDetector.getInstance(context).startListening()
+                delay(PRE_BURST_STATIONARY_CHECK_MS)
+                val isStill = StationaryDetector.getInstance(context).isPhysicallyStationary.value
+                if (shouldAbortPreBurstBeforeGps(isStill, isAppInForeground)) {
+                    online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+                        "MOTION_BURST_PRE_ABORT",
+                        mapOf("stationary" to true, "durationMs" to PRE_BURST_STATIONARY_CHECK_MS)
+                    )
+                    TelemetryLogger.log("POWER", "Motion wake pre-check: verified physically stationary after 3s. Aborting before GNSS hardware power-on.")
+                    StationaryDetector.getInstance(context).stopListening(preserveStationaryState = true)
+                    if (_currentMode.value == AppLifecycleMode.LIVE_ONLY) {
+                        LiveSharingManager.getInstance(context).startStationaryHeartbeat()
+                    }
+                    consecutiveFalseBursts++
+                    val cooldownMs = computeBurstCooldownMs(consecutiveFalseBursts)
+                    scheduleMotionWakeRearm(cooldownMs)
+                    if (motionBurstWakeLock?.isHeld == true) {
+                        try { motionBurstWakeLock?.release() } catch (_: Exception) {}
+                    }
+                    return@launch
+                }
+            }
+
+            if (_currentMode.value == AppLifecycleMode.LIVE_ONLY) {
+                TelemetryLogger.log("POWER", "Significant motion wake in LIVE_ONLY: Resuming GPS updates.")
+                LiveSharingManager.getInstance(context).stopStationaryHeartbeat()
+                if (tripManager.tripMode.value != TripMode.AUTO || tripManager.activeTrip.value != null) {
+                    startLiveOnlyWatcher(isLocomotionActive = true)
+                    if (motionBurstWakeLock?.isHeld == true) {
+                        try { motionBurstWakeLock?.release() } catch (_: Exception) {}
+                    }
+                    return@launch
+                }
+            }
+
+            if (tripManager.tripMode.value != TripMode.AUTO) {
+                if (motionBurstWakeLock?.isHeld == true) {
+                    try { motionBurstWakeLock?.release() } catch (_: Exception) {}
+                }
+                return@launch
+            }
+
+            TelemetryLogger.log("POWER", "Significant motion wake: starting ${burstDurationMs / 1000}s GPS burst for ${profile.displayName} auto-start evaluation")
+            online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+                "MOTION_BURST_START",
+                mapOf("profile" to profile.name, "durationMs" to burstDurationMs)
+            )
+
+            // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
+            LocationManager.getInstance(context).resetTracking()
+
+            // Request GPS updates during confirmation window
+            locManager.updateSamplingInterval(2500L, 1000L)
+
             var anchorFix: LocationFix? = null
             var earlyAborted = false
             // Actively collect raw location stream during burst to ensure fused provider remains engaged
@@ -1135,7 +1197,6 @@ class AppStateManager private constructor(private val context: Context) {
             }
             AppLifecycleMode.FOREGROUND_VIEW -> {
                 motionBurstJob?.cancel()
-                consecutiveFalseBursts = 0
                 motionRearmJob?.cancel()
                 motionManager.disarm()
                 ensureAutoStandbyServiceRunning()

@@ -1,10 +1,12 @@
 package online.hatala.whereami
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
@@ -110,8 +112,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                activateForegroundTrackingIfUnlocked()
+            }
+        }
+    }
+    private var isUserPresentReceiverRegistered = false
+    private var isForegroundTrackingActive = false
+
     override fun onStart() {
         super.onStart()
+        if (AppStateManager.isDeviceInteractiveAndUnlocked(this)) {
+            activateForegroundTrackingIfUnlocked()
+        } else {
+            registerUserPresentReceiverIfNeeded()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!isForegroundTrackingActive && AppStateManager.isDeviceInteractiveAndUnlocked(this)) {
+            activateForegroundTrackingIfUnlocked()
+        }
+    }
+
+    private fun activateForegroundTrackingIfUnlocked() {
+        if (isForegroundTrackingActive) return
+        isForegroundTrackingActive = true
+        unregisterUserPresentReceiverIfNeeded()
         AppStateManager.getInstance(this).setAppForegroundState(true)
         CacheManager.getInstance(this).calculateCacheDeficit()
         viewModel.startTracking()
@@ -120,8 +150,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        viewModel.stopTracking()
-        AppStateManager.getInstance(this).setAppForegroundState(false)
+        unregisterUserPresentReceiverIfNeeded()
+        if (isForegroundTrackingActive) {
+            isForegroundTrackingActive = false
+            viewModel.stopTracking()
+            AppStateManager.getInstance(this).setAppForegroundState(false)
+        }
+    }
+
+    private fun registerUserPresentReceiverIfNeeded() {
+        if (isUserPresentReceiverRegistered) return
+        val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
+        try {
+            registerReceiver(userPresentReceiver, filter)
+            isUserPresentReceiverRegistered = true
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterUserPresentReceiverIfNeeded() {
+        if (!isUserPresentReceiverRegistered) return
+        try {
+            unregisterReceiver(userPresentReceiver)
+        } catch (_: Exception) {}
+        isUserPresentReceiverRegistered = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

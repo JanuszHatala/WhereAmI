@@ -682,4 +682,62 @@ class AutoSleepManagerTest {
         val hasAlarm = AutoSleepManager.hasUpcomingMorningAlarm(nowCal.timeInMillis, alarmCal.timeInMillis)
         assertTrue("Morning alarm 3.5h ahead (10:00 AM) must be recognized as upcoming morning alarm", hasAlarm)
     }
+
+    @Test
+    fun testShouldPauseLiveShareOnSleepEntry() {
+        // 1. Setting disabled -> never pause
+        assertFalse(
+            "Disabled preference must never pause live sharing",
+            AutoSleepManager.shouldPauseLiveShareOnSleepEntry(
+                pauseLiveSharePref = false,
+                isManualSleep = true,
+                isBedtimeAutoSleep = true,
+                isInBedtimeWindow = true
+            )
+        )
+
+        // 2. Manual sleep -> pauses live sharing
+        assertTrue(
+            "Manual sleep entry must pause live sharing",
+            AutoSleepManager.shouldPauseLiveShareOnSleepEntry(
+                pauseLiveSharePref = true,
+                isManualSleep = true,
+                isBedtimeAutoSleep = false,
+                isInBedtimeWindow = false
+            )
+        )
+
+        // 3. Bedtime auto-sleep schedule -> pauses live sharing
+        assertTrue(
+            "Bedtime schedule auto-sleep must pause live sharing",
+            AutoSleepManager.shouldPauseLiveShareOnSleepEntry(
+                pauseLiveSharePref = true,
+                isManualSleep = false,
+                isBedtimeAutoSleep = true,
+                isInBedtimeWindow = false
+            )
+        )
+
+        // 4. Inside bedtime window -> pauses live sharing
+        assertTrue(
+            "Sleep inside bedtime window must pause live sharing",
+            AutoSleepManager.shouldPauseLiveShareOnSleepEntry(
+                pauseLiveSharePref = true,
+                isManualSleep = false,
+                isBedtimeAutoSleep = false,
+                isInBedtimeWindow = true
+            )
+        )
+
+        // 5. Daytime 90-minute standby hibernation outside bedtime window -> MUST NEVER pause live sharing!
+        assertFalse(
+            "Daytime 90m standby hibernation must NOT pause active daytime live sharing",
+            AutoSleepManager.shouldPauseLiveShareOnSleepEntry(
+                pauseLiveSharePref = true,
+                isManualSleep = false,
+                isBedtimeAutoSleep = false,
+                isInBedtimeWindow = false
+            )
+        )
+    }
 }
