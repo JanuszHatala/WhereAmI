@@ -324,7 +324,17 @@ class StreetResolutionTest {
             }
 
             if (rawBase.equals(committedStreetBase, ignoreCase = true)) {
-                committedStreetPl = rawStreetPl
+                val existingHighwayCode = RoadNameNormalizer.extractHighwayCode(committedStreetPl) ?: committedRoadRef
+                val incomingHighwayCode = roadRef ?: RoadNameNormalizer.extractHighwayCode(rawStreetPl)
+                val effectiveRef = incomingHighwayCode ?: existingHighwayCode
+                val isMajor = RoadNameNormalizer.isMajorRoad(rawBase, effectiveRef)
+                val updatedStreetPl = if (isMajor && effectiveRef != null) {
+                    RoadNameNormalizer.formatStreetDisplay(rawBase, effectiveRef) ?: rawStreetPl
+                } else {
+                    rawStreetPl
+                }
+                committedStreetPl = updatedStreetPl
+                if (effectiveRef != null) committedRoadRef = effectiveRef
                 candidateStreetPl = null
                 candidateStreetBase = null
                 candidateStreetCount = 0
@@ -692,6 +702,32 @@ class StreetResolutionTest {
             now = 5600L
         )
         assertEquals("Must promptly switch to ul. Skotnica without excessive delay", "ul. Skotnica", fix3)
+    }
+
+    @Test
+    fun `Cruising on Bielska retains DK52 when subsequent raw fix drops roadRef`() {
+        val model = LocalityStreetHysteresisModel()
+
+        // 1. Initial fix on DK52 with canonical highway designation
+        val fix1 = model.processFix(
+            rawStreetPl = "Bielska (DK52)",
+            city = "Kozy",
+            roadRef = "DK52",
+            speedKmh = 60f,
+            now = 1000L
+        )
+        assertEquals("Bielska (DK52)", fix1)
+
+        // 2. Next fix has base street Bielska (e.g. from building reverse geocode) but roadRef is null
+        val fix2 = model.processFix(
+            rawStreetPl = "Bielska",
+            city = "Kozy",
+            roadRef = null,
+            speedKmh = 58f,
+            now = 2000L
+        )
+        // Must retain Bielska (DK52) without flickering/flipping
+        assertEquals("Bielska (DK52)", fix2)
     }
 }
 

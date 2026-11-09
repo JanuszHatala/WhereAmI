@@ -663,6 +663,8 @@ fun OsmMapView(
     outdoorAreaBoundaryPoints: List<GeoPoint>? = null,
     outdoorAreaKind: OutdoorAreaKind? = null,
     outdoorAreaName: String? = null,
+    outdoorAreaCenter: GeoPoint? = null,
+    fitOutdoorAreaTrigger: Long = 0L,
     searchRoutePolylines: List<List<GeoPoint>>? = null,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -1913,6 +1915,84 @@ fun OsmMapView(
         map.invalidate()
     }
 
+    // Render Outdoor Area On-Map Badge Marker (sticking to the map at area center, styled with border color)
+    var outdoorAreaMarker by remember { mutableStateOf<Marker?>(null) }
+    LaunchedEffect(outdoorAreaBoundaryPoints, outdoorAreaName, outdoorAreaKind, outdoorAreaCenter, showOutdoorAreasOverlay) {
+        val map = mapView ?: return@LaunchedEffect
+        outdoorAreaMarker?.let { map.overlays.remove(it) }
+        outdoorAreaMarker = null
+
+        if (showOutdoorAreasOverlay && !outdoorAreaName.isNullOrBlank() &&
+            (outdoorAreaBoundaryPoints != null || outdoorAreaCenter != null)
+        ) {
+            val center = outdoorAreaCenter ?: outdoorAreaBoundaryPoints?.let { pts ->
+                if (pts.isNotEmpty()) {
+                    val bb = BoundingBox.fromGeoPoints(pts)
+                    GeoPoint(bb.centerLatitude, bb.centerLongitude)
+                } else null
+            }
+            if (center != null) {
+                val om = Marker(map).apply {
+                    position = center
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    icon = makeOutdoorAreaBadgeIcon(context, outdoorAreaName, outdoorAreaKind)
+                    infoWindow = null
+                    setOnMarkerClickListener { _, _ ->
+                        outdoorAreaBoundaryPoints?.let { pts ->
+                            if (pts.isNotEmpty()) {
+                                isFollowing = false
+                                fitPointsToUnobstructedViewport(
+                                    map = map,
+                                    points = pts,
+                                    density = density,
+                                    isLandscape = isLandscape,
+                                    isCompact = isCompact,
+                                    measuredTopInsetPx = measuredTopInsetPx,
+                                    measuredBottomInsetPx = measuredBottomInsetPx,
+                                    isRecording = isRecording,
+                                    isAutoStandby = isAutoStandby,
+                                    onZoomCalculated = { currentZoom = it }
+                                )
+                            }
+                        }
+                        true
+                    }
+                }
+                map.overlays.add(om)
+                outdoorAreaMarker = om
+            }
+        }
+        map.invalidate()
+    }
+
+    // Fit-to-outdoor-area trigger
+    LaunchedEffect(fitOutdoorAreaTrigger) {
+        if (fitOutdoorAreaTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            val pts = outdoorAreaBoundaryPoints
+            if (!pts.isNullOrEmpty()) {
+                isFollowing = false
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = pts,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = { currentZoom = it }
+                )
+            } else if (outdoorAreaCenter != null) {
+                isFollowing = false
+                val centerGp = getOpticalCenter(map, outdoorAreaCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setZoom(12.0)
+                map.controller.animateTo(centerGp)
+            }
+        }
+    }
+
     // Render Search Route Polylines (Full trail routes or rivers)
     LaunchedEffect(searchRoutePolylines) {
         val map = mapView ?: return@LaunchedEffect
@@ -2242,7 +2322,7 @@ fun OsmMapView(
                     // Single-tap clears active pin/saved place card if visible, without dropping a new pin or showing any empty hint/bubble!
                     val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
                         override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                            if (destinationPoint != null || selectedSavedPlace != null) {
+                            if (destinationPoint != null || selectedSavedPlace != null || outdoorAreaBoundaryPoints != null) {
                                 onClearDestination?.invoke()
                             }
                             // Always consume single tap and close any lingering info windows to guarantee no empty hint appears
@@ -2429,45 +2509,6 @@ fun OsmMapView(
                     .align(Alignment.CenterStart)
                     .padding(start = 12.dp)
             )
-        }
-
-        // Floating On-Map Outdoor Area Watermark / Badge
-        if (showOutdoorAreasOverlay && outdoorAreaBoundaryPoints != null && !outdoorAreaName.isNullOrBlank()) {
-            val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
-            val accentColor = if (isRange) ComposeColor(0xFFF59E0B) else ComposeColor(0xFF10B981)
-            val icon = if (isRange) "⛰️" else if (outdoorAreaKind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = ComposeColor(0xE60F172A),
-                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.7f)),
-                shadowElevation = 3.dp,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(
-                        start = if (isLandscape) 16.dp else 12.dp,
-                        top = if (isLandscape) 16.dp else (if (isCompact) 115.dp else 155.dp)
-                    )
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    EmojiText(emoji = icon, fontSize = 11.sp, yOffsetDp = 0.dp)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = outdoorAreaName,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ComposeColor.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = androidx.compose.ui.text.TextStyle(
-                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-                            lineHeight = 12.sp
-                        )
-                    )
-                }
-            }
         }
     }
 
@@ -5230,6 +5271,55 @@ internal fun makePauseIcon(context: Context, durText: String): android.graphics.
 
     val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
     canvas.drawText(fullText, bmp.width / 2f, textY, textPaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
+}
+
+internal fun makeOutdoorAreaBadgeIcon(
+    context: Context,
+    name: String,
+    kind: OutdoorAreaKind?
+): android.graphics.drawable.BitmapDrawable {
+    val density = context.resources.displayMetrics.density
+    val isRange = kind == OutdoorAreaKind.MOUNTAIN_RANGE
+    val accentHex = if (isRange) "#F59E0B" else "#10B981"
+    val accentColor = Color.parseColor(accentHex)
+    val iconEmoji = if (isRange) "⛰️" else if (kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
+
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 12f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.LEFT
+    }
+    val fullText = "$iconEmoji $name"
+    val textBounds = Rect()
+    textPaint.getTextBounds(fullText, 0, fullText.length, textBounds)
+
+    val padH = (10f * density).toInt()
+    val width = textBounds.width() + padH * 2
+    val height = (26f * density).toInt()
+
+    val bmp = Bitmap.createBitmap(maxOf(width, (40f * density).toInt()), height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#E60F172A") // 90% slate-900
+        style = Paint.Style.FILL
+    }
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = accentColor
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    val rect = RectF(1.5f * density, 1.5f * density, bmp.width - 1.5f * density, height - 1.5f * density)
+    val cornerRadius = 6f * density
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)
+
+    val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
+    canvas.drawText(fullText, padH.toFloat(), textY, textPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }

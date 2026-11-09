@@ -346,6 +346,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedOutdoorAreaName = MutableStateFlow<String?>(null)
     val selectedOutdoorAreaName: StateFlow<String?> = _selectedOutdoorAreaName.asStateFlow()
 
+    private val _selectedOutdoorAreaCenter = MutableStateFlow<org.osmdroid.util.GeoPoint?>(null)
+    val selectedOutdoorAreaCenter: StateFlow<org.osmdroid.util.GeoPoint?> = _selectedOutdoorAreaCenter.asStateFlow()
+
+    private val _fitOutdoorAreaTrigger = MutableStateFlow(0L)
+    val fitOutdoorAreaTrigger: StateFlow<Long> = _fitOutdoorAreaTrigger.asStateFlow()
+
     private val _liveOutdoorAreaBoundary = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
     val liveOutdoorAreaBoundary: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _liveOutdoorAreaBoundary.asStateFlow()
 
@@ -710,7 +716,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _selectedOutdoorAreaBoundary.value = boundary
                 _selectedOutdoorAreaKind.value = area.kind
                 _selectedOutdoorAreaName.value = area.name
-                _destinationPoint.value = org.osmdroid.util.GeoPoint(area.centerLat, area.centerLon)
+                _selectedOutdoorAreaCenter.value = org.osmdroid.util.GeoPoint(area.centerLat, area.centerLon)
+                _destinationPoint.value = null
+                _destinationItem.value = null
+                _fitOutdoorAreaTrigger.value = System.currentTimeMillis()
             }
         }
     }
@@ -719,6 +728,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedOutdoorAreaBoundary.value = null
         _selectedOutdoorAreaKind.value = null
         _selectedOutdoorAreaName.value = null
+        _selectedOutdoorAreaCenter.value = null
         _searchRoutePolylines.value = null
     }
 

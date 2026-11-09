@@ -339,6 +339,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     val selectedOutdoorAreaBoundary by viewModel.selectedOutdoorAreaBoundary.collectAsState()
     val selectedOutdoorAreaKind by viewModel.selectedOutdoorAreaKind.collectAsState()
     val selectedOutdoorAreaName by viewModel.selectedOutdoorAreaName.collectAsState()
+    val selectedOutdoorAreaCenter by viewModel.selectedOutdoorAreaCenter.collectAsState()
+    val fitOutdoorAreaTrigger by viewModel.fitOutdoorAreaTrigger.collectAsState()
     val liveOutdoorAreaBoundary by viewModel.liveOutdoorAreaBoundary.collectAsState()
     val liveOutdoorAreaKind by viewModel.liveOutdoorAreaKind.collectAsState()
     val liveOutdoorAreaName by viewModel.liveOutdoorAreaName.collectAsState()
@@ -798,6 +800,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 selectedSavedPlace = null
                 viewModel.setDestination(null)
                 viewModel.clearPinnedBorders()
+                viewModel.clearOutdoorAreaBoundary()
             },
             onMapClick = { gp ->
                 selectedSavedPlace = null
@@ -831,6 +834,8 @@ fun LocationScreen(viewModel: MainViewModel) {
             outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary ?: liveOutdoorAreaBoundary,
             outdoorAreaKind = selectedOutdoorAreaKind ?: liveOutdoorAreaKind,
             outdoorAreaName = selectedOutdoorAreaName ?: liveOutdoorAreaName,
+            outdoorAreaCenter = selectedOutdoorAreaCenter,
+            fitOutdoorAreaTrigger = fitOutdoorAreaTrigger,
             searchRoutePolylines = searchRoutePolylines,
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(

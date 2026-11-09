@@ -81,8 +81,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 130** | Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10) | 8 | 8 | 0 | 0 |
 | **Round 53** | Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync (v2.1.2) | 5 | 5 | 0 | 0 |
 | **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
+| **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **372** | **364** | **0** | **8** |
+| **Total** | | **376** | **368** | **0** | **8** |
 
 
 ---
@@ -1752,6 +1753,24 @@ Evidence & Diagnostics:
 | **FLX-306-04** | Atomic 500ms timeout on `flushBatchedFixes`. | `LocationManager.kt` | Implemented | Protects `BatchedRequestSequencer` from hung Play Services binder callbacks. |
 | **TRP-306-05** | Ongoing trip recording strictly protected against sleep window and DND. | `AutoSleepManager.kt`, `AppStateManager.kt` | Implemented | Active trips strictly block `enterStandbySleep`; sleep window evaluation occurs only upon trip completion. |
 | **VER-306** | Bump to versionCode 184 / 2.1.3. | `app/build.gradle.kts` | Implemented | Unit tests passed; built APK and verified on phone. |
+
+---
+
+## Round 55 - Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2)
+
+Evidence & Diagnostics:
+- Android Auto Speed Delay / Auto-Start Failure: When Sleep Mode was active overnight, `LiveTrackingService.stopSelf()` destroyed the Foreground Service token. On Android 14+, subsequent background location delivery to `AutoMediaService` was blocked. Preserving Zero-CPU Standby FGS (`stopLocationTracking()` + release wake locks) keeps the location token alive without CPU/GNSS drain, restoring immediate speed delivery on Android Auto.
+- Calendar Day Rollover Sleep Hold: `AutoSleepManager.onUserExplicitWake` now sets `lastEvaluatedCycleDate` so waking up before bedtime ends does not reset `wasManuallyWokenThisCycle` on midnight/day rollover.
+- On-Map Outdoor Area Badge: Replaced the fixed floating watermark beneath LocalityCard with an on-map osmdroid `Marker` anchored at the outdoor area centroid, rendering a pill badge styled to match the boundary color (amber/emerald). Single tap on the badge zooms and fits the region into the viewport without dropping a red destination pin.
+- DK52 / DW781 Corridor Flipping & Side-Street Hopping: `SpatialCacheHelper.sanitizeAllSuspiciousHighwayAssignments` repaired 4,100+ rows where `(DK52)` had been stripped from base streets. `LocationManager.applyStreetHysteresis` preserves confirmed highway designations when incoming raw fixes have matching base streets, lowers side-street shielding speed to 20 km/h, and enforces corridor inertia (without turn) at 18-35 km/h.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **AUT-308-01** | Android Auto immediate wake & speed display after sleep mode. | `LiveTrackingService.kt`, `AutoSleepManager.kt`, `AutoMediaService.kt` | Implemented | Standby FGS token preserved; 1 Hz unbatched sampling and `resubscribeGpsIfNeeded()` on playback start. |
+| **MAP-308-02** | Outdoor area badge on map with color match & zoom-to-fit (no pin). | `OsmMapView.kt`, `MainViewModel.kt`, `MainActivity.kt` | Implemented | Osmdroid marker anchored at area center; click triggers `_fitOutdoorAreaTrigger`; floating watermark removed. |
+| **HYS-308-03** | Prevent DK52 / DW781 road number flipping and side-street hopping in Kozy. | `SpatialCacheHelper.kt`, `LocationManager.kt` | Implemented | Major corridor code preserved on base street match; side-street shielding at >=20 km/h; unit tests pass. |
+| **VER-308** | Bump to versionCode 192 / 2.3.2. | `app/build.gradle.kts` | Implemented | All 645 unit tests pass; `assembleDebug` clean. |
+
 
 
 

@@ -358,6 +358,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     }
 
     fun onSleepWoken() {
+        lastEvaluatedCycleDate = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
         isManualSleep = false
         wasDndActiveInSession = false
         wasInBedtimeWindowDuringSleep = false
@@ -453,6 +454,7 @@ class AutoSleepManager private constructor(private val context: Context) {
     }
 
     fun onUserExplicitWake() {
+        lastEvaluatedCycleDate = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
         wasManuallyWokenThisCycle = true
         TelemetryLogger.log("POWER", "User explicitly woke app: AutoSleep suppressed for current night cycle")
     }

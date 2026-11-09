@@ -117,4 +117,19 @@ class SpatialCacheGridTest {
         org.junit.Assert.assertTrue("S1 grid key must be recognized in cached keys", s1Key in cachedKeys)
         org.junit.Assert.assertTrue("DW957 grid key must be recognized in cached keys", dw957Key in cachedKeys)
     }
+
+    @Test
+    fun testMajorCorridorFormatStreetDisplayPreservesDk52() {
+        val base = RoadNameNormalizer.extractBaseStreet("Bielska (DK52)")
+        assertEquals("Bielska", base)
+
+        val formatted = RoadNameNormalizer.formatStreetDisplay(base, "DK52", "PL")
+        assertEquals("Bielska (DK52)", formatted)
+
+        // Ensure formatting already formatted street doesn't duplicate
+        val base2 = RoadNameNormalizer.extractBaseStreet("ul. Krakowska (DK52)")
+        assertEquals("ul. Krakowska", base2)
+        val formatted2 = RoadNameNormalizer.formatStreetDisplay(base2, "DK52", "PL")
+        assertEquals("ul. Krakowska (DK52)", formatted2)
+    }
 }

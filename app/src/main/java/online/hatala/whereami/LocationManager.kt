@@ -874,18 +874,36 @@ class LocationManager private constructor(private val context: Context) {
             return multiData
         }
 
-        // Same base road! Update house number or minor variation immediately
+        // Same base road! Update house number or minor variation immediately while preserving confirmed highway codes
         if (rawBase.equals(committedStreetBase, ignoreCase = true)) {
-            committedStreetPl = rawStreetPl
+            val existingHighwayCode = RoadNameNormalizer.extractHighwayCode(committedStreetPl) ?: committedPlace?.pl?.roadRef
+            val incomingHighwayCode = multiData.pl.roadRef ?: RoadNameNormalizer.extractHighwayCode(rawStreetPl)
+            val effectiveRef = incomingHighwayCode ?: existingHighwayCode
+            val isMajor = RoadNameNormalizer.isMajorRoad(rawBase, effectiveRef)
+
+            val updatedStreetPl = if (isMajor && effectiveRef != null) {
+                RoadNameNormalizer.formatStreetDisplay(rawBase, effectiveRef, multiData.pl.countryCode) ?: rawStreetPl
+            } else {
+                rawStreetPl
+            }
+
+            committedStreetPl = updatedStreetPl
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
-            return multiData
+            val effectiveRefPl = if (isMajor) effectiveRef else multiData.pl.roadRef
+            return multiData.copy(
+                en = multiData.en.copy(street = updatedStreetPl, roadRef = effectiveRefPl),
+                pl = multiData.pl.copy(street = updatedStreetPl, roadRef = effectiveRefPl),
+                native = multiData.native.copy(street = updatedStreetPl, roadRef = effectiveRefPl)
+            )
         }
 
         // Different road detected!
-        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, committedPlace?.pl?.roadRef)
-        val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase, multiData.pl.roadRef)
+        val isCommittedMajor = RoadNameNormalizer.isMajorRoad(committedStreetBase, committedPlace?.pl?.roadRef) ||
+            RoadNameNormalizer.isMajorRoad(committedStreetPl, RoadNameNormalizer.extractHighwayCode(committedStreetPl))
+        val isCandidateMajor = RoadNameNormalizer.isMajorRoad(rawBase, multiData.pl.roadRef) ||
+            RoadNameNormalizer.isMajorRoad(rawStreetPl, RoadNameNormalizer.extractHighwayCode(rawStreetPl))
 
         // Track candidate observations
         if (candidateStreetBase != null && candidateStreetBase.equals(rawBase, ignoreCase = true)) {
@@ -999,16 +1017,25 @@ class LocationManager private constructor(private val context: Context) {
                     else -> 7_000L
                 }
             }
-            speedKmh > 15f -> {
-                // Moderate city driving / cycling:
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 3 else 2
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 3_500L else 2_000L
+            speedKmh > 18f -> {
+                // Moderate city driving / cycling (18 - 35 km/h, road intersections / corridor preservation):
+                // Without a verified physical turn, leaving a major road requires corridor inertia (6 fixes / 8s)
+                rawRequiredCount = when {
+                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 4 else 6
+                    !isCommittedMajor && isCandidateMajor -> 2
+                    else -> if (isRecentTurn) 2 else 4
+                }
+                rawRequiredDuration = when {
+                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 4_000L else 8_000L
+                    !isCommittedMajor && isCandidateMajor -> 2_000L
+                    else -> if (isRecentTurn) 2_000L else 5_000L
+                }
             }
             else -> {
-                // Slow driving / cycling / walking (1.2 - 15 km/h):
+                // Slow driving / cycling / walking (1.2 - 18 km/h):
                 // Protect major roads (DK*, DW*, etc.) and main thoroughfares against side-street hopping
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 4 else 3
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 4_500L else 2_500L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
             }
         }
 
@@ -1648,7 +1675,7 @@ class LocationManager private constructor(private val context: Context) {
                         return sanitizeMultiDataHouseNumbers(upgraded, speedKmh, accuracyMeters)
                     }
 
-                    if (isDrivingFast && speedKmh != null && speedKmh > 35f && isCommittedMajor && isCachedSideStreet) {
+                    if (isDrivingFast && speedKmh != null && speedKmh > 20f && isCommittedMajor && isCachedSideStreet) {
                         TelemetryLogger.log("STREET", "Shielding major corridor '${committed?.street}' from cached side-street '${diskCached.pl.street}' at ${speedKmh.toInt()} km/h")
                         if (committedPlace != null) {
                             val sameLocality = diskCached.pl.city.equals(committedPlace!!.pl.city, ignoreCase = true)
@@ -1670,7 +1697,10 @@ class LocationManager private constructor(private val context: Context) {
                         // Bare highway-only cache cells or missing house numbers during stationary dwell require revalidation
                         val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street)
                         val isStationaryOrLowSpeed = (speedKmh == null || speedKmh < 15f) && (accuracyMeters == null || accuracyMeters <= 35f)
-                        val cachedHasBareStreet = diskCached.pl.street != null && RoadNameNormalizer.extractHouseNumber(diskCached.pl.street) == null
+                        val cachedHasBareStreet = diskCached.pl.street != null &&
+                            !RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street) &&
+                            !RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef) &&
+                            RoadNameNormalizer.extractHouseNumber(diskCached.pl.street) == null
                         if ((bareHighwayCache || (isStationaryOrLowSpeed && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
                             scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
                         }

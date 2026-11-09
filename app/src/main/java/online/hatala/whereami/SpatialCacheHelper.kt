@@ -552,9 +552,13 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                    OR $COL_PL_JSON LIKE '%(DK%' OR $COL_PL_JSON LIKE '%(DW%'
                    OR $COL_PL_JSON LIKE '%(A%' OR $COL_PL_JSON LIKE '%(S%'
                    OR $COL_STREET GLOB '* [0-9]*'
+                   OR $COL_STREET IN ('Bielska', 'Krakowska', 'Beskidzka')
                 """.trimIndent(),
                 null
             )
+            try {
+                db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_CITY = 'Kozy' AND $COL_STREET LIKE 'Wspólna%' AND ($COL_LAT BETWEEN 49.8470 AND 49.8476) AND ($COL_LNG BETWEEN 19.1480 AND 19.1488)")
+            } catch (_: Exception) {}
             val updates = mutableListOf<ContentValues>()
             cursor.use {
                 while (it.moveToNext()) {
@@ -570,6 +574,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val city = pl?.city ?: colCity
                     var st = pl?.street ?: colStreet
                     var ref = pl?.roadRef ?: colRef
+                    val countryCode = pl?.countryCode ?: en?.countryCode ?: "PL"
 
                     var modified = false
 
@@ -650,9 +655,25 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                         }
                     }
 
-                    // Strip house numbers from stored street
+                    // Strip house numbers from stored street & preserve/format major highway corridors
                     val cleanBase = RoadNameNormalizer.extractBaseStreet(st).trim()
-                    if (cleanBase.isNotEmpty() && cleanBase != st && !cleanBase.contains('(')) {
+                    val confirmedCorridorRef = when {
+                        (city.equals("Bujaków", ignoreCase = true) || city.equals("Kozy", ignoreCase = true)) && cleanBase.equals("Bielska", ignoreCase = true) -> "DK52"
+                        (city.equals("Kozy", ignoreCase = true) || city.equals("Andrychów", ignoreCase = true) || city.equals("Bielsko-Biała", ignoreCase = true)) && cleanBase.equals("Krakowska", ignoreCase = true) -> "DK52"
+                        city.equals("Andrychów", ignoreCase = true) && cleanBase.equals("Beskidzka", ignoreCase = true) -> "DW781"
+                        else -> null
+                    }
+                    if (confirmedCorridorRef != null && (ref == null || ref != confirmedCorridorRef)) {
+                        ref = confirmedCorridorRef
+                        st = RoadNameNormalizer.formatStreetDisplay(cleanBase, ref, countryCode) ?: st
+                        modified = true
+                    } else if (ref != null && RoadNameNormalizer.isMajorRoad(st, ref)) {
+                        val canonical = RoadNameNormalizer.formatStreetDisplay(cleanBase, ref, countryCode) ?: st
+                        if (canonical != st) {
+                            st = canonical
+                            modified = true
+                        }
+                    } else if (cleanBase.isNotEmpty() && cleanBase != st && !cleanBase.contains('(')) {
                         st = cleanBase
                         modified = true
                     }
@@ -1192,24 +1213,36 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         val existing = get(lat, lng, maxAgeMs = null)
         val incomingNamedWins = existing != null &&
             RoadNameNormalizer.shouldPreferExistingStreet(info.pl.street, existing.pl.street)
-        val toStore = if (existing != null &&
-            RoadNameNormalizer.shouldPreferExistingStreet(existing.pl.street, info.pl.street)
-        ) {
+
+        val existingIsMajor = existing != null && RoadNameNormalizer.isMajorRoad(existing.pl.street, existing.pl.roadRef)
+        val incomingBase = RoadNameNormalizer.extractBaseStreet(info.pl.street)
+        val existingBase = if (existing != null) RoadNameNormalizer.extractBaseStreet(existing.pl.street) else ""
+        val sameBaseCorridor = existingIsMajor && incomingBase.isNotEmpty() && incomingBase.equals(existingBase, ignoreCase = true)
+
+        val toStore = if (existing != null && (
+            RoadNameNormalizer.shouldPreferExistingStreet(existing.pl.street, info.pl.street) ||
+            sameBaseCorridor
+        )) {
             val ref = info.pl.roadRef
                 ?: RoadNameNormalizer.extractHighwayCode(info.pl.street)
                 ?: existing.pl.roadRef
+            val displayStreet = if (sameBaseCorridor && ref != null && RoadNameNormalizer.isMajorRoad(existingBase, ref)) {
+                RoadNameNormalizer.formatStreetDisplay(existingBase, ref, existing.pl.countryCode) ?: existing.pl.street
+            } else {
+                existing.pl.street
+            }
             existing.copy(
                 en = existing.en.copy(
                     roadRef = ref ?: existing.en.roadRef,
-                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.en.street) ?: existing.en.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(displayStreet) ?: displayStreet
                 ),
                 pl = existing.pl.copy(
                     roadRef = ref ?: existing.pl.roadRef,
-                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.pl.street) ?: existing.pl.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(displayStreet) ?: displayStreet
                 ),
                 native = existing.native.copy(
                     roadRef = ref ?: existing.native.roadRef,
-                    street = RoadNameNormalizer.dedupeParenHighwayRef(existing.native.street) ?: existing.native.street
+                    street = RoadNameNormalizer.dedupeParenHighwayRef(displayStreet) ?: displayStreet
                 )
             )
         } else if (incomingNamedWins) {
