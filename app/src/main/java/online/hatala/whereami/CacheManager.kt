@@ -655,6 +655,7 @@ class CacheManager private constructor(private val context: Context) {
                 spatialHelper.sanitizeCorruptedRoczynyDw781(db)
                 spatialHelper.sanitizeGronInGminaAndrychow(db)
                 spatialHelper.sanitizeAllSuspiciousHighwayAssignments(db)
+                spatialHelper.sanitizeDegradedLocalityAndCorridorEntries(db)
                 // Clean orphan/unknown entries
                 val cursor = db.rawQuery("SELECT count(*) FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'", null)
                 if (cursor.moveToFirst()) {
@@ -767,17 +768,33 @@ class CacheManager private constructor(private val context: Context) {
                 val canAutoWifi = autoStartOnWifi && isUnmeteredWifi()
                 val canAutoCharger = autoStartOnCharger && isDeviceCharging()
 
-                // 1. Process pending stale/obsolete refreshes if power/wifi allows
-                if ((canAutoWifi || canAutoCharger) && pendingRefreshPoints.isNotEmpty()) {
-                    val pointsToRefresh = pendingRefreshPoints.values.toList()
-                    pendingRefreshPoints.clear()
-                    TelemetryLogger.log("CACHE", "Processing ${pointsToRefresh.size} pending stale corridor refreshes post-trip")
-                    for (pt in pointsToRefresh) {
-                        if (!allowOnBattery && !isDeviceCharging()) break
-                        LocationManager.getInstance(context).resolveMultiLanguageData(
-                            pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true
-                        )
-                        kotlinx.coroutines.delay(1000L)
+                // 1. Process pending stale/obsolete refreshes and degraded trip points if power/wifi allows
+                val canProceedRefresh = canAutoWifi || canAutoCharger || (allowOnBattery && !LocationManager.getInstance(context).isOsmRateLimited())
+                if (canProceedRefresh) {
+                    val dbHelper = TripDatabaseHelper.getInstance(context)
+                    val lastTrip = dbHelper.getAllTrips().filter { it.endTime != null && it.endTime > 0 }.maxByOrNull { it.endTime ?: 0L }
+                    val degradedTripPts = lastTrip?.points?.let { pts ->
+                        SpatialCacheHelper.getInstance(context).getIncompleteOrDegradedTripPoints(pts)
+                    } ?: emptyList()
+                    for (pt in degradedTripPts) {
+                        enqueuePendingRefresh(pt.latitude, pt.longitude)
+                    }
+
+                    if (pendingRefreshPoints.isNotEmpty()) {
+                        val pointsToRefresh = pendingRefreshPoints.values.toList()
+                        pendingRefreshPoints.clear()
+                        TelemetryLogger.log("CACHE", "Processing ${pointsToRefresh.size} pending corridor refreshes post-trip")
+                        val locManager = LocationManager.getInstance(context)
+                        for (pt in pointsToRefresh) {
+                            if (!allowOnBattery && !isDeviceCharging()) break
+                            while (locManager.isOsmRateLimited()) {
+                                kotlinx.coroutines.delay(1000L)
+                            }
+                            locManager.resolveMultiLanguageData(
+                                pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true
+                            )
+                            kotlinx.coroutines.delay(1100L)
+                        }
                     }
                 }
 

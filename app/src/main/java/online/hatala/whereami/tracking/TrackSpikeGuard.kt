@@ -159,13 +159,22 @@ object TrackSpikeGuard {
         val ab = distanceM(aLat, aLng, bLat, bLng)
         val bc = distanceM(bLat, bLng, cLat, cLng)
         val ac = distanceM(aLat, aLng, cLat, cLng)
-        if (ab < LATERAL_V_LEG_M || bc < LATERAL_V_LEG_M || ac < LATERAL_V_CHORD_M) return false
-        val detour = ab + bc - ac
-        if (detour < LATERAL_V_XT_M) return false
         val turn = courseDeltaDeg(
             bearingDeg(aLat, aLng, bLat, bLng),
             bearingDeg(bLat, bLng, cLat, cLng)
         )
+        val detour = ab + bc - ac
+
+        // Short-leg backward Z-hook / reversal: point B forms an acute reversal (turn >= 95°)
+        // on short legs (<= 8.0m) where chord A->C is shorter than one of the legs or significantly detoured.
+        if (turn >= 95.0 && minOf(ab, bc) >= 0.8 && maxOf(ab, bc) <= 8.0) {
+            if (ac < maxOf(ab, bc) || (detour >= 1.2 && ac < hypot(ab, bc))) {
+                return true
+            }
+        }
+
+        if (ab < LATERAL_V_LEG_M || bc < LATERAL_V_LEG_M || ac < LATERAL_V_CHORD_M) return false
+        if (detour < LATERAL_V_XT_M) return false
         if (turn < LATERAL_V_TURN_DEG) return false
         val xt = crossTrackM(aLat, aLng, cLat, cLng, bLat, bLng)
         if (xt >= LATERAL_V_XT_M) return true

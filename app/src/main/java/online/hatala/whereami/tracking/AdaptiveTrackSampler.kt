@@ -19,7 +19,7 @@ import kotlin.math.hypot
 class AdaptiveTrackSampler {
 
     private var anchor: SmoothedPoint? = null
-    private val window = ArrayList<SmoothedPoint>()
+    internal val window = ArrayList<SmoothedPoint>()
 
     /** @return the points to commit, in order (0, 1 or 2 points). */
     fun offer(p: SmoothedPoint): List<SmoothedPoint> {
@@ -42,9 +42,9 @@ class AdaptiveTrackSampler {
         }
 
         val chord = distanceM(a, p)
-        // Creeping / parking GNSS texture (< ~4 km/h): do not densify until the vehicle has left the nest.
+        // Creeping / parking GNSS texture (< ~4 km/h): do not buffer jitter as apex candidates
+        // while the vehicle is stationary or within the parking escape nest.
         if (p.speedMps < CRAWL_SPEED_MPS && chord < PARKING_ESCAPE_M) {
-            window.add(p)
             return emptyList()
         }
         if (chord < minSpacingM(p.speedMps)) {
@@ -137,12 +137,30 @@ class AdaptiveTrackSampler {
             fun ny(p: SmoothedPoint) = Math.toRadians(p.lat - a.lat) * R
             val bx = ex(b); val by = ny(b)
             val len = hypot(bx, by)
+            if (len < 1e-6) return null
             var worstDist = -1.0
             var worstPoint: SmoothedPoint? = null
             for (p in pts) {
                 val px = ex(p); val py = ny(p)
-                val t = if (len < 1e-6) 0.0 else ((px * bx + py * by) / (len * len)).coerceIn(0.0, 1.0)
+                val rawT = (px * bx + py * by) / (len * len)
+                // Candidate apex must project strictly forward along chord a -> b
+                if (rawT !in 0.10..0.90) continue
+                val t = rawT.coerceIn(0.0, 1.0)
                 val d = hypot(px - t * bx, py - t * by)
+
+                // Guard against acute backward Z-hooks on short legs
+                val dAP = hypot(px, py)
+                val dPB = hypot(bx - px, by - py)
+                if (minOf(dAP, dPB) >= 0.8 && maxOf(dAP, dPB) <= 8.0) {
+                    val turnAngle = TrackSpikeGuard.courseDeltaDeg(
+                        TrackSpikeGuard.bearingDeg(a.lat, a.lng, p.lat, p.lng),
+                        TrackSpikeGuard.bearingDeg(p.lat, p.lng, b.lat, b.lng)
+                    )
+                    if (turnAngle >= 95.0 && (len < maxOf(dAP, dPB) || (dAP + dPB - len) >= 1.2 && len < hypot(dAP, dPB))) {
+                        continue
+                    }
+                }
+
                 if (d > worstDist) {
                     worstDist = d
                     worstPoint = p

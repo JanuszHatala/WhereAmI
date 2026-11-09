@@ -91,9 +91,12 @@ class FixedLagSmoother(private val lagMs: Long = 3_000L) {
         for (k in n - 2 downTo 0) {
             val curr = steps[k]
             val next = steps[k + 1]
-            // Decouple RTS smoother across multi-second stationary gaps or when either step is stationary
+            // Decouple RTS smoother across multi-second gaps or between stationary steps.
+            // Allow backward smoothing into the final moving step before rest (!curr.isStationary && next.isStationary && dtMs <= 2_500L)
+            // to pull braking overshoot back onto the stationary anchor.
             val dtMs = next.tElapsedMs - curr.tElapsedMs
-            if (dtMs > 4_000L || curr.isStationary || next.isStationary) continue
+            val allowFinalBrakingSmoothing = !curr.isStationary && next.isStationary && dtMs <= 2_500L
+            if (dtMs > 4_000L || curr.isStationary || (next.isStationary && !allowFinalBrakingSmoothing)) continue
 
             val f = next.f
             val pPred = next.pPred

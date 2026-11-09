@@ -14,8 +14,8 @@ import kotlin.math.hypot
 class PencilTrail(private val maxPoints: Int = 600) {
 
     private val t = ArrayList<Long>()
-    private val lat = ArrayList<Double>()
-    private val lng = ArrayList<Double>()
+    internal val lat = ArrayList<Double>()
+    internal val lng = ArrayList<Double>()
 
     val size: Int get() = t.size
 
@@ -27,6 +27,28 @@ class PencilTrail(private val maxPoints: Int = 600) {
             val k = cos(Math.toRadians(latDeg)).coerceAtLeast(0.01)
             val d = hypot((lngDeg - lng[n - 1]) * k, latDeg - lat[n - 1]) * LocalFrame.METERS_PER_DEG_LAT
             if (d < minStepM(speedMps, vehicle)) return false
+
+            // If n >= 2, check whether adding (latDeg, lngDeg) as C after A -> B creates a short-leg acute Z-kink.
+            // If so, collapse B in-place with C to prevent drawing a transient spike behind the live cursor.
+            if (n >= 2) {
+                val aLat = lat[n - 2]; val aLng = lng[n - 2]
+                val bLat = lat[n - 1]; val bLng = lng[n - 1]
+                val ab = hypot((bLng - aLng) * k, bLat - aLat) * LocalFrame.METERS_PER_DEG_LAT
+                val bc = d
+                val ac = hypot((lngDeg - aLng) * k, latDeg - aLat) * LocalFrame.METERS_PER_DEG_LAT
+                if (ab < 6.0 && bc < 6.0) {
+                    val turnAngle = TrackSpikeGuard.courseDeltaDeg(
+                        TrackSpikeGuard.bearingDeg(aLat, aLng, bLat, bLng),
+                        TrackSpikeGuard.bearingDeg(bLat, bLng, latDeg, lngDeg)
+                    )
+                    if (turnAngle >= 95.0 && (ac < maxOf(ab, bc) || ((ab + bc) - ac >= 1.2 && ac < hypot(ab, bc)))) {
+                        t[n - 1] = tMs
+                        lat[n - 1] = latDeg
+                        lng[n - 1] = lngDeg
+                        return true
+                    }
+                }
+            }
         }
         t.add(tMs); lat.add(latDeg); lng.add(lngDeg)
         if (t.size > maxPoints) {

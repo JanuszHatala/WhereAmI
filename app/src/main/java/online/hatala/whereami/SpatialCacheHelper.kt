@@ -77,7 +77,14 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val resolvedVoivodeship = if (resolvedCountry == "Polska" || cc.uppercase() == "PL") {
                     LocationManager.canonicalizePolishVoivodeship(rawVoivodeship)
                 } else rawVoivodeship
-                val rawCity = obj.optString("city", "Unknown City")
+                var rawCity = obj.optString("city", "Unknown City")
+                if (rawCity.startsWith("Międzybrodzie Kob", ignoreCase = true)) {
+                    rawCity = "Międzybrodzie Bialskie"
+                }
+                Regex("""^(\p{L}[\p{L}\s.-]+?)(?:-\d+|\s+\d+|\d{2,})$""").matchEntire(rawCity)?.let { m ->
+                    val stripped = m.groupValues[1].trim()
+                    if (stripped.length >= 2) rawCity = stripped
+                }
                 val isPoland = cc.uppercase() == "PL" || resolvedCountry == "Polska"
                 val rawGmina = obj.optString("gmina").takeIf { it.isNotBlank() }
                 val resolvedGmina = if (isPoland && rawGmina != null) {
@@ -195,6 +202,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         sanitizeCorruptedRoczynyDw781(db)
         sanitizeGronInGminaAndrychow(db)
         sanitizeAllSuspiciousHighwayAssignments(db)
+        sanitizeDegradedLocalityAndCorridorEntries(db)
     }
 
     private fun ensureHighwayTypeColumn(db: SQLiteDatabase) {
@@ -943,6 +951,154 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 db.endTransaction()
             }
         } catch (_: Exception) {}
+    }
+
+    fun sanitizeDegradedLocalityAndCorridorEntries(db: SQLiteDatabase = writableDatabase) {
+        try {
+            // Delete corrupt short junk
+            db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_CITY = 'z' OR length($COL_CITY) < 2")
+
+            // Clean abbreviated Międzybrodzie Kob. -> Międzybrodzie Bialskie
+            db.execSQL(
+                """
+                UPDATE $TABLE_CACHE SET $COL_CITY = 'Międzybrodzie Bialskie',
+                    $COL_EN_JSON = REPLACE(REPLACE($COL_EN_JSON, '"city":"Międzybrodzie Kob."', '"city":"Międzybrodzie Bialskie"'), '"city":"Międzybrodzie Kobiernickie"', '"city":"Międzybrodzie Bialskie"'),
+                    $COL_PL_JSON = REPLACE(REPLACE($COL_PL_JSON, '"city":"Międzybrodzie Kob."', '"city":"Międzybrodzie Bialskie"'), '"city":"Międzybrodzie Kobiernickie"', '"city":"Międzybrodzie Bialskie"'),
+                    $COL_NATIVE_JSON = REPLACE(REPLACE($COL_NATIVE_JSON, '"city":"Międzybrodzie Kob."', '"city":"Międzybrodzie Bialskie"'), '"city":"Międzybrodzie Kobiernickie"', '"city":"Międzybrodzie Bialskie"')
+                WHERE $COL_CITY LIKE 'Międzybrodzie Kob%' OR $COL_PL_JSON LIKE '%Międzybrodzie Kob%'
+                """.trimIndent()
+            )
+
+            // Clean Porąbka-1 -> Porąbka
+            db.execSQL(
+                """
+                UPDATE $TABLE_CACHE SET $COL_CITY = 'Porąbka',
+                    $COL_EN_JSON = REPLACE($COL_EN_JSON, '"city":"Porąbka-1"', '"city":"Porąbka"'),
+                    $COL_PL_JSON = REPLACE($COL_PL_JSON, '"city":"Porąbka-1"', '"city":"Porąbka"'),
+                    $COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '"city":"Porąbka-1"', '"city":"Porąbka"')
+                WHERE $COL_CITY = 'Porąbka-1' OR $COL_PL_JSON LIKE '%"city":"Porąbka-1"%'
+                """.trimIndent()
+            )
+
+            // Clean Zawoja1579 -> Zawoja
+            db.execSQL(
+                """
+                UPDATE $TABLE_CACHE SET $COL_CITY = 'Zawoja',
+                    $COL_EN_JSON = REPLACE($COL_EN_JSON, '"city":"Zawoja1579"', '"city":"Zawoja"'),
+                    $COL_PL_JSON = REPLACE($COL_PL_JSON, '"city":"Zawoja1579"', '"city":"Zawoja"'),
+                    $COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '"city":"Zawoja1579"', '"city":"Zawoja"')
+                WHERE $COL_CITY = 'Zawoja1579' OR $COL_PL_JSON LIKE '%"city":"Zawoja1579"%'
+                """.trimIndent()
+            )
+
+            // Clean Bielsko-Biala -> Bielsko-Biała
+            db.execSQL(
+                """
+                UPDATE $TABLE_CACHE SET
+                    $COL_PL_JSON = REPLACE($COL_PL_JSON, '"city":"Bielsko-Biala"', '"city":"Bielsko-Biała"'),
+                    $COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '"city":"Bielsko-Biala"', '"city":"Bielsko-Biała"')
+                WHERE $COL_PL_JSON LIKE '%"city":"Bielsko-Biala"%' OR $COL_NATIVE_JSON LIKE '%"city":"Bielsko-Biala"%'
+                """.trimIndent()
+            )
+
+            // Purge degraded highway_type IS NULL AND road_ref IS NULL rows from the 2026-11-09 outage
+            // on Żywiecka / Bielska in Międzybrodzie Bialskie and Porąbka so they are refreshed cleanly
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IS NULL AND $COL_ROAD_REF IS NULL
+                  AND ($COL_CITY = 'Międzybrodzie Bialskie' OR $COL_CITY = 'Porąbka')
+                  AND ($COL_STREET LIKE 'Żywiecka%' OR $COL_STREET LIKE 'Bielska%')
+                  AND $COL_TIMESTAMP BETWEEN 1794236000000 AND 1794238000000
+                """.trimIndent()
+            )
+
+            // Purge Sept 20-21 side-street snaps on DW948 corridor with highway_type IS NULL
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IS NULL AND $COL_ROAD_REF IS NULL
+                  AND ($COL_STREET = 'Zamkowa' OR $COL_STREET = 'Miła' OR $COL_STREET = 'Źródlana')
+                  AND ($COL_CITY = 'Międzybrodzie Bialskie' OR $COL_CITY = 'Międzybrodzie Kob.')
+                """.trimIndent()
+            )
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Finds the nearest OSM-verified locality (highway_type IS NOT NULL) within [radiusM] meters.
+     */
+    fun findNearestVerifiedLocality(lat: Double, lng: Double, radiusM: Double = 2500.0, gmina: String? = null): String? {
+        val deg = radiusM / 111000.0
+        val db = readableDatabase
+        val query = if (!gmina.isNullOrBlank()) {
+            "SELECT $COL_CITY, $COL_LAT, $COL_LNG FROM $TABLE_CACHE WHERE $COL_HIGHWAY_TYPE IS NOT NULL AND $COL_CITY IS NOT NULL AND $COL_CITY NOT LIKE '%.%' AND $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ? AND $COL_PL_JSON LIKE ? LIMIT 20"
+        } else {
+            "SELECT $COL_CITY, $COL_LAT, $COL_LNG FROM $TABLE_CACHE WHERE $COL_HIGHWAY_TYPE IS NOT NULL AND $COL_CITY IS NOT NULL AND $COL_CITY NOT LIKE '%.%' AND $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ? LIMIT 20"
+        }
+        val args = if (!gmina.isNullOrBlank()) {
+            arrayOf((lat - deg).toString(), (lat + deg).toString(), (lng - deg).toString(), (lng + deg).toString(), "%$gmina%")
+        } else {
+            arrayOf((lat - deg).toString(), (lat + deg).toString(), (lng - deg).toString(), (lng + deg).toString())
+        }
+        var closestCity: String? = null
+        var closestDist = Float.MAX_VALUE
+        try {
+            val cursor = db.rawQuery(query, args)
+            cursor.use {
+                val dist = FloatArray(1)
+                while (it.moveToNext()) {
+                    val city = it.getString(0) ?: continue
+                    val rowLat = it.getDouble(1)
+                    val rowLng = it.getDouble(2)
+                    android.location.Location.distanceBetween(lat, lng, rowLat, rowLng, dist)
+                    if (dist[0] <= radiusM && dist[0] < closestDist) {
+                        closestDist = dist[0]
+                        closestCity = city
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return closestCity
+    }
+
+    /**
+     * Identifies missing points or degraded points (e.g. unverified corridor rows without highway_type
+     * or corrupted locality names) along a list of trip track points.
+     */
+    fun getIncompleteOrDegradedTripPoints(points: List<org.osmdroid.util.GeoPoint>): List<org.osmdroid.util.GeoPoint> {
+        if (points.isEmpty()) return emptyList()
+        val db = readableDatabase
+        val degradedOrMissing = mutableListOf<org.osmdroid.util.GeoPoint>()
+        val cachedKeys = getAllCachedGridKeys()
+        for (pt in points) {
+            val key = toGridKey(pt.latitude, pt.longitude)
+            if (key !in cachedKeys && !hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
+                degradedOrMissing.add(pt)
+            } else {
+                try {
+                    val cursor = db.rawQuery(
+                        "SELECT $COL_HIGHWAY_TYPE, $COL_CITY, $COL_STREET, $COL_ROAD_REF FROM $TABLE_CACHE WHERE $COL_GRID_KEY = ?",
+                        arrayOf(key)
+                    )
+                    cursor.use {
+                        if (it.moveToFirst()) {
+                            val hw = it.getString(0)
+                            val city = it.getString(1) ?: ""
+                            val street = it.getString(2)
+                            val roadRef = it.getString(3)
+                            val isCorridor = RoadNameNormalizer.isMajorRoad(street, roadRef)
+                            val isDegraded = (isCorridor && hw == null && roadRef == null) ||
+                                city.contains(".") || city.matches(Regex(""".*-\d+$"""))
+                            if (isDegraded) {
+                                degradedOrMissing.add(pt)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        return degradedOrMissing
     }
 
     /**

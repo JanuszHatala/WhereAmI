@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
@@ -179,6 +180,8 @@ class LocationManager private constructor(private val context: Context) {
 
         private const val PREFS_WRITE_INTERVAL_MS = 30_000L
         private const val PREFS_WRITE_DISTANCE_M = 200f
+
+        private val LOCALITY_SUFFIX_REGEX = Regex("""^(\p{L}[\p{L}\s.-]+?)(?:-\d+|\s+\d+|\d{2,})$""")
 
         private val activeCallbacks = Collections.synchronizedSet(mutableSetOf<LocationCallback>())
 
@@ -1285,7 +1288,8 @@ class LocationManager private constructor(private val context: Context) {
                             lng = lng,
                             bearing = capturedBearing,
                             speedKmh = speedKmh,
-                            accuracyMeters = fixAccuracy
+                            accuracyMeters = fixAccuracy,
+                            isCancelled = { !isActive }
                         )
                         val outdoorCtx = try {
                             val isScreenOffNow = run {
@@ -1617,7 +1621,8 @@ class LocationManager private constructor(private val context: Context) {
         accuracyMeters: Float? = null,
         forceCache: Boolean = false,
         allowNetwork: Boolean = true,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        isCancelled: () -> Boolean = { false }
     ): MultiLanguagePlaceInfo {
         val now = System.currentTimeMillis()
         val gridKey = "${String.format(Locale.ROOT, "%.4f", lat)}_${String.format(Locale.ROOT, "%.4f", lng)}"
@@ -1767,20 +1772,47 @@ class LocationManager private constructor(private val context: Context) {
             return fallback
         }
 
-        val baseAddress = geocode(lat, lng, Locale.getDefault())
-        val countryCode = baseAddress?.countryCode?.uppercase() ?: ""
-        val nativeLocale = if (countryCode.isNotEmpty()) Locale("", countryCode) else Locale.getDefault()
+        if (isCancelled()) {
+            return committedPlace ?: getLastGoodMultiPlace(prefs)
+        }
 
-        val enAddress = geocode(lat, lng, Locale.US) ?: baseAddress
-        val plAddress = geocode(lat, lng, Locale("pl", "PL")) ?: baseAddress
-        val nativeAddress = geocode(lat, lng, nativeLocale) ?: baseAddress
+        val defaultLocale = Locale.getDefault()
+        val addressMap = mutableMapOf<String, Address?>()
+        fun getCachedAddress(loc: Locale): Address? {
+            val key = "${loc.language}_${loc.country}"
+            return addressMap.getOrPut(key) { geocode(lat, lng, loc) }
+        }
+
+        val baseAddress = getCachedAddress(defaultLocale)
+        if (isCancelled()) {
+            return committedPlace ?: getLastGoodMultiPlace(prefs)
+        }
+
+        val countryCode = baseAddress?.countryCode?.uppercase() ?: ""
+        val nativeLocale = if (countryCode.isNotEmpty()) {
+            val langForCountry = Locale.getAvailableLocales()
+                .firstOrNull { it.country.equals(countryCode, ignoreCase = true) }?.language ?: defaultLocale.language
+            Locale(langForCountry, countryCode)
+        } else defaultLocale
+
+        val enAddress = getCachedAddress(Locale.US) ?: baseAddress
+        val plAddress = getCachedAddress(Locale("pl", "PL")) ?: baseAddress
+        val nativeAddress = getCachedAddress(nativeLocale) ?: baseAddress
+
+        if (isCancelled()) {
+            return committedPlace ?: getLastGoodMultiPlace(prefs)
+        }
 
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
-        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else Locale.getDefault().language, speedKmh)
-        
+        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else defaultLocale.language, speedKmh)
+        val effectiveBearing = bearing ?: lastValidBearing
+
+        if (isCancelled()) {
+            return committedPlace ?: getLastGoodMultiPlace(prefs)
+        }
+
         // OSRM /nearest: street name for the locality card AND snapped coordinates for display-only road pull.
         // Screen-off bypass: Skip OSRM network requests when screen is off to eliminate cellular modem drain.
-        val effectiveBearing = bearing ?: lastValidBearing
         val nearest = if (isScreenOff) null else OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
         if (nearest != null) {
             online.hatala.whereami.tracking.TrackingRuntime.displaySnap.observeNearest(
@@ -1797,9 +1829,12 @@ class LocationManager private constructor(private val context: Context) {
         // Never shield OSRM before geocoding or spatial caching: corridor shielding belongs strictly in applyStreetHysteresis.
         val osrmStreet = rawOsrmStreet
 
-        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
-        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
-        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters)
+        // If OSRM snaps within 12m to a canonical highway corridor (e.g. DW948, DK52), infer major highway type for coalescing
+        val candidateHighwayType = sharedOsm?.highwayType ?: if (nearest != null && nearest.distanceM <= 12.0 && RoadNameNormalizer.isHighwayCodeOnly(nearest.name)) "primary" else null
+
+        val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters, candidateHighwayType = candidateHighwayType)
+        val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters, candidateHighwayType = candidateHighwayType)
+        val nativePlace = resolvePlace(lat, lng, "native", nativeAddress, nativeLocale.language, countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters, candidateHighwayType = candidateHighwayType)
 
         // If online geocoding failed or returned unknown (e.g. offline tunnel/cell cutout), fall back to persistent cache of any age
         if (enPlace.city == "Unknown City" && plPlace.city == "Unknown City") {
@@ -1819,11 +1854,19 @@ class LocationManager private constructor(private val context: Context) {
         val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
         val lastGoodPl = loadLastGood(prefs, "pl")
         val isFallbackToLastGood = lastGoodPl != null && plPlace.street == lastGoodPl.street && plPlace.city == lastGoodPl.city && enAddress == null && plAddress == null && sharedOsm == null
+        val isFirstClass = sharedOsm != null
         if ((enPlace.city != "Unknown City" || plPlace.city != "Unknown City" || forceCache) && !isFallbackToLastGood) {
             spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
-            try {
-                SpatialCacheHelper.getInstance(context).put(lat, lng, result)
-            } catch (_: Exception) {}
+            if (isFirstClass || forceCache) {
+                try {
+                    SpatialCacheHelper.getInstance(context).put(lat, lng, result)
+                } catch (_: Exception) {}
+            } else {
+                // Enqueue degraded/provisional point for post-trip refresh when stable network is available
+                try {
+                    CacheManager.getInstance(context).enqueuePendingRefresh(lat, lng)
+                } catch (_: Exception) {}
+            }
         }
         return sanitizeMultiDataHouseNumbers(result, speedKmh, accuracyMeters)
     }
@@ -1838,7 +1881,9 @@ class LocationManager private constructor(private val context: Context) {
         sharedOsm: OsmPlaceResult? = null,
         osrmStreet: String? = null,
         speedKmh: Float? = null,
-        accuracyMeters: Float? = null
+        accuracyMeters: Float? = null,
+        candidateHighwayType: String? = null,
+        allowOsmFallback: Boolean = false
     ): PlaceInfo {
         val lastGood = loadLastGood(prefs, cacheKey)
         val lastGoodLat = prefs.getFloat("last_good_lat", Float.MIN_VALUE).toDouble()
@@ -1847,7 +1892,7 @@ class LocationManager private constructor(private val context: Context) {
             distanceBetween(lat, lng, lastGoodLat, lastGoodLng)
         } else Float.MAX_VALUE
 
-        val osm = sharedOsm ?: geocodeWithOsm(lat, lng, osmLang, speedKmh)
+        val osm = sharedOsm ?: if (allowOsmFallback) geocodeWithOsm(lat, lng, osmLang, speedKmh) else null
         val trajectoryStreet = osrmStreet?.takeIf { it.isNotBlank() }
         val isHighwayTrajectory = trajectoryStreet != null && RoadNameNormalizer.isHighwayCodeOnly(trajectoryStreet)
         val osmMatchesTrajectory = trajectoryStreet == null || isHighwayTrajectory || RoadNameNormalizer.streetsMatch(osm?.street, trajectoryStreet)
@@ -1862,7 +1907,7 @@ class LocationManager private constructor(private val context: Context) {
                 osmStreet = osm?.street,
                 osmRoadRef = osm?.roadRef,
                 geocoderStreet = address.thoroughfare,
-                candidateHighwayType = osm?.highwayType
+                candidateHighwayType = osm?.highwayType ?: candidateHighwayType
             )
             val canonicalStreet = when {
                 // 1. OSRM + OSM/Geocoder coalesced street/ref (prefers local name over bare highway code)
@@ -1908,7 +1953,7 @@ class LocationManager private constructor(private val context: Context) {
             ) {
                 lastGood.city
             } else if (basePlace.city.isNotBlank() && basePlace.city != "Unknown City") {
-                basePlace.city
+                sanitizeGeocoderLocality(basePlace.city, basePlace.gmina, lat, lng, lastGood)
             } else {
                 osm?.municipality?.removePrefix("gmina ")?.trim()
                     ?: osm?.county
@@ -2228,6 +2273,44 @@ class LocationManager private constructor(private val context: Context) {
             isLoading = false,
             outdoorContext = outdoorContext
         )
+    }
+
+    fun sanitizeGeocoderLocality(
+        rawCity: String?,
+        gmina: String?,
+        lat: Double,
+        lng: Double,
+        lastGood: PlaceInfo?
+    ): String {
+        if (rawCity.isNullOrBlank() || rawCity == "--") return rawCity ?: ""
+        var city = rawCity.trim()
+
+        // 1. Strip trailing statistical district hyphens and conscription numbers
+        LOCALITY_SUFFIX_REGEX.matchEntire(city)?.let { match ->
+            val stripped = match.groupValues[1].trim()
+            if (stripped.length >= 2) city = stripped
+        }
+        if (city.length < 2) return ""
+
+        // 2. Resolve abbreviated or ASCII dot tokens (e.g. "Międzybrodzie Kob.") using nearby verified OSM locality
+        if (city.contains(".")) {
+            if (lastGood != null && !lastGood.city.contains(".") && !lastGood.city.isNullOrBlank()) {
+                val prefix = city.substringBefore(".").trim().lowercase(Locale.ROOT)
+                if (lastGood.city.lowercase(Locale.ROOT).startsWith(prefix)) {
+                    return lastGood.city
+                }
+            }
+            try {
+                val verifiedNearby = SpatialCacheHelper.getInstance(context).findNearestVerifiedLocality(lat, lng, 2500.0, gmina)
+                if (verifiedNearby != null) {
+                    val prefix = city.substringBefore(".").trim().lowercase(Locale.ROOT)
+                    if (verifiedNearby.lowercase(Locale.ROOT).startsWith(prefix)) {
+                        return verifiedNearby
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return city
     }
 
     private fun geocode(lat: Double, lng: Double, locale: Locale): Address? {
