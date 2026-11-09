@@ -335,4 +335,30 @@ class TrackSpikeGuardTest {
         assertTrue(frame.lat(100_000_000.0) <= 90.0)
         assertTrue(frame.lng(100_000_000.0) <= 180.0)
     }
+
+    @Test
+    fun `trip 314 Tuwima braking hook at 153751 is detected as lateral V spike`() {
+        // A: 15:37:48 (49.813419, 19.054565) -> B: 15:37:51 (49.813405, 19.054551) -> C: 15:37:56 (49.813405, 19.054604)
+        val aLat = 49.813419; val aLng = 19.054565
+        val bLat = 49.813405; val bLng = 19.054551
+        val cLat = 49.813405; val cLng = 19.054604
+        assertTrue(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
+
+    @Test
+    fun `trip 314 Zywiecka turn hook at 153908 is detected as lateral V spike`() {
+        // A: 15:38:37 (49.813390, 19.055618) -> B: 15:39:08 (49.813388, 19.055604) -> C: 15:39:09 (49.813367, 19.055633)
+        val aLat = 49.813390; val aLng = 19.055618
+        val bLat = 49.813388; val bLng = 19.055604
+        val cLat = 49.813367; val cLng = 19.055633
+        assertTrue(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
+
+    @Test
+    fun `legitimate 90-degree intersection turn is not a lateral V spike`() {
+        val (aLat, aLng) = at(0.0, 0.0)
+        val (bLat, bLng) = at(6.0, 0.0)
+        val (cLat, cLng) = at(6.0, 6.0)
+        assertFalse(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
 }

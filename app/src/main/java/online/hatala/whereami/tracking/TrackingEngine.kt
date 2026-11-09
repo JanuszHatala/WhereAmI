@@ -206,7 +206,8 @@ class TrackingEngine(
         val wasStationary = stationary
         if (wasStationary && !lowSpeed) {
             ekf.stationaryMode = false
-            ekf.inflatePositionVariance(max(sigma, 3.0).let { it * it })
+            val releaseSigma = min(sigma, 2.0)
+            ekf.inflatePositionVariance(releaseSigma * releaseSigma)
         }
 
         val f = ekf.predict(fix.tElapsedMs, dopplerSpeed)!!
