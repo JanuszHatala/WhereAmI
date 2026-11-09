@@ -716,15 +716,8 @@ class LiveTrackingService : Service() {
                 LiveSharingManager.getInstance(this).startStationaryHeartbeat()
             }
             updateNotification(force = true)
-            // Complete FGS shutdown during Sleep: detach persistent sleeping notification and stop service
-            // Eliminates overnight location FGS runtime and prevents battery drain attribution
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_DETACH)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(false)
-            }
-            stopSelf()
+            // Keep Zero-CPU Standby FGS alive so Android 14+ location FGS capability
+            // is preserved for morning wake, locomotion bursts, and Android Auto connections.
         } else if (hasLive) {
             // Live sharing active without active trip recording:
             // Keep location stream active only when unpaused and moving/GPS active;

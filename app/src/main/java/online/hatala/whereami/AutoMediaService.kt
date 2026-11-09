@@ -43,6 +43,7 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         mediaSession = MediaSessionCompat(this, "AutoMediaService").apply {
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() {
+                    AppStateManager.getInstance(this@AutoMediaService).setAutoMediaActive(true)
                     setPlaybackState(
                         PlaybackStateCompat.Builder()
                             .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1.0f)
@@ -99,12 +100,22 @@ class AutoMediaService : MediaBrowserServiceCompat() {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceCompat.startForeground(
-                    this,
-                    1,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                )
+                try {
+                    ServiceCompat.startForeground(
+                        this,
+                        1,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    )
+                } catch (secEx: SecurityException) {
+                    TelemetryLogger.log("WARN", "AutoMediaService location FGS denied in background; falling back to mediaPlayback: ${secEx.message}")
+                    ServiceCompat.startForeground(
+                        this,
+                        1,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    )
+                }
             } else {
                 startForeground(1, notification)
             }
@@ -141,6 +152,9 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         val langStr = prefs.getString("display_language", DisplayLanguage.EN.name)
         val lang = try { DisplayLanguage.valueOf(langStr ?: DisplayLanguage.EN.name) } catch (_: Exception) { DisplayLanguage.EN }
         serviceScope.launch {
+            locationManager.isGpsStopped = false
+            locationManager.updateSamplingInterval(1000L, 1000L, 0L)
+            locationManager.resubscribeGpsIfNeeded()
             locationManager.getLocationUpdates(lang).collectLatest { locationData ->
                 updateMediaMetadata(locationData)
             }
