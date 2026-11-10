@@ -1403,10 +1403,10 @@ class LocationManager private constructor(private val context: Context) {
                     isCancelled = { !isActive }
                 )
 
-                synchronized(geocodeLock) {
+                val enrichedSnapshot = synchronized(geocodeLock) {
                     if (params.timestamp < latestEnrichedTimestamp) {
                         TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp ${params.timestamp} (already at $latestEnrichedTimestamp)")
-                        continue
+                        return@synchronized null
                     }
                     latestEnrichedTimestamp = params.timestamp
 
@@ -1417,7 +1417,7 @@ class LocationManager private constructor(private val context: Context) {
                     TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl, lastOutdoorContext)
 
                     val currentSnap = lastLocationSnapshot
-                    val enrichedSnapshot = MultiLocationSnapshot(
+                    val snap = MultiLocationSnapshot(
                         multiPlace = stabilizedMultiData,
                         speedMs = currentSnap?.speedMs ?: params.speedMs,
                         speedKmh = currentSnap?.speedKmh ?: params.speedKmh,
@@ -1431,7 +1431,10 @@ class LocationManager private constructor(private val context: Context) {
                         track = currentSnap?.track,
                         outdoorContext = lastOutdoorContext
                     )
-                    lastLocationSnapshot = enrichedSnapshot
+                    lastLocationSnapshot = snap
+                    snap
+                }
+                if (enrichedSnapshot != null) {
                     snapshotChannelSend?.invoke(enrichedSnapshot)
                 }
             }
@@ -1682,13 +1685,14 @@ class LocationManager private constructor(private val context: Context) {
                     if (!newStreet.isNullOrBlank() && newStreet != oldStreet &&
                         RoadNameNormalizer.extractBaseStreet(newStreet).equals(RoadNameNormalizer.extractBaseStreet(oldStreet), ignoreCase = true)
                     ) {
-                        synchronized(geocodeLock) {
+                        val updatedSnap = synchronized(geocodeLock) {
                             committedPlace = sanitized
                             committedStreetPl = newStreet
-                            val updatedSnap = currentSnap.copy(multiPlace = sanitized)
-                            lastLocationSnapshot = updatedSnap
-                            snapshotChannelSend?.invoke(updatedSnap)
+                            val snap = currentSnap.copy(multiPlace = sanitized)
+                            lastLocationSnapshot = snap
+                            snap
                         }
+                        snapshotChannelSend?.invoke(updatedSnap)
                     }
                 }
             } finally {

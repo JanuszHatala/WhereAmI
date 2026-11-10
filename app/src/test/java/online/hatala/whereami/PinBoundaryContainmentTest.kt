@@ -158,4 +158,19 @@ class PinBoundaryContainmentTest {
             BoundaryHelper.isCachePolygonUsableForPin(distantEastSquare(), pin)
         )
     }
+
+    @Test
+    fun `polygonContains rejects points outside bounding box envelope before ray casting`() {
+        val poly = enclosingSquare()
+        // Way to the north (lat > maxLat)
+        assertFalse(BoundaryHelper.polygonContains(poly, 50.0, 19.25))
+        // Way to the south (lat < minLat)
+        assertFalse(BoundaryHelper.polygonContains(poly, 49.0, 19.25))
+        // Way to the west (lon < minLon)
+        assertFalse(BoundaryHelper.polygonContains(poly, 49.80, 19.0))
+        // Way to the east (lon > maxLon)
+        assertFalse(BoundaryHelper.polygonContains(poly, 49.80, 19.5))
+        // Inside
+        assertTrue(BoundaryHelper.polygonContains(poly, pin.latitude, pin.longitude))
+    }
 }
