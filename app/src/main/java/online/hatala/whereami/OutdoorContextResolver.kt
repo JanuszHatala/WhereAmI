@@ -19,6 +19,8 @@ object OutdoorContextResolver {
     private var lastQueryTime = 0L
     @Volatile
     private var cooldownUntil = 0L
+    @Volatile
+    private var consecutiveFailures = 0
 
     private const val MIN_QUERY_INTERVAL_MS = 15_000L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
@@ -111,12 +113,14 @@ object OutdoorContextResolver {
                 val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
                 val conn = URL(urlStr).openConnection() as HttpURLConnection
                 conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.connectTimeout = 6000
-                conn.readTimeout = 8000
+                conn.connectTimeout = 4000
+                conn.readTimeout = 6000
 
-                if (conn.responseCode == 429) {
-                    cooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
-                    TelemetryLogger.log("OUTDOOR", "Overpass HTTP 429; cooldown active for 30s")
+                if (conn.responseCode == 429 || conn.responseCode >= 500) {
+                    consecutiveFailures++
+                    val backoffMs = (30_000L * (1L shl consecutiveFailures.coerceAtMost(5))).coerceAtMost(600_000L)
+                    cooldownUntil = System.currentTimeMillis() + backoffMs
+                    TelemetryLogger.log("OUTDOOR", "Overpass HTTP ${conn.responseCode}; backoff active for ${backoffMs / 1000}s (failure #$consecutiveFailures)")
                     return@withContext OutdoorContext(
                         mountainRange = offlineMountainRange,
                         protectedAreas = offlineProtected
@@ -124,6 +128,7 @@ object OutdoorContextResolver {
                 }
 
                 if (conn.responseCode == 200) {
+                    consecutiveFailures = 0
                     val body = conn.inputStream.bufferedReader().readText()
                     val parsed = parseOverpassResponse(body, lat, lng)
                     val mergedRange = parsed.mountainRange ?: offlineMountainRange
@@ -140,7 +145,10 @@ object OutdoorContextResolver {
                     return@withContext finalContext
                 }
             } catch (e: Exception) {
-                TelemetryLogger.log("OUTDOOR", "Overpass resolve error: ${e.message}")
+                consecutiveFailures++
+                val backoffMs = (30_000L * (1L shl consecutiveFailures.coerceAtMost(5))).coerceAtMost(600_000L)
+                cooldownUntil = System.currentTimeMillis() + backoffMs
+                TelemetryLogger.log("OUTDOOR", "Overpass resolve error: ${e.message}; backoff active for ${backoffMs / 1000}s (failure #$consecutiveFailures)")
             }
         }
 

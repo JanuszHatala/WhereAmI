@@ -12,69 +12,38 @@ import org.junit.Test
 class FieldTestTrip312StabilizationTest {
 
     @Test
-    fun testRoczynyAndCzaniecFalseDw781SanitizationInDeserialization() {
-        val roczynyWiedenskaJson = """{"city":"Roczyny","street":"Wiedeńska (DW781)","roadRef":"DW781","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p1 = SpatialCacheHelper.deserializePlaceInfo(roczynyWiedenskaJson)
-        assertEquals("Wiedeńska", p1?.street)
+    fun testResidentialStreetHighwayRefSanitizationInDeserialization() {
+        val residentialWithRefJson = """{"city":"AnyTown","street":"Quiet St 12 (DK52)","roadRef":"DK52","highwayType":"residential","country":"Polska","countryCode":"PL"}"""
+        val p1 = SpatialCacheHelper.deserializePlaceInfo(residentialWithRefJson)
+        assertEquals("Quiet St 12", p1?.street)
         assertNull(p1?.roadRef)
 
-        val roczynyBielskaJson = """{"city":"Roczyny","street":"Bielska (DW781)","roadRef":"DW781","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p2 = SpatialCacheHelper.deserializePlaceInfo(roczynyBielskaJson)
-        assertEquals("Bielska", p2?.street)
+        val houseNumberedStreetJson = """{"city":"AnyTown","street":"Main Ave 45B (DW781)","roadRef":"DW781","country":"Polska","countryCode":"PL"}"""
+        val p2 = SpatialCacheHelper.deserializePlaceInfo(houseNumberedStreetJson)
+        assertEquals("Main Ave 45B", p2?.street)
         assertNull(p2?.roadRef)
-
-        val czaniecBielskaJson = """{"city":"Czaniec","street":"Bielska (DW781)","roadRef":"DW781","country":"Polska","countryCode":"PL","gmina":"gmina Porąbka"}"""
-        val p3 = SpatialCacheHelper.deserializePlaceInfo(czaniecBielskaJson)
-        assertEquals("Bielska", p3?.street)
-        assertNull(p3?.roadRef)
     }
 
     @Test
-    fun testSideStreetsFalseHighwaySanitizationInDeserialization() {
-        val szewskaJson = """{"city":"Andrychów","street":"Szewska (DK52)","roadRef":"DK52","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p1 = SpatialCacheHelper.deserializePlaceInfo(szewskaJson)
-        assertEquals("Szewska", p1?.street)
-        assertNull(p1?.roadRef)
-
-        val krakowskaAndrychowJson = """{"city":"Andrychów","street":"Krakowska (DW781)","roadRef":"DW781","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p2 = SpatialCacheHelper.deserializePlaceInfo(krakowskaAndrychowJson)
-        assertEquals("Krakowska (DK52)", p2?.street)
-        assertEquals("DK52", p2?.roadRef)
-
-        val wadowickaSuchaJson = """{"city":"Sucha Beskidzka","street":"Wadowicka (DW946)","roadRef":"DW946","country":"Polska","countryCode":"PL","powiat":"powiat suski"}"""
-        val p3 = SpatialCacheHelper.deserializePlaceInfo(wadowickaSuchaJson)
-        assertEquals("Wadowicka (DK28)", p3?.street)
-        assertEquals("DK28", p3?.roadRef)
+    fun testAutonomousCountyCityStructuralHierarchy() {
+        assertTrue(LocationManager.isAutonomousCountyCity("Bielsko-Biała", null, "powiat Bielsko-Biała"))
+        assertTrue(LocationManager.isAutonomousCountyCity("Kraków", null, "m. Kraków"))
+        assertTrue(LocationManager.isAutonomousCountyCity("Warszawa", null, "m. st. Warszawa"))
+        assertFalse(LocationManager.isAutonomousCountyCity("Kozy", "gmina Kozy", "powiat bielski"))
+        assertFalse(LocationManager.isAutonomousCountyCity("Andrychów", "gmina Andrychów", "powiat wadowicki"))
     }
 
     @Test
-    fun testGronHamletResolvedToTarganiceAndBrzezinka() {
-        val gronGranicznaJson = """{"city":"Groń","street":"Graniczna 58","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p1 = SpatialCacheHelper.deserializePlaceInfo(gronGranicznaJson)
-        assertEquals("Targanice", p1?.city)
-
-        val gronPodgorskaJson = """{"city":"Groń","street":"Podgórska 10","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p2 = SpatialCacheHelper.deserializePlaceInfo(gronPodgorskaJson)
-        assertEquals("Brzezinka", p2?.city)
-
-        val gronLesnaJson = """{"city":"Groń","street":"Leśna","country":"Polska","countryCode":"PL","gmina":"gmina Andrychów"}"""
-        val p3 = SpatialCacheHelper.deserializePlaceInfo(gronLesnaJson)
-        assertEquals("Roczyny", p3?.city)
-    }
-
-    @Test
-    fun testTripDatabaseHelperJsonToPlacesResolvesGronAndCoalesces() {
+    fun testTripDatabaseHelperJsonToPlacesCoalescesConsecutiveDuplicates() {
         val placesJson = """[
-            {"name":"Andrychów","sub":"gm. Andrychów, pow. wadowicki","time":1731000000000,"lat":49.85,"lng":19.34,"dist":0.0,"kind":"LOCALITY"},
-            {"name":"Groń","sub":"gm. Andrychów, pow. wadowicki","time":1731000500000,"lat":49.8271,"lng":19.3250,"dist":5200.0,"kind":"LOCALITY"},
-            {"name":"Targanice","sub":"gm. Andrychów, pow. wadowicki","time":1731000800000,"lat":49.8240,"lng":19.3300,"dist":7100.0,"kind":"LOCALITY"}
+            {"name":"CityA","sub":"gm. CityA","time":1731000000000,"lat":49.85,"lng":19.34,"dist":0.0,"kind":"LOCALITY"},
+            {"name":"CityA","sub":"gm. CityA","time":1731000500000,"lat":49.851,"lng":19.341,"dist":520.0,"kind":"LOCALITY"},
+            {"name":"CityB","sub":"gm. CityB","time":1731000800000,"lat":49.86,"lng":19.35,"dist":2100.0,"kind":"LOCALITY"}
         ]"""
         val places = TripDatabaseHelper.jsonToPlaces(placesJson)
-        // Groń (lng 19.325 >= 19.3216) becomes Targanice.
-        // Adjacent Targanice -> Targanice should coalesce to a single Targanice entry!
         assertEquals(2, places.size)
-        assertEquals("Andrychów", places[0].placeName)
-        assertEquals("Targanice", places[1].placeName)
+        assertEquals("CityA", places[0].placeName)
+        assertEquals("CityB", places[1].placeName)
     }
 
     @Test

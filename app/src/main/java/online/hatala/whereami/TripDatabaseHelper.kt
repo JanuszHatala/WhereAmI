@@ -150,6 +150,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     put("lng", p.longitude)
                     put("dist", p.distanceAtEntryMeters)
                     put("kind", p.placeKind.name)
+                    if (p.countryCode.isNotBlank()) {
+                        put("cc", p.countryCode)
+                    }
                 }
                 array.put(obj)
             }
@@ -166,27 +169,19 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     val kind = try { PlaceKind.valueOf(kindStr) } catch (_: Exception) { PlaceKind.LOCALITY }
                     val rawName = obj.getString("name")
                     val rawSub = obj.optString("sub", "")
-                    val resolvedName = when {
-                        rawName.equals("Krzemionki", ignoreCase = true) &&
-                            (rawSub.contains("gm. Kozy", ignoreCase = true) || rawSub.contains("gmina Kozy", ignoreCase = true)) -> "Kozy"
-                        rawName.equals("Groń", ignoreCase = true) &&
-                            (rawSub.contains("gm. Andrychów", ignoreCase = true) || rawSub.contains("gmina Andrychów", ignoreCase = true)) -> {
-                            val lng = obj.optDouble("lng", 0.0)
-                            if (lng >= 19.3216) "Targanice" else "Brzezinka"
-                        }
-                        else -> rawName
-                    }
+                    val rawCc = obj.optString("cc", "")
 
                     val place = VisitedPlace(
-                        placeName = resolvedName,
+                        placeName = rawName,
                         hierarchySubtitle = rawSub,
                         timestamp = obj.getLong("time"),
                         latitude = obj.getDouble("lat"),
                         longitude = obj.getDouble("lng"),
                         distanceAtEntryMeters = obj.getDouble("dist"),
-                        placeKind = kind
+                        placeKind = kind,
+                        countryCode = rawCc
                     )
-                    if (list.isNotEmpty() && list.last().placeName == place.placeName && list.last().placeKind == place.placeKind) {
+                    if (list.isNotEmpty() && list.last().placeName.equals(place.placeName, ignoreCase = true) && list.last().placeKind == place.placeKind) {
                         continue
                     }
                     list.add(place)
@@ -722,38 +717,7 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     private fun sanitizeStoredPlaces(db: SQLiteDatabase) {
-        try {
-            val cursor = db.rawQuery(
-                "SELECT $COL_ID, $COL_PLACES_JSON FROM $TABLE_TRIPS WHERE $COL_PLACES_JSON LIKE '%Krzemionki%' OR $COL_PLACES_JSON LIKE '%Groń%'",
-                null
-            )
-            val updates = mutableListOf<Pair<Long, String>>()
-            cursor.use { c ->
-                val idIdx = c.getColumnIndexOrThrow(COL_ID)
-                val placesIdx = c.getColumnIndexOrThrow(COL_PLACES_JSON)
-                while (c.moveToNext()) {
-                    val id = c.getLong(idIdx)
-                    val rawPlacesJson = c.getString(placesIdx) ?: "[]"
-                    val parsed = jsonToPlaces(rawPlacesJson)
-                    val cleanedJson = placesToJson(parsed)
-                    if (cleanedJson != rawPlacesJson) {
-                        updates.add(Pair(id, cleanedJson))
-                    }
-                }
-            }
-            if (updates.isNotEmpty()) {
-                db.beginTransaction()
-                try {
-                    for ((tripId, newPlaces) in updates) {
-                        val cv = ContentValues().apply { put(COL_PLACES_JSON, newPlaces) }
-                        db.update(TABLE_TRIPS, cv, "$COL_ID = ?", arrayOf(tripId.toString()))
-                    }
-                    db.setTransactionSuccessful()
-                } finally {
-                    db.endTransaction()
-                }
-            }
-        } catch (_: Exception) {}
+        // Universal Invariant: Adjacent duplicate places are coalesced on jsonToPlaces parse
     }
 
     private fun ensureSavedPlacesColumns(db: SQLiteDatabase) {

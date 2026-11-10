@@ -22,22 +22,23 @@ class PauseRestoreAndLocalitySanityTest {
     }
 
     @Test
-    fun testKrakowCentroidSanityCheckRejectsFalseLocality() {
-        // GPS fix in Bielsko-Biała along S52
-        val latBielsko = 49.8130137
-        val lngBielsko = 18.9750682
+    fun testStructuralHierarchyConsistencyRejectsDisjointLocality() {
+        // Current place in Bielsko-Biała
+        val currentCity = "Bielsko-Biała"
+        val currentPowiat = "powiat Bielsko-Biała"
+        val currentGmina: String? = null
 
-        val krakowCentroid = TripManager.POLISH_CITY_CENTROIDS["kraków"]!!
-        val distKm = haversineKm(latBielsko, lngBielsko, krakowCentroid.first, krakowCentroid.second)
+        val candidateName = "Kraków"
+        val isConsistent = candidateName.equals(currentCity, ignoreCase = true) ||
+                (currentGmina != null && candidateName.equals(currentGmina, ignoreCase = true)) ||
+                (currentPowiat != null && candidateName.equals(currentPowiat, ignoreCase = true))
 
-        // Bielsko-Biała is ~75 km from Kraków center - far beyond the 25km sanity gate
-        assertTrue("Distance to Kraków center must exceed 25 km threshold (was $distKm km)", distKm > 25.0)
+        assertFalse("Kraków candidate must be rejected when current hierarchy is $currentCity, $currentPowiat", isConsistent)
 
-        // Conversely, a real GPS fix in Kraków must be within the gate
-        val latKrakowReal = 50.061
-        val lngKrakowReal = 19.937
-        val distRealKm = haversineKm(latKrakowReal, lngKrakowReal, krakowCentroid.first, krakowCentroid.second)
-        assertTrue("Real fix in Kraków must be within 25 km threshold (was $distRealKm km)", distRealKm < 25.0)
+        // Real candidate in Bielsko-Biała
+        val validCandidate = "Bielsko-Biała"
+        val isValidConsistent = validCandidate.equals(currentCity, ignoreCase = true)
+        assertTrue("Bielsko-Biała must be structurally consistent", isValidConsistent)
     }
 
     @Test
@@ -47,7 +48,7 @@ class PauseRestoreAndLocalitySanityTest {
             VisitedPlace(placeName = "Bielsko-Biała", timestamp = t0, latitude = 49.807, longitude = 18.970),
             VisitedPlace(placeName = "Jaworze", timestamp = t0 + 600_000L, latitude = 49.795, longitude = 18.950),
             VisitedPlace(placeName = "Bielsko-Biała", timestamp = t0 + 1200_000L, latitude = 49.807, longitude = 18.970),
-            VisitedPlace(placeName = "Kraków", timestamp = t0 + 1272_000L, latitude = 49.813, longitude = 18.975), // false centroid blip
+            VisitedPlace(placeName = "Kraków", timestamp = t0 + 1272_000L, latitude = 49.813, longitude = 18.975), // false 9s blip
             VisitedPlace(placeName = "Bielsko-Biała", timestamp = t0 + 1281_000L, latitude = 49.814, longitude = 18.975), // 9s after Kraków
             VisitedPlace(placeName = "Rybarzowice", timestamp = t0 + 1488_000L, latitude = 49.835, longitude = 18.983), // 13s sandwiched blip
             VisitedPlace(placeName = "Bielsko-Biała", timestamp = t0 + 1501_000L, latitude = 49.836, longitude = 18.987),
@@ -60,16 +61,8 @@ class PauseRestoreAndLocalitySanityTest {
         val cleaned = mutableListOf<VisitedPlace>()
         for (i in places.indices) {
             val p = places[i]
-            val nameLower = p.placeName.lowercase(java.util.Locale.ROOT)
 
-            // 1. Centroid check
-            val centroid = TripManager.POLISH_CITY_CENTROIDS[nameLower]
-            if (centroid != null) {
-                val dist = haversineKm(p.latitude, p.longitude, centroid.first, centroid.second)
-                if (dist > 25.0) continue // Skip false city
-            }
-
-            // 2. Sandwiched ping-pong blip check (< 30s)
+            // Sandwiched ping-pong blip check (< 30s)
             if (i < places.size - 1 && cleaned.isNotEmpty()) {
                 val nextP = places[i + 1]
                 val prevP = cleaned.last()

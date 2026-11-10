@@ -189,21 +189,27 @@ class LocationManager private constructor(private val context: Context) {
          * Set of Polish cities with county rights (miasta na prawach powiatu).
          * These localities constitute an autonomous urban county with no rural gmina.
          */
-        val POLISH_COUNTY_CITIES = setOf(
-            "bielsko-biała", "białystok", "bydgoszcz", "bytom", "chełm", "chorzów",
-            "częstochowa", "dąbrowa górnicza", "elbląg", "gdańsk", "gdynia", "gliwice",
-            "głogów", "gniezno", "gorzów wielkopolski", "grudziądz", "inowrocław",
-            "jastrzębie-zdrój", "jaworzno", "jelenia góra", "kalisz", "katowice",
-            "kędzierzyn-koźle", "kielce", "konin", "koszalin", "kraków", "krosno",
-            "legnica", "leszno", "lubin", "lublin", "łomża", "łódź", "mysłowice",
-            "nowy sącz", "olsztyn", "opole", "ostrołęka", "ostrowiec świętokrzyski",
-            "pabianice", "piekary śląskie", "piotrków trybunalski", "płock", "poznań",
-            "przemyśl", "radom", "ruda śląska", "rybnik", "rzeszów", "siedlce",
-            "siemianowice śląskie", "słupsk", "sopot", "sosnowiec", "stalowa wola",
-            "stargard", "suwałki", "szczecin", "świętochłowice", "tarnobrzeg", "tarnów",
-            "tomaszów mazowiecki", "toruń", "tychy", "warszawa", "włocławek", "wrocław",
-            "zabrze", "zamość", "zielona góra", "żory"
-        )
+        /**
+         * Generic structural autonomous county city check (e.g. city with county status / independent city):
+         * Matches whenever the county designation is equal to the city name or starts with "m. <city>"
+         * or "miasto <city>", or when gmina equals city and county is omitted.
+         * Works generically in Poland and internationally without hardcoded city lists.
+         */
+        fun isAutonomousCountyCity(city: String?, gmina: String?, powiat: String?): Boolean {
+            if (city.isNullOrBlank()) return false
+            val cleanCity = city.trim()
+            val cleanP = powiat?.replace("Powiat ", "", ignoreCase = true)
+                ?.replace("powiat ", "", ignoreCase = true)
+                ?.replace("m. st. ", "", ignoreCase = true)
+                ?.replace("m.st. ", "", ignoreCase = true)
+                ?.replace("m. ", "", ignoreCase = true)
+                ?.replace("miasto ", "", ignoreCase = true)?.trim()
+            val cleanG = gmina?.replace("Gmina ", "", ignoreCase = true)
+                ?.replace("gmina ", "", ignoreCase = true)?.trim()
+            if (!cleanP.isNullOrBlank() && cleanP.equals(cleanCity, ignoreCase = true)) return true
+            if (cleanP.isNullOrBlank() && !cleanG.isNullOrBlank() && cleanG.equals(cleanCity, ignoreCase = true)) return true
+            return false
+        }
 
         /**
          * Country-aware hierarchy formatter:
@@ -252,8 +258,14 @@ class LocationManager private constructor(private val context: Context) {
             val city = place.city.trim()
             val rawGmina = place.gmina?.trim()
             val rawPowiat = place.powiat?.trim()
-            val cleanGmina = rawGmina?.replace("Gmina ", "", ignoreCase = true)
-                ?.replace("gmina ", "", ignoreCase = true)?.trim()
+            val cleanGmina = if (isPoland) {
+                if (rawGmina != null && (rawGmina.startsWith("gmina ", ignoreCase = true) || rawGmina.startsWith("gm. ", ignoreCase = true))) {
+                    rawGmina.replace("gmina ", "", ignoreCase = true).replace("gm. ", "", ignoreCase = true).trim()
+                } else null
+            } else {
+                rawGmina?.replace("Gmina ", "", ignoreCase = true)
+                    ?.replace("gmina ", "", ignoreCase = true)?.trim()
+            }
             val cleanPowiat = rawPowiat?.replace("Powiat ", "", ignoreCase = true)
                 ?.replace("powiat ", "", ignoreCase = true)?.trim()
             val voivodeship = if (isPoland) {
@@ -265,9 +277,7 @@ class LocationManager private constructor(private val context: Context) {
                     .trim()
             }
 
-            val cityLower = city.lowercase(Locale.ROOT)
-            val isCountyCity = POLISH_COUNTY_CITIES.contains(cityLower) ||
-                    (cleanPowiat != null && cleanPowiat.equals(city, ignoreCase = true))
+            val isCountyCity = isAutonomousCountyCity(city, cleanGmina, cleanPowiat)
 
             if (isPoland) {
                 val parts = mutableListOf<String>()
@@ -275,10 +285,9 @@ class LocationManager private constructor(private val context: Context) {
                 // They have NO separate rural gmina. Suppress "gm." and "pow." entirely.
                 if (!isCountyCity) {
                     // Clean deduplication: omit gm. X if city is X
-                    // Suppress corrupted non-gmina hamlets mistakenly passed as gmina (e.g. "Jamnik")
                     val isInvalidGmina = cleanGmina.isNullOrEmpty() ||
-                        cleanGmina.equals("Jamnik", ignoreCase = true) ||
-                        cleanGmina.contains("Jamnik", ignoreCase = true)
+                        cleanGmina.contains("powiat", ignoreCase = true) ||
+                        cleanGmina.contains("województwo", ignoreCase = true)
                     if (!isInvalidGmina && !cleanGmina!!.equals(city, ignoreCase = true)) {
                         parts.add("gm. $cleanGmina")
                     }
@@ -370,8 +379,23 @@ class LocationManager private constructor(private val context: Context) {
     private var lastPrefsLat = 0.0
     private var lastPrefsLng = 0.0
 
+    private data class PendingGeocodeParams(
+        val lat: Double,
+        val lng: Double,
+        val speedKmh: Float,
+        val speedMs: Float,
+        val bearing: Float?,
+        val accuracy: Float?,
+        val timestamp: Long
+    )
+    private var pendingGeocodeParams: PendingGeocodeParams? = null
     private var inFlightGeocodeJob: Job? = null
     private val geocodeFlightLock = Any()
+    private var lastOutdoorResolvedLat: Double = 0.0
+    private var lastOutdoorResolvedLng: Double = 0.0
+    private var lastOutdoorResolvedTimeMs: Long = 0L
+    private var outdoorWorkerJob: Job? = null
+    private val outdoorLock = Any()
     private var lastScreenOffGeocodeMs = 0L
     private var lastScreenOffGeocodedPoint: Pair<Double, Double>? = null
 
@@ -891,6 +915,9 @@ class LocationManager private constructor(private val context: Context) {
             }
 
             committedStreetPl = updatedStreetPl
+            if (!multiData.pl.city.isNullOrBlank() && !multiData.pl.city.equals("Unknown City", ignoreCase = true)) {
+                lastCommittedStreetLocality = multiData.pl.city
+            }
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
@@ -928,8 +955,11 @@ class LocationManager private constructor(private val context: Context) {
                 !rawBase.contains("Rondo", ignoreCase = true) &&
                 !rawBase.contains("Roundabout", ignoreCase = true)
 
-        // When crossing into a confirmed new locality, adopt the new locality's street immediately on the 1st fix
-        if (isLocalityTransition && !rawStreetPl.isNullOrBlank()) {
+        // When crossing into a confirmed new locality, adopt the new locality's street immediately on the 1st fix,
+        // UNLESS we are currently on a confirmed major highway corridor and the candidate is a non-major side street
+        // (preserves highway corridor continuity e.g. DK52 across village borders).
+        val allowImmediateLocalityTransition = isLocalityTransition && !(isCommittedMajor && !isCandidateMajor)
+        if (allowImmediateLocalityTransition && !rawStreetPl.isNullOrBlank()) {
             TelemetryLogger.log("STREET", "Locality transition to '${multiData.pl.city}': adopting candidate '$rawStreetPl' immediately on 1st fix")
             committedStreetPl = rawStreetPl
             committedStreetBase = rawBase
@@ -1278,75 +1308,23 @@ class LocationManager private constructor(private val context: Context) {
                 trySend(fastSnapshot)
                 persistLastFix(force = false)
 
-                // 4. Asynchronous geocoding enrichment on IO pool (single-flight conflation)
+                // 4. Asynchronous geocoding enrichment on IO pool (single-flight latest-value conflation)
                 val capturedBearing = currentBearing
                 synchronized(geocodeFlightLock) {
-                    inFlightGeocodeJob?.cancel()
-                    inFlightGeocodeJob = ioScope.launch {
-                        val rawMultiData = resolveMultiLanguageData(
-                            lat = lat,
-                            lng = lng,
-                            bearing = capturedBearing,
-                            speedKmh = speedKmh,
-                            accuracyMeters = fixAccuracy,
-                            isCancelled = { !isActive }
-                        )
-                        val outdoorCtx = try {
-                            val isScreenOffNow = run {
-                                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                                val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
-                                pm?.isInteractive == false && !isAuto
-                            }
-                            OutdoorContextResolver.resolveOutdoorContext(
-                                lat = lat,
-                                lng = lng,
-                                context = context,
-                                allowNetwork = !isScreenOffNow
-                            )
-                        } catch (_: Exception) { null }
-
-                        if (outdoorCtx != null) {
-                            lastOutdoorContext = outdoorCtx
-                        }
-
-                        synchronized(geocodeLock) {
-                            // Discard out-of-order completions to prevent older fixes from reverting newer street/locality
-                            if (fixTimestamp < latestEnrichedTimestamp) {
-                                TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp $fixTimestamp (already at $latestEnrichedTimestamp)")
-                                return@launch
-                            }
-                            latestEnrichedTimestamp = fixTimestamp
-
-                        val borderStabilized = applyBorderHysteresis(lat, lng, rawMultiData)
-                        val stabilizedMultiData = applyStreetHysteresis(speed, borderStabilized, capturedBearing)
-
-                        // Crucial: update committedPlace with stabilized multi data to eradicate street flickering!
-                        committedPlace = stabilizedMultiData
-
-                        // Update TripManager with verified locality hierarchy and outdoor context without injecting duplicate points
-                        TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl, outdoorCtx ?: lastOutdoorContext)
-
-                        // Enriched snapshot MUST carry the CURRENT (latest) kinematic coordinates to prevent backward teleports!
-                        val currentSnap = lastLocationSnapshot
-                        val enrichedSnapshot = MultiLocationSnapshot(
-                            multiPlace = stabilizedMultiData,
-                            speedMs = currentSnap?.speedMs ?: speed,
-                            speedKmh = currentSnap?.speedKmh ?: speedKmh,
-                            lat = currentSnap?.lat ?: lat,
-                            lng = currentSnap?.lng ?: lng,
-                            altitude = currentSnap?.altitude ?: alt,
-                            bearing = currentSnap?.bearing ?: capturedBearing,
-                            accuracy = currentSnap?.accuracy ?: fixAccuracy,
-                            timestamp = currentSnap?.timestamp ?: fixTimestamp,
-                            fixSeqId = currentSnap?.fixSeqId ?: seqId,
-                            track = currentSnap?.track ?: state,
-                            outdoorContext = outdoorCtx ?: lastOutdoorContext
-                        )
-                        lastLocationSnapshot = enrichedSnapshot
-                        trySend(enrichedSnapshot)
+                    pendingGeocodeParams = PendingGeocodeParams(
+                        lat = lat,
+                        lng = lng,
+                        speedKmh = speedKmh,
+                        speedMs = speed,
+                        bearing = capturedBearing,
+                        accuracy = fixAccuracy,
+                        timestamp = fixTimestamp
+                    )
+                    if (inFlightGeocodeJob?.isActive != true) {
+                        launchNextGeocodeFlight()
                     }
                 }
-                }
+                scheduleOutdoorContextEnrichment(lat, lng)
                 return true
             }
 
@@ -1405,6 +1383,97 @@ class LocationManager private constructor(private val context: Context) {
             started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5000),
             replay = 1
         )
+    }
+
+    private fun launchNextGeocodeFlight() {
+        inFlightGeocodeJob = ioScope.launch {
+            while (isActive) {
+                val params = synchronized(geocodeFlightLock) {
+                    val p = pendingGeocodeParams
+                    pendingGeocodeParams = null
+                    p
+                } ?: break
+
+                val rawMultiData = resolveMultiLanguageData(
+                    lat = params.lat,
+                    lng = params.lng,
+                    bearing = params.bearing,
+                    speedKmh = params.speedKmh,
+                    accuracyMeters = params.accuracy,
+                    isCancelled = { !isActive }
+                )
+
+                synchronized(geocodeLock) {
+                    if (params.timestamp < latestEnrichedTimestamp) {
+                        TelemetryLogger.log("GEOCODE", "Discarding out-of-order geocode completion for timestamp ${params.timestamp} (already at $latestEnrichedTimestamp)")
+                        continue
+                    }
+                    latestEnrichedTimestamp = params.timestamp
+
+                    val borderStabilized = applyBorderHysteresis(params.lat, params.lng, rawMultiData)
+                    val stabilizedMultiData = applyStreetHysteresis(params.speedMs, borderStabilized, params.bearing)
+
+                    committedPlace = stabilizedMultiData
+                    TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl, lastOutdoorContext)
+
+                    val currentSnap = lastLocationSnapshot
+                    val enrichedSnapshot = MultiLocationSnapshot(
+                        multiPlace = stabilizedMultiData,
+                        speedMs = currentSnap?.speedMs ?: params.speedMs,
+                        speedKmh = currentSnap?.speedKmh ?: params.speedKmh,
+                        lat = currentSnap?.lat ?: params.lat,
+                        lng = currentSnap?.lng ?: params.lng,
+                        altitude = currentSnap?.altitude,
+                        bearing = currentSnap?.bearing ?: params.bearing,
+                        accuracy = currentSnap?.accuracy ?: params.accuracy,
+                        timestamp = currentSnap?.timestamp ?: params.timestamp,
+                        fixSeqId = currentSnap?.fixSeqId ?: 0L,
+                        track = currentSnap?.track,
+                        outdoorContext = lastOutdoorContext
+                    )
+                    lastLocationSnapshot = enrichedSnapshot
+                    snapshotChannelSend?.invoke(enrichedSnapshot)
+                }
+            }
+        }
+    }
+
+    private fun scheduleOutdoorContextEnrichment(lat: Double, lng: Double) {
+        val now = SystemClock.elapsedRealtime()
+        val distMoved = FloatArray(1)
+        AndroidLocation.distanceBetween(lastOutdoorResolvedLat, lastOutdoorResolvedLng, lat, lng, distMoved)
+        if (lastOutdoorResolvedTimeMs != 0L && distMoved[0] < 250f && (now - lastOutdoorResolvedTimeMs < 30_000L)) {
+            return
+        }
+        synchronized(outdoorLock) {
+            if (outdoorWorkerJob?.isActive == true) return
+            outdoorWorkerJob = ioScope.launch {
+                try {
+                    val isScreenOffNow = run {
+                        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                        val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
+                        pm?.isInteractive == false && !isAuto
+                    }
+                    val outdoorCtx = OutdoorContextResolver.resolveOutdoorContext(
+                        lat = lat,
+                        lng = lng,
+                        context = context,
+                        allowNetwork = !isScreenOffNow
+                    )
+                    if (outdoorCtx != null) {
+                        lastOutdoorContext = outdoorCtx
+                        lastOutdoorResolvedLat = lat
+                        lastOutdoorResolvedLng = lng
+                        lastOutdoorResolvedTimeMs = SystemClock.elapsedRealtime()
+                        lastLocationSnapshot?.let { snap ->
+                            val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
+                            lastLocationSnapshot = updatedSnap
+                            snapshotChannelSend?.invoke(updatedSnap)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     /**
@@ -1562,6 +1631,21 @@ class LocationManager private constructor(private val context: Context) {
             speedKmh, accuracyMeters, isMajor, isPhysStationary, hasNamedLocalStreet
         )
         if (allowHouse) return data
+
+        // If physically stationary, hold previously confirmed house number on the same street
+        // rather than blanking it out due to indoor GPS accuracy degradation
+        val currentStreet = committedPlace?.pl?.street
+        if (isPhysStationary && !currentStreet.isNullOrBlank() && !isMajor && hasNamedLocalStreet) {
+            val baseCurrent = RoadNameNormalizer.extractBaseStreet(currentStreet)
+            val baseData = RoadNameNormalizer.extractBaseStreet(data.pl.street)
+            if (baseCurrent.equals(baseData, ignoreCase = true) && RoadNameNormalizer.extractHouseNumber(currentStreet) != null) {
+                return data.copy(
+                    en = data.en.copy(street = currentStreet),
+                    pl = data.pl.copy(street = currentStreet),
+                    native = data.native.copy(street = currentStreet)
+                )
+            }
+        }
         return data.copy(
             en = data.en.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.en.street, false)),
             pl = data.pl.copy(street = RoadNameNormalizer.sanitizeHouseNumber(data.pl.street, false)),
@@ -1948,7 +2032,7 @@ class LocationManager private constructor(private val context: Context) {
                 osm.city
             } else if (osm == null && lastGood != null && distToLastGood < 1500f &&
                 !lastGood.gmina.isNullOrBlank() &&
-                POLISH_COUNTY_CITIES.contains(basePlace.city.trim().lowercase(Locale.ROOT)) &&
+                isAutonomousCountyCity(basePlace.city, basePlace.gmina, basePlace.powiat) &&
                 !lastGood.city.equals(basePlace.city, ignoreCase = true)
             ) {
                 lastGood.city
@@ -1962,9 +2046,11 @@ class LocationManager private constructor(private val context: Context) {
             }
 
             // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
+            val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
             val localityKey = effectiveCity.lowercase(Locale.ROOT)
-            val isCountyCity = POLISH_COUNTY_CITIES.contains(localityKey)
-            val candidateGmina = if (isCountyCity) null else (osm?.municipality ?: basePlace.gmina)
+            val candidateGminaRaw = osm?.municipality ?: basePlace.gmina
+            val isCountyCity = isAutonomousCountyCity(effectiveCity, candidateGminaRaw, effectivePowiat)
+            val candidateGmina = if (isCountyCity) null else candidateGminaRaw
             val effectiveGmina = if (isCountyCity) {
                 null
             } else if (!candidateGmina.isNullOrBlank()) {
@@ -1974,8 +2060,6 @@ class LocationManager private constructor(private val context: Context) {
                 prefs.getString("loc_gmina_$localityKey", null)
                     ?: if (lastGood?.city.equals(effectiveCity, ignoreCase = true)) lastGood?.gmina else null
             }
-
-            val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
             val rawVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
             val effectiveVoivodeship = if (basePlace.countryCode == "PL" || basePlace.country.equals("Polska", ignoreCase = true) || basePlace.country.equals("Poland", ignoreCase = true)) {
                 canonicalizePolishVoivodeship(rawVoivodeship)
@@ -2007,7 +2091,7 @@ class LocationManager private constructor(private val context: Context) {
             val city = osm.city ?: osm.municipality ?: osm.county
             if (city != null) {
                 val localityKey = city.lowercase(Locale.ROOT)
-                val isCountyCity = POLISH_COUNTY_CITIES.contains(localityKey)
+                val isCountyCity = isAutonomousCountyCity(city, osm.municipality, osm.county)
                 val effectiveGmina = if (isCountyCity) {
                     null
                 } else if (!osm.municipality.isNullOrBlank()) {
@@ -2095,7 +2179,8 @@ class LocationManager private constructor(private val context: Context) {
 
             val urlStr = "https://nominatim.openstreetmap.org/reverse" +
                     "?format=json&lat=$lat&lon=$lng" +
-                    "&accept-language=$language&zoom=$zoom&addressdetails=1&namedetails=1&extratags=1"
+                    "&accept-language=$language&zoom=$zoom&addressdetails=1&namedetails=1&extratags=1" +
+                    (if (zoom >= 18) "&polygon_geojson=1" else "")
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -2115,7 +2200,35 @@ class LocationManager private constructor(private val context: Context) {
                 fun str(key: String) = addrObj.optString(key).takeIf { it.isNotEmpty() }
 
                 val rawRoad = str("road") ?: str("street") ?: str("pedestrian") ?: str("footway")
-                val houseNum = str("house_number")
+                var houseNum = str("house_number")
+
+                // Building polygon containment validation for house numbers at low speeds / rest
+                if (houseNum != null && zoom >= 18) {
+                    val geojson = root.optJSONObject("geojson")
+                    if (geojson != null && geojson.optString("type") == "Polygon") {
+                        val coords = geojson.optJSONArray("coordinates")?.optJSONArray(0)
+                        if (coords != null && coords.length() >= 3) {
+                            val polyPoints = mutableListOf<org.osmdroid.util.GeoPoint>()
+                            for (cIdx in 0 until coords.length()) {
+                                val pt = coords.optJSONArray(cIdx)
+                                if (pt != null && pt.length() >= 2) {
+                                    polyPoints.add(org.osmdroid.util.GeoPoint(pt.getDouble(1), pt.getDouble(0)))
+                                }
+                            }
+                            val isInside = BoundaryHelper.polygonContains(polyPoints, lat, lng)
+                            if (!isInside) {
+                                val objLat = root.optDouble("lat", lat)
+                                val objLon = root.optDouble("lon", lng)
+                                val dist = FloatArray(1)
+                                android.location.Location.distanceBetween(lat, lng, objLat, objLon, dist)
+                                if (dist[0] > 25f) {
+                                    houseNum = null
+                                }
+                            }
+                        }
+                    }
+                }
+
                 val rawRef = str("ref")
                     ?: RoadNameNormalizer.wayRef(rawRoad, root.optJSONObject("namedetails")?.let { nd ->
                         nd.optString("name").takeIf { it.isNotEmpty() } to nd.optString("ref").takeIf { it.isNotEmpty() }
@@ -2145,25 +2258,9 @@ class LocationManager private constructor(private val context: Context) {
                         ?: str("local_administrative_area")
                 }
 
-                // In Poland: If municipality starts with "gmina ", check if village/town is present.
-                // If city is a neighbouring metropolis (e.g. city="Bielsko-Biała" for postal delivery, but municipality="gmina Kozy"),
-                // the true territorial place name is the village or gmina name ("Kozy").
-                // Hamlets/przysiółki (e.g. "Krzemionki", "Małe Kozy") must NOT override the genuine village or gmina name.
                 val isPolishGmina = rawMunicipality != null && rawMunicipality.startsWith("gmina ", ignoreCase = true)
                 val gminaName = if (isPolishGmina) rawMunicipality.removePrefix("gmina ").trim() else null
-                var villageOrTown = str("village") ?: str("town")
-
-                // Groń in gmina Andrychów is an osada wsi Brzezinka (teryt:rm = 04), not an administrative village.
-                if (isPoland && gminaName?.equals("Andrychów", ignoreCase = true) == true &&
-                    villageOrTown?.equals("Groń", ignoreCase = true) == true
-                ) {
-                    val stLow = (rawRoad ?: "").lowercase(Locale.ROOT)
-                    villageOrTown = when {
-                        stLow.contains("graniczn") || stLow.contains("kowalczyk") || lng >= 19.3216 -> "Targanice"
-                        stLow.contains("leśna") || stLow.contains("lesna") || (lat >= 49.8275 && lng < 19.305) -> "Roczyny"
-                        else -> "Brzezinka"
-                    }
-                }
+                val villageOrTown = str("village") ?: str("town")
 
                 val resolvedCity = if (isPolishGmina && !villageOrTown.isNullOrBlank()) {
                     villageOrTown

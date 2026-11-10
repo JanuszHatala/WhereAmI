@@ -22,7 +22,8 @@ data class VisitedPlace(
     val latitude: Double,
     val longitude: Double,
     val distanceAtEntryMeters: Double = 0.0,
-    val placeKind: PlaceKind = PlaceKind.LOCALITY
+    val placeKind: PlaceKind = PlaceKind.LOCALITY,
+    val countryCode: String = ""
 )
 
 const val MAX_TRIP_TITLE_LENGTH = 50

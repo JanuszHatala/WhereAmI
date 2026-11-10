@@ -119,18 +119,9 @@ object StorageMigrationHelper {
                         .replace("ź", "z")
                         .replace("ż", "z")
                         .replace("-", " ")
-                    val isCounty = LocationManager.POLISH_COUNTY_CITIES.any {
-                        val normCity = it.replace("ł", "l")
-                            .replace("ą", "a")
-                            .replace("ę", "e")
-                            .replace("ć", "c")
-                            .replace("ó", "o")
-                            .replace("ś", "s")
-                            .replace("ź", "z")
-                            .replace("ż", "z")
-                            .replace("-", " ")
-                        it.equals(locKey, ignoreCase = true) || normCity.equals(normalizedLoc, ignoreCase = true)
-                    }
+                    val gminaVal = entry.value as? String
+                    val cleanVal = gminaVal?.replace("gmina ", "", ignoreCase = true)?.trim()?.lowercase()
+                    val isCounty = cleanVal != null && (cleanVal == locKey || cleanVal == normalizedLoc)
                     val isCorrupt = locKey.contains("powiat") || locKey.contains("gmina") ||
                             locKey.contains("wojewodztwo") || locKey.contains("województwo") ||
                             locKey.contains("polska") || locKey.contains("poland")

@@ -230,10 +230,16 @@ class CacheManager private constructor(private val context: Context) {
                             }
                         }
                     }
-                    var cc = "pl"
-                    if (p.latitude in 47.7..49.65 && p.longitude in 16.8..22.6) {
-                        if (p.latitude < 49.38 && (p.longitude in 18.8..20.2)) {
-                            cc = "sk"
+                    val cc = if (p.countryCode.isNotBlank()) {
+                        p.countryCode.lowercase(Locale.ROOT)
+                    } else {
+                        val sub = p.hierarchySubtitle
+                        when {
+                            sub.contains("Slovensko", ignoreCase = true) || sub.contains("Slovakia", ignoreCase = true) || sub.contains("kraj", ignoreCase = true) -> "sk"
+                            sub.contains("Česko", ignoreCase = true) || sub.contains("Czech", ignoreCase = true) -> "cz"
+                            sub.contains("Deutschland", ignoreCase = true) || sub.contains("Germany", ignoreCase = true) -> "de"
+                            sub.contains("Österreich", ignoreCase = true) || sub.contains("Austria", ignoreCase = true) -> "at"
+                            else -> "pl"
                         }
                     }
                     val key = "${name.lowercase(Locale.ROOT)}_$cc"
@@ -648,14 +654,7 @@ class CacheManager private constructor(private val context: Context) {
             val db = spatialHelper.writableDatabase
             var cleaned = 0
             try {
-                spatialHelper.sanitizeKnownMismatches(db)
-                spatialHelper.sanitizePolishHighwayCodesOutsidePoland(db)
-                spatialHelper.sanitizeDupeParenStreets(db)
-                spatialHelper.sanitizeFalseHighwayOnLocalNames(db)
-                spatialHelper.sanitizeCorruptedRoczynyDw781(db)
-                spatialHelper.sanitizeGronInGminaAndrychow(db)
-                spatialHelper.sanitizeAllSuspiciousHighwayAssignments(db)
-                spatialHelper.sanitizeDegradedLocalityAndCorridorEntries(db)
+                spatialHelper.sanitizeUniversalInvariants(db)
                 // Clean orphan/unknown entries
                 val cursor = db.rawQuery("SELECT count(*) FROM spatial_cache WHERE city IS NULL OR city = 'Unknown City' OR city = '--'", null)
                 if (cursor.moveToFirst()) {

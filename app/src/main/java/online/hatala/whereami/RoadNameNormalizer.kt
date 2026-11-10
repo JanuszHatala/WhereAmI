@@ -213,35 +213,42 @@ object RoadNameNormalizer {
         val isMajor = isMajorHighwayType(candidateHighwayType)
 
         return when {
-            // Residential / service / unclassified roads must NEVER carry a major highway code
-            named != null && isResidential ->
-                named to null
-
-            // If OSM confirmed both a named street and a valid road ref, prefer OSM confirmed name and ref.
+            // 1. If OSM confirmed both a named street and a valid road ref, prefer OSM confirmed name and ref
+            // (e.g. OSM has Bielska with ref=52, while OSRM snapped to perpendicular local street Podlesie with no ref)
             !osmStreet.isNullOrBlank() && !isHighwayCodeOnly(osmStreet) && !osmRef.isNullOrBlank() ->
                 osmStreet.trim() to osmRef
 
-            // OSRM has a real named street (e.g. "Krakowska"): prefer OSRM street and attach confirmed ref
-            osrm != null && !isHighwayCodeOnly(osrm) ->
-                osrm to osmRef
+            // 2. OSRM has a real named street (e.g. "Krakowska", "Stojałowskiego", "Broniewskiego"):
+            // Prefer OSRM street because it is filtered by the vehicle's driving trajectory (bearing ±35°).
+            // Attach confirmed ref only if candidate is a major corridor and names match or ref is confirmed.
+            osrm != null && !isHighwayCodeOnly(osrm) -> {
+                val refToAttach = if (!isResidential && osmRef != null && (isMajor || streetsMatch(osrm, osmStreet))) {
+                    osmRef
+                } else null
+                osrm to refToAttach
+            }
 
-            // Named street is present and OSRM is a bare highway code:
+            // 3. Residential / service / unclassified roads must NEVER carry a highway code
+            named != null && isResidential ->
+                named to null
+
+            // 4. Named street is present and OSRM is a bare highway code:
             // If OSM confirms major corridor classification, coalesce named street with the OSRM highway code (e.g. "Beskidzka (DW781)")
             named != null && isOsrmHighway && isMajor ->
                 named to osrm
 
-            // Named street is present and OSRM is a bare highway code:
+            // 5. Named street is present and OSRM is a bare highway code:
             // Prefer the named local street, attach confirmed osmRef only if confirmed by OSM
             named != null && isOsrmHighway ->
                 named to osmRef
 
-            // Named street without confirmed highway ref: keep local name, never attach stray highway ref
+            // 6. Named street without confirmed highway ref: keep local name, never attach stray highway ref
             named != null && osmRef == null ->
                 named to null
 
-            // Fallback
-            osrm != null -> osrm to osmRef
-            else -> named to osmRef
+            // 7. Fallback
+            osrm != null -> osrm to (if (!isResidential) osmRef else null)
+            else -> named to (if (!isResidential) osmRef else null)
         }
     }
 
