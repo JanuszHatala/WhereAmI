@@ -448,10 +448,28 @@ object BoundaryHelper {
     }
 
     /**
-     * Ray-casting point-in-polygon. [points] outer ring in GeoPoint(lat, lon) order.
+     * Ray-casting point-in-polygon with O(1) bounding box pre-filter. [points] outer ring in GeoPoint(lat, lon) order.
      */
     fun polygonContains(points: List<GeoPoint>, lat: Double, lon: Double): Boolean {
         if (points.size < 3) return false
+
+        var minLat = Double.MAX_VALUE
+        var maxLat = -Double.MAX_VALUE
+        var minLon = Double.MAX_VALUE
+        var maxLon = -Double.MAX_VALUE
+        for (i in points.indices) {
+            val p = points[i]
+            val plat = p.latitude
+            val plon = p.longitude
+            if (plat < minLat) minLat = plat
+            if (plat > maxLat) maxLat = plat
+            if (plon < minLon) minLon = plon
+            if (plon > maxLon) maxLon = plon
+        }
+        if (lat < minLat || lat > maxLat || lon < minLon || lon > maxLon) {
+            return false
+        }
+
         var inside = false
         var j = points.size - 1
         for (i in points.indices) {

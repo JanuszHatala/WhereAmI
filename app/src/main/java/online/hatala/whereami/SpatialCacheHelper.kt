@@ -140,6 +140,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         """.trimIndent()
         db.execSQL(createTable)
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_spatial_coords ON $TABLE_CACHE ($COL_LAT, $COL_LNG)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_spatial_highway_ref ON $TABLE_CACHE ($COL_HIGHWAY_TYPE, $COL_ROAD_REF)")
         db.execSQL("""
             CREATE TABLE IF NOT EXISTS $TABLE_OUTDOOR_CACHE (
                 $COL_GRID_KEY TEXT PRIMARY KEY,
@@ -160,6 +161,9 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         super.onOpen(db)
         ensureHighwayTypeColumn(db)
         ensureOutdoorTable(db)
+        try {
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_spatial_highway_ref ON $TABLE_CACHE ($COL_HIGHWAY_TYPE, $COL_ROAD_REF)")
+        } catch (_: Exception) {}
         migrateLegacyKeys(db)
         sanitizeUniversalInvariants(db)
     }
