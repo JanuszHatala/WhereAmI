@@ -694,6 +694,11 @@ class AppStateManager private constructor(private val context: Context) {
         if (hasActiveTrip && !isTripPaused) return
 
         val profile = tripManager.activityProfile.value
+        val timeSinceManualStop = System.currentTimeMillis() - tripManager.lastManualStopTimestamp
+        if (tripManager.lastManualStopTimestamp != 0L && timeSinceManualStop < 5 * 60 * 1000L && profile == ActivityProfile.CAR) {
+            TelemetryLogger.log("POWER", "Suppressing motion wake burst within 5m of manual CAR trip stop (${timeSinceManualStop / 1000}s elapsed)")
+            return
+        }
         val burstDurationMs = (profile.autoStartDurationMs + 30_000L).coerceAtLeast(60_000L)
 
         // Acquire scoped wake lock for confirmation burst so CPU doesn't suspend while screen is off
@@ -939,8 +944,8 @@ class AppStateManager private constructor(private val context: Context) {
             else -> 1000L to 1000L
         }
         val (stationaryInterval, stationaryMinInterval) = when {
-            isAuto -> 3000L to 1500L
-            else -> 10000L to 5000L
+            isAuto -> 15000L to 10000L
+            else -> 15000L to 10000L
         }
 
         locManager.updateSamplingInterval(movingInterval, movingMinInterval)
@@ -964,8 +969,8 @@ class AppStateManager private constructor(private val context: Context) {
                         stationarySinceMs = now
                     }
                     val stationaryDuration = now - stationarySinceMs
-                    // After 20 seconds of verified stationary dwell, relax GPS sampling
-                    if (stationaryDuration >= 20_000L && !isStationaryCadenceApplied) {
+                    // After 30 seconds of verified stationary dwell, relax GPS sampling to 15s
+                    if (stationaryDuration >= 30_000L && !isStationaryCadenceApplied) {
                         TelemetryLogger.log("POWER", "FOREGROUND_VIEW: Stationary for ${stationaryDuration / 1000}s. Relaxing cadence (isAuto=$isAuto, interval=${stationaryInterval}ms).")
                         locManager.updateSamplingInterval(stationaryInterval, stationaryMinInterval)
                         isStationaryCadenceApplied = true

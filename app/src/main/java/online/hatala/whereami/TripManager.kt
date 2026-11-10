@@ -55,32 +55,10 @@ class TripManager private constructor(private val context: Context) {
         private const val TRACK_LEAD_IN_MS = 5_000L
         private const val MIN_STEP_DISTANCE_M = 0.5f
         const val KEY_MANUAL_PAUSE_STICKY = "pref_trip_manual_pause_sticky"
-
-        val POLISH_CITY_CENTROIDS = mapOf(
-            "kraków" to Pair(50.064, 19.945),
-            "warszawa" to Pair(52.229, 21.012),
-            "katowice" to Pair(50.264, 19.023),
-            "wrocław" to Pair(51.107, 17.038),
-            "bielsko-biała" to Pair(49.822, 19.044),
-            "gdańsk" to Pair(54.352, 18.646),
-            "poznań" to Pair(52.406, 16.925),
-            "łódź" to Pair(51.759, 19.456),
-            "szczecin" to Pair(53.428, 14.553),
-            "lublin" to Pair(51.246, 22.568),
-            "bydgoszcz" to Pair(53.123, 18.008),
-            "białystok" to Pair(53.132, 23.168),
-            "częstochowa" to Pair(50.811, 19.120),
-            "radom" to Pair(51.402, 21.147),
-            "sosnowiec" to Pair(50.286, 19.104),
-            "toruń" to Pair(53.013, 18.598),
-            "kielce" to Pair(50.866, 20.628),
-            "gliwice" to Pair(50.294, 18.671),
-            "zabrze" to Pair(50.324, 18.785),
-            "olsztyn" to Pair(53.778, 20.480),
-            "rzeszów" to Pair(50.041, 21.999),
-            "opole" to Pair(50.675, 17.921)
-        )
     }
+
+    var lastManualStopTimestamp: Long = 0L
+        private set
 
     private val dbHelper = TripDatabaseHelper.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -761,6 +739,9 @@ class TripManager private constructor(private val context: Context) {
         } catch (_: Exception) {}
         val current = _activeTrip.value ?: return
         val now = System.currentTimeMillis()
+        if (isManualStop) {
+            lastManualStopTimestamp = now
+        }
 
         val shouldTrimTail = !isManualStop || _isPaused.value
         val trimPause = activePause
@@ -1629,26 +1610,21 @@ class TripManager private constructor(private val context: Context) {
             val displacementMeters = distResults[0]
             val durationMs = now - candidate.firstSeenTimestamp
 
-            // Rule 1: Centroid distance check for known Polish county cities
-            val centroid = POLISH_CITY_CENTROIDS[candidateName.lowercase(java.util.Locale.ROOT)]
-            if (centroid != null) {
-                val distKm = distanceBetweenKm(lat, lng, centroid.first, centroid.second)
-                if (distKm > 25.0) {
-                    TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected candidate $candidateName: $distKm km from city centroid")
-                    pendingCandidate = null
-                    return listModified
-                }
-            }
-
-            // Rule 2: County city contradiction check (e.g. city is Kraków, but powiat is Powiat Bielsko-Biała)
-            val candidatePowiat = currentPlace.powiat ?: candidate.place.powiat
-            if (candidateName.equals("kraków", ignoreCase = true) && candidatePowiat?.contains("bielsko", ignoreCase = true) == true) {
-                TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected Kraków due to contradictory powiat: $candidatePowiat")
+            // Rule 1: Structural hierarchy consistency check
+            // Ensure candidate name matches the current locality or enclosing municipality/county
+            val currentCity = currentPlace.city.trim()
+            val currentGmina = currentPlace.gmina?.replace("gmina ", "", ignoreCase = true)?.replace("gm. ", "", ignoreCase = true)?.trim()
+            val currentPowiat = currentPlace.powiat?.replace("powiat ", "", ignoreCase = true)?.replace("pow. ", "", ignoreCase = true)?.trim()
+            val isStructurallyConsistent = candidateName.equals(currentCity, ignoreCase = true) ||
+                (currentGmina != null && candidateName.equals(currentGmina, ignoreCase = true)) ||
+                (currentPowiat != null && candidateName.equals(currentPowiat, ignoreCase = true))
+            if (!isStructurallyConsistent && currentCity.isNotBlank() && !currentCity.equals("Unknown City", ignoreCase = true)) {
+                TelemetryLogger.logTrip("LOCALITY_REJECTED", tripId, "Rejected candidate $candidateName inconsistent with current hierarchy ($currentCity, $currentGmina, $currentPowiat)")
                 pendingCandidate = null
                 return listModified
             }
 
-            // Rule 3: Speed-dependent intentional visit threshold
+            // Rule 2: Speed-dependent intentional visit threshold
             val isFastMode = _activityProfile.value in setOf(ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB)
             val isPenetrated = if (isFastMode) {
                 displacementMeters >= 300f && durationMs >= 15_000L
@@ -1692,7 +1668,8 @@ class TripManager private constructor(private val context: Context) {
                         latitude = candidate.entryLatitude,
                         longitude = candidate.entryLongitude,
                         distanceAtEntryMeters = candidate.entryDistanceMeters,
-                        placeKind = candidateKind
+                        placeKind = candidateKind,
+                        countryCode = currentPlace.countryCode.lowercase(java.util.Locale.ROOT)
                     )
                 )
                 pendingCandidate = null
@@ -1737,20 +1714,8 @@ class TripManager private constructor(private val context: Context) {
 
             for (i in places.indices) {
                 val p = places[i]
-                val nameLower = p.placeName.lowercase(java.util.Locale.ROOT)
 
-                // 1. Centroid distance check for known Polish county cities
-                val centroid = POLISH_CITY_CENTROIDS[nameLower]
-                if (centroid != null) {
-                    val distKm = distanceBetweenKm(p.latitude, p.longitude, centroid.first, centroid.second)
-                    if (distKm > 25.0) {
-                        TelemetryLogger.logTrip("MAINTENANCE_REMOVED", trip.id, "Removed false place ${p.placeName}: $distKm km from city centroid")
-                        removedInTrip++
-                        continue
-                    }
-                }
-
-                // 2. Sandwiched ping-pong blip check (< 30s stay between same locality)
+                // Sandwiched ping-pong blip check (< 30s stay between same locality)
                 if (i < places.size - 1 && cleaned.isNotEmpty()) {
                     val nextP = places[i + 1]
                     val prevP = cleaned.last()

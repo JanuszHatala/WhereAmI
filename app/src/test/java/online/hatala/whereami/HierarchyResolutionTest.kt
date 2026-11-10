@@ -110,15 +110,13 @@ class HierarchyResolutionTest {
     }
 
     @Test
-    fun testPolishCountyCitiesListIntegrity() {
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("bielsko-biała"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("warszawa"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("kraków"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("wrocław"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("katowice"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("gdańsk"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("poznań"))
-        assertTrue(LocationManager.POLISH_COUNTY_CITIES.contains("łódź"))
+    fun testAutonomousCountyCityIntegrity() {
+        assertTrue(LocationManager.isAutonomousCountyCity("bielsko-biała", null, "powiat Bielsko-Biała"))
+        assertTrue(LocationManager.isAutonomousCountyCity("warszawa", null, "m. st. Warszawa"))
+        assertTrue(LocationManager.isAutonomousCountyCity("kraków", null, "m. Kraków"))
+        assertTrue(LocationManager.isAutonomousCountyCity("wrocław", null, "powiat Wrocław"))
+        assertTrue(LocationManager.isAutonomousCountyCity("katowice", null, "powiat Katowice"))
+        assertFalse(LocationManager.isAutonomousCountyCity("kozy", "gmina Kozy", "powiat bielski"))
     }
 
     @Test

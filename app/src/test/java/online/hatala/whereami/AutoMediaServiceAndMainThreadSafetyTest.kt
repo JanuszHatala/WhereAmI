@@ -21,7 +21,7 @@ class AutoMediaServiceAndMainThreadSafetyTest {
             city = "Czaniec",
             street = "ul. Dworska 12",
             roadRef = "DW948",
-            gmina = "Porąbka",
+            gmina = "gmina Porąbka",
             powiat = "bielski",
             voivodeship = "śląskie",
             country = "Polska",
