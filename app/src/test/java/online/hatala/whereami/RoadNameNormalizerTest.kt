@@ -340,5 +340,25 @@ class RoadNameNormalizerTest {
         assertEquals("DW781", beskidzkaRef)
         assertEquals("Beskidzka (DW781)", RoadNameNormalizer.formatStreetDisplay(beskidzkaStreet, beskidzkaRef, "PL"))
     }
+
+    @Test
+    fun testMultiRefSemicolonNormalization() {
+        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize(null, "44;933"))
+        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize("44;933"))
+        assertEquals("A4 (E40)", RoadNameNormalizer.normalize(null, "A4;E40"))
+        assertEquals("A4 (E40)", RoadNameNormalizer.normalize("A4;E40"))
+        assertEquals("ul. Krakowska (DK44 / DW933)", RoadNameNormalizer.normalize("ul. Krakowska", "44;933"))
+        assertTrue(RoadNameNormalizer.isHighwayCodeOnly("DK44 / DW933"))
+        assertTrue(RoadNameNormalizer.isHighwayCodeOnly("A4 (E40)"))
+        assertTrue(RoadNameNormalizer.isHighwayCodeOnly("44;933"))
+        assertEquals("DK44 / DW933", RoadNameNormalizer.extractHighwayCode("ul. Krakowska (DK44 / DW933)"))
+    }
+
+    @Test
+    fun testMotorwayProtectionAgainstHouseNumbers() {
+        assertFalse(RoadNameNormalizer.shouldPreferExistingStreet("Ignacego Daszyńskiego 638", "A4"))
+        assertFalse(RoadNameNormalizer.shouldPreferExistingStreet("Ignacego Daszyńskiego 638", "A4 (E40)"))
+        assertTrue(RoadNameNormalizer.shouldPreferExistingStreet("ul. Krakowska", "DW948"))
+    }
 }
 

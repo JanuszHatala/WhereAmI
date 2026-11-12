@@ -267,6 +267,17 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 }
                 TelemetryLogger.log("SPATIAL_CACHE", "Universal invariant sanitizer cleaned ${updates.size} residential rows with false highway refs")
             }
+
+            // Universal Invariant: Motorway and trunk corridors must NEVER carry residential house-number addresses
+            db.execSQL(
+                """
+                UPDATE $TABLE_CACHE
+                SET $COL_STREET = $COL_ROAD_REF
+                WHERE $COL_HIGHWAY_TYPE IN ('motorway', 'motorway_link', 'trunk', 'trunk_link')
+                  AND $COL_ROAD_REF IS NOT NULL
+                  AND $COL_STREET GLOB '* [0-9]*'
+                """.trimIndent()
+            )
         } catch (e: Exception) {
             TelemetryLogger.log("SPATIAL_CACHE", "sanitizeUniversalInvariants error: ${e.message}")
         }
@@ -556,22 +567,6 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     "WHERE $COL_EN_JSON LIKE '%\"country\":\"Poland\"%' " +
                     "OR $COL_PL_JSON LIKE '%\"country\":\"Poland\"%' " +
                     "OR $COL_NATIVE_JSON LIKE '%\"country\":\"Poland\"%'"
-                )
-                db.execSQL(
-                    "UPDATE $TABLE_CACHE SET $COL_CITY = 'Kozy', " +
-                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"'), " +
-                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"'), " +
-                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"city\":\"Krzemionki\"', '\"city\":\"Kozy\"') " +
-                    "WHERE ($COL_CITY = 'Krzemionki' OR $COL_PL_JSON LIKE '%\"city\":\"Krzemionki\"%') " +
-                    "AND ($COL_PL_JSON LIKE '%gmina Kozy%' OR $COL_PL_JSON LIKE '%gm. Kozy%')"
-                )
-                db.execSQL(
-                    "UPDATE $TABLE_CACHE SET $COL_CITY = 'Kozy', " +
-                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"'), " +
-                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"'), " +
-                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"city\":\"Małe Kozy\"', '\"city\":\"Kozy\"') " +
-                    "WHERE ($COL_CITY = 'Małe Kozy' OR $COL_PL_JSON LIKE '%\"city\":\"Małe Kozy\"%') " +
-                    "AND ($COL_PL_JSON LIKE '%gmina Kozy%' OR $COL_PL_JSON LIKE '%gm. Kozy%')"
                 )
             } catch (_: Exception) {}
         } catch (_: Exception) {}

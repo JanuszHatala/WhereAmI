@@ -146,6 +146,16 @@ class AppStateManager private constructor(private val context: Context) {
             return mode == AppLifecycleMode.IDLE && isStandbySleeping && hasActiveLiveSession
         }
 
+        fun evaluateIsRealTimeDisplayNeeded(
+            isInteractive: Boolean,
+            isAppInForeground: Boolean,
+            isAutoMediaActive: Boolean,
+            isCarUiModeActive: Boolean,
+            isCharging: Boolean
+        ): Boolean {
+            return (isInteractive && isAppInForeground) || isAutoMediaActive || isCarUiModeActive || isCharging
+        }
+
         fun computeBurstCooldownMs(falseBursts: Int): Long {
             return when {
                 falseBursts <= 0 -> 0L
@@ -1117,6 +1127,26 @@ class AppStateManager private constructor(private val context: Context) {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Determines whether real-time spatial awareness, geocoding, OSRM snapping, and DEM elevation
+     * must execute unthrottled. Active when the phone screen is interactive in the foreground,
+     * or when Android Auto is active, or when the device is connected to external power / charging.
+     * When false (screen off on battery without Android Auto), power conservation applies.
+     */
+    fun isRealTimeDisplayNeeded(): Boolean {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val isInteractive = pm?.isInteractive == true && isAppInForeground
+        val isAuto = isAutoMediaActive || isCarUiModeActive()
+        val isPluggedIn = _isCharging.value
+        return evaluateIsRealTimeDisplayNeeded(
+            isInteractive = isInteractive,
+            isAppInForeground = isAppInForeground,
+            isAutoMediaActive = isAutoMediaActive,
+            isCarUiModeActive = isCarUiModeActive(),
+            isCharging = isPluggedIn
+        )
     }
 
     fun recalculateState() {

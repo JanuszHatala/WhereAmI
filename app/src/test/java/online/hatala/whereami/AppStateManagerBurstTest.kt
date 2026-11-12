@@ -169,4 +169,58 @@ class AppStateManagerBurstTest {
             AppStateManager.shouldActivateForegroundOnStart(isInteractive = false, isKeyguardLocked = false)
         )
     }
+
+    @Test
+    fun testEvaluateIsRealTimeDisplayNeeded() {
+        // 1. Foreground interactive -> needed
+        assertTrue(
+            AppStateManager.evaluateIsRealTimeDisplayNeeded(
+                isInteractive = true,
+                isAppInForeground = true,
+                isAutoMediaActive = false,
+                isCarUiModeActive = false,
+                isCharging = false
+            )
+        )
+        // 2. Android Auto media session connected with screen off -> needed
+        assertTrue(
+            AppStateManager.evaluateIsRealTimeDisplayNeeded(
+                isInteractive = false,
+                isAppInForeground = false,
+                isAutoMediaActive = true,
+                isCarUiModeActive = false,
+                isCharging = false
+            )
+        )
+        // 3. Android Auto UI mode with screen off -> needed
+        assertTrue(
+            AppStateManager.evaluateIsRealTimeDisplayNeeded(
+                isInteractive = false,
+                isAppInForeground = false,
+                isAutoMediaActive = false,
+                isCarUiModeActive = true,
+                isCharging = false
+            )
+        )
+        // 4. Phone charging with screen off -> needed
+        assertTrue(
+            AppStateManager.evaluateIsRealTimeDisplayNeeded(
+                isInteractive = false,
+                isAppInForeground = false,
+                isAutoMediaActive = false,
+                isCarUiModeActive = false,
+                isCharging = true
+            )
+        )
+        // 5. Screen off on battery without Android Auto -> NOT needed (conserve battery)
+        assertFalse(
+            AppStateManager.evaluateIsRealTimeDisplayNeeded(
+                isInteractive = false,
+                isAppInForeground = false,
+                isAutoMediaActive = false,
+                isCarUiModeActive = false,
+                isCharging = false
+            )
+        )
+    }
 }

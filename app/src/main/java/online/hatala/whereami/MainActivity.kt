@@ -10200,6 +10200,87 @@ private fun OutdoorContextRow(
     }
 }
 
+private data class QualityPillConfig(
+    val bg: Color,
+    val fg: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val label: String,
+    val tooltip: String
+)
+
+@Composable
+private fun DataAcquisitionStatusPill(
+    health: DataAcquisitionHealth,
+    heightDp: Dp = 34.dp
+) {
+    if (health.status == DataAcquisitionStatus.HEALTHY) return
+    val context = LocalContext.current
+    val config = when (health.status) {
+        DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
+            bg = Color(0x33F59E0B),
+            fg = Color(0xFFFBBF24),
+            icon = Icons.Default.HourglassTop,
+            label = "429 Throttled",
+            tooltip = "OSM Nominatim rate limit (HTTP 429). Using offline spatial cache & OSM vector roads."
+        )
+        DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
+            bg = Color(0x33EF4444),
+            fg = Color(0xFFF87171),
+            icon = Icons.Default.CloudOff,
+            label = "Offline",
+            tooltip = "No internet connection. Locality and roads resolved from offline spatial cache."
+        )
+        DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
+            bg = Color(0x33F59E0B),
+            fg = Color(0xFFFBBF24),
+            icon = Icons.Default.Storage,
+            label = "Cache Only",
+            tooltip = "Network geocoding failed or unavailable. Displaying cached spatial data."
+        )
+        DataAcquisitionStatus.HEALTHY -> null
+    } ?: return
+
+    Surface(
+        onClick = {
+            android.widget.Toast.makeText(context, config.tooltip, android.widget.Toast.LENGTH_LONG).show()
+        },
+        shape = RoundedCornerShape(12.dp),
+        color = config.bg,
+        modifier = Modifier.height(heightDp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 8.dp)
+        ) {
+            Icon(
+                imageVector = config.icon,
+                contentDescription = config.label,
+                tint = config.fg,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = config.label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = config.fg,
+                maxLines = 1,
+                softWrap = false,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    ),
+                    lineHeight = 11.sp
+                )
+            )
+        }
+    }
+}
+
 @Composable
 private fun LocalityCard(
     locationData: LocationData,
@@ -10224,6 +10305,7 @@ private fun LocalityCard(
     val context = LocalContext.current
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
     val isStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
+    val dataHealth by remember { DataAcquisitionManager.health }.collectAsState()
 
     Card(
         modifier = modifier,
@@ -10377,6 +10459,8 @@ private fun LocalityCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 34.dp)
+
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -10720,6 +10804,8 @@ private fun LocalityCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 40.dp)
+
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -11179,7 +11265,8 @@ private fun LocalityCard(
                         ) {
                             EmojiText(
                                 emoji = activityProfile.iconEmoji,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
+                                yOffsetDp = 0.dp
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(

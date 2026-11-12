@@ -1771,6 +1771,30 @@ Evidence & Diagnostics:
 | **HYS-308-03** | Prevent DK52 / DW781 road number flipping and side-street hopping in Kozy. | `SpatialCacheHelper.kt`, `LocationManager.kt` | Implemented | Major corridor code preserved on base street match; side-street shielding at >=20 km/h; unit tests pass. |
 | **VER-308** | Bump to versionCode 192 / 2.3.2. | `app/build.gradle.kts` | Implemented | All 645 unit tests pass; `assembleDebug` clean. |
 
+---
+
+## Round 56 - Dual Power Regime, Android Auto Unthrottled Geocoding, Semicolon Multi-Ref Roads, Retrograde Spike Guard & Data Degradation Indicator (2026-11-12 v2.3.7)
+
+Evidence & Diagnostics:
+- Android Auto Screen-Off Freeze: `isAuto` evaluated against `currentMode == ANDROID_AUTO` (always false during `TRIP_RECORDING`), and `isCharging` was ignored. Fixed via `AppStateManager.isRealTimeDisplayNeeded()`: unthrottled geocoding and OSRM snapping when interactive, in Android Auto, or plugged in.
+- Semicolon-Separated Multi-Highway References: Parsed in `RoadNameNormalizer.normalizeHighwayRef`: `44;933` -> `DK44 / DW933`, `A4;E40` -> `A4 (E40)`.
+- Corridor Inertia Turn Relaxation: Allowed gate relaxation on `isRecentTurn` when candidate road bearing matches vehicle course.
+- Asymmetric Retrograde Hook Spike Guard: `TrackSpikeGuard.isLateralVSpike` now catches and drops backwards excursions ($ab \in [1.5, 15.0]\text{m}$, $bc \ge 20.0\text{m}$, $ac < bc$, $turn \ge 90^\circ$).
+- Spatial Cache Motorway Protection & Purge: Residential house numbers cannot overwrite major highways; purged hardcoded Kozy SQL updates in `SpatialCacheHelper.kt` (Rule 15).
+- Data Acquisition Degradation Health: `DataAcquisitionManager` tracks online health (`HEALTHY`, `CACHED_ONLY`, `RATE_LIMITED_429`, `OFFLINE`). Surfaced via `DataAcquisitionStatusPill` in `LocalityCard`.
+- Activity Profile Pill Vertical Alignment: Added `yOffsetDp = 0.dp` to `EmojiText` in `LocalityCard`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **AUT-318-01** | Android Auto screen-off geocoding freeze fix via dual power regime. | `AppStateManager.kt`, `LocationManager.kt` | Implemented | `isRealTimeDisplayNeeded()` runs unthrottled when charging or in Android Auto; unit tests pass. |
+| **REF-318-02** | Semicolon multi-ref highway parsing (`DK44 / DW933`, `A4 (E40)`). | `RoadNameNormalizer.kt`, `RoadNameNormalizerTest.kt` | Implemented | `normalizeHighwayRef` handles multi-refs and e-routes; unit tests pass. |
+| **HYS-318-03** | Corridor inertia turn relaxation on verified turn. | `LocationManager.kt` | Implemented | Relaxes threshold to 3 confirmations / 3s when turning onto non-house-numbered street. |
+| **SPK-318-04** | Imielin asymmetric retrograde hook spike guard. | `TrackSpikeGuard.kt`, `TrackSpikeGuardTest.kt` | Implemented | Catches and drops backwards excursion before forward jump; unit tests pass. |
+| **SCH-318-05** | Spatial cache motorway integrity & Rule 15 hardcode purge. | `SpatialCacheHelper.kt`, `RoadNameNormalizer.kt` | Implemented | House numbers cannot overwrite motorways; hardcoded Kozy SQL purged. |
+| **NET-318-06** | Data acquisition health tracker & degraded status pill. | `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `LocationManager.kt`, `MainActivity.kt` | Implemented | Surfaces 429 Throttled, Offline, and Cache Only pills with informative toast. |
+| **UI-318-07** | LocalityCard activity profile pill vertical alignment. | `MainActivity.kt` | Implemented | `EmojiText` configured with `yOffsetDp = 0.dp`. |
+| **VER-318** | Bump to versionCode 197 / 2.3.7. | `app/build.gradle.kts` | Implemented | All 661 unit tests pass; debug APK assembled and verified. |
+
 
 
 

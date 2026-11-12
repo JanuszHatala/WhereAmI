@@ -173,6 +173,13 @@ object TrackSpikeGuard {
             }
         }
 
+        // Asymmetric retrograde hook: point B reverses backwards from A (turn >= 90°),
+        // leg A->B is small (ab in 1.5..15.0m), and leg B->C is forward locomotion (bc >= 20.0m)
+        // with material detour (detour >= 3.5m) and chord ac < bc.
+        if (turn >= 90.0 && ab in 1.5..15.0 && bc >= 20.0 && detour >= 3.5 && ac < bc) {
+            return true
+        }
+
         if (ab < LATERAL_V_LEG_M || bc < LATERAL_V_LEG_M || ac < LATERAL_V_CHORD_M) return false
         if (detour < LATERAL_V_XT_M) return false
         if (turn < LATERAL_V_TURN_DEG) return false

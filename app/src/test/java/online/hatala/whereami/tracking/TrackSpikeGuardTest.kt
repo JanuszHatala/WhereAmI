@@ -162,6 +162,17 @@ class TrackSpikeGuardTest {
     }
 
     @Test
+    fun `asymmetric retrograde hook spike is identified and rejected`() {
+        // Point A: vehicle heading north at (0, 0)
+        val (aLat, aLng) = at(0.0, 0.0)
+        // Point B: 4.8m retrograde south excursion during sensor glitch
+        val (bLat, bLng) = at(-4.8, 0.0)
+        // Point C: filter reset forward jump 80m north
+        val (cLat, cLng) = at(80.0, 0.0)
+        assertTrue(TrackSpikeGuard.isLateralVSpike(aLat, aLng, bLat, bLng, cLat, cLng))
+    }
+
+    @Test
     fun `gentle road bend is not a lateral V spike`() {
         val (aLat, aLng) = at(0.0, 0.0)
         val (bLat, bLng) = at(20.0, 3.0)

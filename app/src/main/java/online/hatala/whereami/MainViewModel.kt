@@ -332,6 +332,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _boundaryPoints = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
     val boundaryPoints: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _boundaryPoints.asStateFlow()
 
+    val dataAcquisitionHealth: StateFlow<DataAcquisitionHealth> = DataAcquisitionManager.health
+
     // Pinned Locality Borders Layer (Point 8)
     private val _pinnedBoundaryPoints = MutableStateFlow<List<org.osmdroid.util.GeoPoint>?>(null)
     val pinnedBoundaryPoints: StateFlow<List<org.osmdroid.util.GeoPoint>?> = _pinnedBoundaryPoints.asStateFlow()
@@ -1108,6 +1110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (_showBorders.value) {
                     val newCity = data.primaryPlace?.city
                     if (newCity != null && newCity != previousCity && newCity != "Unknown City") {
+                        _boundaryPoints.value = null // Discard previous locality boundary immediately
                         fetchCurrentBoundary()
                     }
                 }

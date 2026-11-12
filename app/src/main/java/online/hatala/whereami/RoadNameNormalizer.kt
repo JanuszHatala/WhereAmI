@@ -28,17 +28,30 @@ object RoadNameNormalizer {
     fun isMajorRoad(name: String?, roadRef: String? = null): Boolean {
         if (!roadRef.isNullOrBlank()) {
             val refTrimmed = roadRef.trim().uppercase(Locale.ROOT)
+            if (refTrimmed.contains(";")) {
+                if (refTrimmed.split(";").any { isMajorRoad(null, it) }) return true
+            }
+            if (refTrimmed.contains(" / ")) {
+                if (refTrimmed.split(" / ").any { isMajorRoad(null, it) }) return true
+            }
             if (refTrimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
                 refTrimmed.matches(Regex("""^\d{1,3}$""")) ||
-                refTrimmed.matches(Regex("""^(I|II)/\d+.*"""))
+                refTrimmed.matches(Regex("""^(I|II|III)/\d+.*"""))
             ) {
                 return true
             }
         }
         if (name.isNullOrBlank()) return false
         val trimmed = name.trim().uppercase(Locale.ROOT)
+        if (trimmed.contains(";")) {
+            if (trimmed.split(";").any { isMajorRoad(it, null) }) return true
+        }
+        if (trimmed.contains(" / ")) {
+            if (trimmed.split(" / ").any { isMajorRoad(it, null) }) return true
+        }
         return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
                 trimmed.matches(Regex("""^\d{1,3}$""")) ||
+                trimmed.matches(Regex("""^(?:I|II|III)/\d+.*""")) ||
                 trimmed.contains(Regex("""\((DK|DW|A|S|E)\s*\d+.*\)""")) ||
                 trimmed.startsWith("DROGA KRAJOWA") ||
                 trimmed.startsWith("KRAJOWA") ||
@@ -47,6 +60,8 @@ object RoadNameNormalizer {
                 trimmed.startsWith("AUTOSTRADA") ||
                 trimmed.startsWith("DROGA EKSPRESOWA") ||
                 trimmed.startsWith("EKSPRESOWA") ||
+                trimmed.startsWith("DROGA MIĘDZYNARODOWA") ||
+                trimmed.startsWith("TRASA EUROPEJSKA") ||
                 trimmed.startsWith("ALEJA") ||
                 trimmed.startsWith("ALEJE") ||
                 trimmed.startsWith("AL.") ||
@@ -255,6 +270,8 @@ object RoadNameNormalizer {
     /** True when [incoming] is a bare highway code that must not overwrite a named [existing] cache street. */
     fun shouldPreferExistingStreet(existing: String?, incoming: String?): Boolean {
         if (existing.isNullOrBlank() || isHighwayCodeOnly(existing)) return false
+        // Residential address with house numbers must NEVER override incoming major road corridor
+        if (!extractHouseNumber(existing).isNullOrBlank() && isMajorRoad(incoming)) return false
         return incoming.isNullOrBlank() || isHighwayCodeOnly(incoming)
     }
 
@@ -327,12 +344,16 @@ object RoadNameNormalizer {
         return "$out $code".replace(Regex("""\s{2,}"""), " ").trim()
     }
 
-    /** Pulls a canonical highway code from a street line (`DW948` or `Krakowska (DW948)`). */
+    /** Pulls a canonical highway code from a street line (`DW948`, `Krakowska (DW948)`, or `(DK44 / DW933)`). */
     fun extractHighwayCode(street: String?): String? {
         if (street.isNullOrBlank()) return null
         val trimmed = street.trim()
         if (isHighwayCodeOnly(trimmed)) {
-            return normalize(null, trimmed, null, includeHouseNumber = false) ?: trimmed.uppercase(Locale.ROOT)
+            return normalizeHighwayRef(trimmed, "PL") ?: trimmed.uppercase(Locale.ROOT)
+        }
+        val multiParen = Regex("""\(((?:DK|DW|A|S|E|I|II|III)\s*\d+[\w/ ]*(?:\([^)]*\))?)\)""", RegexOption.IGNORE_CASE).find(trimmed)
+        if (multiParen != null) {
+            return normalizeHighwayRef(multiParen.groupValues[1], "PL") ?: multiParen.groupValues[1]
         }
         val paren = Regex("""\((DK|DW|A|S|E)\s*(\d+)\)""", RegexOption.IGNORE_CASE).find(trimmed) ?: return null
         return "${paren.groupValues[1].uppercase(Locale.ROOT)}${paren.groupValues[2]}"
@@ -367,7 +388,7 @@ object RoadNameNormalizer {
     }
 
     private val PAREN_HIGHWAY_REF = Regex("""\((DK|DW|A|S|E)\s*\d+""", RegexOption.IGNORE_CASE)
-    private val PAREN_HIGHWAY_REF_FULL = Regex("""\s*\((DK|DW|A|S|E)\s*\d+\)""", RegexOption.IGNORE_CASE)
+    private val PAREN_HIGHWAY_REF_FULL = Regex("""\s*\((?:(?:DK|DW|A|S|E|I|II|III)\s*\d+[\w/ ]*(?:\([^)]*\))?)\)""", RegexOption.IGNORE_CASE)
 
     /**
      * Determines whether a given string is strictly a highway code (e.g. DK52, S1, DW946)
@@ -376,15 +397,34 @@ object RoadNameNormalizer {
     fun isHighwayCodeOnly(name: String?): Boolean {
         if (name.isNullOrBlank()) return false
         val trimmed = name.trim().uppercase(Locale.ROOT)
+        if (trimmed.contains(";")) {
+            val parts = trimmed.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+            return parts.isNotEmpty() && parts.all { isHighwayCodeOnly(it) }
+        }
+        if (trimmed.contains(" / ")) {
+            val parts = trimmed.split(" / ").map { it.trim() }.filter { it.isNotEmpty() }
+            return parts.isNotEmpty() && parts.all { isHighwayCodeOnly(it) }
+        }
+        if (trimmed.matches(Regex("""^[A-Z0-9/ ]+\s*\([A-Z0-9/ ]+\)$"""))) {
+            val paren = Regex("""^([A-Z0-9/ ]+)\s*\(([A-Z0-9/ ]+)\)$""").find(trimmed)
+            if (paren != null) {
+                val part1 = paren.groupValues[1].trim()
+                val part2 = paren.groupValues[2].trim()
+                if (isHighwayCodeOnly(part1) && isHighwayCodeOnly(part2)) return true
+            }
+        }
         return trimmed.matches(Regex("""^(DK|DW|A|S|E)\s*\d+.*""")) ||
                 trimmed.matches(Regex("""^\d{1,3}$""")) ||
+                trimmed.matches(Regex("""^(?:I|II|III)/\d+$""")) ||
                 trimmed.startsWith("DROGA KRAJOWA") ||
                 trimmed.startsWith("KRAJOWA") ||
                 trimmed.startsWith("DROGA WOJEWÓDZKA") ||
                 trimmed.startsWith("WOJEWÓDZKA") ||
                 trimmed.startsWith("AUTOSTRADA") ||
                 trimmed.startsWith("DROGA EKSPRESOWA") ||
-                trimmed.startsWith("EKSPRESOWA")
+                trimmed.startsWith("EKSPRESOWA") ||
+                trimmed.startsWith("DROGA MIĘDZYNARODOWA") ||
+                trimmed.startsWith("TRASA EUROPEJSKA")
     }
 
     /**
@@ -440,6 +480,86 @@ object RoadNameNormalizer {
     }
 
     /**
+     * Normalizes a single highway token (e.g. "DK 52" -> "DK52", "44" in PL -> "DK44", "A4" -> "A4", "18" in SK -> "I/18").
+     */
+    fun normalizeSingleHighwayCode(rawToken: String?, countryCode: String? = "PL"): String? {
+        if (rawToken.isNullOrBlank()) return null
+        val token = rawToken.trim()
+        val isPoland = countryCode.isNullOrBlank() || countryCode.equals("PL", ignoreCase = true)
+        val isSlovakia = countryCode?.equals("SK", ignoreCase = true) == true
+
+        return when {
+            isPoland && DK_REGEX.matches(token) -> "DK${DK_REGEX.find(token)!!.groupValues[1]}"
+            isPoland && DK_SHORT_REGEX.matches(token) -> "DK${DK_SHORT_REGEX.find(token)!!.groupValues[1]}"
+            !isPoland && DK_SHORT_REGEX.matches(token) -> {
+                val num = DK_SHORT_REGEX.find(token)!!.groupValues[1]
+                sanitizeStreetForCountry("DK$num", countryCode)
+            }
+            isPoland && DW_REGEX.matches(token) -> "DW${DW_REGEX.find(token)!!.groupValues[1]}"
+            isPoland && DW_SHORT_REGEX.matches(token) -> "DW${DW_SHORT_REGEX.find(token)!!.groupValues[1]}"
+            !isPoland && DW_SHORT_REGEX.matches(token) -> {
+                val num = DW_SHORT_REGEX.find(token)!!.groupValues[1]
+                sanitizeStreetForCountry("DW$num", countryCode)
+            }
+            AUTOSTRADA_REGEX.matches(token) -> "A${AUTOSTRADA_REGEX.find(token)!!.groupValues[1]}"
+            EKSPRESOWA_REGEX.matches(token) -> "S${EKSPRESOWA_REGEX.find(token)!!.groupValues[1]}"
+            S_SHORT_REGEX.matches(token) -> "S${S_SHORT_REGEX.find(token)!!.groupValues[1]}"
+            E_ROUTE_REGEX.matches(token) -> "E${E_ROUTE_REGEX.find(token)!!.groupValues[1]}"
+            token.matches(Regex("""^(?:I|II|III)/\d+$""")) -> token
+            token.matches(Regex("""^\d{1,2}$""")) -> {
+                if (isPoland) "DK$token"
+                else if (isSlovakia) "I/$token"
+                else token
+            }
+            token.matches(Regex("""^\d{3}$""")) -> {
+                if (isPoland) "DW$token"
+                else if (isSlovakia) "II/$token"
+                else token
+            }
+            !isPoland && token.matches(Regex("""(?i)^(DK|DW)\s*(\d+)$""")) -> {
+                val match = Regex("""(?i)^(?:DK|DW)\s*(\d+)$""").find(token)!!
+                val num = match.groupValues[1]
+                if (isSlovakia) {
+                    if (num.length <= 2) "I/$num" else "II/$num"
+                } else num
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Normalizes a potentially multi-reference highway designation string
+     * (e.g. "44;933" -> "DK44 / DW933", "A4;E40" -> "A4 (E40)", "DK44;DW933" -> "DK44 / DW933").
+     */
+    fun normalizeHighwayRef(rawRef: String?, countryCode: String? = "PL"): String? {
+        if (rawRef.isNullOrBlank()) return null
+        val trimmed = rawRef.trim()
+        val tokens = if (trimmed.contains(";")) {
+            trimmed.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+        } else if (trimmed.contains(" / ")) {
+            trimmed.split(" / ").map { it.trim() }.filter { it.isNotEmpty() }
+        } else {
+            listOf(trimmed)
+        }
+        val normalized = tokens.mapNotNull { normalizeSingleHighwayCode(it, countryCode) }.distinct()
+        if (normalized.isEmpty()) return null
+        if (normalized.size == 1) return normalized[0]
+
+        // Split European routes (E*) vs National/Motorway routes
+        val eRoutes = normalized.filter { it.startsWith("E") }
+        val nationalRoutes = normalized.filter { !it.startsWith("E") }
+
+        return when {
+            nationalRoutes.isNotEmpty() && eRoutes.isNotEmpty() -> {
+                val nat = nationalRoutes.joinToString(" / ")
+                val eur = eRoutes.joinToString(" / ")
+                "$nat ($eur)"
+            }
+            else -> normalized.joinToString(" / ")
+        }
+    }
+
+    /**
      * Normalizes a raw street name, road reference, and optional house number.
      *
      * Rules:
@@ -457,9 +577,6 @@ object RoadNameNormalizer {
     ): String? {
         if (rawStreet.isNullOrBlank() && rawRef.isNullOrBlank()) return null
 
-        val isPoland = countryCode.isNullOrBlank() || countryCode.equals("PL", ignoreCase = true)
-        val isSlovakia = countryCode?.equals("SK", ignoreCase = true) == true
-
         // Strip an existing `(DK52)` annotation before re-normalizing so we never emit
         // `Krakowska (DK52) (DK52)` when street already carries the code and ref is repeated.
         var road = stripParenHighwayRef(rawStreet?.trim()) ?: ""
@@ -469,137 +586,12 @@ object RoadNameNormalizer {
         var isRoadSelfHighway = false
         var normalizedHighway: String? = null
 
-        when {
-            isPoland && DK_REGEX.matches(road) -> {
-                val match = DK_REGEX.find(road)!!
-                normalizedHighway = "DK${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            isPoland && DK_SHORT_REGEX.matches(road) -> {
-                val match = DK_SHORT_REGEX.find(road)!!
-                normalizedHighway = "DK${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            // Spurious Polish DK/DW labels outside PL (legacy cache / OSM tags) → local form
-            !isPoland && DK_SHORT_REGEX.matches(road) -> {
-                val num = DK_SHORT_REGEX.find(road)!!.groupValues[1]
-                normalizedHighway = sanitizeStreetForCountry("DK$num", countryCode)
-                isRoadSelfHighway = true
-            }
-            isPoland && DW_REGEX.matches(road) -> {
-                val match = DW_REGEX.find(road)!!
-                normalizedHighway = "DW${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            isPoland && DW_SHORT_REGEX.matches(road) -> {
-                val match = DW_SHORT_REGEX.find(road)!!
-                normalizedHighway = "DW${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            !isPoland && DW_SHORT_REGEX.matches(road) -> {
-                val num = DW_SHORT_REGEX.find(road)!!.groupValues[1]
-                normalizedHighway = sanitizeStreetForCountry("DW$num", countryCode)
-                isRoadSelfHighway = true
-            }
-            AUTOSTRADA_REGEX.matches(road) -> {
-                val match = AUTOSTRADA_REGEX.find(road)!!
-                normalizedHighway = "A${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            EKSPRESOWA_REGEX.matches(road) -> {
-                val match = EKSPRESOWA_REGEX.find(road)!!
-                normalizedHighway = "S${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            S_SHORT_REGEX.matches(road) -> {
-                val match = S_SHORT_REGEX.find(road)!!
-                normalizedHighway = "S${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            E_ROUTE_REGEX.matches(road) -> {
-                val match = E_ROUTE_REGEX.find(road)!!
-                normalizedHighway = "E${match.groupValues[1]}"
-                isRoadSelfHighway = true
-            }
-            road.matches(Regex("""^\d{1,2}$""")) -> {
-                if (isPoland) {
-                    // 1-2 digits in Poland designate DK (e.g. "28" -> DK28, "47" -> DK47)
-                    normalizedHighway = "DK$road"
-                } else if (isSlovakia) {
-                    // 1-2 digits in Slovakia designate 1st class road (Cesta I. triedy, e.g. "18" -> "I/18" or "18")
-                    normalizedHighway = "I/$road"
-                } else {
-                    normalizedHighway = road
-                }
-                isRoadSelfHighway = true
-            }
-            road.matches(Regex("""^\d{3}$""")) -> {
-                if (isPoland) {
-                    // 3 digits in Poland designate DW (e.g. "946" -> DW946)
-                    normalizedHighway = "DW$road"
-                } else if (isSlovakia) {
-                    // 3 digits in Slovakia designate 2nd class road (Cesta II. triedy, e.g. "537" -> "II/537")
-                    normalizedHighway = "II/$road"
-                } else {
-                    normalizedHighway = road
-                }
-                isRoadSelfHighway = true
-            }
-            road.matches(Regex("""^(?:I|II|III)/\d+$""")) -> {
-                normalizedHighway = road
-                isRoadSelfHighway = true
-            }
-        }
-
-        // If road was not a highway name, check if rawRef is a highway designation (e.g. ref="52", "DK 52", "A4")
-        if (normalizedHighway == null && ref.isNotEmpty()) {
-            when {
-                isPoland && ref.matches(Regex("""(?i)^DK\s*(\d+)$""")) -> {
-                    val num = Regex("""(?i)^DK\s*(\d+)$""").find(ref)!!.groupValues[1]
-                    normalizedHighway = "DK$num"
-                }
-                isPoland && ref.matches(Regex("""(?i)^DW\s*(\d+)$""")) -> {
-                    val num = Regex("""(?i)^DW\s*(\d+)$""").find(ref)!!.groupValues[1]
-                    normalizedHighway = "DW$num"
-                }
-                ref.matches(Regex("""(?i)^A\s*(\d+)$""")) -> {
-                    val num = Regex("""(?i)^A\s*(\d+)$""").find(ref)!!.groupValues[1]
-                    normalizedHighway = "A$num"
-                }
-                ref.matches(Regex("""(?i)^S\s*(\d+)$""")) -> {
-                    val num = Regex("""(?i)^S\s*(\d+)$""").find(ref)!!.groupValues[1]
-                    normalizedHighway = "S$num"
-                }
-                ref.matches(Regex("""^(?:I|II|III)/\d+$""")) -> {
-                    normalizedHighway = ref
-                }
-                ref.matches(Regex("""^\d{1,2}$""")) -> {
-                    if (isPoland) {
-                        normalizedHighway = "DK$ref"
-                    } else if (isSlovakia) {
-                        normalizedHighway = "I/$ref"
-                    } else {
-                        normalizedHighway = ref
-                    }
-                }
-                ref.matches(Regex("""^\d{3}$""")) -> {
-                    if (isPoland) {
-                        normalizedHighway = "DW$ref"
-                    } else if (isSlovakia) {
-                        normalizedHighway = "II/$ref"
-                    } else {
-                        normalizedHighway = ref
-                    }
-                }
-                !isPoland && ref.matches(Regex("""(?i)^(DK|DW)\s*(\d+)$""")) -> {
-                    // If OSM has a spurious DK/DW tag outside Poland, strip the Polish prefix
-                    val match = Regex("""(?i)^(?:DK|DW)\s*(\d+)$""").find(ref)!!
-                    val num = match.groupValues[1]
-                    normalizedHighway = if (isSlovakia) {
-                        if (num.length <= 2) "I/$num" else "II/$num"
-                    } else num
-                }
-            }
+        val roadAsHighway = normalizeHighwayRef(road, countryCode)
+        if (roadAsHighway != null && (isHighwayCodeOnly(road) || road.contains(";") || normalizeSingleHighwayCode(road, countryCode) != null)) {
+            normalizedHighway = roadAsHighway
+            isRoadSelfHighway = true
+        } else if (ref.isNotEmpty()) {
+            normalizedHighway = normalizeHighwayRef(ref, countryCode)
         }
 
         // Extract house number if available
