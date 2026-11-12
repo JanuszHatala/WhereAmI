@@ -1908,20 +1908,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         Color(0xFF10B981)
                                                     }
 
-                                                    Column(
+                                                    Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .padding(12.dp)
+                                                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.Top
                                                     ) {
-                                                        Row(
-                                                            modifier = Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                            verticalAlignment = Alignment.Top
-                                                        ) {
-                                                            Row(
-                                                                verticalAlignment = Alignment.Top,
-                                                                modifier = Modifier.weight(1f)
-                                                            ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Row(verticalAlignment = Alignment.Top) {
                                                                 Box(
                                                                     modifier = Modifier.size(22.dp),
                                                                     contentAlignment = Alignment.Center
@@ -1938,33 +1933,37 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     )
                                                                 }
                                                                 Spacer(modifier = Modifier.width(8.dp))
-                                                                Column(modifier = Modifier.weight(1f)) {
-                                                                    Text(
-                                                                        text = place.name,
-                                                                        color = Color.White,
-                                                                        fontWeight = FontWeight.Bold,
-                                                                        fontSize = 14.sp,
-                                                                        lineHeight = 18.sp
-                                                                    )
-                                                                    val sub = listOfNotNull(
-                                                                        place.street.takeIf { it.isNotBlank() },
-                                                                        place.locality.takeIf { it.isNotBlank() }
-                                                                    ).joinToString(", ")
-                                                                    if (sub.isNotBlank()) {
-                                                                        Text(
-                                                                            sub,
-                                                                            color = Color(0xFF94A3B8),
-                                                                            fontSize = 11.sp,
-                                                                            maxLines = 2,
-                                                                            overflow = TextOverflow.Ellipsis,
-                                                                            modifier = Modifier.padding(top = 2.dp)
-                                                                        )
-                                                                    }
-                                                                }
+                                                                Text(
+                                                                    text = place.name,
+                                                                    color = Color.White,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 14.sp,
+                                                                    lineHeight = 17.sp,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
                                                             }
+                                                            val sub = listOfNotNull(
+                                                                place.street.takeIf { it.isNotBlank() },
+                                                                place.locality.takeIf { it.isNotBlank() }
+                                                            ).joinToString(", ")
+                                                            if (sub.isNotBlank()) {
+                                                                Text(
+                                                                    sub,
+                                                                    color = Color(0xFF94A3B8),
+                                                                    fontSize = 11.sp,
+                                                                    lineHeight = 13.sp,
+                                                                    maxLines = 2,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    modifier = Modifier.padding(start = 30.dp, top = 1.dp)
+                                                                )
+                                                            }
+                                                        }
 
-                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                        Spacer(modifier = Modifier.width(8.dp))
 
+                                                        Column(
+                                                            horizontalAlignment = Alignment.End
+                                                        ) {
                                                             Row(
                                                                 verticalAlignment = Alignment.CenterVertically,
                                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -2023,72 +2022,68 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
                                                                 }
                                                             }
-                                                        }
 
-                                                        Spacer(modifier = Modifier.height(6.dp))
+                                                            Spacer(modifier = Modifier.height(4.dp))
 
-                                                        Row(
-                                                            modifier = Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.End,
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            // Navigate To
-                                                            IconButton(
-                                                                onClick = {
-                                                                    launchNavigation(context, place.latitude, place.longitude)
-                                                                },
-                                                                modifier = Modifier.size(30.dp)
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
                                                             ) {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Navigation,
-                                                                    contentDescription = "Navigate To",
-                                                                    tint = Color(0xFF38BDF8),
-                                                                    modifier = Modifier.size(18.dp)
-                                                                )
-                                                            }
-                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                                // Navigate To
+                                                                IconButton(
+                                                                    onClick = {
+                                                                        launchNavigation(context, place.latitude, place.longitude)
+                                                                    },
+                                                                    modifier = Modifier.size(28.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Navigation,
+                                                                        contentDescription = "Navigate To",
+                                                                        tint = Color(0xFF38BDF8),
+                                                                        modifier = Modifier.size(17.dp)
+                                                                    )
+                                                                }
 
-                                                            // Open in Google Maps
-                                                            IconButton(
-                                                                onClick = {
-                                                                    openInGoogleMaps(context, place.latitude, place.longitude, place.name)
-                                                                },
-                                                                modifier = Modifier.size(30.dp)
-                                                            ) {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Map,
-                                                                    contentDescription = "Open in Maps",
-                                                                    tint = Color(0xFF10B981),
-                                                                    modifier = Modifier.size(18.dp)
-                                                                )
-                                                            }
-                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                                // Open in Google Maps
+                                                                IconButton(
+                                                                    onClick = {
+                                                                        openInGoogleMaps(context, place.latitude, place.longitude, place.name)
+                                                                    },
+                                                                    modifier = Modifier.size(28.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Map,
+                                                                        contentDescription = "Open in Maps",
+                                                                        tint = Color(0xFF10B981),
+                                                                        modifier = Modifier.size(17.dp)
+                                                                    )
+                                                                }
 
-                                                            // Edit
-                                                            IconButton(
-                                                                onClick = { editingSavedPlace = place },
-                                                                modifier = Modifier.size(30.dp)
-                                                            ) {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Edit,
-                                                                    contentDescription = "Edit Saved Place",
-                                                                    tint = Color(0xFFFBBF24),
-                                                                    modifier = Modifier.size(18.dp)
-                                                                )
-                                                            }
-                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                                // Edit
+                                                                IconButton(
+                                                                    onClick = { editingSavedPlace = place },
+                                                                    modifier = Modifier.size(28.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Edit,
+                                                                        contentDescription = "Edit Saved Place",
+                                                                        tint = Color(0xFFFBBF24),
+                                                                        modifier = Modifier.size(17.dp)
+                                                                    )
+                                                                }
 
-                                                            // Delete (protected by Delete Saved Place confirmation modal)
-                                                            IconButton(
-                                                                onClick = { placeToDelete = place },
-                                                                modifier = Modifier.size(30.dp)
-                                                            ) {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Delete,
-                                                                    contentDescription = "Delete Saved Place",
-                                                                    tint = Color(0xFFF87171),
-                                                                    modifier = Modifier.size(18.dp)
-                                                                )
+                                                                // Delete (protected by Delete Saved Place confirmation modal)
+                                                                IconButton(
+                                                                    onClick = { placeToDelete = place },
+                                                                    modifier = Modifier.size(28.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Delete,
+                                                                        contentDescription = "Delete Saved Place",
+                                                                        tint = Color(0xFFF87171),
+                                                                        modifier = Modifier.size(17.dp)
+                                                                    )
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -4840,16 +4835,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             showSearchDialog = false
                                             viewModel.clearSearch()
                                         }
-                                        .padding(vertical = 8.dp, horizontal = 4.dp)
+                                        .padding(vertical = 6.dp, horizontal = 4.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.Top
                                     ) {
                                         Row(
-                                            modifier = Modifier.weight(1f, fill = false),
-                                            verticalAlignment = Alignment.CenterVertically
+                                            modifier = Modifier.weight(1f),
+                                            verticalAlignment = Alignment.Top
                                         ) {
                                             EmojiText(
                                                 emoji = SearchHelper.iconForPlaceType(item.placeType),
@@ -4868,6 +4863,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 }
                                                 Box(
                                                     modifier = Modifier
+                                                        .padding(top = 4.dp)
                                                         .size(8.dp)
                                                         .clip(CircleShape)
                                                         .background(dotCol)
@@ -4879,49 +4875,54 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 color = Color(0xFF38BDF8),
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f, fill = false)
+                                                lineHeight = 16.sp,
+                                                modifier = Modifier.weight(1f)
                                             )
-                                            if (item.elevationMeters != null && item.elevationMeters > 0) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Surface(
-                                                    color = Color(0xFF0F172A),
-                                                    shape = RoundedCornerShape(4.dp)
-                                                ) {
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                        }
+                                        if (item.elevationMeters != null || distanceLabel != null) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                if (item.elevationMeters != null && item.elevationMeters > 0) {
+                                                    Surface(
+                                                        color = Color(0xFF0F172A),
+                                                        shape = RoundedCornerShape(4.dp)
                                                     ) {
-                                                        Text(
-                                                            text = "▲",
-                                                            color = Color(0xFF94A3B8),
-                                                            fontSize = 8.sp,
-                                                            lineHeight = 8.sp
-                                                        )
-                                                        Spacer(modifier = Modifier.width(3.dp))
-                                                        Text(
-                                                            text = "${item.elevationMeters} m",
-                                                            color = Color(0xFF34D399),
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            lineHeight = 10.sp,
-                                                            maxLines = 1,
-                                                            softWrap = false
-                                                        )
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "▲",
+                                                                color = Color(0xFF94A3B8),
+                                                                fontSize = 8.sp,
+                                                                lineHeight = 8.sp
+                                                            )
+                                                            Spacer(modifier = Modifier.width(2.dp))
+                                                            Text(
+                                                                text = "${item.elevationMeters} m",
+                                                                color = Color(0xFF34D399),
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                lineHeight = 10.sp,
+                                                                maxLines = 1,
+                                                                softWrap = false
+                                                            )
+                                                        }
                                                     }
                                                 }
+                                                if (distanceLabel != null) {
+                                                    Text(
+                                                        text = distanceLabel,
+                                                        color = Color(0xFF94A3B8),
+                                                        fontSize = 11.sp,
+                                                        maxLines = 1,
+                                                        softWrap = false
+                                                    )
+                                                }
                                             }
-                                        }
-                                        if (distanceLabel != null) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = distanceLabel,
-                                                color = Color(0xFF94A3B8),
-                                                fontSize = 11.sp,
-                                                maxLines = 1,
-                                                softWrap = false
-                                            )
                                         }
                                     }
                                     if (item.subtitle.isNotBlank()) {
@@ -4929,13 +4930,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             text = item.subtitle,
                                             color = Color(0xFF94A3B8),
                                             fontSize = 11.sp,
-                                            modifier = Modifier.padding(start = 20.dp, top = 2.dp)
+                                            lineHeight = 13.sp,
+                                            modifier = Modifier.padding(start = 20.dp, top = 1.dp)
                                         )
                                     }
                                     if (!item.outdoorRegionLabel.isNullOrBlank()) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(start = 20.dp, top = 3.dp)
+                                            modifier = Modifier.padding(start = 20.dp, top = 2.dp)
                                         ) {
                                             Surface(
                                                 color = Color(0xFF064E3B).copy(alpha = 0.55f),
@@ -4944,7 +4946,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             ) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                                 ) {
                                                     EmojiText(emoji = "🌲", fontSize = 9.sp, yOffsetDp = 0.dp)
                                                     Spacer(modifier = Modifier.width(4.dp))
@@ -4952,6 +4954,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                         text = item.outdoorRegionLabel,
                                                         color = Color(0xFF6EE7B7),
                                                         fontSize = 10.sp,
+                                                        lineHeight = 12.sp,
                                                         fontWeight = FontWeight.Medium,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis
@@ -11457,7 +11460,7 @@ private fun LocalityCard(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Metric display: tap to toggle Speed-first <-> Pace-first (remembered per profile)
+                    // Metric display: tap to toggle Speed <-> Pace (remembered per profile), single value only
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -11466,7 +11469,6 @@ private fun LocalityCard(
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
                         val primaryMetric = if (preferPace) paceStr else speedStr
-                        val secondaryMetric = if (preferPace) speedStr else paceStr
                         Text(
                             text = primaryMetric,
                             fontSize = 15.sp,
@@ -11483,24 +11485,6 @@ private fun LocalityCard(
                                 lineHeight = 15.sp
                             )
                         )
-                        if (activityProfile != ActivityProfile.CAR || preferPace) {
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "($secondaryMetric)",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 12.sp
-                                )
-                            )
-                        }
                     }
                 }
             }
