@@ -274,12 +274,24 @@ fun openInGoogleMaps(context: android.content.Context, lat: Double, lng: Double,
  * and centers the glyph so Row(CenterVertically) actually centers the visual glyph.
  */
 /**
- * Standard Composable for rendering emojis with guaranteed baseline alignment.
- * Noto Color Emoji's glyph metrics sit near the bottom of its bounding box on Android,
- * while Latin uppercase letters occupy the higher cap-height region.
- * We apply a default upward offset (-maxOf(2.5f, fontSize.value * 0.28f).dp) so the emoji's
- * optical center is strictly aligned with the cap-height center and baseline of adjacent Latin text.
+ * Computes the optical upward shift required to vertically center an emoji glyph with adjacent Latin text.
+ * Noto Color Emoji font glyphs have varying heights and vertical baselines:
+ * - Standard upright glyphs (e.g. 🚶, 🏃, 🚴, 🚵, 🚩, 📍, 🌲, 🏞️) have visual centers at ~35% of em-height,
+ *   which naturally coincides with the vertical center of uppercase Latin text (cap-height ~70%, center = 35%).
+ * - Low-profile/horizontal glyphs (🚗 car, 🛶 kayak) sit near the baseline with visual centers at ~14-19%,
+ *   requiring a ~16-20% upward shift of fontSize (negative Y offset in Compose) to align with the cap-height center.
+ * - Mid-profile glyphs (🥾 hiking boot) sit at ~30%, requiring a ~5% upward shift.
  */
+fun emojiOpticalYOffset(emoji: String, fontSize: TextUnit): Dp {
+    val ratio = when (emoji) {
+        "🚗" -> -0.20f    // Driving: Noto Color Emoji yCenter=14.1% vs Latin cap-height center=35.0%
+        "🛶" -> -0.16f    // Kayaking: Noto Color Emoji yCenter=18.8% vs Latin cap-height center=35.0%
+        "🥾" -> -0.05f    // Hiking: Noto Color Emoji yCenter=29.7% vs Latin cap-height center=35.0%
+        else -> 0.0f      // Upright glyphs (🚶, 🏃, 🚴, 🚵, 🚩, 📍, 🌲, 🏞️) already centered at ~35%
+    }
+    return (fontSize.value * ratio).dp
+}
+
 @Composable
 fun EmojiText(
     emoji: String,
@@ -290,7 +302,7 @@ fun EmojiText(
     val effectiveOffset = if (yOffsetDp != Dp.Unspecified) {
         yOffsetDp
     } else {
-        (-maxOf(2.5f, fontSize.value * 0.28f)).dp
+        emojiOpticalYOffset(emoji, fontSize)
     }
     Text(
         text = emoji,
@@ -10713,8 +10725,7 @@ private fun LocalityCard(
                         ) {
                             EmojiText(
                                 emoji = activityProfile.iconEmoji,
-                                fontSize = 11.sp,
-                                yOffsetDp = 0.dp
+                                fontSize = 11.sp
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             val metricText = when (activityProfile) {
@@ -11265,8 +11276,7 @@ private fun LocalityCard(
                         ) {
                             EmojiText(
                                 emoji = activityProfile.iconEmoji,
-                                fontSize = 13.sp,
-                                yOffsetDp = 0.dp
+                                fontSize = 13.sp
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(

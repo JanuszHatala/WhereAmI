@@ -258,15 +258,29 @@ enum class ActivityProfile(
     val chargingLiveSyncIntervalMs: Long = 6_000L,
     val chargingBreadcrumbDisplacementMeters: Float = 12.0f,
     val recentSectionMeters: Double = 2_000.0,
-    val recentSectionLabel: String = "2 km"
+    val recentSectionLabel: String = "2 km",
+    /**
+     * Optical upward shift ratio (negative = shift UP in Compose Y-down coordinate space)
+     * required to align the emoji glyph's optical center with adjacent Latin uppercase cap-height center (~35% of em-box).
+     *
+     * In Android's Noto Color Emoji font:
+     * - CAR (🚗): glyph height 71.9 units, optical center at 14.1% -> needs -20.9% shift (~ -0.20f)
+     * - KAYAKING (🛶): glyph height 81.3 units, optical center at 18.8% -> needs -16.2% shift (~ -0.16f)
+     * - HIKING (🥾): glyph height 103.1 units, optical center at 29.7% -> needs -5.3% shift (~ -0.05f)
+     * - CYCLING (🚴), MTB (🚵), RUNNING (🏃), WALKING (🚶): optical centers already at 34.4% - 35.9%,
+     *   matching Latin uppercase cap-height center (~35.0%), requiring 0.0f shift.
+     */
+    val opticalYOffsetRatio: Float = 0.0f
 ) {
-    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 45, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 15.0f, recentSectionMeters = 5_000.0, recentSectionLabel = "5 km"),
-    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 60, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 2_000.0, recentSectionLabel = "2 km"),
-    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 60, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_500.0, recentSectionLabel = "1.5 km"),
-    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m"),
-    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 30, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km"),
-    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m"),
-    KAYAKING("Kayaking", "🛶", 3.0f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 10.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km");
+    CAR("Driving", "🚗", 10.0f, 10_000L, 8.0f, 45, 2_000L, 1_000L, minValidDistanceMeters = 80.0, minValidDurationMs = 25_000L, chargingLiveSyncIntervalMs = 5_000L, chargingBreadcrumbDisplacementMeters = 15.0f, recentSectionMeters = 5_000.0, recentSectionLabel = "5 km", opticalYOffsetRatio = -0.20f),
+    CYCLING("Cycling", "🚴", 7.0f, 10_000L, 4.0f, 60, 2_000L, 1_000L, minValidDistanceMeters = 50.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 2_000.0, recentSectionLabel = "2 km", opticalYOffsetRatio = 0.0f),
+    MTB("MTB", "🚵", 6.0f, 10_000L, 3.5f, 60, 2_000L, 1_000L, minValidDistanceMeters = 40.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 6_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_500.0, recentSectionLabel = "1.5 km", opticalYOffsetRatio = 0.0f),
+    HIKING("Hiking", "🥾", 2.5f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m", opticalYOffsetRatio = -0.05f),
+    RUNNING("Running", "🏃", 5.0f, 10_000L, 2.5f, 30, 2_000L, 1_000L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 8_000L, chargingBreadcrumbDisplacementMeters = 12.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km", opticalYOffsetRatio = 0.0f),
+    WALKING("Walking", "🚶", 2.5f, 15_000L, 1.5f, 90, 3_000L, 1_500L, minValidDistanceMeters = 25.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 8.0f, recentSectionMeters = 500.0, recentSectionLabel = "500 m", opticalYOffsetRatio = 0.0f),
+    KAYAKING("Kayaking", "🛶", 3.0f, 15_000L, 1.0f, 90, 3_000L, 1_500L, minValidDistanceMeters = 30.0, minValidDurationMs = 20_000L, chargingLiveSyncIntervalMs = 10_000L, chargingBreadcrumbDisplacementMeters = 10.0f, recentSectionMeters = 1_000.0, recentSectionLabel = "1 km", opticalYOffsetRatio = -0.16f);
+
+    fun opticalYOffsetDp(fontSizeSp: Float): Float = fontSizeSp * opticalYOffsetRatio
 
     /** CAR / CYCLING / MTB — indoor multipath scribble discard applies only here. */
     val isVehicleProfile: Boolean

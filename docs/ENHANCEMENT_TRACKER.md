@@ -1795,6 +1795,28 @@ Evidence & Diagnostics:
 | **UI-318-07** | LocalityCard activity profile pill vertical alignment. | `MainActivity.kt` | Implemented | `EmojiText` configured with `yOffsetDp = 0.dp`. |
 | **VER-318** | Bump to versionCode 197 / 2.3.7. | `app/build.gradle.kts` | Implemented | All 661 unit tests pass; debug APK assembled and verified. |
 
+## Round 57 (v2.3.8, 2026-11-12)
+
+User feedback:
+"I have a reservation about the UI Profile Pill Centering - now the other icons looks well but Driving and Cayacking are displayed too much to the bottom, look at the screenshots: the expanded list shows the icons better that when they're selected, especially the car icon is shifted - can't we optimize it to satisfy all icons to be visually centered?"
+
+Root Cause:
+In Noto Color Emoji font (extracted directly from device `/system/fonts/NotoColorEmoji.ttf` and verified via CoreText):
+1. Upright emojis (`🚶`, `🏃`, `🚴`, `🚵`, `🚩`, `📍`) have glyph height ~112 units and optical center at ~35.0% of em-box, which naturally coincides with Latin uppercase cap-height center (~35.0%). Their optical offset is `0.0f`.
+2. Low-profile / horizontal emojis (`🚗` Driving, `🛶` Kayaking) have shorter glyphs (~72-81 units) resting near the baseline with optical centers at 14.1% and 18.8% of em-box.
+3. When `yOffsetDp = 0.dp` was applied across all profiles in v2.3.7, upright emojis looked centered, but `🚗` and `🛶` were displayed ~21% and ~16% too low relative to Latin uppercase text.
+4. Setting a uniform `-28%` offset (the old default) pushed upright emojis too high into the ceiling, while `0.dp` dropped flat emojis to the bottom.
+
+Fix:
+- Added `ActivityProfile.opticalYOffsetRatio`: `-0.20f` for `CAR`, `-0.16f` for `KAYAKING`, `-0.05f` for `HIKING`, and `0.0f` for `CYCLING`, `MTB`, `RUNNING`, `WALKING`.
+- Updated `EmojiText` to use `emojiOpticalYOffset(emoji, fontSize)` as the default offset, computing precise optical compensation per glyph so all 7 profiles are optically centered against adjacent text in both compact and normal modes.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **OPT-318-01** | Data-driven optical centering for activity profile emojis and `EmojiText`. | `TripModels.kt`, `MainActivity.kt`, `EmojiOpticalCenteringTest.kt` | Implemented | `opticalYOffsetRatio` and `emojiOpticalYOffset` align both flat and upright emoji glyphs with Latin cap-height center. |
+| **VER-318-2** | Version bump to 2.3.8 (198). | `app/build.gradle.kts` | Implemented | 662 unit tests passing, APK assembled and verified on device. |
+
+
 
 
 
