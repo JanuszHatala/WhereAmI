@@ -704,30 +704,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setDestination(item)
         viewModelScope.launch(Dispatchers.IO) {
             val geom = SearchHelper.fetchResultGeometry(getApplication(), item)
+            val pt = item.placeType?.lowercase(java.util.Locale.ROOT)
+            val isOutdoorAreaType = pt in listOf(
+                "mountain_range", "range", "national_park", "landscape_park",
+                "nature_reserve", "protected_area", "valley", "water", "lake / water"
+            )
+            val isLocalityType = pt in listOf(
+                "city", "town", "village", "municipality", "borough",
+                "suburb", "hamlet", "locality", "administrative"
+            )
+
+            var fallbackLocalityPoly: List<org.osmdroid.util.GeoPoint>? = null
+            if (geom == null && isLocalityType) {
+                fallbackLocalityPoly = BoundaryHelper.getLocalityBoundary(
+                    context = getApplication(),
+                    cityName = item.localityName ?: item.title,
+                    countryCode = item.countryCode ?: "pl",
+                    fallbackMunicipality = item.municipalityName,
+                    geoPoint = item.geoPoint,
+                    forPin = true
+                )
+            }
+
             withContext(Dispatchers.Main) {
-                if (geom != null) {
-                    if (geom.polygon != null && geom.polygon.size >= 3) {
+                if (geom != null && geom.polygon != null && geom.polygon.size >= 3) {
+                    if (isOutdoorAreaType) {
                         _selectedOutdoorAreaBoundary.value = geom.polygon
-                        _selectedOutdoorAreaKind.value = when (item.placeType?.lowercase(java.util.Locale.ROOT)) {
-                            "mountain_range" -> OutdoorAreaKind.MOUNTAIN_RANGE
+                        _selectedOutdoorAreaKind.value = when (pt) {
+                            "mountain_range", "range" -> OutdoorAreaKind.MOUNTAIN_RANGE
                             "national_park" -> OutdoorAreaKind.NATIONAL_PARK
-                            "landscape_park" -> OutdoorAreaKind.LANDSCAPE_PARK
+                            "landscape_park", "protected_area" -> OutdoorAreaKind.LANDSCAPE_PARK
                             "nature_reserve" -> OutdoorAreaKind.NATURE_RESERVE
                             else -> null
                         }
                         _selectedOutdoorAreaName.value = item.title
+                        _selectedOutdoorAreaCenter.value = item.geoPoint
                         _searchRoutePolylines.value = null
-                    } else if (geom.polylines != null && geom.polylines.isNotEmpty()) {
-                        _searchRoutePolylines.value = geom.polylines
-                        _selectedOutdoorAreaBoundary.value = null
-                        _selectedOutdoorAreaKind.value = null
-                        _selectedOutdoorAreaName.value = null
+                        _pinnedBoundaryPoints.value = null
+                        _fitOutdoorAreaTrigger.value = System.currentTimeMillis()
                     } else {
+                        _pinnedBoundaryPoints.value = geom.polygon
                         _selectedOutdoorAreaBoundary.value = null
                         _selectedOutdoorAreaKind.value = null
                         _selectedOutdoorAreaName.value = null
                         _searchRoutePolylines.value = null
                     }
+                } else if (geom != null && geom.polylines != null && geom.polylines.isNotEmpty()) {
+                    _searchRoutePolylines.value = geom.polylines
+                    _selectedOutdoorAreaBoundary.value = null
+                    _selectedOutdoorAreaKind.value = null
+                    _selectedOutdoorAreaName.value = null
+                    _pinnedBoundaryPoints.value = null
+                } else if (fallbackLocalityPoly != null && fallbackLocalityPoly.size >= 3) {
+                    _pinnedBoundaryPoints.value = fallbackLocalityPoly
+                    _selectedOutdoorAreaBoundary.value = null
+                    _selectedOutdoorAreaKind.value = null
+                    _selectedOutdoorAreaName.value = null
+                    _searchRoutePolylines.value = null
                 } else {
                     _selectedOutdoorAreaBoundary.value = null
                     _selectedOutdoorAreaKind.value = null

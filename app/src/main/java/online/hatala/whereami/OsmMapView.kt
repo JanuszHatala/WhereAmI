@@ -1484,6 +1484,7 @@ fun OsmMapView(
         }
 
         isFollowing = false
+        map.mapOrientation = 0f
 
         val dm = destMarker ?: Marker(map).also {
             it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -1884,6 +1885,20 @@ fun OsmMapView(
             }
             map.overlays.add(0, poly)
             pinnedBoundaryPolygon = poly
+            isFollowing = false
+            map.mapOrientation = 0f
+            fitPointsToUnobstructedViewport(
+                map = map,
+                points = pinnedBoundaryPoints,
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
+                onZoomCalculated = { currentZoom = it }
+            )
         }
         map.invalidate()
     }
@@ -1972,6 +1987,7 @@ fun OsmMapView(
             val pts = outdoorAreaBoundaryPoints
             if (!pts.isNullOrEmpty()) {
                 isFollowing = false
+                map.mapOrientation = 0f
                 fitPointsToUnobstructedViewport(
                     map = map,
                     points = pts,
@@ -1986,6 +2002,7 @@ fun OsmMapView(
                 )
             } else if (outdoorAreaCenter != null) {
                 isFollowing = false
+                map.mapOrientation = 0f
                 val centerGp = getOpticalCenter(map, outdoorAreaCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                 map.controller.setZoom(12.0)
                 map.controller.animateTo(centerGp)
@@ -2001,9 +2018,11 @@ fun OsmMapView(
 
         if (!searchRoutePolylines.isNullOrEmpty()) {
             val newPolys = mutableListOf<Polyline>()
+            val allRoutePts = mutableListOf<GeoPoint>()
             val density = context.resources.displayMetrics.density
             for (linePoints in searchRoutePolylines) {
                 if (linePoints.size < 2) continue
+                allRoutePts.addAll(linePoints)
                 val poly = Polyline(map).apply {
                     outlinePaint.color = Color.parseColor("#EF4444")
                     outlinePaint.strokeWidth = 6.0f * density
@@ -2015,6 +2034,22 @@ fun OsmMapView(
                 newPolys.add(poly)
             }
             searchRouteOverlays = newPolys
+            if (allRoutePts.size >= 2) {
+                isFollowing = false
+                map.mapOrientation = 0f
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = allRoutePts,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = { currentZoom = it }
+                )
+            }
         }
         map.invalidate()
     }
