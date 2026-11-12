@@ -1054,12 +1054,12 @@ class LocationManager private constructor(private val context: Context) {
                 // Moderate city driving / cycling (18 - 35 km/h, road intersections / corridor preservation):
                 // Without a verified physical turn, leaving a major road requires corridor inertia (6 fixes / 8s)
                 rawRequiredCount = when {
-                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 4 else 6
+                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 3 else 6
                     !isCommittedMajor && isCandidateMajor -> 2
                     else -> if (isRecentTurn) 2 else 4
                 }
                 rawRequiredDuration = when {
-                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 4_000L else 8_000L
+                    isCommittedMajor && !isCandidateMajor -> if (isRecentTurn) 3_000L else 8_000L
                     !isCommittedMajor && isCandidateMajor -> 2_000L
                     else -> if (isRecentTurn) 2_000L else 5_000L
                 }
@@ -1067,25 +1067,26 @@ class LocationManager private constructor(private val context: Context) {
             else -> {
                 // Slow driving / cycling / walking (1.2 - 18 km/h):
                 // Protect major roads (DK*, DW*, etc.) and main thoroughfares against side-street hopping
-                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) 5 else 3
-                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) 6_000L else 3_000L
+                rawRequiredCount = if (isCommittedMajor && !isCandidateMajor) (if (isRecentTurn) 3 else 5) else 3
+                rawRequiredDuration = if (isCommittedMajor && !isCandidateMajor) (if (isRecentTurn) 3_000L else 6_000L) else 3_000L
             }
         }
 
         // When crossing into a confirmed new locality, after making a physical turn,
         // or transitioning between village estates (osiedla/przysiółki),
-        // relax threshold to adopt the new name promptly (2 confirmations / 2 seconds).
-        // BUT NEVER relax leaving a major highway corridor for a non-major residential street
+        // relax threshold to adopt the new name promptly (2-3 confirmations / 2-3 seconds).
+        // NEVER relax leaving a major highway corridor for a residential street with a house number
         // (prevents roundabout entry curves and highway bends from hopping to side streets like "Lipowa 6").
         val isEstateTransition = (committedStreetBase?.startsWith("os. ") == true) || rawBase.startsWith("os. ")
-        val canRelax = (isLocalityTransition || isRecentTurn || isEstateTransition) &&
-            !(isCommittedMajor && !isCandidateMajor)
+        val isCandidateResidentialSideStreet = RoadNameNormalizer.isResidentialSideStreet(rawStreetPl)
+        val canRelax = (isLocalityTransition || isEstateTransition) ||
+            (isRecentTurn && (!isCommittedMajor || isCandidateMajor || !isCandidateResidentialSideStreet))
         val requiredCount = when {
-            canRelax -> minOf(rawRequiredCount, 2)
+            canRelax -> minOf(rawRequiredCount, 3)
             else -> rawRequiredCount
         }
         val requiredDuration = when {
-            canRelax -> minOf(rawRequiredDuration, 2_000L)
+            canRelax -> minOf(rawRequiredDuration, 3_000L)
             else -> rawRequiredDuration
         }
         val candidateDuration = now - candidateStreetFirstSeenTime
@@ -1452,16 +1453,12 @@ class LocationManager private constructor(private val context: Context) {
             if (outdoorWorkerJob?.isActive == true) return
             outdoorWorkerJob = ioScope.launch {
                 try {
-                    val isScreenOffNow = run {
-                        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                        val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
-                        pm?.isInteractive == false && !isAuto
-                    }
+                    val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
                     val outdoorCtx = OutdoorContextResolver.resolveOutdoorContext(
                         lat = lat,
                         lng = lng,
                         context = context,
-                        allowNetwork = !isScreenOffNow
+                        allowNetwork = realTimeNeeded
                     )
                     if (outdoorCtx != null) {
                         lastOutdoorContext = outdoorCtx
@@ -1824,14 +1821,11 @@ class LocationManager private constructor(private val context: Context) {
 
         val prefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
 
-        val isScreenOff = run {
-            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            val isAuto = AppStateManager.getInstance(context).currentMode.value == AppLifecycleMode.ANDROID_AUTO
-            pm?.isInteractive == false && !isAuto
-        }
+        val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
+        val isScreenOff = !realTimeNeeded
 
         var effectiveAllowNetwork = allowNetwork
-        if (isScreenOff && allowNetwork && !forceCache) {
+        if (!realTimeNeeded && allowNetwork && !forceCache) {
             val now = android.os.SystemClock.elapsedRealtime()
             val distFromLast = lastScreenOffGeocodedPoint?.let {
                 val res = FloatArray(1)
@@ -1900,8 +1894,8 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         // OSRM /nearest: street name for the locality card AND snapped coordinates for display-only road pull.
-        // Screen-off bypass: Skip OSRM network requests when screen is off to eliminate cellular modem drain.
-        val nearest = if (isScreenOff) null else OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
+        // Screen-off bypass: Skip OSRM network requests when real-time display is not needed.
+        val nearest = if (!realTimeNeeded) null else OsmMapMatcher.getNearest(lat, lng, effectiveBearing)
         if (nearest != null) {
             online.hatala.whereami.tracking.TrackingRuntime.displaySnap.observeNearest(
                 rawLat = lat,
@@ -2193,10 +2187,12 @@ class LocationManager private constructor(private val context: Context) {
             if (conn.responseCode == 429) {
                 osmRateLimitCooldownUntil = System.currentTimeMillis() + 30_000L
                 TelemetryLogger.log("OSM", "Nominatim reverse geocode HTTP 429; 30s cooldown active")
+                DataAcquisitionManager.reportRateLimited(30)
                 return null
             }
 
             if (conn.responseCode == 200) {
+                DataAcquisitionManager.reportSuccess()
                 val body = conn.inputStream.bufferedReader().readText()
                 val root = JSONObject(body)
                 val addrObj = root.optJSONObject("address") ?: return null
@@ -2290,7 +2286,8 @@ class LocationManager private constructor(private val context: Context) {
                 osmResponseCache[osmKey] = CachedOsmResult(System.currentTimeMillis(), osmResult)
                 osmResult
             } else null
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            DataAcquisitionManager.reportError(e)
             null
         }
     }

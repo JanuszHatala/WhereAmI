@@ -388,10 +388,12 @@ object BoundaryHelper {
             if (code == 429) {
                 coolDownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
                 TelemetryLogger.log("BOUNDARY", "Nominatim HTTP 429 received. Backing off for 30s")
+                DataAcquisitionManager.reportRateLimited(30)
                 return null
             }
 
             if (code == 200) {
+                DataAcquisitionManager.reportSuccess()
                 val body = conn.inputStream.bufferedReader().readText()
                 val array = JSONArray(body)
                 return selectBestBoundaryPolygon(array, mustContain = mustContain)
@@ -421,10 +423,12 @@ object BoundaryHelper {
             if (code == 429) {
                 coolDownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
                 TelemetryLogger.log("BOUNDARY", "Nominatim HTTP 429 received. Backing off for 30s")
+                DataAcquisitionManager.reportRateLimited(30)
                 return null
             }
 
             if (code == 200) {
+                DataAcquisitionManager.reportSuccess()
                 val body = conn.inputStream.bufferedReader().readText()
                 val obj = JSONObject(body)
                 val geojson = obj.optJSONObject("geojson") ?: return null
