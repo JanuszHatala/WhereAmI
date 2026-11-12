@@ -365,6 +365,11 @@ fun LocationScreen(viewModel: MainViewModel) {
     val destinationAltitude by viewModel.destinationAltitude.collectAsState()
     val destinationAltitudeLoading by viewModel.destinationAltitudeLoading.collectAsState()
     val savedPlaces by viewModel.savedPlaces.collectAsState()
+    val profilePreferPaceMap by viewModel.profilePreferPaceMap.collectAsState()
+    val preferPaceForCurrentProfile = profilePreferPaceMap[activityProfile] ?: when (activityProfile) {
+        ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> true
+        else -> false
+    }
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
     val localityCardStyle by viewModel.localityCardStyle.collectAsState()
@@ -911,6 +916,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             },
                             onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                             onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                            preferPace = preferPaceForCurrentProfile,
+                            onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                             onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
                             modifier = Modifier.widthIn(max = 410.dp)
                         )
@@ -1032,6 +1039,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     },
                     onSetLocalityCardStyle = { viewModel.setLocalityCardStyle(it) },
                     onSetActivityProfile = { viewModel.setActivityProfile(it) },
+                    preferPace = preferPaceForCurrentProfile,
+                    onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                     onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1892,26 +1901,26 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                                                     shape = RoundedCornerShape(14.dp)
                                                 ) {
-                                                    Row(
+                                                    val pinColorHex = place.getEffectiveColorHex()
+                                                    val pinComposeColor = try {
+                                                        Color(android.graphics.Color.parseColor(pinColorHex))
+                                                    } catch (_: Exception) {
+                                                        Color(0xFF10B981)
+                                                    }
+
+                                                    Column(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .padding(12.dp),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
+                                                            .padding(12.dp)
                                                     ) {
-                                                        val pinColorHex = place.getEffectiveColorHex()
-                                                        val pinComposeColor = try {
-                                                            Color(android.graphics.Color.parseColor(pinColorHex))
-                                                        } catch (_: Exception) {
-                                                            Color(0xFF10B981)
-                                                        }
-
-                                                        Column(
-                                                            modifier = Modifier.weight(1f)
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.Top
                                                         ) {
                                                             Row(
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                modifier = Modifier.fillMaxWidth()
+                                                                verticalAlignment = Alignment.Top,
+                                                                modifier = Modifier.weight(1f)
                                                             ) {
                                                                 Box(
                                                                     modifier = Modifier.size(22.dp),
@@ -1929,16 +1938,37 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     )
                                                                 }
                                                                 Spacer(modifier = Modifier.width(8.dp))
-                                                                Text(
-                                                                    text = place.name,
-                                                                    color = Color.White,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    fontSize = 14.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    modifier = Modifier.weight(1f, fill = false)
-                                                                )
-                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Column(modifier = Modifier.weight(1f)) {
+                                                                    Text(
+                                                                        text = place.name,
+                                                                        color = Color.White,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        fontSize = 14.sp,
+                                                                        lineHeight = 18.sp
+                                                                    )
+                                                                    val sub = listOfNotNull(
+                                                                        place.street.takeIf { it.isNotBlank() },
+                                                                        place.locality.takeIf { it.isNotBlank() }
+                                                                    ).joinToString(", ")
+                                                                    if (sub.isNotBlank()) {
+                                                                        Text(
+                                                                            sub,
+                                                                            color = Color(0xFF94A3B8),
+                                                                            fontSize = 11.sp,
+                                                                            maxLines = 2,
+                                                                            overflow = TextOverflow.Ellipsis,
+                                                                            modifier = Modifier.padding(top = 2.dp)
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            Spacer(modifier = Modifier.width(8.dp))
+
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
                                                                 Surface(
                                                                     color = Color(0xFF0F172A),
                                                                     shape = RoundedCornerShape(4.dp)
@@ -1965,7 +1995,6 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
                                                                 }
                                                                 if (place.altitude != null && place.altitude > 0.0) {
-                                                                    Spacer(modifier = Modifier.width(6.dp))
                                                                     Surface(
                                                                         color = Color(0xFF0F172A),
                                                                         shape = RoundedCornerShape(4.dp)
@@ -1994,23 +2023,15 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
                                                                 }
                                                             }
-                                                            val sub = listOfNotNull(
-                                                                place.street.takeIf { it.isNotBlank() },
-                                                                place.locality.takeIf { it.isNotBlank() }
-                                                            ).joinToString(", ")
-                                                            if (sub.isNotBlank()) {
-                                                                Text(
-                                                                    sub,
-                                                                    color = Color(0xFF94A3B8),
-                                                                    fontSize = 11.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    modifier = Modifier.padding(start = 30.dp, top = 2.dp)
-                                                                )
-                                                            }
                                                         }
 
-                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.End,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
                                                             // Navigate To
                                                             IconButton(
                                                                 onClick = {
@@ -2025,7 +2046,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     modifier = Modifier.size(18.dp)
                                                                 )
                                                             }
-                                                            Spacer(modifier = Modifier.width(2.dp))
+                                                            Spacer(modifier = Modifier.width(6.dp))
 
                                                             // Open in Google Maps
                                                             IconButton(
@@ -2041,7 +2062,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     modifier = Modifier.size(18.dp)
                                                                 )
                                                             }
-                                                            Spacer(modifier = Modifier.width(2.dp))
+                                                            Spacer(modifier = Modifier.width(6.dp))
 
                                                             // Edit
                                                             IconButton(
@@ -2055,9 +2076,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     modifier = Modifier.size(18.dp)
                                                                 )
                                                             }
-                                                            Spacer(modifier = Modifier.width(2.dp))
+                                                            Spacer(modifier = Modifier.width(6.dp))
 
-                                                            // Delete (with confirmation dialog)
+                                                            // Delete (protected by Delete Saved Place confirmation modal)
                                                             IconButton(
                                                                 onClick = { placeToDelete = place },
                                                                 modifier = Modifier.size(30.dp)
@@ -4753,6 +4774,24 @@ fun LocationScreen(viewModel: MainViewModel) {
                         },
                         label = { Text("Search city, street, peak or trail") },
                         singleLine = true,
+                        trailingIcon = {
+                            if (searchField.text.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        searchField = TextFieldValue("")
+                                        searchQuery = ""
+                                        viewModel.clearSearch()
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear search",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
@@ -4812,6 +4851,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                                             modifier = Modifier.weight(1f, fill = false),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
+                                            EmojiText(
+                                                emoji = SearchHelper.iconForPlaceType(item.placeType),
+                                                fontSize = 13.sp,
+                                                yOffsetDp = 0.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             if (item.trailColor != null) {
                                                 val dotCol = when (item.trailColor) {
                                                     TrailColor.RED -> Color(0xFFEF4444)
@@ -4835,10 +4880,41 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
                                                 maxLines = 1,
-                                                softWrap = false
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
+                                            if (item.elevationMeters != null && item.elevationMeters > 0) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    color = Color(0xFF0F172A),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "▲",
+                                                            color = Color(0xFF94A3B8),
+                                                            fontSize = 8.sp,
+                                                            lineHeight = 8.sp
+                                                        )
+                                                        Spacer(modifier = Modifier.width(3.dp))
+                                                        Text(
+                                                            text = "${item.elevationMeters} m",
+                                                            color = Color(0xFF34D399),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            lineHeight = 10.sp,
+                                                            maxLines = 1,
+                                                            softWrap = false
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                         if (distanceLabel != null) {
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = distanceLabel,
                                                 color = Color(0xFF94A3B8),
@@ -4852,8 +4928,37 @@ fun LocationScreen(viewModel: MainViewModel) {
                                         Text(
                                             text = item.subtitle,
                                             color = Color(0xFF94A3B8),
-                                            fontSize = 11.sp
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(start = 20.dp, top = 2.dp)
                                         )
+                                    }
+                                    if (!item.outdoorRegionLabel.isNullOrBlank()) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(start = 20.dp, top = 3.dp)
+                                        ) {
+                                            Surface(
+                                                color = Color(0xFF064E3B).copy(alpha = 0.55f),
+                                                shape = RoundedCornerShape(4.dp),
+                                                border = BorderStroke(0.5.dp, Color(0xFF10B981).copy(alpha = 0.45f))
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    EmojiText(emoji = "🌲", fontSize = 9.sp, yOffsetDp = 0.dp)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = item.outdoorRegionLabel,
+                                                        color = Color(0xFF6EE7B7),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 HorizontalDivider(color = Color(0x22FFFFFF))
@@ -10311,6 +10416,8 @@ private fun LocalityCard(
     onOpenSavedPlaces: () -> Unit = {},
     onSetLocalityCardStyle: (LocalityCardStyle) -> Unit,
     onSetActivityProfile: (ActivityProfile) -> Unit,
+    preferPace: Boolean = false,
+    onToggleSpeedPace: () -> Unit = {},
     onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -10719,25 +10826,32 @@ private fun LocalityCard(
                                 .height(22.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(Color(0xFF1E293B))
-                                .clickable { profileMenuExpanded = true }
                                 .padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            EmojiText(
-                                emoji = activityProfile.iconEmoji,
-                                fontSize = 11.sp
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            val metricText = when (activityProfile) {
-                                ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB, ActivityProfile.KAYAKING -> speedStr
-                                ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> paceStr
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { profileMenuExpanded = true }
+                                    .padding(end = 3.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                EmojiText(
+                                    emoji = activityProfile.iconEmoji,
+                                    fontSize = 11.sp
+                                )
                             }
+                            val metricText = if (preferPace) paceStr else speedStr
                             Text(
                                 text = metricText,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8),
                                 softWrap = false,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { onToggleSpeedPace() }
+                                    .padding(horizontal = 2.dp),
                                 style = TextStyle(
                                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                                     lineHeightStyle = LineHeightStyle(
@@ -11343,80 +11457,36 @@ private fun LocalityCard(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Metric display: CAR, CYCLING & MTB show Speed-first; WALKING, RUNNING & HIKING show Pace-first
-                    when (activityProfile) {
-                        ActivityProfile.CAR -> {
-                            Text(
-                                text = speedStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
+                    // Metric display: tap to toggle Speed-first <-> Pace-first (remembered per profile)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onToggleSpeedPace() }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        val primaryMetric = if (preferPace) paceStr else speedStr
+                        val secondaryMetric = if (preferPace) speedStr else paceStr
+                        Text(
+                            text = primaryMetric,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8),
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 15.sp
                             )
-                        }
-                        ActivityProfile.CYCLING, ActivityProfile.MTB, ActivityProfile.KAYAKING -> {
-                            Text(
-                                text = speedStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
-                            )
+                        )
+                        if (activityProfile != ActivityProfile.CAR || preferPace) {
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "($paceStr)",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 12.sp
-                                )
-                            )
-                        }
-                        ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> {
-                            Text(
-                                text = paceStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = 15.sp
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "($speedStr)",
+                                text = "($secondaryMetric)",
                                 fontSize = 12.sp,
                                 color = Color(0xFF94A3B8),
                                 maxLines = 1,

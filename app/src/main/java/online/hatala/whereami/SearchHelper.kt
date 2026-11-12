@@ -50,7 +50,8 @@ data class SearchResultItem(
     val osmId: Long? = null,
     val elevationMeters: Int? = null,
     val trailColor: TrailColor? = null,
-    val outdoorAreaId: String? = null
+    val outdoorAreaId: String? = null,
+    val outdoorRegionLabel: String? = null
 )
 
 data class TouristicPoi(
@@ -89,7 +90,9 @@ object SearchHelper {
         val candidates = mutableListOf<PlaceSearchRanker.Candidate>()
 
         fun addCandidate(c: PlaceSearchRanker.Candidate) {
-            candidates.add(c)
+            if (category == SearchCategory.ALL || matchesCategory(category, c.item)) {
+                candidates.add(c)
+            }
         }
 
         // 1. Match offline regions (mountain ranges, landscape parks, national parks)
@@ -156,7 +159,7 @@ object SearchHelper {
             }
         }
 
-        val photonHits = tryPhoton(trimmed, originLat, originLon)
+        val photonHits = tryPhoton(trimmed, originLat, originLon, category = category)
         for (hit in photonHits) {
             addCandidate(
                 PlaceSearchRanker.Candidate(
@@ -181,8 +184,8 @@ object SearchHelper {
             }
         }
 
-        // Fallback when Photon is empty/unavailable
-        if (photonHits.isEmpty()) {
+        // Fallback when Photon (and Overpass) yielded no matching candidates
+        if (candidates.isEmpty()) {
             val fallback = mutableListOf<SearchResultItem>()
             val hasDigits = trimmed.any { it.isDigit() }
             val isExplicitStreet = trimmed.startsWith("ul.", ignoreCase = true) ||
@@ -195,18 +198,20 @@ object SearchHelper {
             val cityAvailable = !currentCity.isNullOrBlank() &&
                 !trimmed.contains(currentCity, ignoreCase = true)
 
-            if (cityAvailable && isExplicitStreet) {
+            if (category == SearchCategory.ALL && cityAvailable && isExplicitStreet) {
                 val localAddress = "$trimmed, $currentCity"
                 fallback += tryGeocoder(context, localAddress)
                 fallback += tryNominatim(localAddress, originLat, originLon)
             }
 
-            fallback += tryGeocoder(context, trimmed)
+            if (category == SearchCategory.ALL) {
+                fallback += tryGeocoder(context, trimmed)
+            }
             if (fallback.size < 5) {
                 fallback += tryNominatim(trimmed, originLat, originLon)
             }
 
-            if (fallback.isEmpty() && cityAvailable && hasDigits) {
+            if (category == SearchCategory.ALL && fallback.isEmpty() && cityAvailable && hasDigits) {
                 val localAddress = "$trimmed, $currentCity"
                 fallback += tryGeocoder(context, localAddress)
                 fallback += tryNominatim(localAddress, originLat, originLon)
@@ -223,31 +228,155 @@ object SearchHelper {
             }
         }
 
-        return@withContext PlaceSearchRanker.rank(
+        val ranked = PlaceSearchRanker.rank(
             query = trimmed,
             candidates = candidates,
             originLat = originLat,
             originLon = originLon,
             countryCode = countryCode
         )
+        return@withContext enrichSearchResults(context, ranked)
+    }
+
+    fun iconForPlaceType(placeType: String?): String {
+        val t = placeType?.lowercase(Locale.ROOT) ?: return "📍"
+        return when {
+            t in listOf("peak", "volcano") -> "🏔️"
+            t in listOf("mountain_pass", "saddle", "pass", "mountain_range", "range") -> "⛰️"
+            t in listOf("national_park", "landscape_park", "protected_area", "nature_reserve", "forest", "wood") -> "🌲"
+            t in listOf("water", "river", "lake", "lake / water", "stream", "waterway", "spring", "waterfall") -> "🌊"
+            t == "valley" -> "🏞️"
+            t in listOf("alpine_hut", "wilderness_hut", "mountain hut", "shelter") -> "🛖"
+            t == "viewpoint" -> "🔭"
+            t in listOf("trail", "route", "path", "footway", "cycleway", "mtb", "track") || t.startsWith("trail (") -> "🥾"
+            t in listOf("city", "town", "municipality", "borough") -> "🏙️"
+            t in listOf("village", "hamlet", "suburb", "locality", "isolated_dwelling", "neighbourhood", "neighborhood") -> "🏘️"
+            t in listOf("street", "highway", "road", "residential", "pedestrian", "primary", "secondary", "tertiary", "unclassified", "service") -> "🛣️"
+            t == "saved" -> "⭐"
+            t == "recent" -> "🕒"
+            else -> "📍"
+        }
+    }
+
+    internal fun matchesCategory(category: SearchCategory, item: SearchResultItem): Boolean {
+        if (category == SearchCategory.ALL) return true
+        val t = item.placeType?.lowercase(Locale.ROOT) ?: ""
+        return when (category) {
+            SearchCategory.PEAKS_PASSES ->
+                t in listOf("peak", "volcano", "saddle", "mountain_pass", "pass")
+            SearchCategory.TRAILS ->
+                t in listOf("trail", "route", "path", "footway", "cycleway", "mtb", "track") ||
+                    t.startsWith("trail (") ||
+                    item.geometryType == SearchGeometryType.POLYLINE
+            SearchCategory.RANGES_PARKS ->
+                t in listOf("mountain_range", "range", "national_park", "landscape_park", "protected_area", "nature_reserve") ||
+                    item.geometryType == SearchGeometryType.POLYGON
+            SearchCategory.WATER_VALLEYS ->
+                t in listOf("water", "river", "lake", "lake / water", "stream", "waterway", "valley", "spring", "waterfall")
+            SearchCategory.HUTS_POIS ->
+                t in listOf("alpine_hut", "wilderness_hut", "mountain hut", "shelter", "viewpoint", "camp_site", "picnic_site")
+            SearchCategory.ALL -> true
+        }
+    }
+
+    private suspend fun enrichSearchResults(
+        context: Context,
+        results: List<SearchResultItem>
+    ): List<SearchResultItem> {
+        if (results.isEmpty()) return results
+        val db = try { TripDatabaseHelper.getInstance(context) } catch (_: Exception) { null }
+
+        // Batch-resolve DEM elevation for mountain objects missing OSM `ele`
+        val mountainTypes = setOf("peak", "volcano", "saddle", "mountain_pass", "pass", "alpine_hut", "wilderness_hut", "mountain hut", "viewpoint")
+        val missingEleIndices = results.indices.filter { idx ->
+            val item = results[idx]
+            item.elevationMeters == null && (item.placeType?.lowercase(Locale.ROOT) in mountainTypes)
+        }
+        val fetchedAltitudes = if (missingEleIndices.isNotEmpty()) {
+            try {
+                ElevationRepository.fetchAltitudes(
+                    points = missingEleIndices.map { results[it].geoPoint },
+                    db = db,
+                    isSingleLookup = true
+                )
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        val eleByIndex = mutableMapOf<Int, Int>()
+        missingEleIndices.forEachIndexed { listIdx, resIdx ->
+            val alt = fetchedAltitudes.getOrNull(listIdx)
+            if (alt != null && alt > 0.0) {
+                eleByIndex[resIdx] = alt.toInt()
+            }
+        }
+
+        // Resolve offline / cached outdoor regions (mountain range, park, reserve) for each result
+        return results.mapIndexed { idx, item ->
+            val ctx = try {
+                OutdoorContextResolver.resolveOutdoorContext(
+                    item.geoPoint.latitude,
+                    item.geoPoint.longitude,
+                    context,
+                    allowNetwork = false
+                )
+            } catch (_: Exception) {
+                null
+            }
+            val regionNames = buildList {
+                ctx?.mountainRange?.name?.takeIf { !it.equals(item.title, ignoreCase = true) }?.let { add(it) }
+                ctx?.protectedAreas?.forEach { area ->
+                    if (!area.name.equals(item.title, ignoreCase = true)) add(area.name)
+                }
+            }.distinct()
+
+            item.copy(
+                elevationMeters = item.elevationMeters ?: eleByIndex[idx],
+                outdoorRegionLabel = regionNames.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+            )
+        }
+    }
+
+    internal fun buildPhotonUrl(
+        q: String,
+        lat: Double?,
+        lon: Double?,
+        limit: Int = 10,
+        category: SearchCategory = SearchCategory.ALL
+    ): String {
+        val encoded = URLEncoder.encode(q.trim(), "UTF-8")
+        val lang = Locale.getDefault().language.takeIf { it.length == 2 } ?: "en"
+        val sb = StringBuilder("https://photon.komoot.io/api/?q=$encoded&limit=$limit&lang=$lang")
+        sb.append("&location_bias_scale=$PHOTON_BIAS_SCALE")
+        if (lat != null && lon != null) {
+            sb.append("&lat=").append(String.format(Locale.US, "%.5f", lat))
+            sb.append("&lon=").append(String.format(Locale.US, "%.5f", lon))
+        }
+        val tags = when (category) {
+            SearchCategory.PEAKS_PASSES -> listOf("natural:peak", "natural:volcano", "natural:saddle", "mountain_pass:yes")
+            SearchCategory.TRAILS -> listOf("highway:path", "highway:footway", "highway:track", "highway:cycleway", "route:hiking", "route:foot", "route:mtb", "route:bicycle")
+            SearchCategory.RANGES_PARKS -> listOf("boundary:national_park", "boundary:protected_area", "leisure:nature_reserve", "natural:mountain_range")
+            SearchCategory.WATER_VALLEYS -> listOf("waterway:river", "waterway:stream", "natural:water", "natural:valley", "natural:spring")
+            SearchCategory.HUTS_POIS -> listOf("tourism:alpine_hut", "tourism:wilderness_hut", "tourism:shelter", "tourism:viewpoint")
+            SearchCategory.ALL -> emptyList()
+        }
+        for (tag in tags) {
+            sb.append("&osm_tag=").append(URLEncoder.encode(tag, "UTF-8"))
+        }
+        return sb.toString()
     }
 
     internal fun tryPhoton(
         q: String,
         lat: Double?,
         lon: Double?,
-        limit: Int = 10
+        limit: Int = 10,
+        category: SearchCategory = SearchCategory.ALL
     ): List<SearchResultItem> {
         return try {
-            val encoded = URLEncoder.encode(q.trim(), "UTF-8")
-            val lang = Locale.getDefault().language.takeIf { it.length == 2 } ?: "en"
-            val sb = StringBuilder("https://photon.komoot.io/api/?q=$encoded&limit=$limit&lang=$lang")
-            sb.append("&location_bias_scale=$PHOTON_BIAS_SCALE")
-            if (lat != null && lon != null) {
-                sb.append("&lat=").append(String.format(Locale.US, "%.5f", lat))
-                sb.append("&lon=").append(String.format(Locale.US, "%.5f", lon))
-            }
-            val conn = URL(sb.toString()).openConnection() as HttpURLConnection
+            val urlStr = buildPhotonUrl(q, lat, lon, limit, category)
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.connectTimeout = 6000
             conn.readTimeout = 6000
@@ -290,20 +419,28 @@ object SearchHelper {
             val osmId = props.optLong("osm_id").takeIf { it > 0 }
             val osmType = props.optString("osm_type", "").takeIf { it.isNotBlank() }
             val extraTags = props.optJSONObject("extra_tags")
-            val ele = extraTags?.optString("ele")?.toIntOrNull() ?: props.optString("ele").toIntOrNull()
+            val ele = extraTags?.optString("ele")?.toDoubleOrNull()?.toInt()
+                ?: props.optString("ele").toDoubleOrNull()?.toInt()
             val geomType = when {
                 osmKey in listOf("waterway", "route") -> SearchGeometryType.POLYLINE
                 osmKey in listOf("boundary", "leisure", "landuse") || osmValue in listOf("mountain_range", "valley", "water", "national_park", "protected_area", "nature_reserve") -> SearchGeometryType.POLYGON
                 else -> SearchGeometryType.POINT
             }
-            val type = props.optString("type", "").takeIf { it.isNotBlank() }
-                ?: osmValue.takeIf { it.isNotBlank() }
-                ?: osmKey.takeIf { it.isNotBlank() }
+            val rawPropType = props.optString("type", "").takeIf { it.isNotBlank() && it != "other" }
+            val type = when {
+                osmKey == "mountain_pass" || osmValue == "mountain_pass" || osmValue == "saddle" -> "mountain_pass"
+                osmKey in listOf("natural", "tourism", "waterway", "route", "boundary", "leisure") &&
+                    osmValue.isNotBlank() && osmValue != "yes" -> osmValue
+                rawPropType != null -> rawPropType
+                osmValue.isNotBlank() && osmValue != "yes" -> osmValue
+                osmKey.isNotBlank() -> osmKey
+                else -> null
+            }
             val importance = props.optDouble("importance", 0.0)
 
             val title = when {
                 street != null && house != null -> "$street $house"
-                name != null -> if (ele != null && (osmValue == "peak" || type == "peak")) "$name (${ele}m)" else name
+                name != null -> name
                 street != null -> street
                 city != null -> city
                 else -> continue
@@ -389,7 +526,7 @@ object SearchHelper {
         return try {
             val encodedQuery = URLEncoder.encode(q.trim(), "UTF-8")
             val sb = StringBuilder(
-                "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&addressdetails=1&limit=8"
+                "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&addressdetails=1&extratags=1&limit=8"
             )
             // Soft viewbox bias (no bounded=1): near results preferred, far still allowed
             if (originLat != null && originLon != null) {
@@ -448,6 +585,11 @@ object SearchHelper {
                 addressObj?.optString("country")?.takeIf { it.isNotBlank() }
             ).distinct().joinToString(", ")
 
+            val extratags = obj.optJSONObject("extratags")
+            val ele = extratags?.optString("ele")?.toDoubleOrNull()?.toInt()
+            val osmElemType = obj.optString("osm_type", "").takeIf { it.isNotBlank() }
+            val osmId = obj.optLong("osm_id").takeIf { it > 0 }
+
             val placeType = when {
                 osmClass == "highway" -> "street"
                 osmType.isNotBlank() -> osmType
@@ -464,7 +606,10 @@ object SearchHelper {
                     countryCode = countryCode,
                     placeType = placeType,
                     source = "nominatim",
-                    importance = importance
+                    importance = importance,
+                    osmType = osmElemType,
+                    osmId = osmId,
+                    elevationMeters = ele
                 )
             )
         }
@@ -969,7 +1114,7 @@ object SearchHelper {
             if (lat.isNaN() || lon.isNaN()) continue
 
             val dist = if (originLat != null && originLon != null) computeDistanceMeters(originLat, originLon, lat, lon) else null
-            val ele = tags.optString("ele").toIntOrNull()
+            val ele = tags.optString("ele").toDoubleOrNull()?.toInt()
 
             val geomType = when {
                 tags.has("route") || tags.optString("waterway") == "river" -> SearchGeometryType.POLYLINE
@@ -996,7 +1141,7 @@ object SearchHelper {
                 else -> "Outdoor POI"
             }
 
-            val title = if (ele != null && (natural == "peak" || natural == "saddle")) "$name (${ele}m)" else name
+            val title = name
             val subtitle = dist?.let { "$kindLabel · ${LiveGuest.formatDistance(it)}" } ?: kindLabel
 
             val trailColor = if (tags.has("osmc:symbol") || tags.has("colour")) {

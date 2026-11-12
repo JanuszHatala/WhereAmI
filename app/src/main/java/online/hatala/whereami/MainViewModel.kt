@@ -110,6 +110,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Activity Profile (Car, Walking, Cycling)
     val activityProfile: StateFlow<ActivityProfile> = tripManager.activityProfile
 
+    private val _profilePreferPaceMap = MutableStateFlow(loadProfilePreferPaceMap())
+    val profilePreferPaceMap: StateFlow<Map<ActivityProfile, Boolean>> = _profilePreferPaceMap.asStateFlow()
+
+    private fun defaultPreferPace(profile: ActivityProfile): Boolean = when (profile) {
+        ActivityProfile.WALKING, ActivityProfile.RUNNING, ActivityProfile.HIKING -> true
+        ActivityProfile.CAR, ActivityProfile.CYCLING, ActivityProfile.MTB, ActivityProfile.KAYAKING -> false
+    }
+
+    private fun loadProfilePreferPaceMap(): Map<ActivityProfile, Boolean> {
+        return ActivityProfile.values().associateWith { profile ->
+            val key = "pref_profile_${profile.name}_prefer_pace"
+            if (appPrefs.contains(key)) {
+                appPrefs.getBoolean(key, defaultPreferPace(profile))
+            } else {
+                defaultPreferPace(profile)
+            }
+        }
+    }
+
+    fun toggleSpeedPaceForProfile(profile: ActivityProfile) {
+        val currentMap = _profilePreferPaceMap.value
+        val current = currentMap[profile] ?: defaultPreferPace(profile)
+        val next = !current
+        appPrefs.edit().putBoolean("pref_profile_${profile.name}_prefer_pace", next).apply()
+        _profilePreferPaceMap.value = currentMap + (profile to next)
+    }
+
     // Trips state
     val activeTrip: StateFlow<TripRecord?> = tripManager.activeTrip
     val rawTrackPoints: StateFlow<List<GeoPoint>> = tripManager.rawTrackPoints
