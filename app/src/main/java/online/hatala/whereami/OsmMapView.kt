@@ -1009,8 +1009,10 @@ fun OsmMapView(
                     it.enabledColors = enabledTrailColors
                     it.onTrailSelected = onTrailSelected
                     if (!map.overlays.contains(it)) {
-                        map.overlays.add(it)
+                        val insertIdx = if (map.overlays.size > 1) 1 else 0
+                        map.overlays.add(insertIdx, it)
                     }
+                    it.onFiltersUpdated(map)
                 }
             }
         } else {

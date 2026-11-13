@@ -22,7 +22,7 @@ object OutdoorContextResolver {
     private val OVERPASS_MIRRORS = listOf(
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+        "https://overpass.private.coffee/api/interpreter"
     )
     private const val OSM_API_BASE_URL = "https://api.openstreetmap.org/api/0.6/map"
 

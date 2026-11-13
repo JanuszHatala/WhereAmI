@@ -37,6 +37,17 @@ class VectorTrailOverlay(
             val colorOk = enabledColors.isEmpty() || segment.color in enabledColors
             return kindOk && colorOk
         }
+
+        fun resolveStrokeColorHex(trail: TrailVectorSegment): String {
+            if (trail.color != TrailColor.NONE) return trail.color.hexColor
+            return when (trail.kind) {
+                TrailRouteKind.EDUCATIONAL -> "#14B8A6"
+                TrailRouteKind.MTB -> "#F97316"
+                TrailRouteKind.CYCLING -> "#8B5CF6"
+                TrailRouteKind.KAYAKING -> "#06B6D4"
+                TrailRouteKind.HIKING -> "#EF4444"
+            }
+        }
     }
 
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -61,19 +72,34 @@ class VectorTrailOverlay(
 
     private val currentTrails = CopyOnWriteArrayList<TrailVectorSegment>()
     private var lastQueriedBbox: BoundingBox? = null
+    private var lastFetchedKinds: Set<TrailRouteKind>? = null
+    private var lastFailedAtMs: Long = 0L
+    private var lastFailedBbox: BoundingBox? = null
     private var fetchJob: Job? = null
     var selectedTrailId: Long? = null
+
+    fun onFiltersUpdated(mapView: MapView) {
+        updateTrailsForViewport(mapView)
+        mapView.invalidate()
+    }
 
     fun updateTrailsForViewport(mapView: MapView) {
         if (mapView.zoomLevelDouble < 12.0) {
             currentTrails.clear()
             lastQueriedBbox = null
+            lastFetchedKinds = null
             return
         }
 
         val bbox = mapView.boundingBox ?: return
+        val kindsScope = enabledKinds.toSet()
+        val kindsCovered = lastFetchedKinds?.let { prevKinds ->
+            prevKinds.isEmpty() || (kindsScope.isNotEmpty() && kindsScope.all { it in prevKinds })
+        } == true
+
         val prev = lastQueriedBbox
-        if (prev != null &&
+        if (kindsCovered &&
+            prev != null &&
             bbox.latSouth >= prev.latSouth &&
             bbox.latNorth <= prev.latNorth &&
             bbox.lonWest >= prev.lonWest &&
@@ -85,6 +111,16 @@ class VectorTrailOverlay(
 
         if (fetchJob?.isActive == true) return
 
+        val now = android.os.SystemClock.elapsedRealtime()
+        val fBox = lastFailedBbox
+        if (kindsCovered && currentTrails.isEmpty() && fBox != null && (now - lastFailedAtMs) < 15_000L) {
+            val sameArea = kotlin.math.abs(bbox.latSouth - fBox.latSouth) < 0.004 &&
+                kotlin.math.abs(bbox.latNorth - fBox.latNorth) < 0.004 &&
+                kotlin.math.abs(bbox.lonWest - fBox.lonWest) < 0.004 &&
+                kotlin.math.abs(bbox.lonEast - fBox.lonEast) < 0.004
+            if (sameArea) return
+        }
+
         // Expand query bbox by 25% to avoid fetching on small pans
         val latSpan = bbox.latNorth - bbox.latSouth
         val lonSpan = bbox.lonEast - bbox.lonWest
@@ -95,11 +131,24 @@ class VectorTrailOverlay(
             bbox.lonWest - lonSpan * 0.25
         )
 
-        lastQueriedBbox = expanded
         fetchJob = scope.launch(Dispatchers.IO) {
-            val trails = TrailVectorRepository.getTrailsForBoundingBox(context, expanded)
+            val trails = TrailVectorRepository.getTrailsForBoundingBox(
+                context = context,
+                bbox = expanded,
+                requestedKinds = kindsScope
+            )
             currentTrails.clear()
             currentTrails.addAll(trails)
+            if (trails.isNotEmpty()) {
+                lastQueriedBbox = expanded
+                lastFetchedKinds = kindsScope
+                lastFailedBbox = null
+            } else {
+                lastQueriedBbox = null
+                lastFetchedKinds = kindsScope
+                lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
+                lastFailedBbox = bbox
+            }
             launch(Dispatchers.Main) {
                 mapView.invalidate()
             }
@@ -161,7 +210,7 @@ class VectorTrailOverlay(
                 path.lineTo(p2.x.toFloat(), p2.y.toFloat())
             }
             val colorArgb = try {
-                Color.parseColor(trail.color.hexColor)
+                Color.parseColor(resolveStrokeColorHex(trail))
             } catch (_: Exception) {
                 Color.parseColor("#EF4444")
             }
@@ -204,7 +253,16 @@ class VectorTrailOverlay(
 
         if (nearestTrail != null) {
             selectedTrailId = nearestTrail.id
-            onTrailSelected?.invoke(nearestTrail)
+            if (nearestTrail.name.startsWith("Trail #")) {
+                scope.launch(Dispatchers.IO) {
+                    val enriched = TrailVectorRepository.resolveTrailDetailsIfMissing(context, nearestTrail)
+                    launch(Dispatchers.Main) {
+                        onTrailSelected?.invoke(enriched)
+                    }
+                }
+            } else {
+                onTrailSelected?.invoke(nearestTrail)
+            }
             mapView.invalidate()
             return true
         }

@@ -2,8 +2,11 @@ package online.hatala.whereami
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -12,9 +15,15 @@ import org.osmdroid.util.GeoPoint
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.PI
+import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.sinh
+import kotlin.math.tan
 
 data class TrailVectorSegment(
     val id: Long,
@@ -26,18 +35,63 @@ data class TrailVectorSegment(
     val points: List<GeoPoint>
 )
 
+data class WaymarkedRelationMeta(
+    val relationId: Long,
+    val name: String? = null,
+    val ref: String? = null,
+    val route: String? = null,
+    val educational: Boolean = false,
+    val osmcSymbol: String? = null,
+    val colour: String? = null
+)
+
 object TrailVectorRepository {
 
-    private const val USER_AGENT = "WhereAmI-Android/2.3 (https://github.com/jh/WhereAmI)"
+    private const val USER_AGENT = "WhereAmIPersonalApp/2.4 (vector-trails)"
     private const val TILE_SIZE_DEG = 0.08
-    private val memoryCache = ConcurrentHashMap<String, List<TrailVectorSegment>>()
-    private val fetchMutex = Mutex()
-    private val pendingTiles = ConcurrentHashMap.newKeySet<String>()
+    private const val WAYMARKED_ZOOM = 12
+    private const val MERCATOR_ORIGIN_SHIFT = 20037508.342789244
+    private const val CACHE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+    private const val FAILURE_COOLDOWN_MS = 15_000L
+    private const val MAX_WAYMARKED_TILES_PER_FETCH = 9
+    private const val MAX_DETAIL_FETCHES_PER_BATCH = 20
 
+    private val memoryCache = ConcurrentHashMap<String, List<TrailVectorSegment>>()
+    private val relMetaCache = ConcurrentHashMap<String, WaymarkedRelationMeta>()
+    private val pendingTiles = ConcurrentHashMap.newKeySet<String>()
+    private val failedTileTimestamps = ConcurrentHashMap<String, Long>()
+
+    private fun logDebug(message: String) {
+        TelemetryLogger.log("TRAILS", message)
+        try {
+            android.util.Log.d("TRAILS", message)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Computes integer grid key using floor() so negative latitudes and longitudes never alias around zero. */
     fun toTileKey(lat: Double, lon: Double): String {
-        val latIdx = (lat / TILE_SIZE_DEG).toInt()
-        val lonIdx = (lon / TILE_SIZE_DEG).toInt()
+        val latIdx = floor(lat / TILE_SIZE_DEG).toInt()
+        val lonIdx = floor(lon / TILE_SIZE_DEG).toInt()
         return "tile_${latIdx}_${lonIdx}"
+    }
+
+    /** Converts WGS84 coordinates into a Slippy Map tile `(x, y)` index at zoom 12. */
+    fun latLonToTileZ12(lat: Double, lon: Double): Pair<Int, Int> {
+        val n = (1 shl WAYMARKED_ZOOM).toDouble()
+        val maxIdx = (1 shl WAYMARKED_ZOOM) - 1
+        val clampedLat = lat.coerceIn(-85.0511, 85.0511)
+        val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, maxIdx)
+        val latRad = Math.toRadians(clampedLat)
+        val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, maxIdx)
+        return x to y
+    }
+
+    /** Converts Web Mercator (`EPSG:3857`) coordinates in meters into a WGS84 [GeoPoint]. */
+    fun mercatorToLatLon(mx: Double, my: Double): GeoPoint {
+        val lon = (mx / MERCATOR_ORIGIN_SHIFT) * 180.0
+        val lat = Math.toDegrees(atan(sinh((my / MERCATOR_ORIGIN_SHIFT) * PI)))
+        return GeoPoint(lat, lon)
     }
 
     private fun getCacheDir(context: Context): File {
@@ -46,118 +100,756 @@ object TrailVectorRepository {
         return dir
     }
 
+    internal fun resetCachesForTest() {
+        memoryCache.clear()
+        relMetaCache.clear()
+        pendingTiles.clear()
+        failedTileTimestamps.clear()
+    }
+
+    private fun isTileOnFailureCooldown(key: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val failedAt = failedTileTimestamps[key] ?: return false
+        if (nowMs - failedAt < FAILURE_COOLDOWN_MS) return true
+        failedTileTimestamps.remove(key, failedAt)
+        return false
+    }
+
+    private fun markTileFailed(key: String, nowMs: Long = System.currentTimeMillis()) {
+        failedTileTimestamps[key] = nowMs
+    }
+
+    /**
+     * Fetches vector trails for [bbox], optionally restricting to [requestedKinds].
+     * Uses Waymarked Trails z=12 GeoJSON vector tiles (~0.25s worldwide) as Tier 1 for
+     * hiking/educational/cycling/MTB routes, falling back to hardened Overpass and
+     * viewport-centered OSM `/api/0.6/map` XML when Waymarked fails or KAYAKING is requested.
+     */
     suspend fun getTrailsForBoundingBox(
         context: Context,
         bbox: BoundingBox,
-        allowNetwork: Boolean = true
+        allowNetwork: Boolean = true,
+        requestedKinds: Set<TrailRouteKind> = emptySet(),
+        waymarkedTileUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/tiles/12/{x}/{y}.json",
+        waymarkedDetailsUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/details/relation/{id}",
+        overpassEndpoints: List<String>? = null,
+        osmMapBaseUrl: String = "https://api.openstreetmap.org/api/0.6/map"
     ): List<TrailVectorSegment> = withContext(Dispatchers.IO) {
+        val subdomains = subdomainsForKinds(requestedKinds)
+        val wantWaymarked = subdomains.isNotEmpty()
+        val wantKayakingFallback = TrailRouteKind.KAYAKING in requestedKinds
+
+        val results = mutableListOf<TrailVectorSegment>()
+        var anyWaymarkedOk = false
+
+        if (wantWaymarked) {
+            val (wmSegments, allOrAnyOk) = fetchWaymarkedForBoundingBox(
+                context = context,
+                bbox = bbox,
+                subdomains = subdomains,
+                allowNetwork = allowNetwork,
+                tileUrlTemplate = waymarkedTileUrlTemplate,
+                detailsUrlTemplate = waymarkedDetailsUrlTemplate
+            )
+            results.addAll(wmSegments)
+            anyWaymarkedOk = allOrAnyOk
+        }
+
+        val needTier2Fallback = wantKayakingFallback || (wantWaymarked && !anyWaymarkedOk)
+        if (needTier2Fallback) {
+            val fallbackSegments = fetchOverpassOrOsmFallback(
+                context = context,
+                bbox = bbox,
+                allowNetwork = allowNetwork,
+                kayakOnly = wantKayakingFallback && anyWaymarkedOk && requestedKinds.all { it == TrailRouteKind.KAYAKING || !wantWaymarked },
+                overpassEndpoints = overpassEndpoints,
+                osmMapBaseUrl = osmMapBaseUrl
+            )
+            results.addAll(fallbackSegments)
+        }
+
+        results.distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
+    }
+
+    private fun subdomainsForKinds(requestedKinds: Set<TrailRouteKind>): List<String> {
+        if (requestedKinds.isEmpty()) return listOf("hiking", "cycling", "mtb")
+        val subs = mutableListOf<String>()
+        if (TrailRouteKind.HIKING in requestedKinds || TrailRouteKind.EDUCATIONAL in requestedKinds) subs.add("hiking")
+        if (TrailRouteKind.CYCLING in requestedKinds) subs.add("cycling")
+        if (TrailRouteKind.MTB in requestedKinds) subs.add("mtb")
+        return subs
+    }
+
+    private suspend fun fetchWaymarkedForBoundingBox(
+        context: Context,
+        bbox: BoundingBox,
+        subdomains: List<String>,
+        allowNetwork: Boolean,
+        tileUrlTemplate: String,
+        detailsUrlTemplate: String
+    ): Pair<List<TrailVectorSegment>, Boolean> = coroutineScope {
+        val (xMinRaw, yMaxRaw) = latLonToTileZ12(bbox.latSouth, bbox.lonWest)
+        val (xMaxRaw, yMinRaw) = latLonToTileZ12(bbox.latNorth, bbox.lonEast)
+        val xStart = minOf(xMinRaw, xMaxRaw)
+        val xEnd = maxOf(xMinRaw, xMaxRaw)
+        val yStart = minOf(yMinRaw, yMaxRaw)
+        val yEnd = maxOf(yMinRaw, yMaxRaw)
+
+        val (cx, cy) = latLonToTileZ12(
+            (bbox.latSouth + bbox.latNorth) / 2.0,
+            (bbox.lonWest + bbox.lonEast) / 2.0
+        )
+        val tileCoords = mutableListOf<Pair<Int, Int>>()
+        for (tx in xStart..xEnd) {
+            for (ty in yStart..yEnd) {
+                tileCoords.add(tx to ty)
+            }
+        }
+        val cappedTiles = tileCoords
+            .sortedBy { (tx, ty) -> kotlin.math.abs(tx - cx) + kotlin.math.abs(ty - cy) }
+            .take(MAX_WAYMARKED_TILES_PER_FETCH)
+
+        val rawTiles = mutableListOf<Triple<String, Pair<Int, Int>, String>>()
+        var anySourceOk = false
+
+        val fetchJobs = cappedTiles.flatMap { (tx, ty) ->
+            subdomains.map { sub ->
+                async {
+                    val key = "wm_${sub}_12_${tx}_${ty}"
+                    val file = File(getCacheDir(context), "$key.geojson")
+                    val cachedJson = readFreshCacheFile(file)
+                    if (cachedJson != null) {
+                        Triple(sub, tx to ty, cachedJson) to true
+                    } else if (!allowNetwork || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
+                        null to false
+                    } else {
+                        try {
+                            val urlStr = tileUrlTemplate
+                                .replace("{sub}", sub)
+                                .replace("{x}", tx.toString())
+                                .replace("{y}", ty.toString())
+                            val body = httpGetString(urlStr, connectTimeoutMs = 6000, readTimeoutMs = 10000)
+                            if (body != null) {
+                                try {
+                                    file.writeText(body)
+                                } catch (_: Exception) {
+                                }
+                                DataAcquisitionManager.reportSuccess()
+                                Triple(sub, tx to ty, body) to true
+                            } else {
+                                markTileFailed(key)
+                                null to false
+                            }
+                        } catch (e: Exception) {
+                            markTileFailed(key)
+                            logDebug("Waymarked tile $key error: ${e.message}")
+                            null to false
+                        } finally {
+                            pendingTiles.remove(key)
+                        }
+                    }
+                }
+            }
+        }
+
+        for ((tileEntry, ok) in fetchJobs.awaitAll()) {
+            if (ok) anySourceOk = true
+            if (tileEntry != null) rawTiles.add(tileEntry)
+        }
+
+        if (rawTiles.isEmpty()) return@coroutineScope emptyList<TrailVectorSegment>() to anySourceOk
+
+        // Preload cached relation metadata from disk for relations referenced in loaded tiles
+        val uncachedRels = linkedSetOf<Pair<String, Long>>()
+        for ((sub, _, jsonStr) in rawTiles) {
+            for (relId in extractRelationIdsFromWaymarkedTile(jsonStr)) {
+                val metaKey = "$sub:$relId"
+                if (!relMetaCache.containsKey(metaKey)) {
+                    val diskMeta = loadRelationMetaFromDisk(context, sub, relId)
+                    if (diskMeta != null) {
+                        relMetaCache[metaKey] = diskMeta
+                    } else if (allowNetwork) {
+                        uncachedRels.add(sub to relId)
+                    }
+                }
+            }
+        }
+
+        if (allowNetwork && uncachedRels.isNotEmpty()) {
+            val sem = Semaphore(6)
+            uncachedRels.take(MAX_DETAIL_FETCHES_PER_BATCH).map { (sub, relId) ->
+                async {
+                    sem.withPermit {
+                        val urlStr = detailsUrlTemplate
+                            .replace("{sub}", sub)
+                            .replace("{id}", relId.toString())
+                        val body = httpGetString(urlStr, connectTimeoutMs = 4000, readTimeoutMs = 5000)
+                        if (body != null) {
+                            val meta = parseWaymarkedRelationDetailsJson(relId, body)
+                            if (meta != null) {
+                                relMetaCache["$sub:$relId"] = meta
+                                saveRelationMetaToDisk(context, sub, meta)
+                            }
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+
+        val segments = mutableListOf<TrailVectorSegment>()
+        for ((sub, xy, jsonStr) in rawTiles) {
+            segments.addAll(
+                parseWaymarkedTileJson(
+                    jsonStr = jsonStr,
+                    subdomain = sub,
+                    relationMeta = relMetaCache,
+                    tileX = xy.first,
+                    tileY = xy.second
+                )
+            )
+        }
+        segments to anySourceOk
+    }
+
+    /** Enriches a single Waymarked [segment] with relation metadata if its name was deferred on tap. */
+    suspend fun resolveTrailDetailsIfMissing(
+        context: Context,
+        segment: TrailVectorSegment,
+        detailsUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/details/relation/{id}"
+    ): TrailVectorSegment = withContext(Dispatchers.IO) {
+        val relId = segment.id / 100_000L
+        if (relId <= 0L || !segment.name.startsWith("Trail #")) return@withContext segment
+        val sub = when (segment.kind) {
+            TrailRouteKind.CYCLING -> "cycling"
+            TrailRouteKind.MTB -> "mtb"
+            TrailRouteKind.HIKING, TrailRouteKind.EDUCATIONAL -> "hiking"
+            TrailRouteKind.KAYAKING -> return@withContext segment
+        }
+        val meta = relMetaCache["$sub:$relId"]
+            ?: loadRelationMetaFromDisk(context, sub, relId)?.also { relMetaCache["$sub:$relId"] = it }
+            ?: httpGetString(
+                detailsUrlTemplate.replace("{sub}", sub).replace("{id}", relId.toString()),
+                connectTimeoutMs = 4000,
+                readTimeoutMs = 5000
+            )?.let { parseWaymarkedRelationDetailsJson(relId, it) }?.also {
+                relMetaCache["$sub:$relId"] = it
+                saveRelationMetaToDisk(context, sub, it)
+            }
+            ?: return@withContext segment
+
+        val updatedKind = if (sub == "hiking" && meta.educational) TrailRouteKind.EDUCATIONAL else segment.kind
+        val parsedColor = OutdoorContextResolver.parseTrailColor(meta.osmcSymbol, meta.colour)
+        segment.copy(
+            name = meta.name ?: meta.ref ?: segment.ref ?: segment.name,
+            ref = meta.ref ?: segment.ref,
+            kind = updatedKind,
+            color = if (parsedColor != TrailColor.NONE) parsedColor else segment.color
+        )
+    }
+
+    private suspend fun fetchOverpassOrOsmFallback(
+        context: Context,
+        bbox: BoundingBox,
+        allowNetwork: Boolean,
+        kayakOnly: Boolean,
+        overpassEndpoints: List<String>?,
+        osmMapBaseUrl: String
+    ): List<TrailVectorSegment> = coroutineScope {
         val minLat = bbox.latSouth
         val maxLat = bbox.latNorth
         val minLon = bbox.lonWest
         val maxLon = bbox.lonEast
 
         val results = mutableListOf<TrailVectorSegment>()
-        val startLatIdx = (minLat / TILE_SIZE_DEG).toInt()
-        val endLatIdx = (maxLat / TILE_SIZE_DEG).toInt()
-        val startLonIdx = (minLon / TILE_SIZE_DEG).toInt()
-        val endLonIdx = (maxLon / TILE_SIZE_DEG).toInt()
+        val startLatIdx = floor(minLat / TILE_SIZE_DEG).toInt()
+        val endLatIdx = floor(maxLat / TILE_SIZE_DEG).toInt()
+        val startLonIdx = floor(minLon / TILE_SIZE_DEG).toInt()
+        val endLonIdx = floor(maxLon / TILE_SIZE_DEG).toInt()
 
         for (latIdx in startLatIdx..endLatIdx) {
             for (lonIdx in startLonIdx..endLonIdx) {
-                val key = "tile_${latIdx}_${lonIdx}"
+                val baseKey = "tile_${latIdx}_${lonIdx}"
+                val key = if (kayakOnly) "${baseKey}_kayak" else "${baseKey}_fb"
                 val tileSouth = latIdx * TILE_SIZE_DEG
                 val tileNorth = (latIdx + 1) * TILE_SIZE_DEG
                 val tileWest = lonIdx * TILE_SIZE_DEG
                 val tileEast = (lonIdx + 1) * TILE_SIZE_DEG
 
-                val tileTrails = getOrFetchTile(
-                    context, key,
-                    tileSouth, tileWest, tileNorth, tileEast,
-                    allowNetwork
-                )
-                results.addAll(tileTrails)
+                val cached = memoryCache[key]
+                if (cached != null) {
+                    results.addAll(cached)
+                    continue
+                }
+
+                val diskFile = File(getCacheDir(context), "$key.json")
+                if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
+                    try {
+                        val parsed = parseTileJson(diskFile.readText())
+                        if (parsed.isNotEmpty()) {
+                            memoryCache[key] = parsed
+                            results.addAll(parsed)
+                            continue
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+
+                if (!allowNetwork || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) continue
+
+                try {
+                    val s = String.format(Locale.US, "%.4f", tileSouth)
+                    val w = String.format(Locale.US, "%.4f", tileWest)
+                    val n = String.format(Locale.US, "%.4f", tileNorth)
+                    val e = String.format(Locale.US, "%.4f", tileEast)
+
+                    val ql = if (kayakOnly) {
+                        """
+                            [out:json][timeout:12];
+                            relation["type"="route"]["route"~"^(canoe|kayak)$"]($s,$w,$n,$e)->.rels;
+                            way(r.rels)($s,$w,$n,$e)->.rw;
+                            .rels out;
+                            .rw out tags geom;
+                        """.trimIndent().replace("\n", "")
+                    } else {
+                        """
+                            [out:json][timeout:12];
+                            (
+                              way["highway"~"^(path|footway|track|cycleway)$"]["osmc:symbol"]($s,$w,$n,$e);
+                              way["highway"~"^(path|footway|track|cycleway)$"]["sac_scale"]($s,$w,$n,$e);
+                              way["highway"~"^(path|footway|track|cycleway)$"]["educational"="yes"]($s,$w,$n,$e);
+                            )->.dw;
+                            relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e)->.rels;
+                            way(r.rels)($s,$w,$n,$e)->.rw;
+                            .rels out;
+                            (.dw; .rw;) out tags geom;
+                        """.trimIndent().replace("\n", "")
+                    }
+
+                    val body = if (overpassEndpoints != null) {
+                        OutdoorContextResolver.executeOverpassQuery(
+                            ql = ql,
+                            connectTimeoutMs = 6000,
+                            readTimeoutMs = 12000,
+                            tag = "TRAILS",
+                            endpoints = overpassEndpoints
+                        )
+                    } else {
+                        OutdoorContextResolver.executeOverpassQuery(
+                            ql = ql,
+                            connectTimeoutMs = 6000,
+                            readTimeoutMs = 12000,
+                            tag = "TRAILS"
+                        )
+                    }
+
+                    if (body != null) {
+                        val parsed = parseOverpassTrails(body)
+                        memoryCache[key] = parsed
+                        saveTileJson(diskFile, parsed)
+                        results.addAll(parsed)
+                        continue
+                    }
+
+                    // Fallback: center OSM /api/0.6/map XML on the actual visible viewport center (never off-screen tile center),
+                    // bisecting once if node count exceeds OSM API limits.
+                    val focusLat = ((bbox.latSouth + bbox.latNorth) / 2.0).coerceIn(tileSouth, tileNorth)
+                    val focusLon = ((bbox.lonWest + bbox.lonEast) / 2.0).coerceIn(tileWest, tileEast)
+                    val halfLat = minOf((bbox.latNorth - bbox.latSouth).coerceAtLeast(0.01) / 2.0, 0.015)
+                    val halfLon = minOf((bbox.lonEast - bbox.lonWest).coerceAtLeast(0.01) / 2.0, 0.02)
+
+                    val xml = OutdoorContextResolver.fetchOsmMapXml(
+                        minLat = focusLat - halfLat,
+                        minLon = focusLon - halfLon,
+                        maxLat = focusLat + halfLat,
+                        maxLon = focusLon + halfLon,
+                        connectTimeoutMs = 6000,
+                        readTimeoutMs = 12000,
+                        baseUrl = osmMapBaseUrl
+                    ) ?: OutdoorContextResolver.fetchOsmMapXml(
+                        minLat = focusLat - halfLat * 0.5,
+                        minLon = focusLon - halfLon * 0.5,
+                        maxLat = focusLat + halfLat * 0.5,
+                        maxLon = focusLon + halfLon * 0.5,
+                        connectTimeoutMs = 6000,
+                        readTimeoutMs = 12000,
+                        baseUrl = osmMapBaseUrl
+                    )
+
+                    if (xml != null) {
+                        val parsedXml = parseOsmMapXmlTrails(xml)
+                            .let { list -> if (kayakOnly) list.filter { it.kind == TrailRouteKind.KAYAKING } else list }
+                        if (parsedXml.isNotEmpty()) {
+                            memoryCache[key] = parsedXml
+                            saveTileJson(diskFile, parsedXml)
+                        }
+                        results.addAll(parsedXml)
+                    } else {
+                        markTileFailed(key)
+                    }
+                } catch (e: Exception) {
+                    markTileFailed(key)
+                    logDebug("Fallback fetch tile $key error: ${e.message}")
+                } finally {
+                    pendingTiles.remove(key)
+                }
             }
         }
-        return@withContext results.distinctBy { it.id.toString() + "_" + it.points.firstOrNull() }
+        return@coroutineScope results
     }
 
-    private suspend fun getOrFetchTile(
-        context: Context,
-        key: String,
-        s: Double, w: Double, n: Double, e: Double,
-        allowNetwork: Boolean
-    ): List<TrailVectorSegment> {
-        memoryCache[key]?.let { return it }
-
-        // Disk cache
-        val file = File(getCacheDir(context), "$key.json")
-        if (file.exists()) {
-            try {
-                val text = file.readText()
-                val parsed = parseTileJson(text)
-                memoryCache[key] = parsed
-                return parsed
-            } catch (_: Exception) {}
-        }
-
-        if (!allowNetwork) return emptyList()
-        if (!pendingTiles.add(key)) return emptyList()
-
+    private fun readFreshCacheFile(file: File): String? {
+        if (!file.exists()) return null
+        if (System.currentTimeMillis() - file.lastModified() > CACHE_TTL_MS) return null
         return try {
-            fetchMutex.withLock {
-                // Re-check after lock
-                memoryCache[key]?.let { return it }
+            file.readText().takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
-                val ql = """
-                    [out:json][timeout:15];
-                    (
-                      way["highway"~"^(path|footway|track|cycleway)$"]["osmc:symbol"]($s,$w,$n,$e);
-                      way["highway"~"^(path|footway|track|cycleway)$"]["sac_scale"]($s,$w,$n,$e);
-                      way["highway"~"^(path|footway|track|cycleway)$"]["educational"="yes"]($s,$w,$n,$e);
-                      relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e);
-                      way(r)($s,$w,$n,$e);
-                    );
-                    out tags geom;
-                """.trimIndent().replace("\n", "")
+    private fun loadRelationMetaFromDisk(context: Context, subdomain: String, relId: Long): WaymarkedRelationMeta? {
+        val file = File(getCacheDir(context), "wm_rel_${subdomain}_${relId}.json")
+        val raw = readFreshCacheFile(file) ?: return null
+        return try {
+            val obj = JSONObject(raw)
+            WaymarkedRelationMeta(
+                relationId = obj.getLong("id"),
+                name = obj.optString("name").takeIf { it.isNotBlank() && it != "null" },
+                ref = obj.optString("ref").takeIf { it.isNotBlank() && it != "null" },
+                route = obj.optString("route").takeIf { it.isNotBlank() && it != "null" },
+                educational = obj.optBoolean("educational", false),
+                osmcSymbol = obj.optString("osmcSymbol").takeIf { it.isNotBlank() && it != "null" },
+                colour = obj.optString("colour").takeIf { it.isNotBlank() && it != "null" }
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
 
-                val body = OutdoorContextResolver.executeOverpassQuery(
-                    ql = ql,
-                    connectTimeoutMs = 8000,
-                    readTimeoutMs = 15000,
-                    tag = "TRAILS"
-                )
-                if (body != null) {
-                    val parsed = parseOverpassTrails(body)
-                    memoryCache[key] = parsed
-                    saveTileJson(file, parsed)
-                    return parsed
-                }
+    private fun saveRelationMetaToDisk(context: Context, subdomain: String, meta: WaymarkedRelationMeta) {
+        try {
+            val file = File(getCacheDir(context), "wm_rel_${subdomain}_${meta.relationId}.json")
+            val obj = JSONObject().apply {
+                put("id", meta.relationId)
+                put("name", meta.name ?: JSONObject.NULL)
+                put("ref", meta.ref ?: JSONObject.NULL)
+                put("route", meta.route ?: JSONObject.NULL)
+                put("educational", meta.educational)
+                put("osmcSymbol", meta.osmcSymbol ?: JSONObject.NULL)
+                put("colour", meta.colour ?: JSONObject.NULL)
+            }
+            file.writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
 
-                // Fallback: bounded OSM 0.6 /api/0.6/map XML around tile center when all Overpass mirrors fail
-                val cLat = (s + n) / 2.0
-                val cLon = (w + e) / 2.0
-                val halfLat = minOf((n - s) / 2.0, 0.015)
-                val halfLon = minOf((e - w) / 2.0, 0.02)
-                val xml = OutdoorContextResolver.fetchOsmMapXml(
-                    cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon,
-                    connectTimeoutMs = 6000,
-                    readTimeoutMs = 12000
-                )
-                if (xml != null) {
-                    val parsedXml = parseOsmMapXmlTrails(xml)
-                    if (parsedXml.isNotEmpty()) {
-                        memoryCache[key] = parsedXml
-                    }
-                    return parsedXml
-                }
-                emptyList()
+    private fun httpGetString(urlStr: String, connectTimeoutMs: Int, readTimeoutMs: Int): String? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = connectTimeoutMs
+                readTimeout = readTimeoutMs
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("Accept", "application/json")
+            }
+            val code = conn.responseCode
+            if (code == 200) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                logDebug("HTTP $code for $urlStr")
+                if (code == 429) DataAcquisitionManager.reportRateLimited()
+                else if (code >= 500) DataAcquisitionManager.reportCachedOnly("Trail Tiles HTTP $code")
+                null
             }
         } catch (e: Exception) {
-            TelemetryLogger.log("TRAILS", "Fetch tile $key error: ${e.message}")
-            emptyList()
+            logDebug("HTTP error for $urlStr: ${e.message}")
+            DataAcquisitionManager.reportError(e)
+            null
         } finally {
-            pendingTiles.remove(key)
+            conn?.disconnect()
         }
+    }
+
+    private fun extractRelationIdsFromWaymarkedTile(jsonStr: String): Set<Long> {
+        return try {
+            val root = JSONObject(jsonStr)
+            val features = root.optJSONArray("features") ?: return emptySet()
+            val ids = linkedSetOf<Long>()
+            for (i in 0 until features.length()) {
+                val props = features.optJSONObject(i)?.optJSONObject("properties") ?: continue
+                if (props.optString("type") != "way") continue
+                val top = props.optJSONArray("top_relations")
+                if (top != null) {
+                    for (j in 0 until top.length()) {
+                        val id = top.optLong(j, -1L)
+                        if (id > 0L) ids.add(id)
+                    }
+                }
+            }
+            ids
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
+    /** Parses `/api/v1/details/relation/{id}` JSON into [WaymarkedRelationMeta]. */
+    fun parseWaymarkedRelationDetailsJson(relationId: Long, jsonStr: String): WaymarkedRelationMeta? {
+        return try {
+            val root = JSONObject(jsonStr)
+            val tags = root.optJSONObject("tags") ?: JSONObject()
+            val name = root.optString("name").takeIf { it.isNotBlank() && it != "null" }
+                ?: tags.optString("name").takeIf { it.isNotBlank() && it != "null" }
+            val ref = root.optString("ref").takeIf { it.isNotBlank() && it != "null" }
+                ?: tags.optString("ref").takeIf { it.isNotBlank() && it != "null" }
+            val route = tags.optString("route").takeIf { it.isNotBlank() && it != "null" }
+            val edu = tags.optString("educational").equals("yes", ignoreCase = true) ||
+                route.equals("educational", ignoreCase = true)
+            val osmc = tags.optString("osmc:symbol").takeIf { it.isNotBlank() && it != "null" }
+            val colour = tags.optString("colour").ifEmpty { tags.optString("color") }
+                .takeIf { it.isNotBlank() && it != "null" }
+            WaymarkedRelationMeta(
+                relationId = relationId,
+                name = name,
+                ref = ref,
+                route = route,
+                educational = edu,
+                osmcSymbol = osmc,
+                colour = colour
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses a Waymarked Trails shield identifier (such as `osmc_REG_white_yellow-bar`,
+     * `osmc_REG_white_yellow-diamond_0054004d0042_black`, `cbox_LOC_red`, or `ctb_LOC_615CF3_00560048`)
+     * into the dominant blaze [TrailColor], avoiding label text color false positives.
+     */
+    fun parseWaymarkedShieldColor(shield: String): TrailColor {
+        val tokens = shield.split('_')
+        if (tokens.size < 3) return TrailColor.NONE
+        val hexTextRegex = Regex("^[0-9a-fA-F]{4,}$")
+        val prefix = tokens[0].lowercase(Locale.US)
+
+        if (prefix == "osmc") {
+            val strippedEndIdx = tokens.indexOfFirst { tok ->
+                tok.length >= 4 && tok.length % 4 == 0 && hexTextRegex.matches(tok)
+            }
+            val symbolTokens = if (strippedEndIdx >= 3) tokens.subList(0, strippedEndIdx) else tokens
+            for (tok in symbolTokens.drop(3)) {
+                val c = matchTrailColorToken(tok)
+                if (c != TrailColor.NONE) return c
+            }
+            val bgColor = matchTrailColorToken(symbolTokens[2])
+            if (bgColor != TrailColor.NONE) return bgColor
+            return TrailColor.NONE
+        }
+
+        if (prefix == "cbox" || prefix == "ctb") {
+            return matchTrailColorToken(tokens[2])
+        }
+
+        return TrailColor.NONE
+    }
+
+    private fun matchTrailColorToken(token: String): TrailColor {
+        val lower = token.lowercase(Locale.US)
+        val base = lower.substringBefore('-')
+        val byWord = OutdoorContextResolver.parseTrailColor(null, base)
+        if (byWord != TrailColor.NONE) return byWord
+        val rawHex = token.removePrefix("#")
+        if (rawHex.length == 6 && rawHex.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
+            val rgb = rawHex.toInt(16)
+            val r = (rgb shr 16) and 0xFF
+            val g = (rgb shr 8) and 0xFF
+            val b = rgb and 0xFF
+            return when {
+                r < 55 && g < 55 && b < 55 -> TrailColor.BLACK
+                r > 180 && g > 160 && b < 110 -> TrailColor.YELLOW
+                r >= g + 45 && r >= b + 45 -> TrailColor.RED
+                g >= r + 35 && g >= b + 35 -> TrailColor.GREEN
+                b >= r + 40 && b >= g + 25 -> TrailColor.BLUE
+                else -> TrailColor.NONE
+            }
+        }
+        return TrailColor.NONE
+    }
+
+    /** Decodes UTF-16BE hex ref payloads from Waymarked Trails shield strings (e.g., `ref_LOC_0054004a` -> `TJ`). */
+    fun parseWaymarkedShieldRef(shield: String): String? {
+        val tokens = shield.split('_')
+        val hexTok = tokens.lastOrNull { tok ->
+            tok.length >= 4 && tok.length % 4 == 0 && tok.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+        } ?: return null
+        return try {
+            val sb = StringBuilder(hexTok.length / 4)
+            var idx = 0
+            while (idx + 4 <= hexTok.length) {
+                val codePoint = hexTok.substring(idx, idx + 4).toInt(16)
+                if (codePoint >= 0x20) sb.append(codePoint.toChar())
+                idx += 4
+            }
+            sb.toString().trim().takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses a Waymarked Trails `z=12` EPSG:3857 GeoJSON vector tile into [TrailVectorSegment]s,
+     * applying cached/fetched [relationMeta] when available.
+     */
+    fun parseWaymarkedTileJson(
+        jsonStr: String,
+        subdomain: String,
+        relationMeta: Map<String, WaymarkedRelationMeta> = emptyMap(),
+        tileX: Int = 0,
+        tileY: Int = 0
+    ): List<TrailVectorSegment> {
+        val root = try {
+            JSONObject(jsonStr)
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val features = root.optJSONArray("features") ?: return emptyList()
+        val segments = mutableListOf<TrailVectorSegment>()
+        var localSeq = 0
+
+        for (i in 0 until features.length()) {
+            val feature = features.optJSONObject(i) ?: continue
+            val props = feature.optJSONObject("properties") ?: continue
+            if (props.optString("type") != "way") continue
+
+            val geom = feature.optJSONObject("geometry") ?: continue
+            val geomType = geom.optString("type")
+            val coordsArr = geom.optJSONArray("coordinates") ?: continue
+
+            val lines = mutableListOf<List<GeoPoint>>()
+            when (geomType) {
+                "LineString" -> {
+                    val pts = parseMercatorLineCoords(coordsArr)
+                    if (pts.size >= 2) lines.add(pts)
+                }
+                "MultiLineString" -> {
+                    for (lineIdx in 0 until coordsArr.length()) {
+                        val subCoords = coordsArr.optJSONArray(lineIdx) ?: continue
+                        val pts = parseMercatorLineCoords(subCoords)
+                        if (pts.size >= 2) lines.add(pts)
+                    }
+                }
+                else -> continue
+            }
+            if (lines.isEmpty()) continue
+
+            val shields = mutableListOf<String>()
+            val shieldsArr = props.optJSONArray("shields")
+            if (shieldsArr != null) {
+                for (sIdx in 0 until shieldsArr.length()) {
+                    val s = shieldsArr.optString(sIdx)
+                    if (s.isNotBlank() && s != "null") shields.add(s)
+                }
+            }
+            val rawShieldColors = shields.map { parseWaymarkedShieldColor(it) }
+            val shieldColors = rawShieldColors.filter { it != TrailColor.NONE }
+            val fallbackRef = shields.firstNotNullOfOrNull { parseWaymarkedShieldRef(it) }
+
+            val relIds = mutableListOf<Long>()
+            val topArr = props.optJSONArray("top_relations")
+            if (topArr != null) {
+                for (rIdx in 0 until topArr.length()) {
+                    val id = topArr.optLong(rIdx, -1L)
+                    if (id > 0L) relIds.add(id)
+                }
+            }
+            if (relIds.isEmpty()) {
+                val childArr = props.optJSONArray("child_relations")
+                if (childArr != null) {
+                    for (rIdx in 0 until childArr.length()) {
+                        val id = childArr.optLong(rIdx, -1L)
+                        if (id > 0L) relIds.add(id)
+                    }
+                }
+            }
+
+            if (relIds.isEmpty()) {
+                val tileSalt = ((tileX * 73856093 xor tileY * 19349663) and 0x7FFF)
+                val segColor = shieldColors.firstOrNull() ?: TrailColor.NONE
+                val kind = when (subdomain) {
+                    "cycling" -> TrailRouteKind.CYCLING
+                    "mtb" -> TrailRouteKind.MTB
+                    else -> TrailRouteKind.HIKING
+                }
+                for (pts in lines) {
+                    localSeq++
+                    val synthId = (tileSalt.toLong() shl 16) + localSeq
+                    segments.add(
+                        TrailVectorSegment(
+                            id = synthId,
+                            name = fallbackRef ?: "Marked Trail",
+                            ref = fallbackRef,
+                            kind = kind,
+                            color = segColor,
+                            points = pts
+                        )
+                    )
+                }
+                continue
+            }
+
+            for ((rOffset, relId) in relIds.withIndex()) {
+                val meta = relationMeta["$subdomain:$relId"]
+                val kind = when (subdomain) {
+                    "cycling" -> TrailRouteKind.CYCLING
+                    "mtb" -> TrailRouteKind.MTB
+                    else -> if (meta?.educational == true) TrailRouteKind.EDUCATIONAL else TrailRouteKind.HIKING
+                }
+                val metaColor = if (meta != null) {
+                    OutdoorContextResolver.parseTrailColor(meta.osmcSymbol, meta.colour)
+                } else {
+                    TrailColor.NONE
+                }
+                val finalColor = when {
+                    metaColor != TrailColor.NONE -> metaColor
+                    meta != null && relIds.size == 1 -> shieldColors.firstOrNull() ?: TrailColor.NONE
+                    meta != null -> TrailColor.NONE
+                    else -> rawShieldColors.getOrNull(rOffset) ?: shieldColors.firstOrNull() ?: TrailColor.NONE
+                }
+                val ref = meta?.ref ?: fallbackRef
+                val name = meta?.name ?: ref ?: "Trail #$relId"
+
+                for (pts in lines) {
+                    localSeq++
+                    val suffix = ((tileX * 73856093 xor tileY * 19349663 xor localSeq) and 0xFFFF).toLong()
+                    segments.add(
+                        TrailVectorSegment(
+                            id = relId * 100_000L + suffix,
+                            name = name,
+                            ref = ref,
+                            kind = kind,
+                            color = finalColor,
+                            points = pts
+                        )
+                    )
+                }
+            }
+        }
+        return segments
+    }
+
+    private fun parseMercatorLineCoords(coordsArr: JSONArray): List<GeoPoint> {
+        val pts = ArrayList<GeoPoint>(coordsArr.length())
+        for (k in 0 until coordsArr.length()) {
+            val pair = coordsArr.optJSONArray(k) ?: continue
+            if (pair.length() < 2) continue
+            val mx = pair.optDouble(0, Double.NaN)
+            val my = pair.optDouble(1, Double.NaN)
+            if (!mx.isNaN() && !my.isNaN()) {
+                pts.add(mercatorToLatLon(mx, my))
+            }
+        }
+        return pts
     }
 
     /**

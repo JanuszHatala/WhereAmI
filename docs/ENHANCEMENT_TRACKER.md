@@ -1818,7 +1818,7 @@ Fix:
 
 ---
 
-## Round 58 - Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0)
+## Round 58 - Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1)
 
 Evidence & Diagnostics:
 - Regional Hardcoding Audit: Purged `OfflineOutdoorRegionIndex.kt`, `outdoor_regions_pl_border.json`, and all silent `"pl"`/`"PL"` fallbacks, local landmark/city/shop lists, and hardcoded coordinates across production files, enforced permanently by `GlobalUniversalityInvariantTest`. Only country-mandated road schemas (`PL` `DK*`/`DW*`, `SK` `I/*`/`II/*`), Polish admin prefixes (`gm.`/`pow.`/`woj.` when `PL`), and private `AutoMediaService.kt` / `StreetAbbreviator.kt` remain.
@@ -1838,7 +1838,8 @@ Evidence & Diagnostics:
 | **KIN-58-05** | 7.5s stationary dwell cadence, `externalStationary` anchor continuity, `seed()` Doppler clamp, and finalized `onSmoothedPoints` `maxSpeedKmh`. | `TrackingEngine.kt`, `AppStateManager.kt`, `TripManager.kt`, `TrackingEngineTest.kt`, `FieldReplayTest.kt` | Implemented | `TrackingEngineTest` regression suite & `trip323`/`325`/`326` replays pass. |
 | **MAP-58-06** | Clean Map Base Views (`TOPO` + `VECTOR` defaults for outdoor profiles), layer mutual exclusion, and selective Trail Type / Blaze Color filters. | `MapProfileConfigHelper.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt`, `strings.xml` | Implemented | `MapProfileConfigTest` covers migration, defaults, persistence, and `matchesFilters`. |
 | **SKL-58-07** | Fix `jh-field-test-feedback` SQL `activity_profile` column, outdoor/429/max_speed audit checks, and Question-Only Gate. | `.agents/skills/jh-field-test-feedback/SKILL.md`, `pull_device_data.sh` | Implemented | Updated skill documentation and telemetry script. |
-| **VER-58** | Bump to `versionCode = 201`, `versionName = "2.4.0"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest`, `assembleDebug`, and server tests pass. |
+| **VEC-58-08** | Fix invisible Vector Trails: Waymarked `z=12` GeoJSON vector tiles + relation meta cache, drop broken `maps.mail.ru` mirror, split OverpassQL, viewport-centered OSM `0.6/map` XML fallback, `floor()` tile math, 15s overlay cooldown/filter refetch, `TrailColor.NONE` kind accents, and Z-order index `1`. | `TrailVectorRepository.kt`, `OutdoorContextResolver.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `TrailVectorRepositoryTest.kt` | Implemented | 9/9 tests in `TrailVectorRepositoryTest` + full 684-test suite pass. |
+| **VER-58** | Bump to `versionCode = 202`, `versionName = "2.4.1"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest`, `assembleDebug`, and server tests pass. |
 
 
 

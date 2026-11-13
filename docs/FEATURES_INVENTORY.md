@@ -187,10 +187,10 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
 ### MAP-03: Filterable Vector Trails & Waymarked Overlay
-- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) fetched globally from Overpass (with OSM `0.6/map` XML fallback), plus optional mutually exclusive Waymarked Trails raster overlay.
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) fetched globally via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) with hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, plus optional mutually exclusive Waymarked Trails raster overlay.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `VectorTrailOverlay.kt` (`matchesFilters`), `TrailVectorRepository.kt`, `OsmMapView.kt` (`MapSettingsDialog` selective filter chips), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `TrailOverlayMode`).
+  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`), `TrailVectorRepository.kt`, `OsmMapView.kt` (`MapSettingsDialog` selective filter chips), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `TrailOverlayMode`).
 
 ### MAP-04: Map Recenter & Floating Recenter Pill
 - **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.
