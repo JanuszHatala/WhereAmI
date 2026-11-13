@@ -15,6 +15,36 @@ class TrackingEngineTest {
     private fun run(engine: TrackingEngine, fixes: List<RawFix>): List<EngineResult> = fixes.map { engine.ingest(it) }
 
     @Test
+    fun `continuesStationary preserves anchor across 10s dwell intervals when externalStationary is true`() {
+        val sim = TrackSim(seed = 12, posNoiseM = 3.0, corrNoiseM = 2.0)
+        sim.stand(60.0)
+        val sparse = sim.fixes(1.0)
+            .filterIndexed { i, _ -> i == 0 || i % 10 == 0 }
+            .map { it.copy(speedMps = 0.0f, accuracyM = 6.0f) }
+        val engine = TrackingEngine(TrackingProfile.CAR)
+        val first = engine.ingest(sparse[0], externalStationary = true)
+        assertEquals(FixDecision.ACCEPTED, first.decision)
+        val next10s = engine.ingest(sparse[1], externalStationary = true)
+        assertEquals(FixDecision.ACCEPTED, next10s.decision)
+        assertTrue(next10s.state!!.isStationary)
+        assertEquals(0.0, next10s.state!!.speedMps, 1e-6)
+    }
+
+    @Test
+    fun `reset seed clamps isolated Doppler speed spike contradicting small step displacement`() {
+        val sim = TrackSim(seed = 13, posNoiseM = 0.5, corrNoiseM = 0.5)
+        sim.straight(5.0, 1.2)
+        sim.stand(15.0)
+        val fixes = sim.fixes(1.0)
+        val engine = TrackingEngine(TrackingProfile.CAR)
+        assertEquals(FixDecision.ACCEPTED, engine.ingest(fixes[0]).decision)
+        val spikedAfterGap = fixes[12].copy(speedMps = 19.9f, accuracyM = 8.0f)
+        val res = engine.ingest(spikedAfterGap)
+        assertEquals(FixDecision.ACCEPTED_AFTER_RESET, res.decision)
+        assertTrue("Expected clamped speed < 5.0 m/s, got ${res.state!!.speedMps}", res.state!!.speedMps < 5.0)
+    }
+
+    @Test
     fun `straight line filtered error is clearly below raw noise`() {
         val sim = TrackSim(seed = 3)
         sim.straight(90.0, 15.0)

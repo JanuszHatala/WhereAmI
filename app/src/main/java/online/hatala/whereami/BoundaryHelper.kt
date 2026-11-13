@@ -26,9 +26,9 @@ object BoundaryHelper {
 
     /**
      * Bump when on-disk polygon semantics change. v1 = pre-pin; v2 = pin containment;
-     * v3 = live name-first (invalidates v1.18.0 reverse-first pollution under city keys).
+     * v3 = live name-first; v4 = validate-before-save + municipality key scoping.
      */
-    private const val CACHE_GEN = "v3"
+    private const val CACHE_GEN = "v4"
 
     fun clearMemoryCache() {
         memoryCache.clear()
@@ -53,13 +53,6 @@ object BoundaryHelper {
         context: Context,
         area: OutdoorArea
     ): List<GeoPoint>? = withContext(Dispatchers.IO) {
-        OfflineOutdoorRegionIndex.initIfNeeded(context)
-        val offlineHit = OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.id)
-            ?: OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.name)
-        if (offlineHit != null && offlineHit.polygon.size >= 3) {
-            return@withContext subsamplePoints(offlineHit.polygon, 160)
-        }
-
         val cacheKey = sanitizeKey("outdoor_${area.kind.name.lowercase(Locale.ROOT)}_${area.id.lowercase(Locale.ROOT)}_$CACHE_GEN")
         memoryCache[cacheKey]?.let { return@withContext it }
 
@@ -114,7 +107,7 @@ object BoundaryHelper {
     suspend fun getLocalityBoundary(
         context: Context,
         cityName: String?,
-        countryCode: String = "pl",
+        countryCode: String = "",
         fallbackMunicipality: String? = null,
         geoPoint: GeoPoint? = null,
         forPin: Boolean = false
@@ -122,10 +115,13 @@ object BoundaryHelper {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         }
+        val ccNorm = countryCode.trim().lowercase(Locale.ROOT).ifBlank { "global" }
+        val munNorm = fallbackMunicipality?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
         val cleanKey = if (cleanCity != null) {
-            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN")
-        } else if (!fallbackMunicipality.isNullOrBlank()) {
-            sanitizeKey("${fallbackMunicipality.trim().lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN")
+            val munPart = munNorm?.let { "_$it" } ?: ""
+            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}${munPart}_${ccNorm}_$CACHE_GEN")
+        } else if (munNorm != null) {
+            sanitizeKey("${munNorm}_${ccNorm}_$CACHE_GEN")
         } else if (geoPoint != null) {
             String.format(Locale.US, "coord_%.3f_%.3f_$CACHE_GEN", geoPoint.latitude, geoPoint.longitude)
         } else {
@@ -222,22 +218,22 @@ object BoundaryHelper {
                 }
             }
 
-            // Name search — live GPS primary path; pin fallback when reverse has no polygon.
+            // Name search - live GPS primary path; pin fallback when reverse has no polygon.
             var fetchedFromNamedCity = false
             if (fetched == null && cleanCity != null) {
                 throttle()
                 fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = containGate)
-                if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
-                    throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Polska", mustContain = containGate)
-                } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
-                    throttle()
-                    fetched = fetchFromNetwork(cleanCity, "Slovensko", mustContain = containGate)
+                if (fetched == null && countryCode.isNotBlank()) {
+                    val countryDisplay = Locale("", countryCode.uppercase(Locale.ROOT))
+                        .getDisplayCountry(Locale.ENGLISH)
+                        .takeIf { it.isNotBlank() && !it.equals(countryCode, ignoreCase = true) }
+                    if (countryDisplay != null) {
+                        throttle()
+                        fetched = fetchFromNetwork(cleanCity, countryDisplay, mustContain = containGate)
+                    }
                 }
                 if (fetched == null && !fallbackMunicipality.isNullOrBlank()) {
-                    val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
-                        .replace("gmina ", "", ignoreCase = true)
-                        .replace("gm. ", "", ignoreCase = true).trim()
+                    val cleanMun = fallbackMunicipality.trim()
                     if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                         throttle()
                         fetched = fetchFromNetwork("$cleanCity, $cleanMun", countryCode, mustContain = containGate)
@@ -245,38 +241,40 @@ object BoundaryHelper {
                 }
                 if (fetched != null && fetched.isNotEmpty()) {
                     fetchedFromNamedCity = true
-                    if (!pinMode) {
-                        val namedSimplified = subsamplePoints(fetched, 120)
-                        memoryCache[cleanKey] = namedSimplified
-                        saveToDiskCache(context, cleanKey, namedSimplified)
-                    }
-                    // For live GPS, verify candidate fetched polygon actually contains or is near current position
+                    // For live GPS, verify candidate fetched polygon actually contains or is near current position BEFORE caching.
                     if (geoPoint != null && !isCachePolygonUsableForLive(fetched, geoPoint)) {
                         TelemetryLogger.log(
                             "BOUNDARY",
-                            "Live boundary for $cleanCity does not enclose current location (${geoPoint.latitude}, ${geoPoint.longitude}); falling back without overwriting $cleanKey"
+                            "Live boundary for $cleanCity does not enclose current location (${geoPoint.latitude}, ${geoPoint.longitude}); skipping cache write for $cleanKey"
                         )
                         fetched = null
                         fetchedFromNamedCity = false
                     }
+                    if (fetched != null) {
+                        if (!pinMode) {
+                            val namedSimplified = subsamplePoints(fetched, 120)
+                            memoryCache[cleanKey] = namedSimplified
+                            saveToDiskCache(context, cleanKey, namedSimplified)
+                        }
+                        return@withContext fetched
+                    }
                 }
             }
 
-            // Municipality / gmina fallback
+            // Municipality fallback
             if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cleanCity, ignoreCase = true)) {
-                val cleanMun = fallbackMunicipality.replace("Gmina ", "", ignoreCase = true)
-                    .replace("gmina ", "", ignoreCase = true)
-                    .replace("gm. ", "", ignoreCase = true).trim()
+                val cleanMun = fallbackMunicipality.trim()
                 if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
-                    val munQuery = if (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty()) "gmina $cleanMun" else cleanMun
                     throttle()
-                    fetched = fetchFromNetwork(munQuery, countryCode, mustContain = containGate)
-                    if (fetched == null && (countryCode.equals("PL", ignoreCase = true) || countryCode.isEmpty())) {
-                        throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Polska", mustContain = containGate)
-                    } else if (fetched == null && countryCode.equals("SK", ignoreCase = true)) {
-                        throttle()
-                        fetched = fetchFromNetwork(cleanMun, "Slovensko", mustContain = containGate)
+                    fetched = fetchFromNetwork(cleanMun, countryCode, mustContain = containGate)
+                    if (fetched == null && countryCode.isNotBlank()) {
+                        val countryDisplay = Locale("", countryCode.uppercase(Locale.ROOT))
+                            .getDisplayCountry(Locale.ENGLISH)
+                            .takeIf { it.isNotBlank() && !it.equals(countryCode, ignoreCase = true) }
+                        if (countryDisplay != null) {
+                            throttle()
+                            fetched = fetchFromNetwork(cleanMun, countryDisplay, mustContain = containGate)
+                        }
                     }
                 }
             }
@@ -360,12 +358,15 @@ object BoundaryHelper {
         return false
     }
 
-    fun hasBoundary(context: Context, cityName: String?, countryCode: String = "pl"): Boolean {
+    fun hasBoundary(context: Context, cityName: String?, countryCode: String = "", fallbackMunicipality: String? = null): Boolean {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         } ?: return true
+        val ccNorm = countryCode.trim().lowercase(Locale.ROOT).ifBlank { "global" }
+        val munNorm = fallbackMunicipality?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        val munPart = munNorm?.let { "_$it" } ?: ""
         val cleanKey = sanitizeKey(
-            "${cleanCity.lowercase(Locale.ROOT)}_${countryCode.trim().lowercase(Locale.ROOT)}_$CACHE_GEN"
+            "${cleanCity.lowercase(Locale.ROOT)}${munPart}_${ccNorm}_$CACHE_GEN"
         )
         val file = File(getCacheDir(context), "$cleanKey.json")
         return file.exists()
@@ -377,8 +378,15 @@ object BoundaryHelper {
         mustContain: GeoPoint? = null
     ): List<GeoPoint>? {
         return try {
-            val q = URLEncoder.encode("$cityName, $countryPart", "UTF-8")
-            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q&polygon_geojson=1&format=json&limit=5&extratags=1"
+            val trimmedCountry = countryPart.trim()
+            val isIso2 = trimmedCountry.length == 2 && trimmedCountry.all { it.isLetter() }
+            val q = if (trimmedCountry.isNotBlank() && !isIso2) {
+                URLEncoder.encode("$cityName, $trimmedCountry", "UTF-8")
+            } else {
+                URLEncoder.encode(cityName, "UTF-8")
+            }
+            val ccParam = if (isIso2) "&countrycodes=${trimmedCountry.lowercase(Locale.ROOT)}" else ""
+            val urlStr = "https://nominatim.openstreetmap.org/search?q=$q$ccParam&polygon_geojson=1&format=json&limit=5&extratags=1"
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
             conn.connectTimeout = 6000
@@ -398,8 +406,12 @@ object BoundaryHelper {
                 val array = JSONArray(body)
                 return selectBestBoundaryPolygon(array, mustContain = mustContain)
             }
+            if (code in 500..599) {
+                DataAcquisitionManager.reportError(java.io.IOException("Nominatim HTTP $code"))
+            }
             null
         } catch (e: Exception) {
+            DataAcquisitionManager.reportError(e)
             TelemetryLogger.log("BOUNDARY", "Network fetch error for $cityName: ${e.message}")
             null
         }
@@ -446,6 +458,7 @@ object BoundaryHelper {
             }
             null
         } catch (e: Exception) {
+            DataAcquisitionManager.reportError(e)
             TelemetryLogger.log("BOUNDARY", "Reverse boundary error at ($lat, $lon, zoom=$zoom): ${e.message}")
             null
         }

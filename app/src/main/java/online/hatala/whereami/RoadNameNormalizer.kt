@@ -151,7 +151,7 @@ object RoadNameNormalizer {
     fun formatStreetDisplay(
         street: String?,
         roadRef: String?,
-        countryCode: String? = "PL",
+        countryCode: String? = null,
         allowHouseNumber: Boolean = false,
         houseNumber: String? = null
     ): String? {
@@ -345,15 +345,15 @@ object RoadNameNormalizer {
     }
 
     /** Pulls a canonical highway code from a street line (`DW948`, `Krakowska (DW948)`, or `(DK44 / DW933)`). */
-    fun extractHighwayCode(street: String?): String? {
+    fun extractHighwayCode(street: String?, countryCode: String? = null): String? {
         if (street.isNullOrBlank()) return null
         val trimmed = street.trim()
         if (isHighwayCodeOnly(trimmed)) {
-            return normalizeHighwayRef(trimmed, "PL") ?: trimmed.uppercase(Locale.ROOT)
+            return normalizeHighwayRef(trimmed, countryCode) ?: trimmed.uppercase(Locale.ROOT)
         }
         val multiParen = Regex("""\(((?:DK|DW|A|S|E|I|II|III)\s*\d+[\w/ ]*(?:\([^)]*\))?)\)""", RegexOption.IGNORE_CASE).find(trimmed)
         if (multiParen != null) {
-            return normalizeHighwayRef(multiParen.groupValues[1], "PL") ?: multiParen.groupValues[1]
+            return normalizeHighwayRef(multiParen.groupValues[1], countryCode) ?: multiParen.groupValues[1]
         }
         val paren = Regex("""\((DK|DW|A|S|E)\s*(\d+)\)""", RegexOption.IGNORE_CASE).find(trimmed) ?: return null
         return "${paren.groupValues[1].uppercase(Locale.ROOT)}${paren.groupValues[2]}"
@@ -482,22 +482,23 @@ object RoadNameNormalizer {
     /**
      * Normalizes a single highway token (e.g. "DK 52" -> "DK52", "44" in PL -> "DK44", "A4" -> "A4", "18" in SK -> "I/18").
      */
-    fun normalizeSingleHighwayCode(rawToken: String?, countryCode: String? = "PL"): String? {
+    fun normalizeSingleHighwayCode(rawToken: String?, countryCode: String? = null): String? {
         if (rawToken.isNullOrBlank()) return null
         val token = rawToken.trim()
-        val isPoland = countryCode.isNullOrBlank() || countryCode.equals("PL", ignoreCase = true)
+        val isPoland = countryCode.equals("PL", ignoreCase = true)
+        val isNonPoland = !countryCode.isNullOrBlank() && !isPoland
         val isSlovakia = countryCode?.equals("SK", ignoreCase = true) == true
 
         return when {
-            isPoland && DK_REGEX.matches(token) -> "DK${DK_REGEX.find(token)!!.groupValues[1]}"
-            isPoland && DK_SHORT_REGEX.matches(token) -> "DK${DK_SHORT_REGEX.find(token)!!.groupValues[1]}"
-            !isPoland && DK_SHORT_REGEX.matches(token) -> {
+            !isNonPoland && DK_REGEX.matches(token) -> "DK${DK_REGEX.find(token)!!.groupValues[1]}"
+            !isNonPoland && DK_SHORT_REGEX.matches(token) -> "DK${DK_SHORT_REGEX.find(token)!!.groupValues[1]}"
+            isNonPoland && DK_SHORT_REGEX.matches(token) -> {
                 val num = DK_SHORT_REGEX.find(token)!!.groupValues[1]
                 sanitizeStreetForCountry("DK$num", countryCode)
             }
-            isPoland && DW_REGEX.matches(token) -> "DW${DW_REGEX.find(token)!!.groupValues[1]}"
-            isPoland && DW_SHORT_REGEX.matches(token) -> "DW${DW_SHORT_REGEX.find(token)!!.groupValues[1]}"
-            !isPoland && DW_SHORT_REGEX.matches(token) -> {
+            !isNonPoland && DW_REGEX.matches(token) -> "DW${DW_REGEX.find(token)!!.groupValues[1]}"
+            !isNonPoland && DW_SHORT_REGEX.matches(token) -> "DW${DW_SHORT_REGEX.find(token)!!.groupValues[1]}"
+            isNonPoland && DW_SHORT_REGEX.matches(token) -> {
                 val num = DW_SHORT_REGEX.find(token)!!.groupValues[1]
                 sanitizeStreetForCountry("DW$num", countryCode)
             }
@@ -516,7 +517,7 @@ object RoadNameNormalizer {
                 else if (isSlovakia) "II/$token"
                 else token
             }
-            !isPoland && token.matches(Regex("""(?i)^(DK|DW)\s*(\d+)$""")) -> {
+            isNonPoland && token.matches(Regex("""(?i)^(DK|DW)\s*(\d+)$""")) -> {
                 val match = Regex("""(?i)^(?:DK|DW)\s*(\d+)$""").find(token)!!
                 val num = match.groupValues[1]
                 if (isSlovakia) {
@@ -531,7 +532,7 @@ object RoadNameNormalizer {
      * Normalizes a potentially multi-reference highway designation string
      * (e.g. "44;933" -> "DK44 / DW933", "A4;E40" -> "A4 (E40)", "DK44;DW933" -> "DK44 / DW933").
      */
-    fun normalizeHighwayRef(rawRef: String?, countryCode: String? = "PL"): String? {
+    fun normalizeHighwayRef(rawRef: String?, countryCode: String? = null): String? {
         if (rawRef.isNullOrBlank()) return null
         val trimmed = rawRef.trim()
         val tokens = if (trimmed.contains(";")) {
@@ -573,7 +574,7 @@ object RoadNameNormalizer {
         rawRef: String? = null,
         houseNumber: String? = null,
         includeHouseNumber: Boolean = false,
-        countryCode: String? = "PL"
+        countryCode: String? = null
     ): String? {
         if (rawStreet.isNullOrBlank() && rawRef.isNullOrBlank()) return null
 
@@ -603,7 +604,7 @@ object RoadNameNormalizer {
             // If the road was just the highway designation itself (e.g. "DK 52" or "Krajowa 52"), return canonical highway code
             val shouldAttachRef = !isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)
             val combined = if (shouldAttachRef) {
-                val cleanLocal = cleanStreetPrefix(extractBaseStreet(road))
+                val cleanLocal = cleanStreetPrefix(extractBaseStreet(road), countryCode)
                 if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
                     "$cleanLocal $effectiveHouseNumber ($normalizedHighway)"
                 } else {
@@ -617,7 +618,7 @@ object RoadNameNormalizer {
 
         // It's a residential or local street (may still carry a Polish DK/DW token outside PL):
         val baseStreet = extractBaseStreet(road)
-        val cleanStreet = cleanStreetPrefix(baseStreet)
+        val cleanStreet = cleanStreetPrefix(baseStreet, countryCode)
 
         val local = if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
             "$cleanStreet $effectiveHouseNumber"
@@ -648,10 +649,11 @@ object RoadNameNormalizer {
     }
 
     /**
-     * Cleans common Polish street prefixes into standard abbreviations.
+     * Cleans common Polish street prefixes into standard abbreviations (strictly gated on PL country code).
      */
-    private fun cleanStreetPrefix(name: String): String {
+    private fun cleanStreetPrefix(name: String, countryCode: String? = null): String {
         var res = name.trim()
+        if (!countryCode.equals("PL", ignoreCase = true)) return res
         if (res.startsWith("ulica ", ignoreCase = true)) {
             res = "ul. " + res.substring(6).trim()
         } else if (res.startsWith("aleja ", ignoreCase = true)) {

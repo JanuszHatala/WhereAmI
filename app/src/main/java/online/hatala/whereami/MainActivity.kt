@@ -969,10 +969,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         onTogglePinBorders = {
                             if (selectedSavedPlace != null) {
                                 val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
-                                viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                                viewModel.togglePinnedBorders(loc, "", null, selectedSavedPlace!!.geoPoint)
                             } else {
                                 val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "", destinationItem?.municipalityName, destinationPoint)
                             }
                         },
                         isPinBorderVisible = pinnedBoundaryPoints != null,
@@ -1097,10 +1097,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onTogglePinBorders = {
                         if (selectedSavedPlace != null) {
                             val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
-                            viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                            viewModel.togglePinnedBorders(loc, "", null, selectedSavedPlace!!.geoPoint)
                         } else {
                             val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "", destinationItem?.municipalityName, destinationPoint)
                         }
                     },
                     isPinBorderVisible = pinnedBoundaryPoints != null,
@@ -9287,10 +9287,10 @@ private fun ProfileConfigSheet(
                         shape = RoundedCornerShape(10.dp),
                         color = Color(0xFF1E293B),
                         border = BorderStroke(1.dp, Color(0xFF475569)),
-                        modifier = Modifier.width(115.dp).height(40.dp)
+                        modifier = Modifier.widthIn(min = 138.dp).height(40.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp).fillMaxHeight(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -9299,8 +9299,10 @@ private fun ProfileConfigSheet(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
-                                maxLines = 1
+                                maxLines = 1,
+                                softWrap = false
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = "Select Auto-Stop Timeout",
@@ -9321,7 +9323,9 @@ private fun ProfileConfigSheet(
                                     Text(
                                         text = label,
                                         color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
-                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 },
                                 onClick = {
@@ -10331,56 +10335,94 @@ private data class QualityPillConfig(
 @Composable
 private fun DataAcquisitionStatusPill(
     health: DataAcquisitionHealth,
-    heightDp: Dp = 34.dp
+    staleUnverifiedMeters: Float? = null,
+    isCompactDocked: Boolean = false,
+    isLandscape: Boolean = false
 ) {
-    if (health.status == DataAcquisitionStatus.HEALTHY) return
+    val isStaleUnverified = staleUnverifiedMeters != null && staleUnverifiedMeters > 400f
+    if (health.status == DataAcquisitionStatus.HEALTHY && !isStaleUnverified) return
     val context = LocalContext.current
-    val config = when (health.status) {
-        DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
-            bg = Color(0x33F59E0B),
+    val distLabel = if (isStaleUnverified) {
+        val m = staleUnverifiedMeters ?: 0f
+        if (m >= 1000f) String.format(java.util.Locale.US, "%.1f km", m / 1000f) else "${m.toInt()} m"
+    } else null
+
+    val config = when {
+        health.status == DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
+            bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.HourglassTop,
-            label = "429 Throttled",
+            label = if (distLabel != null) "429 Throttled • Unverified ($distLabel)" else "429 Throttled",
             tooltip = "OSM Nominatim rate limit (HTTP 429). Using offline spatial cache & OSM vector roads."
         )
-        DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
-            bg = Color(0x33EF4444),
+        health.status == DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
+            bg = Color(0xEE1F1622),
             fg = Color(0xFFF87171),
             icon = Icons.Default.CloudOff,
-            label = "Offline",
-            tooltip = "No internet connection. Locality and roads resolved from offline spatial cache."
+            label = if (distLabel != null) "Offline • Unverified ($distLabel)" else "Offline",
+            tooltip = if (distLabel != null) {
+                "No internet connection and $distLabel from last verified locality. Queued for post-trip cache backfill."
+            } else {
+                "No internet connection. Locality and roads resolved from offline spatial cache."
+            }
         )
-        DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
-            bg = Color(0x33F59E0B),
+        health.status == DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
+            bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.Storage,
-            label = "Cache Only",
-            tooltip = "Network geocoding failed or unavailable. Displaying cached spatial data."
+            label = if (distLabel != null) "Cache Miss • Unverified ($distLabel)" else "Cache Only",
+            tooltip = if (distLabel != null) {
+                "Network geocoding unavailable and $distLabel from last verified locality. Queued for post-trip cache backfill."
+            } else {
+                "Network geocoding failed or unavailable. Displaying cached spatial data."
+            }
         )
-        DataAcquisitionStatus.HEALTHY -> null
+        isStaleUnverified -> QualityPillConfig(
+            bg = Color(0xEE182032),
+            fg = Color(0xFFFBBF24),
+            icon = Icons.Default.Warning,
+            label = "Unverified ($distLabel)",
+            tooltip = "Display relies on last verified place $distLabel away; live locality lookup pending."
+        )
+        else -> null
     } ?: return
 
+    val pillShape = if (isCompactDocked) {
+        RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
+    } else {
+        RoundedCornerShape(12.dp)
+    }
+    val startPadding = if (isLandscape) if (isCompactDocked) 16.dp else 12.dp else 0.dp
+    val heightDp = if (isCompactDocked) 22.dp else 24.dp
+
+    if (!isCompactDocked) {
+        Spacer(modifier = Modifier.height(3.dp))
+    }
     Surface(
         onClick = {
             android.widget.Toast.makeText(context, config.tooltip, android.widget.Toast.LENGTH_LONG).show()
         },
-        shape = RoundedCornerShape(12.dp),
+        shape = pillShape,
         color = config.bg,
-        modifier = Modifier.height(heightDp)
+        border = BorderStroke(1.dp, config.fg.copy(alpha = 0.45f)),
+        shadowElevation = 4.dp,
+        modifier = Modifier
+            .padding(start = startPadding)
+            .height(heightDp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxHeight()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 10.dp)
         ) {
             Icon(
                 imageVector = config.icon,
                 contentDescription = config.label,
                 tint = config.fg,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(13.dp)
             )
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = config.label,
                 fontSize = 11.sp,
@@ -10428,13 +10470,20 @@ private fun LocalityCard(
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
     val isStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
     val dataHealth by remember { DataAcquisitionManager.health }.collectAsState()
+    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isStaleUnverified = locationData.dataFreshness == PlaceDataFreshness.STALE_FALLBACK &&
+        (locationData.staleSinceDistanceMeters ?: 0f) > 400f
 
-    Card(
+    Column(
         modifier = modifier,
-        shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        horizontalAlignment = if (isLandscape) Alignment.Start else Alignment.CenterHorizontally
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -10581,8 +10630,6 @@ private fun LocalityCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 34.dp)
-
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -10719,7 +10766,12 @@ private fun LocalityCard(
                 }
 
                 // ── Row 2: Dedicated Full-Width Street Name & Number (NEVER Truncated) ──
-                if (streetOrRoad.isNotEmpty()) {
+                val displayStreetCompact = when {
+                    streetOrRoad.isNotEmpty() -> streetOrRoad
+                    isStaleUnverified -> "Offline • Unverified"
+                    else -> ""
+                }
+                if (displayStreetCompact.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -10728,11 +10780,20 @@ private fun LocalityCard(
                     ) {
                         EmojiText(emoji = "📍", fontSize = 13.sp)
                         Spacer(modifier = Modifier.width(4.dp))
+                        if (isStaleUnverified) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Unverified fallback",
+                                tint = Color(0xFFFCA5A5),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
                         Text(
-                            text = streetOrRoad,
+                            text = displayStreetCompact,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFFBBF24), // Vivid Amber Gold
+                            color = if (isStaleUnverified) Color(0xFFFCA5A5) else Color(0xFFFBBF24), // Vivid Amber Gold
                             maxLines = 2,
                             style = TextStyle(
                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -10746,7 +10807,7 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Compact Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                // ── Compact Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
                     OutdoorContextRow(
                         outdoor = outdoor,
@@ -10932,8 +10993,6 @@ private fun LocalityCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 40.dp)
-
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -11264,23 +11323,42 @@ private fun LocalityCard(
                     allowHouseNumber = allowHouseNum
                 ).orEmpty()
 
-                if (streetOrRoad.isNotEmpty()) {
-                    Text(
-                        text = streetOrRoad,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFFFBBF24), // Amber gold for street
-                        textAlign = TextAlign.Center,
+                val displayStreetNormal = when {
+                    streetOrRoad.isNotEmpty() -> streetOrRoad
+                    isStaleUnverified -> "Offline • Unverified"
+                    else -> ""
+                }
+                if (displayStreetNormal.isNotEmpty()) {
+                    Row(
                         modifier = Modifier.padding(top = 1.dp),
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 15.sp
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        if (isStaleUnverified) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Unverified fallback",
+                                tint = Color(0xFFFCA5A5),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = displayStreetNormal,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isStaleUnverified) Color(0xFFFCA5A5) else Color(0xFFFBBF24), // Amber gold for street
+                            textAlign = TextAlign.Center,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 15.sp
+                            )
                         )
-                    )
+                    }
                 }
 
                 // Administrative Hierarchy (Gmina, Powiat, Województwo, Country)
@@ -11312,7 +11390,7 @@ private fun LocalityCard(
                     )
                 }
 
-                // ── Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
                     Spacer(modifier = Modifier.height(4.dp))
                     OutdoorContextRow(
@@ -11489,6 +11567,13 @@ private fun LocalityCard(
                 }
             }
         }
+        }
+        DataAcquisitionStatusPill(
+            health = dataHealth,
+            staleUnverifiedMeters = if (isStaleUnverified) locationData.staleSinceDistanceMeters else null,
+            isCompactDocked = isCompact,
+            isLandscape = isLandscape
+        )
     }
 }
 

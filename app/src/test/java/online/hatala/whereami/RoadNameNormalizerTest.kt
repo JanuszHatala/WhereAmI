@@ -10,23 +10,23 @@ class RoadNameNormalizerTest {
 
     @Test
     fun testNationalRoadsNormalization() {
-        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa 52"))
-        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa nr 52"))
-        assertEquals("DK52", RoadNameNormalizer.normalize("Krajowa 52"))
-        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52"))
-        assertEquals("DK52", RoadNameNormalizer.normalize("DK52"))
-        assertEquals("DK28", RoadNameNormalizer.normalize("Droga Krajowa 28"))
-        assertEquals("DK28", RoadNameNormalizer.normalize("28"))
-        assertEquals("DK47", RoadNameNormalizer.normalize("47"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa 52", countryCode = "PL"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("Droga Krajowa nr 52", countryCode = "PL"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("Krajowa 52", countryCode = "PL"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52", countryCode = "PL"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK52", countryCode = "PL"))
+        assertEquals("DK28", RoadNameNormalizer.normalize("Droga Krajowa 28", countryCode = "PL"))
+        assertEquals("DK28", RoadNameNormalizer.normalize("28", countryCode = "PL"))
+        assertEquals("DK47", RoadNameNormalizer.normalize("47", countryCode = "PL"))
     }
 
     @Test
     fun testProvincialRoadsNormalization() {
-        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946"))
-        assertEquals("DW946", RoadNameNormalizer.normalize("Wojewódzka 946"))
-        assertEquals("DW946", RoadNameNormalizer.normalize("DW 946"))
-        assertEquals("DW948", RoadNameNormalizer.normalize("Droga Wojewódzka nr 948"))
-        assertEquals("DW946", RoadNameNormalizer.normalize("946"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946", countryCode = "PL"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("Wojewódzka 946", countryCode = "PL"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("DW 946", countryCode = "PL"))
+        assertEquals("DW948", RoadNameNormalizer.normalize("Droga Wojewódzka nr 948", countryCode = "PL"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("946", countryCode = "PL"))
     }
 
     @Test
@@ -41,27 +41,27 @@ class RoadNameNormalizerTest {
     @Test
     fun testMajorRoadsStripHouseNumbers() {
         // Major roads must NOT have house numbers appended
-        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52", houseNumber = "142"))
-        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946", houseNumber = "55B"))
+        assertEquals("DK52", RoadNameNormalizer.normalize("DK 52", houseNumber = "142", countryCode = "PL"))
+        assertEquals("DW946", RoadNameNormalizer.normalize("Droga Wojewódzka 946", houseNumber = "55B", countryCode = "PL"))
     }
 
     @Test
     fun testResidentialStreetsStripHouseNumbersAndCleanPrefix() {
-        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza", houseNumber = "12"))
-        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza 12"))
-        assertEquals("al. Wolności", RoadNameNormalizer.normalize("aleja Wolności", houseNumber = "4A"))
-        assertEquals("os. Tysiąclecia", RoadNameNormalizer.normalize("osiedle Tysiąclecia", houseNumber = "5"))
-        assertEquals("pl. Grunwaldzki", RoadNameNormalizer.normalize("plac Grunwaldzki"))
-        assertEquals("Zagłębocze", RoadNameNormalizer.normalize("Zagłębocze 45"))
-        assertEquals("Górska", RoadNameNormalizer.normalize("Górska 92"))
-        assertEquals("Zielona", RoadNameNormalizer.normalize("Zielona 18"))
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza", houseNumber = "12", countryCode = "PL"))
+        assertEquals("ul. Mickiewicza", RoadNameNormalizer.normalize("ulica Mickiewicza 12", countryCode = "PL"))
+        assertEquals("al. Wolności", RoadNameNormalizer.normalize("aleja Wolności", houseNumber = "4A", countryCode = "PL"))
+        assertEquals("os. Tysiąclecia", RoadNameNormalizer.normalize("osiedle Tysiąclecia", houseNumber = "5", countryCode = "PL"))
+        assertEquals("pl. Grunwaldzki", RoadNameNormalizer.normalize("plac Grunwaldzki", countryCode = "PL"))
+        assertEquals("Zagłębocze", RoadNameNormalizer.normalize("Zagłębocze 45", countryCode = "PL"))
+        assertEquals("Górska", RoadNameNormalizer.normalize("Górska 92", countryCode = "PL"))
+        assertEquals("Zielona", RoadNameNormalizer.normalize("Zielona 18", countryCode = "PL"))
     }
 
     @Test
     fun testNamedStreetWithHighwayRef() {
-        assertEquals("ul. Wadowicka (DK52)", RoadNameNormalizer.normalize("ulica Wadowicka", rawRef = "DK52"))
-        assertEquals("ul. Żywiecka (DW946)", RoadNameNormalizer.normalize("ulica Żywiecka", rawRef = "946"))
-        assertEquals("al. świętego Jana Pawła II (S1)", RoadNameNormalizer.normalize("Aleje świętego Jana Pawła II", rawRef = "S1"))
+        assertEquals("ul. Wadowicka (DK52)", RoadNameNormalizer.normalize("ulica Wadowicka", rawRef = "DK52", countryCode = "PL"))
+        assertEquals("ul. Żywiecka (DW946)", RoadNameNormalizer.normalize("ulica Żywiecka", rawRef = "946", countryCode = "PL"))
+        assertEquals("al. świętego Jana Pawła II (S1)", RoadNameNormalizer.normalize("Aleje świętego Jana Pawła II", rawRef = "S1", countryCode = "PL"))
     }
 
     @Test
@@ -179,16 +179,22 @@ class RoadNameNormalizerTest {
         assertEquals("I/18", RoadNameNormalizer.normalize(null, rawRef = "DK18", countryCode = "SK"))
         assertEquals("II/537", RoadNameNormalizer.normalize(null, rawRef = "DW537", countryCode = "SK"))
 
-        // Generic other country (e.g. CZ, DE)
+        // Generic other country (e.g. CZ, DE) & unknown null/blank countryCode
         assertEquals("18", RoadNameNormalizer.normalize("18", countryCode = "CZ"))
         assertEquals("537", RoadNameNormalizer.normalize("537", countryCode = "DE"))
+        assertEquals("12", RoadNameNormalizer.normalize("12", countryCode = null))
+        assertEquals("66", RoadNameNormalizer.normalize("66", countryCode = ""))
+        assertEquals("902", RoadNameNormalizer.normalize("902", countryCode = null))
+        assertEquals("Main St (66)", RoadNameNormalizer.normalize("Main St", rawRef = "66", countryCode = "US"))
+        assertEquals("Plac Espanya", RoadNameNormalizer.normalize("Plac Espanya", countryCode = "ES"))
+        assertEquals("Ulica Heroja", RoadNameNormalizer.normalize("Ulica Heroja", countryCode = "HR"))
     }
 
     @Test
     fun corridorLocalName_isNotShieldedWhenTheWayCarriesTheRoadNumber() {
         // DK52 through Bujaków: OSRM snaps "Bielska", Nominatim's way has ref 52.
         assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Bielska", "52"))
-        assertEquals("Bielska (DK52)", RoadNameNormalizer.normalize("Bielska", "52"))
+        assertEquals("Bielska (DK52)", RoadNameNormalizer.normalize("Bielska", "52", countryCode = "PL"))
         // A parallel / crossing local street without a road number stays shielded at speed.
         assertTrue(RoadNameNormalizer.shouldShieldMajorCorridor(54f, true, "Polna", null))
         assertFalse(RoadNameNormalizer.shouldShieldMajorCorridor(30f, true, "Polna", null))
@@ -343,11 +349,12 @@ class RoadNameNormalizerTest {
 
     @Test
     fun testMultiRefSemicolonNormalization() {
-        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize(null, "44;933"))
-        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize("44;933"))
-        assertEquals("A4 (E40)", RoadNameNormalizer.normalize(null, "A4;E40"))
-        assertEquals("A4 (E40)", RoadNameNormalizer.normalize("A4;E40"))
-        assertEquals("ul. Krakowska (DK44 / DW933)", RoadNameNormalizer.normalize("ul. Krakowska", "44;933"))
+        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize(null, "44;933", countryCode = "PL"))
+        assertEquals("DK44 / DW933", RoadNameNormalizer.normalize("44;933", countryCode = "PL"))
+        assertEquals("A4 (E40)", RoadNameNormalizer.normalize(null, "A4;E40", countryCode = "PL"))
+        assertEquals("A4 (E40)", RoadNameNormalizer.normalize("A4;E40", countryCode = "PL"))
+        assertEquals("ul. Krakowska (DK44 / DW933)", RoadNameNormalizer.normalize("ul. Krakowska", "44;933", countryCode = "PL"))
+        assertEquals("44 / 933", RoadNameNormalizer.normalize(null, "44;933", countryCode = null))
         assertTrue(RoadNameNormalizer.isHighwayCodeOnly("DK44 / DW933"))
         assertTrue(RoadNameNormalizer.isHighwayCodeOnly("A4 (E40)"))
         assertTrue(RoadNameNormalizer.isHighwayCodeOnly("44;933"))

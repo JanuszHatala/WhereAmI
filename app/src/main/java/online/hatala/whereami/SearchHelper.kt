@@ -85,40 +85,12 @@ object SearchHelper {
     ): List<SearchResultItem> = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
-        OfflineOutdoorRegionIndex.initIfNeeded(context)
 
         val candidates = mutableListOf<PlaceSearchRanker.Candidate>()
 
         fun addCandidate(c: PlaceSearchRanker.Candidate) {
             if (category == SearchCategory.ALL || matchesCategory(category, c.item)) {
                 candidates.add(c)
-            }
-        }
-
-        // 1. Match offline regions (mountain ranges, landscape parks, national parks)
-        if (category == SearchCategory.ALL || category == SearchCategory.RANGES_PARKS) {
-            val offlineRegions = OfflineOutdoorRegionIndex.getAllRegions()
-            for (r in offlineRegions) {
-                if (SearchNormalizer.matchesQuery(trimmed, r.area.name, r.area.nameEn, r.area.kind.displayName)) {
-                    val centerLat = (r.minLat + r.maxLat) / 2.0
-                    val centerLon = (r.minLon + r.maxLon) / 2.0
-                    addCandidate(
-                        PlaceSearchRanker.Candidate(
-                            item = SearchResultItem(
-                                title = r.area.name,
-                                subtitle = r.area.nameEn?.let { "$it · ${r.area.kind.displayName}" } ?: r.area.kind.displayName,
-                                geoPoint = GeoPoint(centerLat, centerLon),
-                                placeType = r.area.kind.name.lowercase(Locale.ROOT),
-                                source = "offline_regions",
-                                importance = 0.88,
-                                geometryType = SearchGeometryType.POLYGON,
-                                outdoorAreaId = r.area.id
-                            ),
-                            placeType = r.area.kind.name.lowercase(Locale.ROOT),
-                            importance = 0.88
-                        )
-                    )
-                }
             }
         }
 
@@ -661,7 +633,7 @@ object SearchHelper {
                 val street = addr.thoroughfare
                 val houseNum = addr.subThoroughfare
                 val locality = addr.locality ?: addr.subLocality ?: addr.subAdminArea
-                val countryCode = addr.countryCode?.lowercase(Locale.ROOT) ?: "pl"
+                val countryCode = addr.countryCode?.lowercase(Locale.ROOT) ?: ""
 
                 var isOffRoad = false
                 if (addr.hasLatitude() && addr.hasLongitude()) {
@@ -763,7 +735,7 @@ object SearchHelper {
         val county = addressObj?.optString("county")?.takeIf { it.isNotBlank() }
         val state = addressObj?.optString("state")?.takeIf { it.isNotBlank() }
         val country = addressObj?.optString("country")?.takeIf { it.isNotBlank() }
-        val countryCode = addressObj?.optString("country_code", "pl")?.lowercase(Locale.ROOT) ?: "pl"
+        val countryCode = addressObj?.optString("country_code", "")?.lowercase(Locale.ROOT) ?: ""
 
         val isTouristicFeature = isTouristicOsmFeature(osmClass, osmType)
         val isNaturalTerrain = osmClass in listOf("natural", "landuse", "leisure", "waterway") ||
@@ -923,28 +895,9 @@ object SearchHelper {
         originLon: Double?
     ): List<SearchResultItem> = withContext(Dispatchers.IO) {
         if (originLat == null || originLon == null) return@withContext emptyList()
-        OfflineOutdoorRegionIndex.initIfNeeded(context)
         when (category) {
             SearchCategory.ALL -> emptyList()
-            SearchCategory.RANGES_PARKS -> {
-                OfflineOutdoorRegionIndex.getAllRegions().map { r ->
-                    val cLat = (r.minLat + r.maxLat) / 2.0
-                    val cLon = (r.minLon + r.maxLon) / 2.0
-                    val dist = computeDistanceMeters(originLat, originLon, cLat, cLon)
-                    val kindDisplay = r.area.kind.displayName
-                    SearchResultItem(
-                        title = r.area.name,
-                        subtitle = r.area.nameEn?.let { "$it · $kindDisplay" } ?: kindDisplay,
-                        geoPoint = GeoPoint(cLat, cLon),
-                        distanceMeters = dist,
-                        placeType = r.area.kind.name.lowercase(Locale.ROOT),
-                        source = "offline_regions",
-                        geometryType = SearchGeometryType.POLYGON,
-                        outdoorAreaId = r.area.id,
-                        importance = 0.85
-                    )
-                }.sortedBy { it.distanceMeters ?: Float.MAX_VALUE }.take(15)
-            }
+            SearchCategory.RANGES_PARKS -> fetchNearbyOutdoorAreas(originLat, originLon)
             SearchCategory.PEAKS_PASSES -> fetchNearbyOutdoorNodes(originLat, originLon, "peak|saddle|volcano")
             SearchCategory.TRAILS -> fetchNearbyOutdoorTrails(originLat, originLon)
             SearchCategory.WATER_VALLEYS -> fetchNearbyWaterAndValleys(originLat, originLon)
@@ -953,13 +906,6 @@ object SearchHelper {
     }
 
     suspend fun fetchResultGeometry(context: Context, item: SearchResultItem): SearchResultGeometry? = withContext(Dispatchers.IO) {
-        if (item.outdoorAreaId != null) {
-            OfflineOutdoorRegionIndex.initIfNeeded(context)
-            val poly = OfflineOutdoorRegionIndex.getPolygonByIdOrName(item.outdoorAreaId)?.polygon
-            if (poly != null && poly.size >= 3) {
-                return@withContext SearchResultGeometry(polygon = poly)
-            }
-        }
         val osmId = item.osmId ?: return@withContext null
         val osmType = item.osmType ?: "relation"
 
@@ -990,13 +936,13 @@ object SearchHelper {
                 } else {
                     "[out:json][timeout:12]; relation($osmId); (._; >;); out skel qt;"
                 }
-                val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-                val conn = URL(urlStr).openConnection() as HttpURLConnection
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.connectTimeout = 6000
-                conn.readTimeout = 10000
-                if (conn.responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().readText()
+                val body = OutdoorContextResolver.executeOverpassQuery(
+                    ql = ql,
+                    connectTimeoutMs = 6000,
+                    readTimeoutMs = 10000,
+                    tag = "SEARCH"
+                )
+                if (body != null) {
                     val parsedTrails = TrailVectorRepository.parseOverpassTrails(body)
                     if (parsedTrails.isNotEmpty()) {
                         val lines = parsedTrails.map { it.points }
@@ -1018,22 +964,36 @@ object SearchHelper {
             val qEscaped = query.replace("\"", "")
             val areaClause = if (originLat != null && originLon != null) "(around:80000,$originLat,$originLon)" else ""
             val filter = when (category) {
-                SearchCategory.PEAKS_PASSES -> "node[natural~\"^(peak|saddle|volcano)$\"]$areaClause[name~\"$qEscaped\",i]; out center 12;"
-                SearchCategory.TRAILS -> "rel[type=route][route~\"^(hiking|foot|mtb|bicycle|canoe|kayak)$\"]$areaClause[name~\"$qEscaped\",i]; out center 12;"
-                SearchCategory.RANGES_PARKS -> "(rel[boundary~\"^(national_park|protected_area)$\"]$areaClause[name~\"$qEscaped\",i]; rel[natural~\"^(mountain_range|valley)$\"]$areaClause[name~\"$qEscaped\",i];); out center 12;"
-                SearchCategory.WATER_VALLEYS -> "(way[waterway=river]$areaClause[name~\"$qEscaped\",i]; rel[waterway=river]$areaClause[name~\"$qEscaped\",i]; way[natural=water]$areaClause[name~\"$qEscaped\",i]; rel[natural=water]$areaClause[name~\"$qEscaped\",i]; way[natural=valley]$areaClause[name~\"$qEscaped\",i]; rel[natural=valley]$areaClause[name~\"$qEscaped\",i];); out center 12;"
-                SearchCategory.HUTS_POIS -> "(node[tourism~\"^(alpine_hut|wilderness_hut|viewpoint)$\"]$areaClause[name~\"$qEscaped\",i]; way[tourism~\"^(alpine_hut|wilderness_hut)$\"]$areaClause[name~\"$qEscaped\",i];); out center 12;"
+                SearchCategory.PEAKS_PASSES -> """node[natural~"^(peak|saddle|volcano)$"]$areaClause[name~"$qEscaped",i]; out center 12;"""
+                SearchCategory.TRAILS -> """rel[type=route][route~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]$areaClause[name~"$qEscaped",i]; out center 12;"""
+                SearchCategory.RANGES_PARKS -> """(rel[boundary~"^(national_park|protected_area)$"]$areaClause[name~"$qEscaped",i]; node[natural~"^(mountain_range|valley|massif)$"]$areaClause[name~"$qEscaped",i]; way[natural~"^(mountain_range|valley|massif)$"]$areaClause[name~"$qEscaped",i]; rel[natural~"^(mountain_range|valley|massif)$"]$areaClause[name~"$qEscaped",i];); out center 15;"""
+                SearchCategory.WATER_VALLEYS -> """(way[waterway=river]$areaClause[name~"$qEscaped",i]; rel[waterway=river]$areaClause[name~"$qEscaped",i]; way[natural=water]$areaClause[name~"$qEscaped",i]; rel[natural=water]$areaClause[name~"$qEscaped",i]; way[natural=valley]$areaClause[name~"$qEscaped",i]; rel[natural=valley]$areaClause[name~"$qEscaped",i];); out center 12;"""
+                SearchCategory.HUTS_POIS -> """(node[tourism~"^(alpine_hut|wilderness_hut|viewpoint)$"]$areaClause[name~"$qEscaped",i]; way[tourism~"^(alpine_hut|wilderness_hut)$"]$areaClause[name~"$qEscaped",i];); out center 12;"""
                 else -> return emptyList()
             }
             val ql = "[out:json][timeout:8]; $filter"
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
             parseOverpassSearchResults(body, originLat, originLon)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchNearbyOutdoorAreas(lat: Double, lon: Double): List<SearchResultItem> {
+        return try {
+            val ql = """[out:json][timeout:10]; (relation(around:50000,$lat,$lon)[boundary~"^(national_park|protected_area)$"][name]; way(around:25000,$lat,$lon)[leisure="nature_reserve"][name]; node(around:40000,$lat,$lon)[natural~"^(mountain_range|massif|valley)$"][name]; way(around:40000,$lat,$lon)[natural~"^(mountain_range|massif|valley)$"][name]; relation(around:40000,$lat,$lon)[natural~"^(mountain_range|massif|valley)$"][name];); out center 20;"""
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 10000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
+            parseOverpassSearchResults(body, lat, lon)
         } catch (_: Exception) {
             emptyList()
         }
@@ -1041,56 +1001,52 @@ object SearchHelper {
 
     private fun fetchNearbyOutdoorNodes(lat: Double, lon: Double, naturalFilter: String): List<SearchResultItem> {
         return try {
-            val ql = "[out:json][timeout:8]; node(around:25000,$lat,$lon)[natural~\"^($naturalFilter)$\\\"][name]; out 15;"
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
+            val ql = """[out:json][timeout:8]; node(around:25000,$lat,$lon)[natural~"^($naturalFilter)$"][name]; out 15;"""
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
             parseOverpassSearchResults(body, lat, lon)
         } catch (_: Exception) { emptyList() }
     }
 
     private fun fetchNearbyOutdoorTrails(lat: Double, lon: Double): List<SearchResultItem> {
         return try {
-            val ql = "[out:json][timeout:8]; rel(around:15000,$lat,$lon)[type=route][route~\"^(hiking|foot|mtb|bicycle|canoe|kayak)$\\\"][name]; out center 15;"
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
+            val ql = """[out:json][timeout:8]; rel(around:15000,$lat,$lon)[type=route][route~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"][name]; out center 15;"""
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
             parseOverpassSearchResults(body, lat, lon)
         } catch (_: Exception) { emptyList() }
     }
 
     private fun fetchNearbyWaterAndValleys(lat: Double, lon: Double): List<SearchResultItem> {
         return try {
-            val ql = "[out:json][timeout:8]; (way(around:15000,$lat,$lon)[natural~\"^(water|valley)$\\\"][name]; way(around:15000,$lat,$lon)[waterway=river][name];); out center 15;"
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
+            val ql = """[out:json][timeout:8]; (way(around:15000,$lat,$lon)[natural~"^(water|valley)$"][name]; way(around:15000,$lat,$lon)[waterway=river][name];); out center 15;"""
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
             parseOverpassSearchResults(body, lat, lon)
         } catch (_: Exception) { emptyList() }
     }
 
     private fun fetchNearbyHutsAndPois(lat: Double, lon: Double): List<SearchResultItem> {
         return try {
-            val ql = "[out:json][timeout:8]; (node(around:20000,$lat,$lon)[tourism~\"^(alpine_hut|wilderness_hut|viewpoint)$\\\"][name]; way(around:20000,$lat,$lon)[tourism~\"^(alpine_hut|wilderness_hut)$\\\"][name];); out center 15;"
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
+            val ql = """[out:json][timeout:8]; (node(around:20000,$lat,$lon)[tourism~"^(alpine_hut|wilderness_hut|viewpoint)$"][name]; way(around:20000,$lat,$lon)[tourism~"^(alpine_hut|wilderness_hut)$"][name];); out center 15;"""
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = ql,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return emptyList()
             parseOverpassSearchResults(body, lat, lon)
         } catch (_: Exception) { emptyList() }
     }
@@ -1184,13 +1140,12 @@ object SearchHelper {
                 );
                 out body;
             """.trimIndent().replace("\n", "")
-            val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(query, "UTF-8")
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
-            conn.connectTimeout = 5000
-            conn.readTimeout = 8000
-            if (conn.responseCode != 200) return null
-            val body = conn.inputStream.bufferedReader().readText()
+            val body = OutdoorContextResolver.executeOverpassQuery(
+                ql = query,
+                connectTimeoutMs = 5000,
+                readTimeoutMs = 8000,
+                tag = "SEARCH"
+            ) ?: return null
             selectNearestTouristicPoi(body, lat, lon, maxDistanceMeters = radius.toFloat())
         } catch (_: Exception) {
             null

@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Where Am I</string>
-    <string name="freemap_outdoor_description">Official PTTK trail colors (Red, Blue, Green, Yellow, Black), terrain hillshading, contours and mountain huts (Central Europe) • Hi-DPI 512px</string>
+    <string name="freemap_outdoor_description">Pre-rendered trail colors, terrain hillshading, contours and mountain huts (Central Europe) • Hi-DPI 512px</string>
 </resources>

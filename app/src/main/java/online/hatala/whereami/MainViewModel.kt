@@ -541,7 +541,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun togglePinnedBorders(
         locality: String?,
-        countryCode: String? = "pl",
+        countryCode: String? = null,
         fallbackMunicipality: String? = null,
         geoPoint: org.osmdroid.util.GeoPoint? = null
     ) {
@@ -553,7 +553,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val poly = BoundaryHelper.getLocalityBoundary(
                     context = getApplication(),
                     cityName = locality,
-                    countryCode = countryCode ?: "pl",
+                    countryCode = countryCode?.takeIf { it.isNotBlank() } ?: "",
                     fallbackMunicipality = fallbackMunicipality,
                     geoPoint = geoPoint,
                     forPin = true
@@ -719,7 +719,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 fallbackLocalityPoly = BoundaryHelper.getLocalityBoundary(
                     context = getApplication(),
                     cityName = item.localityName ?: item.title,
-                    countryCode = item.countryCode ?: "pl",
+                    countryCode = item.countryCode?.takeIf { it.isNotBlank() } ?: "",
                     fallbackMunicipality = item.municipalityName,
                     geoPoint = item.geoPoint,
                     forPin = true
@@ -1111,10 +1111,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _liveOutdoorAreaName.value = area.name
 
         viewModelScope.launch(Dispatchers.IO) {
-            OfflineOutdoorRegionIndex.initIfNeeded(getApplication())
-            val polyObj = OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.id)
-                ?: OfflineOutdoorRegionIndex.getPolygonByIdOrName(area.name)
-            val points = polyObj?.polygon ?: BoundaryHelper.getOutdoorAreaBoundary(getApplication(), area)
+            val points = BoundaryHelper.getOutdoorAreaBoundary(getApplication(), area)
             withContext(Dispatchers.Main) {
                 if (lastOutdoorAreaId == area.id) {
                     _liveOutdoorAreaBoundary.value = points

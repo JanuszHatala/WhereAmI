@@ -22,8 +22,22 @@ class VectorTrailOverlay(
     private val context: Context,
     private val scope: CoroutineScope,
     var trailThickness: TrailThickness = TrailThickness.NORMAL,
+    var enabledKinds: Set<TrailRouteKind> = emptySet(),
+    var enabledColors: Set<TrailColor> = emptySet(),
     var onTrailSelected: ((TrailVectorSegment) -> Unit)? = null
 ) : Overlay() {
+
+    companion object {
+        fun matchesFilters(
+            segment: TrailVectorSegment,
+            enabledKinds: Set<TrailRouteKind>,
+            enabledColors: Set<TrailColor>
+        ): Boolean {
+            val kindOk = enabledKinds.isEmpty() || segment.kind in enabledKinds
+            val colorOk = enabledColors.isEmpty() || segment.color in enabledColors
+            return kindOk && colorOk
+        }
+    }
 
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -98,7 +112,7 @@ class VectorTrailOverlay(
         if (zoom < 12.0) return
 
         updateTrailsForViewport(mapView)
-        val trailsToDraw = currentTrails
+        val trailsToDraw = currentTrails.filter { matchesFilters(it, enabledKinds, enabledColors) }
         if (trailsToDraw.isEmpty()) return
 
         val proj = mapView.projection ?: return
@@ -175,6 +189,7 @@ class VectorTrailOverlay(
         var minDistancePx = Float.MAX_VALUE
 
         for (trail in currentTrails) {
+            if (!matchesFilters(trail, enabledKinds, enabledColors)) continue
             val pts = trail.points
             for (i in 0 until pts.size - 1) {
                 proj.toPixels(pts[i], p1)

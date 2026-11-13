@@ -120,20 +120,35 @@ object TrailVectorRepository {
                     out tags geom;
                 """.trimIndent().replace("\n", "")
 
-                val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-                val conn = URL(urlStr).openConnection() as HttpURLConnection
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.setRequestProperty("Accept", "application/json")
-                conn.setRequestProperty("Accept-Charset", "utf-8")
-                conn.connectTimeout = 8000
-                conn.readTimeout = 15000
-
-                if (conn.responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().readText()
+                val body = OutdoorContextResolver.executeOverpassQuery(
+                    ql = ql,
+                    connectTimeoutMs = 8000,
+                    readTimeoutMs = 15000,
+                    tag = "TRAILS"
+                )
+                if (body != null) {
                     val parsed = parseOverpassTrails(body)
                     memoryCache[key] = parsed
                     saveTileJson(file, parsed)
                     return parsed
+                }
+
+                // Fallback: bounded OSM 0.6 /api/0.6/map XML around tile center when all Overpass mirrors fail
+                val cLat = (s + n) / 2.0
+                val cLon = (w + e) / 2.0
+                val halfLat = minOf((n - s) / 2.0, 0.015)
+                val halfLon = minOf((e - w) / 2.0, 0.02)
+                val xml = OutdoorContextResolver.fetchOsmMapXml(
+                    cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon,
+                    connectTimeoutMs = 6000,
+                    readTimeoutMs = 12000
+                )
+                if (xml != null) {
+                    val parsedXml = parseOsmMapXmlTrails(xml)
+                    if (parsedXml.isNotEmpty()) {
+                        memoryCache[key] = parsedXml
+                    }
+                    return parsedXml
                 }
                 emptyList()
             }
@@ -142,6 +157,136 @@ object TrailVectorRepository {
             emptyList()
         } finally {
             pendingTiles.remove(key)
+        }
+    }
+
+    /**
+     * Parses OSM 0.6 `/api/0.6/map` XML elements into [TrailVectorSegment]s when Overpass mirrors
+     * are unavailable or rate-limited.
+     */
+    fun parseOsmMapXmlTrails(xmlStr: String): List<TrailVectorSegment> {
+        return try {
+            val dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            try {
+                dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            } catch (_: Exception) {}
+            val doc = dbf.newDocumentBuilder().parse(org.xml.sax.InputSource(java.io.StringReader(xmlStr)))
+            val nodesMap = HashMap<Long, GeoPoint>()
+            val wayNodeRefs = HashMap<Long, List<Long>>()
+            val wayTagsMap = HashMap<Long, Map<String, String>>()
+            val segments = mutableListOf<TrailVectorSegment>()
+
+            val nodeEls = doc.getElementsByTagName("node")
+            for (i in 0 until nodeEls.length) {
+                val el = nodeEls.item(i) as? org.w3c.dom.Element ?: continue
+                val id = el.getAttribute("id").toLongOrNull() ?: continue
+                val lat = el.getAttribute("lat").toDoubleOrNull() ?: continue
+                val lon = el.getAttribute("lon").toDoubleOrNull() ?: continue
+                nodesMap[id] = GeoPoint(lat, lon)
+            }
+
+            fun readTags(parent: org.w3c.dom.Element): Map<String, String> {
+                val map = HashMap<String, String>()
+                val children = parent.childNodes
+                for (i in 0 until children.length) {
+                    val child = children.item(i) as? org.w3c.dom.Element ?: continue
+                    if (child.tagName == "tag") {
+                        val k = child.getAttribute("k")
+                        val v = child.getAttribute("v")
+                        if (k.isNotEmpty()) map[k] = v
+                    }
+                }
+                return map
+            }
+
+            val wayEls = doc.getElementsByTagName("way")
+            for (i in 0 until wayEls.length) {
+                val el = wayEls.item(i) as? org.w3c.dom.Element ?: continue
+                val wayId = el.getAttribute("id").toLongOrNull() ?: continue
+                val nds = ArrayList<Long>()
+                val children = el.childNodes
+                for (c in 0 until children.length) {
+                    val child = children.item(c) as? org.w3c.dom.Element ?: continue
+                    if (child.tagName == "nd") {
+                        child.getAttribute("ref").toLongOrNull()?.let { nds.add(it) }
+                    }
+                }
+                if (nds.size >= 2) {
+                    wayNodeRefs[wayId] = nds
+                    val tags = readTags(el)
+                    if (tags.isNotEmpty()) wayTagsMap[wayId] = tags
+                }
+            }
+
+            val relEls = doc.getElementsByTagName("relation")
+            val validRoutes = setOf("hiking", "foot", "mtb", "bicycle", "canoe", "kayak")
+            for (i in 0 until relEls.length) {
+                val el = relEls.item(i) as? org.w3c.dom.Element ?: continue
+                val relId = el.getAttribute("id").toLongOrNull() ?: continue
+                val tags = readTags(el)
+                if (tags["type"] != "route") continue
+                val route = tags["route"] ?: continue
+                if (route !in validRoutes) continue
+                val name = tags["name"] ?: tags["ref"] ?: "Trail #$relId"
+                val ref = tags["ref"]?.takeIf { it.isNotBlank() }
+                val kind = when (route) {
+                    "mtb" -> TrailRouteKind.MTB
+                    "bicycle" -> TrailRouteKind.CYCLING
+                    "canoe", "kayak" -> TrailRouteKind.KAYAKING
+                    else -> if (tags["educational"] == "yes") TrailRouteKind.EDUCATIONAL else TrailRouteKind.HIKING
+                }
+                val color = OutdoorContextResolver.parseTrailColor(tags["osmc:symbol"], tags["colour"] ?: tags["color"])
+                val network = tags["network"]?.takeIf { it.isNotBlank() }
+
+                val children = el.childNodes
+                for (c in 0 until children.length) {
+                    val child = children.item(c) as? org.w3c.dom.Element ?: continue
+                    if (child.tagName == "member" && child.getAttribute("type") == "way") {
+                        val wayId = child.getAttribute("ref").toLongOrNull() ?: continue
+                        val pts = wayNodeRefs[wayId]?.mapNotNull { nodesMap[it] } ?: emptyList()
+                        if (pts.size >= 2) {
+                            segments.add(
+                                TrailVectorSegment(
+                                    id = relId * 100_000L + wayId % 100_000L,
+                                    name = name,
+                                    ref = ref,
+                                    kind = kind,
+                                    color = color,
+                                    network = network,
+                                    points = pts
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            val trailHighways = setOf("path", "footway", "track", "cycleway")
+            for ((wayId, tags) in wayTagsMap) {
+                if (tags["highway"] !in trailHighways) continue
+                val osmc = tags["osmc:symbol"].orEmpty()
+                val sac = tags["sac_scale"].orEmpty()
+                val edu = tags["educational"].orEmpty()
+                if (osmc.isEmpty() && sac.isEmpty() && edu != "yes") continue
+                val pts = wayNodeRefs[wayId]?.mapNotNull { nodesMap[it] } ?: continue
+                if (pts.size < 2) continue
+                val kind = if (edu == "yes") TrailRouteKind.EDUCATIONAL else TrailRouteKind.HIKING
+                val color = OutdoorContextResolver.parseTrailColor(osmc, tags["colour"] ?: tags["color"])
+                segments.add(
+                    TrailVectorSegment(
+                        id = wayId,
+                        name = tags["name"] ?: "Trail #$wayId",
+                        ref = tags["ref"]?.takeIf { it.isNotBlank() },
+                        kind = kind,
+                        color = color,
+                        network = null,
+                        points = pts
+                    )
+                )
+            }
+            segments
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
