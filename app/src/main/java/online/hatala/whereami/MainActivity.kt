@@ -361,6 +361,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val liveOutdoorAreaName by viewModel.liveOutdoorAreaName.collectAsState()
     val searchRoutePolylines by viewModel.searchRoutePolylines.collectAsState()
     val searchRouteColorHex by viewModel.searchRouteColorHex.collectAsState()
+    val searchRouteFitTrigger by viewModel.searchRouteFitTrigger.collectAsState()
     val destinationOutdoorContext by viewModel.destinationOutdoorContext.collectAsState()
     val searchCategory by viewModel.searchCategory.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
@@ -871,6 +872,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             fitOutdoorAreaTrigger = fitOutdoorAreaTrigger,
             searchRoutePolylines = searchRoutePolylines,
             searchRouteColorHex = searchRouteColorHex,
+            searchRouteFitTrigger = searchRouteFitTrigger,
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
                     SearchResultItem(
@@ -10177,19 +10179,22 @@ private fun OutdoorContextRow(
     FlowRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = if (isCompact) Arrangement.spacedBy(4.dp) else Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // 1. Mountain Range Pill
+        // 1. Mountain Range Pill (use non-clickable Surface + Modifier.clickable to avoid M3 48dp min-touch padding bloat)
         outdoor.primaryRange?.let { range ->
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onOutdoorAreaClick?.invoke(range) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x28F59E0B),
                 border = BorderStroke(1.dp, Color(0x66F59E0B)),
-                modifier = Modifier.widthIn(max = 280.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onOutdoorAreaClick?.invoke(range) }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = "⛰️", fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10207,7 +10212,7 @@ private fun OutdoorContextRow(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 13.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10216,15 +10221,18 @@ private fun OutdoorContextRow(
 
         // 2. Protected Area / Park Pill
         outdoor.parkOrReserve?.let { park ->
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onOutdoorAreaClick?.invoke(park) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x2810B981),
                 border = BorderStroke(1.dp, Color(0x6610B981)),
-                modifier = Modifier.widthIn(max = 280.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onOutdoorAreaClick?.invoke(park) }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = if (park.kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
@@ -10243,7 +10251,7 @@ private fun OutdoorContextRow(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 13.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10260,15 +10268,18 @@ private fun OutdoorContextRow(
                 TrailColor.BLACK -> Color(0xFFCBD5E1)
                 else -> Color(0xFF38BDF8)
             }
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onTrailClick?.invoke(trail) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x280284C7),
                 border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.55f)),
-                modifier = Modifier.widthIn(max = 280.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onTrailClick?.invoke(trail) }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = trail.kind.iconEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10286,7 +10297,7 @@ private fun OutdoorContextRow(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 13.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10300,15 +10311,18 @@ private fun OutdoorContextRow(
             val featBg = if (isWater) Color(0x280284C7) else Color(0x331E293B)
             val featBorder = if (isWater) Color(0x8838BDF8) else Color(0x77CBD5E1)
             val featTextColor = if (isWater) Color(0xFF38BDF8) else Color(0xFFF1F5F9)
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onFeatureClick?.invoke(feature) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = featBg,
                 border = BorderStroke(1.dp, featBorder),
-                modifier = Modifier.widthIn(max = 280.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onFeatureClick?.invoke(feature) }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val featureEmoji = when (feature.kind) {
@@ -10340,7 +10354,7 @@ private fun OutdoorContextRow(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 13.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10842,7 +10856,7 @@ private fun LocalityCard(
                         onOutdoorAreaClick = onOutdoorAreaClick,
                         onTrailClick = onTrailClick,
                         onFeatureClick = onFeatureClick,
-                        modifier = Modifier.padding(vertical = 1.dp)
+                        modifier = Modifier.padding(top = 1.dp)
                     )
                 }
 
@@ -11421,14 +11435,13 @@ private fun LocalityCard(
 
                 // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
-                    Spacer(modifier = Modifier.height(4.dp))
                     OutdoorContextRow(
                         outdoor = outdoor,
                         isCompact = false,
                         onOutdoorAreaClick = onOutdoorAreaClick,
                         onTrailClick = onTrailClick,
                         onFeatureClick = onFeatureClick,
-                        modifier = Modifier.padding(vertical = 1.dp)
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
@@ -11446,7 +11459,7 @@ private fun LocalityCard(
                 // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
                 Row(
                     modifier = Modifier
-                        .padding(top = 3.dp)
+                        .padding(top = 2.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
                         .padding(horizontal = 8.dp)
@@ -12027,11 +12040,11 @@ private fun DestinationPlaceCard(
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFA0F172A)),
         elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -12150,9 +12163,9 @@ private fun DestinationPlaceCard(
                             alignment = LineHeightStyle.Alignment.Center,
                             trim = LineHeightStyle.Trim.Both
                         ),
-                        lineHeight = 14.sp
+                        lineHeight = 13.sp
                     ),
-                    modifier = Modifier.padding(top = 2.dp, start = 26.dp)
+                    modifier = Modifier.padding(top = 1.dp, start = 26.dp)
                 )
             }
 
@@ -12163,7 +12176,7 @@ private fun DestinationPlaceCard(
                     onOutdoorAreaClick = onOutdoorAreaClick,
                     onTrailClick = onTrailClick,
                     onFeatureClick = onFeatureClick,
-                    modifier = Modifier.padding(top = 6.dp)
+                    modifier = Modifier.padding(top = 3.dp)
                 )
             }
 
@@ -12171,7 +12184,7 @@ private fun DestinationPlaceCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
@@ -12184,7 +12197,7 @@ private fun DestinationPlaceCard(
                     ),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Navigation, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12199,7 +12212,7 @@ private fun DestinationPlaceCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12211,7 +12224,7 @@ private fun DestinationPlaceCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12223,7 +12236,7 @@ private fun DestinationPlaceCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp),
+                    .padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (savedPlace != null) {
@@ -12232,8 +12245,8 @@ private fun DestinationPlaceCard(
                         onClick = { onReadAndSaveAltitude?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.Landscape, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12244,8 +12257,8 @@ private fun DestinationPlaceCard(
                         onClick = { onEditSavedPlace?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12256,8 +12269,8 @@ private fun DestinationPlaceCard(
                         onClick = { onDeleteSavedPlace?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12271,8 +12284,8 @@ private fun DestinationPlaceCard(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12286,8 +12299,8 @@ private fun DestinationPlaceCard(
                         containerColor = if (isPinBorderVisible) Color(0xFFDC2626) else Color(0xFF1E293B)
                     ),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(
                         imageVector = if (isPinBorderVisible) Icons.Default.LayersClear else Icons.Default.Layers,

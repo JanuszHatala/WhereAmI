@@ -1863,6 +1863,22 @@ User feedback & root causes:
 | **PIN-59-05** | Resolve outdoor regions inside `DestinationPlaceCard` and condense gray address subtitle line spacing. | `MainViewModel.kt`, `MainActivity.kt` | Implemented | UI & state wiring verified via build and unit suite. |
 | **VER-59** | Bump to `versionCode = 203`, `versionName = "2.4.2"`. | `app/build.gradle.kts` | Implemented | 689 passed / 1 skipped (`FieldReplayTest` fixture absent) + `assembleDebug` + 16 server tests pass. |
 
+---
+
+## Round 60 - Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3)
+
+User feedback & root causes:
+- Huge vertical spacing between outdoor pills in `LocalityCard` (both expanded & collapsed) and `DestinationPlaceCard`: Material 3 `Surface(onClick = ...)` in `OutdoorContextRow` automatically injected `Modifier.minimumInteractiveComponentSize()`, inflating every ~21dp pill slot to 48dp tall. Replaced with non-clickable `Surface` + `.clip(pillShape).clickable { ... }`, compacted internal pill padding to `horizontal = 6.dp, vertical = 2.dp`, `spacedBy(2.dp)`, removed redundant spacers/margins in `LocalityCard` and `DestinationPlaceCard`.
+- Tight dashed trail gaps (`TrailLineStyle.DASHED`): `Paint.Cap.ROUND` endcaps (`+strokeWidthPx`) plus `haloPaint` (`+2.4dp`) encroached on the prior `2.0 * strokeWidthPx` gap. Calibrated `VectorTrailOverlay.computeDashIntervals` to dash `(strokeWidthPx * 2.8f).coerceAtLeast(6.5f * density)` and gap `(strokeWidthPx * 5.2f).coerceAtLeast(15.0f * density)` (`DOTTED` gap `(strokeWidthPx * 2.8f).coerceAtLeast(7.0f * density)`).
+- Clicking active trail (`Szklary - Bielawa...`) and water body (`Ślęża`) pills appeared unresponsive when Overpass timed out (`Cache Only`): `fetchTrailRouteByOsmId` blocked up to ~120s across failing Overpass mirrors before touching `memoryCache`, never checked cached `tile_*.json` / `wm_*.geojson` disk tiles, and lacked an OSM `0.6/{way,relation}/{id}/full` XML fallback (`parseOsmFullXmlLines` via `SAXParserFactory`). Added direct OSM `0.6/full` resolution, upfront local `memoryCache` + `wm_*.geojson` + `tile_*.json` lookup, and `searchRouteFitTrigger` camera refit on repeat taps.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI-60-01** | Remove Material 3 48dp minimum-touch bloat in `OutdoorContextRow` and tighten vertical spacing in `LocalityCard` (Normal/Compact) & `DestinationPlaceCard`. | `MainActivity.kt` | Implemented | Compact chip modifiers & card spacing verified by compilation and layout inspection. |
+| **VEC-60-02** | Widen `TrailLineStyle.DASHED` and `DOTTED` clear intervals via `computeDashIntervals`. | `VectorTrailOverlay.kt`, `TrailVectorRepositoryTest.kt` | Implemented | `computeDashIntervals` unit test verifies clear gap exceeds stroke/halo width. |
+| **OUT-60-03** | Fast OSM `0.6/{way,relation}/{id}/full` resolution, cached `wm_*.geojson`/`memoryCache` fallback, `searchRouteFitTrigger`, and `selectOutdoorFeature` null-anchor Toast. | `TrailVectorRepository.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `TrailVectorRepositoryTest.kt` | Implemented | OSM `0.6/full` relation/way fallback & cached GeoJSON unit tests pass. |
+| **VER-60** | Bump to `versionCode = 204`, `versionName = "2.4.3"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and server tests pass. |
+
 
 
 

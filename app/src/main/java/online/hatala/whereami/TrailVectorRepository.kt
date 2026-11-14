@@ -672,17 +672,40 @@ object TrailVectorRepository {
         preferRelation: Boolean = true,
         nearLatLng: GeoPoint? = null,
         allowNetwork: Boolean = true,
-        overpassEndpoints: List<String>? = null
+        overpassEndpoints: List<String>? = null,
+        osmFullBaseUrl: String = "https://api.openstreetmap.org/api/0.6"
     ): List<List<GeoPoint>> = withContext(Dispatchers.IO) {
         if (osmId <= 0L) return@withContext emptyList()
-        val typeTag = if (preferRelation) "r" else "w"
-        val diskFile = File(getCacheDir(context), "rel_geom_${typeTag}_${osmId}.json")
-        if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
-            try {
-                val parsed = parseTileJson(diskFile.readText()).map { it.points }.filter { it.size >= 2 }
-                if (parsed.isNotEmpty()) return@withContext parsed
-            } catch (_: Exception) {
+        val cacheDir = getCacheDir(context)
+        val primaryTypeTag = if (preferRelation) "r" else "w"
+        val altTypeTag = if (preferRelation) "w" else "r"
+        val primaryDiskFile = File(cacheDir, "rel_geom_${primaryTypeTag}_${osmId}.json")
+        val altDiskFile = File(cacheDir, "rel_geom_${altTypeTag}_${osmId}.json")
+
+        fun matchesProximity(lines: List<List<GeoPoint>>): Boolean {
+            if (lines.isEmpty()) return false
+            val anchor = nearLatLng ?: return true
+            return lines.any { pts ->
+                pts.any { p -> p.distanceToAsDouble(anchor) <= 50_000.0 }
             }
+        }
+
+        for (file in listOf(primaryDiskFile, altDiskFile)) {
+            if (file.exists() && System.currentTimeMillis() - file.lastModified() < CACHE_TTL_MS) {
+                try {
+                    val parsed = parseTileJson(file.readText()).map { it.points }.filter { it.size >= 2 }
+                    if (matchesProximity(parsed)) return@withContext parsed
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        // Gather cached in-memory and disk tile geometries upfront so offline or degraded clicks resolve immediately
+        val localCachedLines = loadCachedTrailSegmentsForOsmId(cacheDir, osmId, preferRelation)
+            .takeIf { matchesProximity(it) } ?: emptyList()
+
+        if (!allowNetwork) {
+            return@withContext localCachedLines
         }
 
         fun extractWays(body: String): List<List<GeoPoint>> {
@@ -705,58 +728,254 @@ object TrailVectorRepository {
             return lines
         }
 
-        fun matchesProximity(lines: List<List<GeoPoint>>): Boolean {
-            val anchor = nearLatLng ?: return lines.isNotEmpty()
-            return lines.any { pts ->
-                pts.any { p -> p.distanceToAsDouble(anchor) <= 50_000.0 }
+        fun queryOverpass(tryRelation: Boolean): Pair<Boolean, List<List<GeoPoint>>> {
+            val ql = if (tryRelation) {
+                "[out:json][timeout:12];(relation($osmId);way(r););out body geom;"
+            } else {
+                "[out:json][timeout:12];way($osmId);out body geom;"
+            }
+            val body = if (overpassEndpoints != null) {
+                OutdoorContextResolver.executeOverpassQuery(ql, 4000, 10000, "TRAIL_ROUTE", endpoints = overpassEndpoints)
+            } else {
+                OutdoorContextResolver.executeOverpassQuery(ql, 4000, 10000, "TRAIL_ROUTE")
+            } ?: return false to emptyList()
+            val lines = extractWays(body).takeIf { matchesProximity(it) } ?: emptyList()
+            return true to lines
+        }
+
+        fun queryOsmFull(tryRelation: Boolean): Pair<Boolean, List<List<GeoPoint>>> {
+            val kindSegment = if (tryRelation) "relation" else "way"
+            val urlStr = "$osmFullBaseUrl/$kindSegment/$osmId/full"
+            val (code, xml) = httpGetResponse(
+                urlStr = urlStr,
+                acceptHeader = "application/xml",
+                connectTimeoutMs = 4000,
+                readTimeoutMs = 10000
+            )
+            if (xml == null) {
+                // 404/410 simply indicates this ID does not exist as the probed primitive type (way vs relation)
+                return (code == 404 || code == 410) to emptyList()
+            }
+            val lines = parseOsmFullXmlLines(xml, expectRelation = tryRelation, targetOsmId = osmId)
+                .takeIf { matchesProximity(it) } ?: emptyList()
+            return true to lines
+        }
+
+        fun persistResolved(file: File, lines: List<List<GeoPoint>>) {
+            val synthetic = lines.mapIndexed { idx, pts ->
+                TrailVectorSegment(id = osmId * 1000L + idx, name = "Trail #$osmId", points = pts)
+            }
+            saveTileJson(file, synthetic)
+        }
+
+        try {
+            if (overpassEndpoints != null) {
+                val (pReachable, pLines) = queryOverpass(preferRelation)
+                if (pLines.isNotEmpty()) {
+                    persistResolved(primaryDiskFile, pLines)
+                    return@withContext pLines
+                }
+                if (pReachable) {
+                    val (_, sLines) = queryOverpass(!preferRelation)
+                    if (sLines.isNotEmpty()) {
+                        persistResolved(altDiskFile, sLines)
+                        return@withContext sLines
+                    }
+                }
+                if (osmFullBaseUrl != "https://api.openstreetmap.org/api/0.6") {
+                    val (oReachable, oLines) = queryOsmFull(preferRelation)
+                    if (oLines.isNotEmpty()) {
+                        persistResolved(primaryDiskFile, oLines)
+                        return@withContext oLines
+                    }
+                    if (oReachable) {
+                        val (_, oAltLines) = queryOsmFull(!preferRelation)
+                        if (oAltLines.isNotEmpty()) {
+                            persistResolved(altDiskFile, oAltLines)
+                            return@withContext oAltLines
+                        }
+                    }
+                }
+            } else {
+                // Direct OSM 0.6 /full lookup avoids Overpass rate limits and multi-mirror timeouts
+                val (oReachable, oLines) = queryOsmFull(preferRelation)
+                if (oLines.isNotEmpty()) {
+                    persistResolved(primaryDiskFile, oLines)
+                    return@withContext oLines
+                }
+                if (oReachable) {
+                    val (_, oAltLines) = queryOsmFull(!preferRelation)
+                    if (oAltLines.isNotEmpty()) {
+                        persistResolved(altDiskFile, oAltLines)
+                        return@withContext oAltLines
+                    }
+                }
+                val status = DataAcquisitionManager.health.value.status
+                if (localCachedLines.isEmpty() || status == DataAcquisitionStatus.HEALTHY) {
+                    val (pReachable, pLines) = queryOverpass(preferRelation)
+                    if (pLines.isNotEmpty()) {
+                        persistResolved(primaryDiskFile, pLines)
+                        return@withContext pLines
+                    }
+                    if (pReachable) {
+                        val (_, sLines) = queryOverpass(!preferRelation)
+                        if (sLines.isNotEmpty()) {
+                            persistResolved(altDiskFile, sLines)
+                            return@withContext sLines
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logDebug("fetchTrailRouteByOsmId($osmId) error: ${e.message}")
+        }
+
+        localCachedLines
+    }
+
+    private fun loadCachedTrailSegmentsForOsmId(
+        cacheDir: File,
+        osmId: Long,
+        preferRelation: Boolean
+    ): List<List<GeoPoint>> {
+        val rawLines = mutableListOf<List<GeoPoint>>()
+
+        fun matchesSegmentId(segId: Long): Boolean =
+            segId == osmId || segId / 100_000L == osmId || segId / 1_000L == osmId
+
+        memoryCache.values.flatten()
+            .filter { matchesSegmentId(it.id) && it.points.size >= 2 }
+            .forEach { rawLines.add(it.points) }
+
+        if (rawLines.isEmpty() && cacheDir.exists()) {
+            val idStr = osmId.toString()
+            val files = cacheDir.listFiles().orEmpty()
+            for (file in files) {
+                val name = file.name
+                if (name.startsWith("tile_") && name.endsWith(".json")) {
+                    val text = readFreshCacheFile(file) ?: continue
+                    if (!text.contains(idStr)) continue
+                    parseTileJson(text)
+                        .filter { matchesSegmentId(it.id) && it.points.size >= 2 }
+                        .forEach { rawLines.add(it.points) }
+                } else if (preferRelation && name.startsWith("wm_") && name.endsWith(".geojson")) {
+                    val text = readFreshCacheFile(file) ?: continue
+                    if (!text.contains(idStr)) continue
+                    rawLines.addAll(parseWaymarkedTileLinesForRelation(text, osmId))
+                }
             }
         }
 
-        if (allowNetwork) {
+        return rawLines.distinctBy { pts ->
+            val first = pts.first()
+            val last = pts.last()
+            "${pts.size}:${String.format(Locale.US, "%.5f,%.5f", first.latitude, first.longitude)}:${String.format(Locale.US, "%.5f,%.5f", last.latitude, last.longitude)}"
+        }
+    }
+
+    private fun parseWaymarkedTileLinesForRelation(jsonStr: String, targetRelId: Long): List<List<GeoPoint>> {
+        val root = try { JSONObject(jsonStr) } catch (_: Exception) { return emptyList() }
+        val features = root.optJSONArray("features") ?: return emptyList()
+        val results = mutableListOf<List<GeoPoint>>()
+        for (i in 0 until features.length()) {
+            val feature = features.optJSONObject(i) ?: continue
+            val props = feature.optJSONObject("properties") ?: continue
+            if (props.optString("type") != "way") continue
+            val matchesRel = jsonArrayContainsLong(props.optJSONArray("top_relations"), targetRelId) ||
+                jsonArrayContainsLong(props.optJSONArray("child_relations"), targetRelId)
+            if (!matchesRel) continue
+            val geom = feature.optJSONObject("geometry") ?: continue
+            results.addAll(parseGeoJsonMercatorLines(geom))
+        }
+        return results
+    }
+
+    private fun jsonArrayContainsLong(arr: JSONArray?, target: Long): Boolean {
+        if (arr == null) return false
+        for (i in 0 until arr.length()) {
+            if (arr.optLong(i, -1L) == target) return true
+        }
+        return false
+    }
+
+    internal fun parseOsmFullXmlLines(
+        xmlStr: String,
+        expectRelation: Boolean,
+        targetOsmId: Long
+    ): List<List<GeoPoint>> {
+        if (xmlStr.isBlank()) return emptyList()
+        return try {
+            val spf = javax.xml.parsers.SAXParserFactory.newInstance()
             try {
-                val primaryQl = if (preferRelation) {
-                    "[out:json][timeout:15];(relation($osmId);way(r););out body geom;"
-                } else {
-                    "[out:json][timeout:15];way($osmId);out body geom;"
-                }
-                val primaryBody = if (overpassEndpoints != null) {
-                    OutdoorContextResolver.executeOverpassQuery(primaryQl, 6000, 15000, "TRAIL_ROUTE", endpoints = overpassEndpoints)
-                } else {
-                    OutdoorContextResolver.executeOverpassQuery(primaryQl, 6000, 15000, "TRAIL_ROUTE")
-                }
-                val primaryLines = primaryBody?.let { extractWays(it) }?.takeIf { matchesProximity(it) }
+                spf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            } catch (_: Exception) {}
+            val nodesMap = HashMap<Long, GeoPoint>()
+            val wayNodeRefs = LinkedHashMap<Long, List<Long>>()
+            val targetMemberWayIds = ArrayList<Long>()
+            val parser = spf.newSAXParser()
+            parser.parse(org.xml.sax.InputSource(java.io.StringReader(xmlStr)), object : org.xml.sax.helpers.DefaultHandler() {
+                private var currentWayId: Long = -1L
+                private var currentWayNodes: ArrayList<Long>? = null
+                private var currentRelId: Long = -1L
 
-                val finalLines = primaryLines ?: run {
-                    val secondaryQl = if (preferRelation) {
-                        "[out:json][timeout:15];way($osmId);out body geom;"
-                    } else {
-                        "[out:json][timeout:15];(relation($osmId);way(r););out body geom;"
+                override fun startElement(uri: String?, localName: String?, qName: String, attrs: org.xml.sax.Attributes) {
+                    val tag = localName?.takeIf { it.isNotEmpty() } ?: qName
+                    when (tag) {
+                        "node" -> {
+                            val id = attrs.getValue("id")?.toLongOrNull() ?: return
+                            val lat = attrs.getValue("lat")?.toDoubleOrNull() ?: return
+                            val lon = attrs.getValue("lon")?.toDoubleOrNull() ?: return
+                            nodesMap[id] = GeoPoint(lat, lon)
+                        }
+                        "way" -> {
+                            currentWayId = attrs.getValue("id")?.toLongOrNull() ?: -1L
+                            currentWayNodes = ArrayList()
+                        }
+                        "nd" -> {
+                            val list = currentWayNodes ?: return
+                            attrs.getValue("ref")?.toLongOrNull()?.let { list.add(it) }
+                        }
+                        "relation" -> {
+                            currentRelId = attrs.getValue("id")?.toLongOrNull() ?: -1L
+                        }
+                        "member" -> {
+                            if (currentRelId == targetOsmId && attrs.getValue("type") == "way") {
+                                attrs.getValue("ref")?.toLongOrNull()?.let { targetMemberWayIds.add(it) }
+                            }
+                        }
                     }
-                    val secondaryBody = if (overpassEndpoints != null) {
-                        OutdoorContextResolver.executeOverpassQuery(secondaryQl, 6000, 15000, "TRAIL_ROUTE", endpoints = overpassEndpoints)
-                    } else {
-                        OutdoorContextResolver.executeOverpassQuery(secondaryQl, 6000, 15000, "TRAIL_ROUTE")
-                    }
-                    secondaryBody?.let { extractWays(it) }?.takeIf { matchesProximity(it) } ?: emptyList()
                 }
 
-                if (finalLines.isNotEmpty()) {
-                    val synthetic = finalLines.mapIndexed { idx, pts ->
-                        TrailVectorSegment(id = osmId * 1000L + idx, name = "Trail #$osmId", points = pts)
+                override fun endElement(uri: String?, localName: String?, qName: String) {
+                    val tag = localName?.takeIf { it.isNotEmpty() } ?: qName
+                    when (tag) {
+                        "way" -> {
+                            val nds = currentWayNodes
+                            if (currentWayId > 0L && nds != null && nds.size >= 2) {
+                                wayNodeRefs[currentWayId] = nds
+                            }
+                            currentWayId = -1L
+                            currentWayNodes = null
+                        }
+                        "relation" -> {
+                            currentRelId = -1L
+                        }
                     }
-                    saveTileJson(diskFile, synthetic)
-                    return@withContext finalLines
                 }
-            } catch (e: Exception) {
-                logDebug("fetchTrailRouteByOsmId($osmId) error: ${e.message}")
+            })
+
+            val orderedWayIds: Iterable<Long> = when {
+                expectRelation && targetMemberWayIds.isNotEmpty() -> targetMemberWayIds.distinct()
+                !expectRelation && wayNodeRefs.containsKey(targetOsmId) -> listOf(targetOsmId)
+                else -> wayNodeRefs.keys
             }
+            orderedWayIds.mapNotNull { wayId ->
+                val pts = wayNodeRefs[wayId]?.mapNotNull { nodesMap[it] } ?: return@mapNotNull null
+                pts.takeIf { it.size >= 2 }
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
-
-        val cachedFromMem = memoryCache.values.flatten()
-            .filter { it.id == osmId || it.id / 100_000L == osmId || it.id / 1_000L == osmId }
-            .map { it.points }
-            .filter { it.size >= 2 }
-        cachedFromMem
     }
 
     private fun readFreshCacheFile(file: File): String? {
@@ -805,7 +1024,15 @@ object TrailVectorRepository {
         }
     }
 
-    private fun httpGetString(urlStr: String, connectTimeoutMs: Int, readTimeoutMs: Int): String? {
+    private fun httpGetString(urlStr: String, connectTimeoutMs: Int, readTimeoutMs: Int): String? =
+        httpGetResponse(urlStr, "application/json", connectTimeoutMs, readTimeoutMs).second
+
+    private fun httpGetResponse(
+        urlStr: String,
+        acceptHeader: String,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int
+    ): Pair<Int, String?> {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
@@ -814,21 +1041,24 @@ object TrailVectorRepository {
                 readTimeout = readTimeoutMs
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", USER_AGENT)
-                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Accept", acceptHeader)
             }
             val code = conn.responseCode
             if (code == 200) {
-                conn.inputStream.bufferedReader().use { it.readText() }
+                200 to conn.inputStream.bufferedReader().use { it.readText() }
             } else {
                 logDebug("HTTP $code for $urlStr")
-                if (code == 429) DataAcquisitionManager.reportRateLimited()
-                else if (code >= 500) DataAcquisitionManager.reportCachedOnly("Trail Tiles HTTP $code")
-                null
+                if (code == 429) {
+                    DataAcquisitionManager.reportRateLimited()
+                } else if (code >= 500) {
+                    DataAcquisitionManager.reportCachedOnly("Trail Tiles HTTP $code")
+                }
+                code to null
             }
         } catch (e: Exception) {
             logDebug("HTTP error for $urlStr: ${e.message}")
             DataAcquisitionManager.reportError(e)
-            null
+            -1 to null
         } finally {
             conn?.disconnect()
         }
@@ -986,24 +1216,7 @@ object TrailVectorRepository {
             if (props.optString("type") != "way") continue
 
             val geom = feature.optJSONObject("geometry") ?: continue
-            val geomType = geom.optString("type")
-            val coordsArr = geom.optJSONArray("coordinates") ?: continue
-
-            val lines = mutableListOf<List<GeoPoint>>()
-            when (geomType) {
-                "LineString" -> {
-                    val pts = parseMercatorLineCoords(coordsArr)
-                    if (pts.size >= 2) lines.add(pts)
-                }
-                "MultiLineString" -> {
-                    for (lineIdx in 0 until coordsArr.length()) {
-                        val subCoords = coordsArr.optJSONArray(lineIdx) ?: continue
-                        val pts = parseMercatorLineCoords(subCoords)
-                        if (pts.size >= 2) lines.add(pts)
-                    }
-                }
-                else -> continue
-            }
+            val lines = parseGeoJsonMercatorLines(geom)
             if (lines.isEmpty()) continue
 
             val shields = mutableListOf<String>()
@@ -1099,6 +1312,26 @@ object TrailVectorRepository {
             }
         }
         return segments
+    }
+
+    private fun parseGeoJsonMercatorLines(geom: JSONObject): List<List<GeoPoint>> {
+        val geomType = geom.optString("type")
+        val coordsArr = geom.optJSONArray("coordinates") ?: return emptyList()
+        val lines = mutableListOf<List<GeoPoint>>()
+        when (geomType) {
+            "LineString" -> {
+                val pts = parseMercatorLineCoords(coordsArr)
+                if (pts.size >= 2) lines.add(pts)
+            }
+            "MultiLineString" -> {
+                for (lineIdx in 0 until coordsArr.length()) {
+                    val subCoords = coordsArr.optJSONArray(lineIdx) ?: continue
+                    val pts = parseMercatorLineCoords(subCoords)
+                    if (pts.size >= 2) lines.add(pts)
+                }
+            }
+        }
+        return lines
     }
 
     private fun parseMercatorLineCoords(coordsArr: JSONArray): List<GeoPoint> {

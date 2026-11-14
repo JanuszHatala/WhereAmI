@@ -669,6 +669,7 @@ fun OsmMapView(
     fitOutdoorAreaTrigger: Long = 0L,
     searchRoutePolylines: List<List<GeoPoint>>? = null,
     searchRouteColorHex: String = "#EF4444",
+    searchRouteFitTrigger: Long = 0L,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -2080,7 +2081,7 @@ fun OsmMapView(
     }
 
     // Render Search Route Polylines (Full trail routes or rivers)
-    LaunchedEffect(searchRoutePolylines, searchRouteColorHex) {
+    LaunchedEffect(searchRoutePolylines, searchRouteColorHex, searchRouteFitTrigger) {
         val map = mapView ?: return@LaunchedEffect
         searchRouteOverlays.forEach { map.overlays.remove(it) }
         searchRouteOverlays = emptyList()

@@ -407,6 +407,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchRouteColorHex = MutableStateFlow("#EF4444")
     val searchRouteColorHex: StateFlow<String> = _searchRouteColorHex.asStateFlow()
 
+    private val _searchRouteFitTrigger = MutableStateFlow(0L)
+    val searchRouteFitTrigger: StateFlow<Long> = _searchRouteFitTrigger.asStateFlow()
+
     private val _destinationOutdoorContext = MutableStateFlow<OutdoorContext?>(null)
     val destinationOutdoorContext: StateFlow<OutdoorContext?> = _destinationOutdoorContext.asStateFlow()
     private var destinationOutdoorJob: Job? = null
@@ -799,6 +802,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _searchRouteColorHex.value = item.trailColor?.takeIf { it != TrailColor.NONE }?.hexColor
                         ?: if (pt == "water" || pt == "waterway" || pt == "river") "#38BDF8" else "#EF4444"
                     _searchRoutePolylines.value = geom.polylines
+                    _searchRouteFitTrigger.value = System.currentTimeMillis()
                     _selectedOutdoorAreaPolygons.value = null
                     _selectedOutdoorAreaBoundary.value = null
                     _selectedOutdoorAreaIsExplicit.value = false
@@ -863,11 +867,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectActiveTrail(trail: ActiveTrailInfo) {
+        val nearPoint = _currentLatLng.value?.let { GeoPoint(it.first, it.second) }
         viewModelScope.launch(Dispatchers.IO) {
             val lines = TrailVectorRepository.fetchTrailRouteByOsmId(
                 context = getApplication(),
                 osmId = trail.osmId,
-                preferRelation = true
+                preferRelation = true,
+                nearLatLng = nearPoint
             )
             val strokeHex = trail.color.takeIf { it != TrailColor.NONE }?.hexColor ?: when (trail.kind) {
                 TrailRouteKind.EDUCATIONAL -> "#14B8A6"
@@ -897,6 +903,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 resolveDestinationOutdoorContext(null)
                 _searchRouteColorHex.value = strokeHex
                 _searchRoutePolylines.value = lines
+                _searchRouteFitTrigger.value = System.currentTimeMillis()
             }
         }
     }
@@ -904,7 +911,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectOutdoorFeature(feature: OutdoorFeatureInfo) {
         val anchor = if (kotlin.math.abs(feature.latitude) > 1e-4 || kotlin.math.abs(feature.longitude) > 1e-4) {
             GeoPoint(feature.latitude, feature.longitude)
-        } else null
+        } else {
+            _currentLatLng.value?.let { GeoPoint(it.first, it.second) }
+        }
 
         if (feature.kind == PlaceKind.WATER_BODY && feature.osmId > 0L) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -928,6 +937,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         resolveDestinationOutdoorContext(null)
                         _searchRouteColorHex.value = "#38BDF8"
                         _searchRoutePolylines.value = lines
+                        _searchRouteFitTrigger.value = System.currentTimeMillis()
                     } else if (anchor != null) {
                         clearOutdoorAreaBoundary()
                         setDestination(
@@ -940,6 +950,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 elevationMeters = feature.elevationMeters
                             )
                         )
+                    } else {
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Could not load geometry for ${feature.name}",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -962,6 +978,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     elevationMeters = feature.elevationMeters
                 )
             )
+        } else {
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Location coordinates unavailable for ${feature.name}",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

@@ -64,6 +64,28 @@ class VectorTrailOverlay(
                 TrailRouteKind.HIKING -> "#EF4444"
             }
         }
+
+        /**
+         * Computes `[dashOnPx, dashOffPx]` intervals compensated for round stroke caps and halo casing
+         * so dashed/dotted trails preserve a clear visible gap between segments across all zoom levels.
+         */
+        internal fun computeDashIntervals(
+            style: TrailLineStyle,
+            strokeWidthPx: Float,
+            density: Float
+        ): FloatArray? {
+            return when (style) {
+                TrailLineStyle.SOLID -> null
+                TrailLineStyle.DASHED -> floatArrayOf(
+                    (strokeWidthPx * 2.8f).coerceAtLeast(6.5f * density),
+                    (strokeWidthPx * 5.2f).coerceAtLeast(15.0f * density)
+                )
+                TrailLineStyle.DOTTED -> floatArrayOf(
+                    (0.6f * density).coerceAtLeast(1f),
+                    (strokeWidthPx * 2.8f).coerceAtLeast(7.0f * density)
+                )
+            }
+        }
     }
 
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -102,17 +124,8 @@ class VectorTrailOverlay(
         if (cachedEffectStyle == style && cachedEffectWidthBucket == bucket) {
             return cachedPathEffect
         }
-        val effect = when (style) {
-            TrailLineStyle.SOLID -> null
-            TrailLineStyle.DASHED -> DashPathEffect(
-                floatArrayOf((strokeWidthPx * 3.2f).coerceAtLeast(6f * density), (strokeWidthPx * 2.0f).coerceAtLeast(4f * density)),
-                0f
-            )
-            TrailLineStyle.DOTTED -> DashPathEffect(
-                floatArrayOf((0.6f * density).coerceAtLeast(1f), (strokeWidthPx * 2.1f).coerceAtLeast(4f * density)),
-                0f
-            )
-        }
+        val intervals = computeDashIntervals(style, strokeWidthPx, density)
+        val effect = intervals?.let { DashPathEffect(it, 0f) }
         cachedEffectStyle = style
         cachedEffectWidthBucket = bucket
         cachedPathEffect = effect

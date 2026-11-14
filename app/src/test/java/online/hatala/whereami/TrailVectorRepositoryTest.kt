@@ -508,4 +508,129 @@ class TrailVectorRepositoryTest {
         assertEquals(1, riverLines.size)
         assertEquals(2, riverLines[0].size)
     }
+
+    @Test
+    fun `fetchTrailRouteByOsmId falls back to OSM 0_6 full XML when Overpass fails`() = runBlocking {
+        var osmWayHitCount = 0
+        var osmRelHitCount = 0
+        val srv = HttpServer.create(InetSocketAddress(0), 0).apply {
+            createContext("/overpass") { ex ->
+                val b = "Gateway Timeout".toByteArray()
+                ex.sendResponseHeaders(504, b.size.toLong())
+                ex.responseBody.use { it.write(b) }
+            }
+            createContext("/osm06/relation/1716770/full") { ex ->
+                osmRelHitCount++
+                val xml = """
+                    <osm version="0.6">
+                      <node id="1" lat="50.710" lon="16.830"/>
+                      <node id="2" lat="50.715" lon="16.840"/>
+                      <node id="3" lat="50.720" lon="16.850"/>
+                      <way id="27446595">
+                        <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+                      </way>
+                      <relation id="1716770">
+                        <member type="way" ref="27446595" role=""/>
+                      </relation>
+                    </osm>
+                """.trimIndent().toByteArray()
+                ex.sendResponseHeaders(200, xml.size.toLong())
+                ex.responseBody.use { it.write(xml) }
+            }
+            createContext("/osm06/way/103820085/full") { ex ->
+                osmWayHitCount++
+                val xml = """
+                    <osm version="0.6">
+                      <node id="10" lat="50.714" lon="16.835"/>
+                      <node id="11" lat="50.716" lon="16.839"/>
+                      <way id="103820085">
+                        <nd ref="10"/><nd ref="11"/>
+                      </way>
+                    </osm>
+                """.trimIndent().toByteArray()
+                ex.sendResponseHeaders(200, xml.size.toLong())
+                ex.responseBody.use { it.write(xml) }
+            }
+            start()
+        }
+        server = srv
+        val base = "http://127.0.0.1:${srv.address.port}"
+        val ctx = fakeContext()
+
+        val trailLines = TrailVectorRepository.fetchTrailRouteByOsmId(
+            context = ctx,
+            osmId = 1716770L,
+            preferRelation = true,
+            nearLatLng = GeoPoint(50.715, 16.842),
+            overpassEndpoints = listOf("$base/overpass"),
+            osmFullBaseUrl = "$base/osm06"
+        )
+        assertEquals(1, osmRelHitCount)
+        assertEquals(1, trailLines.size)
+        assertEquals(3, trailLines[0].size)
+
+        val waterLines = TrailVectorRepository.fetchTrailRouteByOsmId(
+            context = ctx,
+            osmId = 103820085L,
+            preferRelation = false,
+            nearLatLng = GeoPoint(50.715, 16.842),
+            overpassEndpoints = listOf("$base/overpass"),
+            osmFullBaseUrl = "$base/osm06"
+        )
+        assertEquals(1, osmWayHitCount)
+        assertEquals(1, waterLines.size)
+        assertEquals(2, waterLines[0].size)
+    }
+
+    @Test
+    fun `fetchTrailRouteByOsmId resolves cached Waymarked GeoJSON tiles offline when allowNetwork is false`() = runBlocking {
+        val ctx = fakeContext()
+        val wmDir = File(ctx.cacheDir, "trail_vectors").apply { mkdirs() }
+        // 50.715, 16.842 in EPSG:3857 -> x ≈ 1874842, y ≈ 6571077
+        val cachedGeoJson = """
+            {
+              "type": "FeatureCollection",
+              "features": [
+                {
+                  "type": "Feature",
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[1874500.0, 6570800.0], [1875200.0, 6571400.0]]
+                  },
+                  "properties": {
+                    "type": "way",
+                    "top_relations": [1716770]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        File(wmDir, "wm_hiking_12_2240_1375.geojson").writeText(cachedGeoJson)
+
+        val lines = TrailVectorRepository.fetchTrailRouteByOsmId(
+            context = ctx,
+            osmId = 1716770L,
+            preferRelation = true,
+            nearLatLng = GeoPoint(50.715, 16.842),
+            allowNetwork = false
+        )
+        assertEquals(1, lines.size)
+        assertEquals(2, lines[0].size)
+        assertEquals(50.715, lines[0][0].latitude, 0.02)
+    }
+
+    @Test
+    fun `VectorTrailOverlay computeDashIntervals keeps wide halo-compensated gap on DASHED`() {
+        val density = 3.0f
+        val strokeWidthPx = VectorTrailOverlay.computeStrokeWidthDp(14.5, TrailThickness.NORMAL) * density
+        val haloWidthPx = strokeWidthPx + 2.4f * density * ((strokeWidthPx / density) / 2.8f).coerceIn(0.45f, 1.35f)
+        val intervals = VectorTrailOverlay.computeDashIntervals(TrailLineStyle.DASHED, strokeWidthPx, density)
+        assertNotNull(intervals)
+        val on = intervals!![0]
+        val off = intervals[1]
+        // Clear gap after accounting for round endcaps + dark halo casing must exceed the dash length
+        val clearHaloGap = off - haloWidthPx
+        assertTrue("Expected off($off) - halo($haloWidthPx) = $clearHaloGap > stroke($strokeWidthPx)", clearHaloGap > strokeWidthPx * 1.5f)
+        assertTrue("Expected off($off) > on($on)", off > on)
+    }
 }
