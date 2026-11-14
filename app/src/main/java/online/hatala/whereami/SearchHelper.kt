@@ -930,26 +930,15 @@ object SearchHelper {
                 }
             } catch (_: Exception) {}
         } else if (item.geometryType == SearchGeometryType.POLYLINE) {
-            try {
-                val ql = if (osmType.startsWith("w", ignoreCase = true)) {
-                    "[out:json][timeout:10]; way($osmId); (._; >;); out skel qt;"
-                } else {
-                    "[out:json][timeout:12]; relation($osmId); (._; >;); out skel qt;"
-                }
-                val body = OutdoorContextResolver.executeOverpassQuery(
-                    ql = ql,
-                    connectTimeoutMs = 6000,
-                    readTimeoutMs = 10000,
-                    tag = "SEARCH"
-                )
-                if (body != null) {
-                    val parsedTrails = TrailVectorRepository.parseOverpassTrails(body)
-                    if (parsedTrails.isNotEmpty()) {
-                        val lines = parsedTrails.map { it.points }
-                        return@withContext SearchResultGeometry(polylines = lines)
-                    }
-                }
-            } catch (_: Exception) {}
+            val isWay = osmType.startsWith("w", ignoreCase = true)
+            val lines = TrailVectorRepository.fetchTrailRouteByOsmId(
+                context = context,
+                osmId = osmId,
+                preferRelation = !isWay
+            )
+            if (lines.isNotEmpty()) {
+                return@withContext SearchResultGeometry(polylines = lines)
+            }
         }
         null
     }

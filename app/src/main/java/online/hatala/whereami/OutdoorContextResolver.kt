@@ -56,7 +56,7 @@ object OutdoorContextResolver {
             SpatialCacheHelper.getInstance(context).getOutdoorContext(lat, lng)
         } catch (_: Exception) {
             null
-        } ?: OutdoorContext()
+        } ?: OutdoorContext(isAuthoritative = false)
     }
 
     suspend fun resolveOutdoorContext(
@@ -74,13 +74,13 @@ object OutdoorContextResolver {
         } catch (_: Exception) {}
 
         if (!allowNetwork) {
-            return@withContext OutdoorContext()
+            return@withContext OutdoorContext(isAuthoritative = false)
         }
 
         // 2. Network query via rotating Overpass mirrors, falling back to OSM 0.6 XML map endpoint
         val now = System.currentTimeMillis()
         if (now < cooldownUntil) {
-            return@withContext OutdoorContext()
+            return@withContext OutdoorContext(isAuthoritative = false)
         }
 
         queryMutex.withLock {
@@ -92,7 +92,7 @@ object OutdoorContextResolver {
 
             val elapsed = System.currentTimeMillis() - lastQueryTime
             if (elapsed < MIN_QUERY_INTERVAL_MS) {
-                return@withContext OutdoorContext()
+                return@withContext OutdoorContext(isAuthoritative = false)
             }
 
             try {
@@ -146,7 +146,7 @@ object OutdoorContextResolver {
             }
         }
 
-        return@withContext OutdoorContext()
+        return@withContext OutdoorContext(isAuthoritative = false)
     }
 
     /**

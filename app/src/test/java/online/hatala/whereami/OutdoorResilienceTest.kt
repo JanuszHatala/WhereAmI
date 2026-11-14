@@ -315,4 +315,60 @@ class OutdoorResilienceTest {
         assertFalse(BoundaryHelper.polygonContains(square, 48.0, 10.05))
         assertFalse(BoundaryHelper.polygonContains(square, 47.05, 11.0))
     }
+
+    @Test
+    fun parseGeoJsonPolygonsOrdersLargestRingFirstAndPreservesAllOuterRings() {
+        val multiPolygon = org.json.JSONObject(
+            """
+            {
+              "type": "MultiPolygon",
+              "coordinates": [
+                [[[16.80, 50.70], [16.81, 50.70], [16.81, 50.71], [16.80, 50.71], [16.80, 50.70]]],
+                [[[16.70, 50.60], [16.80, 50.60], [16.80, 50.70], [16.70, 50.70], [16.70, 50.60]]],
+                [[[16.85, 50.75], [16.89, 50.75], [16.89, 50.79], [16.85, 50.79], [16.85, 50.75]]]
+              ]
+            }
+            """.trimIndent()
+        )
+        val rings = BoundaryHelper.parseGeoJsonPolygons(multiPolygon)
+        org.junit.Assert.assertEquals(3, rings.size)
+        org.junit.Assert.assertEquals(50.60, rings[0][0].latitude, 1e-6)
+        org.junit.Assert.assertEquals(50.75, rings[1][0].latitude, 1e-6)
+        org.junit.Assert.assertEquals(50.70, rings[2][0].latitude, 1e-6)
+
+        val single = BoundaryHelper.parseGeoJsonPolygon(multiPolygon)
+        org.junit.Assert.assertNotNull(single)
+        org.junit.Assert.assertEquals(rings[0].size, single!!.size)
+        org.junit.Assert.assertEquals(50.60, single[0].latitude, 1e-6)
+    }
+
+    @Test
+    fun parseGeoJsonPolygonsSupportsSinglePolygonOuterRingOnly() {
+        val polygon = org.json.JSONObject(
+            """
+            {
+              "type": "Polygon",
+              "coordinates": [
+                [[16.70, 50.60], [16.80, 50.60], [16.80, 50.70], [16.70, 50.70], [16.70, 50.60]],
+                [[16.72, 50.62], [16.74, 50.62], [16.74, 50.64], [16.72, 50.64], [16.72, 50.62]]
+              ]
+            }
+            """.trimIndent()
+        )
+        val rings = BoundaryHelper.parseGeoJsonPolygons(polygon)
+        org.junit.Assert.assertEquals(1, rings.size)
+        org.junit.Assert.assertEquals(5, rings[0].size)
+        org.junit.Assert.assertEquals(50.60, rings[0][0].latitude, 1e-6)
+    }
+
+    @Test
+    fun outdoorContextDistinguishesNonAuthoritativeFromAuthoritativeEmpty() {
+        val nonAuth = OutdoorContext(isAuthoritative = false)
+        assertFalse(nonAuth.isAuthoritative)
+        assertFalse(nonAuth.hasAnyOutdoor)
+
+        val authEmpty = OutdoorContext()
+        assertTrue(authEmpty.isAuthoritative)
+        assertFalse(authEmpty.hasAnyOutdoor)
+    }
 }

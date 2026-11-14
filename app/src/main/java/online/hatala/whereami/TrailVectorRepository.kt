@@ -53,7 +53,12 @@ object TrailVectorRepository {
     private const val MERCATOR_ORIGIN_SHIFT = 20037508.342789244
     private const val CACHE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
     private const val FAILURE_COOLDOWN_MS = 15_000L
-    private const val MAX_WAYMARKED_TILES_PER_FETCH = 9
+    private const val MAX_WAYMARKED_CACHED_TILES = 144
+    private const val MAX_WAYMARKED_NETWORK_TILES = 16
+    private const val MAX_WIDE_WAYMARKED_SPAN_TILES = 36
+    private const val MACRO_GRID_DEG = 2.0
+    private const val MAX_MACRO_SPAN_DEG = 6.0
+    private const val MAX_FALLBACK_TILES = 16
     private const val MAX_DETAIL_FETCHES_PER_BATCH = 20
 
     private val memoryCache = ConcurrentHashMap<String, List<TrailVectorSegment>>()
@@ -137,6 +142,9 @@ object TrailVectorRepository {
         val subdomains = subdomainsForKinds(requestedKinds)
         val wantWaymarked = subdomains.isNotEmpty()
         val wantKayakingFallback = TrailRouteKind.KAYAKING in requestedKinds
+        val latSpan = kotlin.math.abs(bbox.latNorth - bbox.latSouth)
+        val lonSpan = kotlin.math.abs(bbox.lonEast - bbox.lonWest)
+        val isWideViewport = latSpan > 1.5 || lonSpan > 2.0
 
         val results = mutableListOf<TrailVectorSegment>()
         var anyWaymarkedOk = false
@@ -154,7 +162,19 @@ object TrailVectorRepository {
             anyWaymarkedOk = allOrAnyOk
         }
 
-        val needTier2Fallback = wantKayakingFallback || (wantWaymarked && !anyWaymarkedOk)
+        if (isWideViewport && latSpan <= MAX_MACRO_SPAN_DEG && lonSpan <= MAX_MACRO_SPAN_DEG) {
+            results.addAll(
+                fetchMacroRoutesForWideZoom(
+                    context = context,
+                    bbox = bbox,
+                    requestedKinds = requestedKinds,
+                    allowNetwork = allowNetwork,
+                    overpassEndpoints = overpassEndpoints
+                )
+            )
+        }
+
+        val needTier2Fallback = !isWideViewport && (wantKayakingFallback || (wantWaymarked && !anyWaymarkedOk))
         if (needTier2Fallback) {
             val fallbackSegments = fetchOverpassOrOsmFallback(
                 context = context,
@@ -204,22 +224,45 @@ object TrailVectorRepository {
                 tileCoords.add(tx to ty)
             }
         }
-        val cappedTiles = tileCoords
+        val sortedCoords = tileCoords
             .sortedBy { (tx, ty) -> kotlin.math.abs(tx - cx) + kotlin.math.abs(ty - cy) }
-            .take(MAX_WAYMARKED_TILES_PER_FETCH)
+            .take(MAX_WAYMARKED_CACHED_TILES)
 
-        val rawTiles = mutableListOf<Triple<String, Pair<Int, Int>, String>>()
+        val allowTileNetwork = allowNetwork && tileCoords.size <= MAX_WIDE_WAYMARKED_SPAN_TILES
+        val networkAllowedCoords = if (allowTileNetwork) {
+            sortedCoords.take(MAX_WAYMARKED_NETWORK_TILES).toHashSet()
+        } else {
+            emptySet()
+        }
+
+        data class LoadedTile(
+            val sub: String,
+            val tx: Int,
+            val ty: Int,
+            val segKey: String,
+            val jsonStr: String?,
+            val cachedSegs: List<TrailVectorSegment>?
+        )
+
+        val loadedTiles = mutableListOf<LoadedTile>()
         var anySourceOk = false
 
-        val fetchJobs = cappedTiles.flatMap { (tx, ty) ->
+        val fetchJobs = sortedCoords.flatMap { xy ->
+            val (tx, ty) = xy
+            val canFetchThisTile = xy in networkAllowedCoords
             subdomains.map { sub ->
                 async {
                     val key = "wm_${sub}_12_${tx}_${ty}"
+                    val segKey = "wm_seg_${sub}_12_${tx}_${ty}"
+                    val memSegs = memoryCache[segKey]
+                    if (memSegs != null) {
+                        return@async LoadedTile(sub, tx, ty, segKey, null, memSegs) to true
+                    }
                     val file = File(getCacheDir(context), "$key.geojson")
                     val cachedJson = readFreshCacheFile(file)
                     if (cachedJson != null) {
-                        Triple(sub, tx to ty, cachedJson) to true
-                    } else if (!allowNetwork || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
+                        LoadedTile(sub, tx, ty, segKey, cachedJson, null) to true
+                    } else if (!canFetchThisTile || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
                         null to false
                     } else {
                         try {
@@ -234,7 +277,7 @@ object TrailVectorRepository {
                                 } catch (_: Exception) {
                                 }
                                 DataAcquisitionManager.reportSuccess()
-                                Triple(sub, tx to ty, body) to true
+                                LoadedTile(sub, tx, ty, segKey, body, null) to true
                             } else {
                                 markTileFailed(key)
                                 null to false
@@ -253,28 +296,30 @@ object TrailVectorRepository {
 
         for ((tileEntry, ok) in fetchJobs.awaitAll()) {
             if (ok) anySourceOk = true
-            if (tileEntry != null) rawTiles.add(tileEntry)
+            if (tileEntry != null) loadedTiles.add(tileEntry)
         }
 
-        if (rawTiles.isEmpty()) return@coroutineScope emptyList<TrailVectorSegment>() to anySourceOk
+        if (loadedTiles.isEmpty()) return@coroutineScope emptyList<TrailVectorSegment>() to anySourceOk
 
-        // Preload cached relation metadata from disk for relations referenced in loaded tiles
+        // Preload cached relation metadata from disk for JSON-loaded tiles and queue any missing ones
         val uncachedRels = linkedSetOf<Pair<String, Long>>()
-        for ((sub, _, jsonStr) in rawTiles) {
+        for (entry in loadedTiles) {
+            val jsonStr = entry.jsonStr ?: continue
             for (relId in extractRelationIdsFromWaymarkedTile(jsonStr)) {
-                val metaKey = "$sub:$relId"
+                val metaKey = "${entry.sub}:$relId"
                 if (!relMetaCache.containsKey(metaKey)) {
-                    val diskMeta = loadRelationMetaFromDisk(context, sub, relId)
+                    val diskMeta = loadRelationMetaFromDisk(context, entry.sub, relId)
                     if (diskMeta != null) {
                         relMetaCache[metaKey] = diskMeta
-                    } else if (allowNetwork) {
-                        uncachedRels.add(sub to relId)
+                    } else if (allowTileNetwork) {
+                        uncachedRels.add(entry.sub to relId)
                     }
                 }
             }
         }
 
-        if (allowNetwork && uncachedRels.isNotEmpty()) {
+        val fetchedMetaRelIds = HashSet<Long>()
+        if (allowTileNetwork && uncachedRels.isNotEmpty()) {
             val sem = Semaphore(6)
             uncachedRels.take(MAX_DETAIL_FETCHES_PER_BATCH).map { (sub, relId) ->
                 async {
@@ -288,6 +333,7 @@ object TrailVectorRepository {
                             if (meta != null) {
                                 relMetaCache["$sub:$relId"] = meta
                                 saveRelationMetaToDisk(context, sub, meta)
+                                synchronized(fetchedMetaRelIds) { fetchedMetaRelIds.add(relId) }
                             }
                         }
                     }
@@ -296,16 +342,23 @@ object TrailVectorRepository {
         }
 
         val segments = mutableListOf<TrailVectorSegment>()
-        for ((sub, xy, jsonStr) in rawTiles) {
-            segments.addAll(
-                parseWaymarkedTileJson(
-                    jsonStr = jsonStr,
-                    subdomain = sub,
+        for (entry in loadedTiles) {
+            if (entry.cachedSegs != null) {
+                segments.addAll(entry.cachedSegs)
+            } else if (entry.jsonStr != null) {
+                val parsed = parseWaymarkedTileJson(
+                    jsonStr = entry.jsonStr,
+                    subdomain = entry.sub,
                     relationMeta = relMetaCache,
-                    tileX = xy.first,
-                    tileY = xy.second
+                    tileX = entry.tx,
+                    tileY = entry.ty
                 )
-            )
+                val tileRels = extractRelationIdsFromWaymarkedTile(entry.jsonStr)
+                if (tileRels.all { relMetaCache.containsKey("${entry.sub}:$it") }) {
+                    memoryCache[entry.segKey] = parsed
+                }
+                segments.addAll(parsed)
+            }
         }
         segments to anySourceOk
     }
@@ -365,8 +418,19 @@ object TrailVectorRepository {
         val startLonIdx = floor(minLon / TILE_SIZE_DEG).toInt()
         val endLonIdx = floor(maxLon / TILE_SIZE_DEG).toInt()
 
+        val focusLatIdx = floor(((minLat + maxLat) / 2.0) / TILE_SIZE_DEG).toInt()
+        val focusLonIdx = floor(((minLon + maxLon) / 2.0) / TILE_SIZE_DEG).toInt()
+        val fbTileList = mutableListOf<Pair<Int, Int>>()
         for (latIdx in startLatIdx..endLatIdx) {
             for (lonIdx in startLonIdx..endLonIdx) {
+                fbTileList.add(latIdx to lonIdx)
+            }
+        }
+        val cappedFbTiles = fbTileList
+            .sortedBy { (la, lo) -> kotlin.math.abs(la - focusLatIdx) + kotlin.math.abs(lo - focusLonIdx) }
+            .take(MAX_FALLBACK_TILES)
+
+        for ((latIdx, lonIdx) in cappedFbTiles) {
                 val baseKey = "tile_${latIdx}_${lonIdx}"
                 val key = if (kayakOnly) "${baseKey}_kayak" else "${baseKey}_fb"
                 val tileSouth = latIdx * TILE_SIZE_DEG
@@ -491,9 +555,208 @@ object TrailVectorRepository {
                 } finally {
                     pendingTiles.remove(key)
                 }
-            }
         }
         return@coroutineScope results
+    }
+
+    /**
+     * Fetches long-distance national/international routes (`iwn|nwn|icn|ncn` and canoe/kayak waterways)
+     * across wide viewports (`latSpan`/`lonSpan` > 1.5 deg) so trails stay visible when zoomed out.
+     */
+    private suspend fun fetchMacroRoutesForWideZoom(
+        context: Context,
+        bbox: BoundingBox,
+        requestedKinds: Set<TrailRouteKind>,
+        allowNetwork: Boolean,
+        overpassEndpoints: List<String>?
+    ): List<TrailVectorSegment> = withContext(Dispatchers.IO) {
+        val startLatBin = floor(bbox.latSouth / MACRO_GRID_DEG).toInt()
+        val endLatBin = floor(bbox.latNorth / MACRO_GRID_DEG).toInt()
+        val startLonBin = floor(bbox.lonWest / MACRO_GRID_DEG).toInt()
+        val endLonBin = floor(bbox.lonEast / MACRO_GRID_DEG).toInt()
+
+        val wantHiking = requestedKinds.isEmpty() ||
+            TrailRouteKind.HIKING in requestedKinds ||
+            TrailRouteKind.EDUCATIONAL in requestedKinds
+        val wantCycling = requestedKinds.isEmpty() || TrailRouteKind.CYCLING in requestedKinds
+        val wantMtb = requestedKinds.isEmpty() || TrailRouteKind.MTB in requestedKinds
+        val wantKayak = requestedKinds.isEmpty() || TrailRouteKind.KAYAKING in requestedKinds
+
+        val routeTypes = buildList {
+            if (wantHiking) add("hiking"); if (wantHiking) add("foot")
+            if (wantCycling) add("bicycle")
+            if (wantMtb) add("mtb")
+        }.distinct()
+        val kindTag = listOfNotNull(
+            if (wantHiking) "h" else null,
+            if (wantCycling) "c" else null,
+            if (wantMtb) "m" else null,
+            if (wantKayak) "k" else null
+        ).joinToString("")
+
+        val results = mutableListOf<TrailVectorSegment>()
+        var binCount = 0
+        for (latBin in startLatBin..endLatBin) {
+            for (lonBin in startLonBin..endLonBin) {
+                binCount++
+                if (binCount > 6) break
+                val key = "macro_${kindTag}_${latBin}_${lonBin}"
+                memoryCache[key]?.let { results.addAll(it); continue }
+
+                val diskFile = File(getCacheDir(context), "$key.json")
+                if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
+                    try {
+                        val parsed = parseTileJson(diskFile.readText())
+                        if (parsed.isNotEmpty()) {
+                            memoryCache[key] = parsed
+                            results.addAll(parsed)
+                            continue
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+
+                if (!allowNetwork || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) continue
+                try {
+                    val s = String.format(Locale.US, "%.4f", latBin * MACRO_GRID_DEG)
+                    val w = String.format(Locale.US, "%.4f", lonBin * MACRO_GRID_DEG)
+                    val n = String.format(Locale.US, "%.4f", (latBin + 1) * MACRO_GRID_DEG)
+                    val e = String.format(Locale.US, "%.4f", (lonBin + 1) * MACRO_GRID_DEG)
+
+                    val blocks = buildString {
+                        if (routeTypes.isNotEmpty()) {
+                            val rRegex = "^(${routeTypes.joinToString("|")})$"
+                            append("""relation["type"="route"]["route"~"$rRegex"]["network"~"^(iwn|nwn|icn|ncn)$"]($s,$w,$n,$e);""")
+                        }
+                        if (wantKayak) {
+                            append("""relation["type"="route"]["route"~"^(canoe|kayak)$"]($s,$w,$n,$e);""")
+                        }
+                    }
+                    if (blocks.isBlank()) continue
+                    val ql = "[out:json][timeout:18];($blocks)->.rels;way(r.rels)($s,$w,$n,$e)->.rw;.rels out;.rw out tags geom;"
+
+                    val body = if (overpassEndpoints != null) {
+                        OutdoorContextResolver.executeOverpassQuery(ql, 8000, 18000, "MACRO_TRAILS", endpoints = overpassEndpoints)
+                    } else {
+                        OutdoorContextResolver.executeOverpassQuery(ql, 8000, 18000, "MACRO_TRAILS")
+                    }
+                    if (body != null) {
+                        val parsed = parseOverpassTrails(body)
+                        memoryCache[key] = parsed
+                        saveTileJson(diskFile, parsed)
+                        results.addAll(parsed)
+                    } else {
+                        markTileFailed(key)
+                    }
+                } catch (ex: Exception) {
+                    markTileFailed(key)
+                    logDebug("Macro fetch $key error: ${ex.message}")
+                } finally {
+                    pendingTiles.remove(key)
+                }
+            }
+        }
+        results
+    }
+
+    /**
+     * Loads full polyline member segments for a trail relation or waterway [osmId], checking
+     * disk cache and querying Overpass worldwide. When [nearLatLng] is supplied (e.g. from a
+     * river/waterway pin), tries the matching OSM element type (`way` then `relation`, or
+     * `relation` then `way`) so numeric ID collisions across continents never return an unrelated
+     * geometry.
+     */
+    suspend fun fetchTrailRouteByOsmId(
+        context: Context,
+        osmId: Long,
+        preferRelation: Boolean = true,
+        nearLatLng: GeoPoint? = null,
+        allowNetwork: Boolean = true,
+        overpassEndpoints: List<String>? = null
+    ): List<List<GeoPoint>> = withContext(Dispatchers.IO) {
+        if (osmId <= 0L) return@withContext emptyList()
+        val typeTag = if (preferRelation) "r" else "w"
+        val diskFile = File(getCacheDir(context), "rel_geom_${typeTag}_${osmId}.json")
+        if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
+            try {
+                val parsed = parseTileJson(diskFile.readText()).map { it.points }.filter { it.size >= 2 }
+                if (parsed.isNotEmpty()) return@withContext parsed
+            } catch (_: Exception) {
+            }
+        }
+
+        fun extractWays(body: String): List<List<GeoPoint>> {
+            val elements = JSONObject(body).optJSONArray("elements") ?: return emptyList()
+            val lines = mutableListOf<List<GeoPoint>>()
+            for (i in 0 until elements.length()) {
+                val el = elements.optJSONObject(i) ?: continue
+                if (el.optString("type") == "way") {
+                    val geom = el.optJSONArray("geometry") ?: continue
+                    val pts = ArrayList<GeoPoint>(geom.length())
+                    for (g in 0 until geom.length()) {
+                        val pt = geom.optJSONObject(g) ?: continue
+                        val lat = pt.optDouble("lat", Double.NaN)
+                        val lon = pt.optDouble("lon", Double.NaN)
+                        if (!lat.isNaN() && !lon.isNaN()) pts.add(GeoPoint(lat, lon))
+                    }
+                    if (pts.size >= 2) lines.add(pts)
+                }
+            }
+            return lines
+        }
+
+        fun matchesProximity(lines: List<List<GeoPoint>>): Boolean {
+            val anchor = nearLatLng ?: return lines.isNotEmpty()
+            return lines.any { pts ->
+                pts.any { p -> p.distanceToAsDouble(anchor) <= 50_000.0 }
+            }
+        }
+
+        if (allowNetwork) {
+            try {
+                val primaryQl = if (preferRelation) {
+                    "[out:json][timeout:15];(relation($osmId);way(r););out body geom;"
+                } else {
+                    "[out:json][timeout:15];way($osmId);out body geom;"
+                }
+                val primaryBody = if (overpassEndpoints != null) {
+                    OutdoorContextResolver.executeOverpassQuery(primaryQl, 6000, 15000, "TRAIL_ROUTE", endpoints = overpassEndpoints)
+                } else {
+                    OutdoorContextResolver.executeOverpassQuery(primaryQl, 6000, 15000, "TRAIL_ROUTE")
+                }
+                val primaryLines = primaryBody?.let { extractWays(it) }?.takeIf { matchesProximity(it) }
+
+                val finalLines = primaryLines ?: run {
+                    val secondaryQl = if (preferRelation) {
+                        "[out:json][timeout:15];way($osmId);out body geom;"
+                    } else {
+                        "[out:json][timeout:15];(relation($osmId);way(r););out body geom;"
+                    }
+                    val secondaryBody = if (overpassEndpoints != null) {
+                        OutdoorContextResolver.executeOverpassQuery(secondaryQl, 6000, 15000, "TRAIL_ROUTE", endpoints = overpassEndpoints)
+                    } else {
+                        OutdoorContextResolver.executeOverpassQuery(secondaryQl, 6000, 15000, "TRAIL_ROUTE")
+                    }
+                    secondaryBody?.let { extractWays(it) }?.takeIf { matchesProximity(it) } ?: emptyList()
+                }
+
+                if (finalLines.isNotEmpty()) {
+                    val synthetic = finalLines.mapIndexed { idx, pts ->
+                        TrailVectorSegment(id = osmId * 1000L + idx, name = "Trail #$osmId", points = pts)
+                    }
+                    saveTileJson(diskFile, synthetic)
+                    return@withContext finalLines
+                }
+            } catch (e: Exception) {
+                logDebug("fetchTrailRouteByOsmId($osmId) error: ${e.message}")
+            }
+        }
+
+        val cachedFromMem = memoryCache.values.flatten()
+            .filter { it.id == osmId || it.id / 100_000L == osmId || it.id / 1_000L == osmId }
+            .map { it.points }
+            .filter { it.size >= 2 }
+        cachedFromMem
     }
 
     private fun readFreshCacheFile(file: File): String? {

@@ -406,6 +406,8 @@ class LocationManager private constructor(private val context: Context) {
     private var lastOutdoorResolvedLat: Double = 0.0
     private var lastOutdoorResolvedLng: Double = 0.0
     private var lastOutdoorResolvedTimeMs: Long = 0L
+    private var lastOutdoorAnchorLat: Double = 0.0
+    private var lastOutdoorAnchorLng: Double = 0.0
     private var outdoorWorkerJob: Job? = null
     private val outdoorLock = Any()
     private var lastScreenOffGeocodeMs = 0L
@@ -1481,14 +1483,36 @@ class LocationManager private constructor(private val context: Context) {
                         allowNetwork = realTimeNeeded || activeOutdoorRecording
                     )
                     if (outdoorCtx != null) {
-                        lastOutdoorContext = outdoorCtx
+                        val movedFromAnchor = if (lastOutdoorAnchorLat != 0.0 || lastOutdoorAnchorLng != 0.0) {
+                            val anchorDist = FloatArray(1)
+                            AndroidLocation.distanceBetween(lastOutdoorAnchorLat, lastOutdoorAnchorLng, lat, lng, anchorDist)
+                            anchorDist[0]
+                        } else {
+                            Float.MAX_VALUE
+                        }
+                        val keepExisting = !outdoorCtx.hasAnyOutdoor &&
+                            lastOutdoorContext?.hasAnyOutdoor == true &&
+                            (!outdoorCtx.isAuthoritative || movedFromAnchor <= 1_500f)
+
+                        if (outdoorCtx.hasAnyOutdoor) {
+                            lastOutdoorAnchorLat = lat
+                            lastOutdoorAnchorLng = lng
+                        } else if (!keepExisting) {
+                            lastOutdoorAnchorLat = 0.0
+                            lastOutdoorAnchorLng = 0.0
+                        }
+
                         lastOutdoorResolvedLat = lat
                         lastOutdoorResolvedLng = lng
                         lastOutdoorResolvedTimeMs = SystemClock.elapsedRealtime()
-                        lastLocationSnapshot?.let { snap ->
-                            val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
-                            lastLocationSnapshot = updatedSnap
-                            snapshotChannelSend?.invoke(updatedSnap)
+
+                        if (!keepExisting) {
+                            lastOutdoorContext = outdoorCtx
+                            lastLocationSnapshot?.let { snap ->
+                                val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
+                                lastLocationSnapshot = updatedSnap
+                                snapshotChannelSend?.invoke(updatedSnap)
+                            }
                         }
                     }
                 } catch (_: Exception) {}

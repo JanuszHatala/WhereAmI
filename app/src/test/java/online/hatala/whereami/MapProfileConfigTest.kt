@@ -76,20 +76,24 @@ class MapProfileConfigTest {
         assertEquals(setOf(TrailRouteKind.CYCLING, TrailRouteKind.MTB), cyclingConfig.enabledTrailKinds)
         assertEquals("#EF4444", cyclingConfig.trackColorHex)
 
-        // MTB defaults: clean Topographic + filterable Vector trails
+        // MTB defaults: clean Topographic + filterable Vector trails + crisp Standard width
         val mtbConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.MTB)
         assertEquals(MapBaseLayer.TOPO, mtbConfig.baseLayer)
         assertEquals(MapOrientationMode.COURSE_UP, mtbConfig.orientationMode)
         assertTrue(mtbConfig.showHikingOverlay)
+        assertEquals(TrailThickness.NORMAL, mtbConfig.trailThickness)
+        assertEquals(TrailLineStyle.SOLID, mtbConfig.trailLineStyle)
+        assertEquals(TrailOpacity.NORMAL, mtbConfig.trailOpacity)
         assertEquals(TrailOverlayMode.VECTOR, mtbConfig.trailOverlayMode)
         assertEquals(setOf(TrailRouteKind.MTB, TrailRouteKind.CYCLING), mtbConfig.enabledTrailKinds)
         assertEquals("#10B981", mtbConfig.trackColorHex)
 
-        // Hiking defaults: clean Topographic + filterable Vector trails
+        // Hiking defaults: clean Topographic + filterable Vector trails + crisp Standard width
         val hikingConfig = MapProfileConfigHelper.getDefaultConfig(ActivityProfile.HIKING)
         assertEquals(MapBaseLayer.TOPO, hikingConfig.baseLayer)
         assertEquals(MapOrientationMode.COURSE_UP, hikingConfig.orientationMode)
         assertTrue(hikingConfig.showHikingOverlay)
+        assertEquals(TrailThickness.NORMAL, hikingConfig.trailThickness)
         assertEquals(TrailOverlayMode.VECTOR, hikingConfig.trailOverlayMode)
         assertEquals(setOf(TrailRouteKind.HIKING, TrailRouteKind.EDUCATIONAL), hikingConfig.enabledTrailKinds)
         assertEquals("#F59E0B", hikingConfig.trackColorHex)
@@ -186,5 +190,32 @@ class MapProfileConfigTest {
         assertEquals(TrailOverlayMode.VECTOR, reset.trailOverlayMode)
         assertEquals(setOf(TrailRouteKind.HIKING, TrailRouteKind.EDUCATIONAL), reset.enabledTrailKinds)
         assertTrue(reset.enabledTrailColors.isEmpty())
+    }
+
+    @Test
+    fun testTrailLineStyleAndOpacityPersistenceAndReset() {
+        val ctx = testContext()
+        MapProfileConfigHelper.setTrailLineStyle(ctx, ActivityProfile.HIKING, TrailLineStyle.DASHED)
+        MapProfileConfigHelper.setTrailOpacity(ctx, ActivityProfile.HIKING, TrailOpacity.SOFT)
+
+        val hiking = MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING)
+        assertEquals(TrailLineStyle.DASHED, hiking.trailLineStyle)
+        assertEquals(TrailOpacity.SOFT, hiking.trailOpacity)
+
+        // Different profile keeps canonical defaults
+        val car = MapProfileConfigHelper.getConfig(ctx, ActivityProfile.CAR)
+        assertEquals(TrailLineStyle.SOLID, car.trailLineStyle)
+        assertEquals(TrailOpacity.NORMAL, car.trailOpacity)
+
+        MapProfileConfigHelper.setTrailLineStyle(ctx, ActivityProfile.MTB, TrailLineStyle.DOTTED)
+        MapProfileConfigHelper.setTrailOpacity(ctx, ActivityProfile.MTB, TrailOpacity.SUBTLE)
+        MapProfileConfigHelper.resetAllProfileDefaults(ctx)
+
+        val resetHiking = MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING)
+        val resetMtb = MapProfileConfigHelper.getConfig(ctx, ActivityProfile.MTB)
+        assertEquals(TrailLineStyle.SOLID, resetHiking.trailLineStyle)
+        assertEquals(TrailOpacity.NORMAL, resetHiking.trailOpacity)
+        assertEquals(TrailLineStyle.SOLID, resetMtb.trailLineStyle)
+        assertEquals(TrailOpacity.NORMAL, resetMtb.trailOpacity)
     }
 }

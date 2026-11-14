@@ -349,14 +349,19 @@ fun LocationScreen(viewModel: MainViewModel) {
     val boundaryPoints by viewModel.boundaryPoints.collectAsState()
     val pinnedBoundaryPoints by viewModel.pinnedBoundaryPoints.collectAsState()
     val selectedOutdoorAreaBoundary by viewModel.selectedOutdoorAreaBoundary.collectAsState()
+    val selectedOutdoorAreaPolygons by viewModel.selectedOutdoorAreaPolygons.collectAsState()
+    val selectedOutdoorAreaIsExplicit by viewModel.selectedOutdoorAreaIsExplicit.collectAsState()
     val selectedOutdoorAreaKind by viewModel.selectedOutdoorAreaKind.collectAsState()
     val selectedOutdoorAreaName by viewModel.selectedOutdoorAreaName.collectAsState()
     val selectedOutdoorAreaCenter by viewModel.selectedOutdoorAreaCenter.collectAsState()
     val fitOutdoorAreaTrigger by viewModel.fitOutdoorAreaTrigger.collectAsState()
     val liveOutdoorAreaBoundary by viewModel.liveOutdoorAreaBoundary.collectAsState()
+    val liveOutdoorAreaPolygons by viewModel.liveOutdoorAreaPolygons.collectAsState()
     val liveOutdoorAreaKind by viewModel.liveOutdoorAreaKind.collectAsState()
     val liveOutdoorAreaName by viewModel.liveOutdoorAreaName.collectAsState()
     val searchRoutePolylines by viewModel.searchRoutePolylines.collectAsState()
+    val searchRouteColorHex by viewModel.searchRouteColorHex.collectAsState()
+    val destinationOutdoorContext by viewModel.destinationOutdoorContext.collectAsState()
     val searchCategory by viewModel.searchCategory.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
     val fitPlacesTrigger by viewModel.fitPlacesTrigger.collectAsState()
@@ -734,6 +739,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     // or recenter the map before allowing the system to minimize the app.
     val hasOverlaySelection = selectedSavedPlace != null ||
             destinationPoint != null ||
+            selectedOutdoorAreaIsExplicit ||
+            searchRoutePolylines != null ||
             selectedGuestDetails != null ||
             selectedTripsList.isNotEmpty()
     BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
@@ -745,10 +752,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                     showLiveViewsDetailsModal = true
                 }
             }
-            selectedSavedPlace != null -> selectedSavedPlace = null
+            selectedSavedPlace != null -> {
+                selectedSavedPlace = null
+                viewModel.resolveSavedPlaceOutdoor(null)
+            }
             destinationPoint != null -> {
                 viewModel.setDestination(null)
                 viewModel.clearPinnedBorders()
+            }
+            selectedOutdoorAreaIsExplicit || searchRoutePolylines != null -> {
+                viewModel.clearOutdoorAreaBoundary()
             }
             selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
             !isMapFollowing -> {
@@ -812,6 +825,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             onSavedPlaceClick = { sp ->
                 selectedSavedPlace = sp
                 viewModel.setDestination(null)
+                viewModel.resolveSavedPlaceOutdoor(sp.geoPoint)
             },
             onClearDestination = {
                 selectedSavedPlace = null
@@ -849,11 +863,14 @@ fun LocationScreen(viewModel: MainViewModel) {
             showMapSettingsExternal = showMapSettingsDialog,
             onDismissMapSettings = { showMapSettingsDialog = false },
             outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary ?: liveOutdoorAreaBoundary,
+            outdoorAreaBoundaryPolygons = selectedOutdoorAreaPolygons ?: liveOutdoorAreaPolygons,
+            outdoorAreaIsExplicit = selectedOutdoorAreaIsExplicit,
             outdoorAreaKind = selectedOutdoorAreaKind ?: liveOutdoorAreaKind,
             outdoorAreaName = selectedOutdoorAreaName ?: liveOutdoorAreaName,
             outdoorAreaCenter = selectedOutdoorAreaCenter,
             fitOutdoorAreaTrigger = fitOutdoorAreaTrigger,
             searchRoutePolylines = searchRoutePolylines,
+            searchRouteColorHex = searchRouteColorHex,
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
                     SearchResultItem(
@@ -919,6 +936,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             preferPace = preferPaceForCurrentProfile,
                             onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                             onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                            onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                            onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                             modifier = Modifier.widthIn(max = 410.dp)
                         )
                     }
@@ -938,6 +957,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         savedPlace = selectedSavedPlace,
                         destinationAltitude = destinationAltitude,
                         destinationAltitudeLoading = destinationAltitudeLoading,
+                        destinationOutdoorContext = destinationOutdoorContext,
+                        onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                        onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                        onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                         onClearDestination = {
                             selectedSavedPlace = null
                             viewModel.setDestination(null)
@@ -1042,6 +1065,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     preferPace = preferPaceForCurrentProfile,
                     onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                     onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                    onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                    onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
@@ -1066,6 +1091,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                     savedPlace = selectedSavedPlace,
                     destinationAltitude = destinationAltitude,
                     destinationAltitudeLoading = destinationAltitudeLoading,
+                    destinationOutdoorContext = destinationOutdoorContext,
+                    onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                    onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                    onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                     onClearDestination = {
                         selectedSavedPlace = null
                         viewModel.setDestination(null)
@@ -10139,6 +10168,8 @@ private fun OutdoorContextRow(
     outdoor: OutdoorContext,
     isCompact: Boolean,
     onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (!outdoor.hasAnyOutdoor) return
@@ -10155,12 +10186,10 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x28F59E0B),
                 border = BorderStroke(1.dp, Color(0x66F59E0B)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                modifier = Modifier.widthIn(max = 280.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = "⛰️", fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10170,16 +10199,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFBBF24),
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 13.sp
                         )
                     )
                 }
@@ -10193,12 +10221,10 @@ private fun OutdoorContextRow(
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x2810B981),
                 border = BorderStroke(1.dp, Color(0x6610B981)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                modifier = Modifier.widthIn(max = 280.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = if (park.kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
@@ -10209,16 +10235,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF34D399),
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 13.sp
                         )
                     )
                 }
@@ -10236,15 +10261,14 @@ private fun OutdoorContextRow(
                 else -> Color(0xFF38BDF8)
             }
             Surface(
+                onClick = { onTrailClick?.invoke(trail) },
                 shape = RoundedCornerShape(6.dp),
                 color = Color(0x280284C7),
-                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.5f)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.55f)),
+                modifier = Modifier.widthIn(max = 280.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = trail.kind.iconEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10254,16 +10278,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = trailBadgeColor,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 13.sp
                         )
                     )
                 }
@@ -10273,16 +10296,19 @@ private fun OutdoorContextRow(
         // 4. Nearest Peak or Pass or Hut or Water Body
         val feature = outdoor.nearestPeak ?: outdoor.nearestHut ?: outdoor.nearestPass ?: outdoor.nearestWater
         if (feature != null) {
+            val isWater = feature.kind == PlaceKind.WATER_BODY
+            val featBg = if (isWater) Color(0x280284C7) else Color(0x331E293B)
+            val featBorder = if (isWater) Color(0x8838BDF8) else Color(0x77CBD5E1)
+            val featTextColor = if (isWater) Color(0xFF38BDF8) else Color(0xFFF1F5F9)
             Surface(
+                onClick = { onFeatureClick?.invoke(feature) },
                 shape = RoundedCornerShape(6.dp),
-                color = Color(0x28475569),
-                border = BorderStroke(1.dp, Color(0x6694A3B8)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                color = featBg,
+                border = BorderStroke(1.dp, featBorder),
+                modifier = Modifier.widthIn(max = 280.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val featureEmoji = when (feature.kind) {
@@ -10304,18 +10330,17 @@ private fun OutdoorContextRow(
                     Text(
                         text = label,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFFE2E8F0),
-                        maxLines = 1,
+                        fontWeight = FontWeight.SemiBold,
+                        color = featTextColor,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 13.sp
                         )
                     )
                 }
@@ -10464,6 +10489,8 @@ private fun LocalityCard(
     preferPace: Boolean = false,
     onToggleSpeedPace: () -> Unit = {},
     onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -10813,6 +10840,8 @@ private fun LocalityCard(
                         outdoor = outdoor,
                         isCompact = true,
                         onOutdoorAreaClick = onOutdoorAreaClick,
+                        onTrailClick = onTrailClick,
+                        onFeatureClick = onFeatureClick,
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
                 }
@@ -11397,6 +11426,8 @@ private fun LocalityCard(
                         outdoor = outdoor,
                         isCompact = false,
                         onOutdoorAreaClick = onOutdoorAreaClick,
+                        onTrailClick = onTrailClick,
+                        onFeatureClick = onFeatureClick,
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
                 }
@@ -11978,6 +12009,10 @@ private fun DestinationPlaceCard(
     savedPlace: SavedPlace? = null,
     destinationAltitude: Double? = null,
     destinationAltitudeLoading: Boolean = false,
+    destinationOutdoorContext: OutdoorContext? = null,
+    onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     onClearDestination: () -> Unit,
     onNavigate: (Double, Double) -> Unit,
     onGoogleMaps: (Double, Double, String) -> Unit,
@@ -12107,8 +12142,28 @@ private fun DestinationPlaceCard(
                     text = subtitleText,
                     color = Color(0xFF94A3B8),
                     fontSize = 12.sp,
-                    maxLines = 2,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        ),
+                        lineHeight = 14.sp
+                    ),
                     modifier = Modifier.padding(top = 2.dp, start = 26.dp)
+                )
+            }
+
+            destinationOutdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                OutdoorContextRow(
+                    outdoor = outdoor,
+                    isCompact = true,
+                    onOutdoorAreaClick = onOutdoorAreaClick,
+                    onTrailClick = onTrailClick,
+                    onFeatureClick = onFeatureClick,
+                    modifier = Modifier.padding(top = 6.dp)
                 )
             }
 

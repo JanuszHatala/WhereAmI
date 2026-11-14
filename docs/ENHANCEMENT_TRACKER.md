@@ -82,8 +82,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 53** | Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync (v2.1.2) | 5 | 5 | 0 | 0 |
 | **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
 | **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
+| **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
+| **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **376** | **368** | **0** | **8** |
+| **Total** | | **391** | **383** | **0** | **8** |
 
 
 ---
@@ -1840,6 +1842,26 @@ Evidence & Diagnostics:
 | **SKL-58-07** | Fix `jh-field-test-feedback` SQL `activity_profile` column, outdoor/429/max_speed audit checks, and Question-Only Gate. | `.agents/skills/jh-field-test-feedback/SKILL.md`, `pull_device_data.sh` | Implemented | Updated skill documentation and telemetry script. |
 | **VEC-58-08** | Fix invisible Vector Trails: Waymarked `z=12` GeoJSON vector tiles + relation meta cache, drop broken `maps.mail.ru` mirror, split OverpassQL, viewport-centered OSM `0.6/map` XML fallback, `floor()` tile math, 15s overlay cooldown/filter refetch, `TrailColor.NONE` kind accents, and Z-order index `1`. | `TrailVectorRepository.kt`, `OutdoorContextResolver.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `TrailVectorRepositoryTest.kt` | Implemented | 9/9 tests in `TrailVectorRepositoryTest` + full 684-test suite pass. |
 | **VER-58** | Bump to `versionCode = 202`, `versionName = "2.4.1"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest`, `assembleDebug`, and server tests pass. |
+
+---
+
+## Round 59 - Zoom-Out Vector Trails, Line Styles/Opacity, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2)
+
+User feedback & root causes:
+- Trails disappeared below `z=12.0`: `VectorTrailOverlay` cleared `currentTrails` and returned early when `zoomLevelDouble < 12.0`. Added cached `z=12` tile retention up to `144` tiles plus Overpass `fetchMacroRoutesForWideZoom` (`iwn|nwn|icn|ncn` and `canoe|kayak`) up to `6.0` deg viewport span.
+- Thick vector trails & style controls: calibrated `TrailThickness` (`1.0f` Standard `2.8dp..0.85dp`, `2.0f` Thick, `2.5f` Bold) with smooth zoom tapering (`computeStrokeWidthDp`), plus persisted `TrailLineStyle` (`SOLID`, `DASHED`, `DOTTED`) and `TrailOpacity` (`NORMAL = 1.0f`, `SOFT = 0.65f`, `SUBTLE = 0.35f`) in `MapSettingsDialog` and `MapProfileConfigHelper`.
+- Outdoor badges disappearing (`22:24` -> `22:26`) & truncation: ~11m `%.4f_%.4f` cache misses + non-authoritative empty responses overwrote `lastOutdoorContext`. Added `~150m` nearest-fresh fallback in `SpatialCacheHelper`, `OutdoorContext.isAuthoritative`, anchor retention (`<= 1500f` m) in `LocationManager`, and multi-line wrapping (`maxLines = 3`) in `OutdoorContextRow`.
+- Protected area, trail, and waterway pill clicks & contrast: fixed MultiPolygon ring sorting/preservation (`BoundaryHelper.parseGeoJsonPolygons`), fixed `GeoPoint(0.0, 0.0)` center fallback (`MainViewModel`), updated `lastMapInteractionElapsedMs` on explicit area fit (`OsmMapView`) + `BackHandler` clear, wired `selectActiveTrail` / `selectOutdoorFeature` via `TrailVectorRepository.fetchTrailRouteByOsmId` (`out body geom;` + proximity check), and improved `PlaceKind.WATER_BODY` contrast (`#0284C7`/`#38BDF8`).
+- Pinned Location Card (`DestinationPlaceCard`): resolved `destinationOutdoorContext` on map taps, search picks, and saved places, rendered `OutdoorContextRow`, and condensed gray subtitle spacing (`lineHeight = 14.sp`, `includeFontPadding = false`).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VEC-59-01** | Keep vector trails visible across all zoom levels (`<= 144` cached `z=12` tiles + `iwn|nwn|icn|ncn` / kayak macro routes). | `VectorTrailOverlay.kt`, `TrailVectorRepository.kt`, `TrailVectorRepositoryTest.kt` | Implemented | Zoom-out cached tile + macro Overpass tests pass. |
+| **VEC-59-02** | Calibrate zoomed trail tapering (`Standard` 1.0x / `Thick` 2.0x / `Bold` 2.5x) and add persisted `TrailLineStyle` & `TrailOpacity`. | `OutdoorModels.kt`, `MapProfileConfigHelper.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt` | Implemented | `computeStrokeWidthDp` & config persistence tests pass. |
+| **OUT-59-03** | Prevent non-authoritative/drift badge clears (`~150m` cache fallback, `isAuthoritative`, anchor retention) and allow multi-line badge wrap. | `OutdoorModels.kt`, `SpatialCacheHelper.kt`, `OutdoorContextResolver.kt`, `LocationManager.kt`, `MainActivity.kt`, `OutdoorResilienceTest.kt` | Implemented | `OutdoorContext.isAuthoritative` unit tests pass. |
+| **OUT-59-04** | Fix MultiPolygon parsing, explicit boundary fit/recents interaction timer, active trail click, waterway click & contrast, and `BackHandler` clear. | `BoundaryHelper.kt`, `SearchHelper.kt`, `TrailVectorRepository.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `OutdoorResilienceTest.kt` | Implemented | MultiPolygon ring sorting & river `way` fetch unit tests pass. |
+| **PIN-59-05** | Resolve outdoor regions inside `DestinationPlaceCard` and condense gray address subtitle line spacing. | `MainViewModel.kt`, `MainActivity.kt` | Implemented | UI & state wiring verified via build and unit suite. |
+| **VER-59** | Bump to `versionCode = 203`, `versionName = "2.4.2"`. | `app/build.gradle.kts` | Implemented | 689 passed / 1 skipped (`FieldReplayTest` fixture absent) + `assembleDebug` + 16 server tests pass. |
 
 
 

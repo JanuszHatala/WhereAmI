@@ -873,6 +873,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     fun getOutdoorContext(lat: Double, lng: Double, maxAgeMs: Long? = 6 * 3600 * 1000L): OutdoorContext? {
         val key = toGridKey(lat, lng)
         val db = readableDatabase
+        val nowMs = System.currentTimeMillis()
         val cursor = db.rawQuery(
             "SELECT $COL_CONTEXT_JSON, $COL_TIMESTAMP FROM $TABLE_OUTDOOR_CACHE WHERE $COL_GRID_KEY = ?",
             arrayOf(key)
@@ -881,13 +882,39 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             if (it.moveToFirst()) {
                 val json = it.getString(0)
                 val timestamp = it.getLong(1)
-                if (maxAgeMs != null && (System.currentTimeMillis() - timestamp) > maxAgeMs) {
-                    return null
+                if (maxAgeMs == null || (nowMs - timestamp) <= maxAgeMs) {
+                    return deserializeOutdoorContext(json)
                 }
-                return deserializeOutdoorContext(json)
             }
         }
-        return null
+        // Fallback to nearest fresh cached row within ~150m so indoor GPS cell jitter never blanks outdoor badges
+        val dLat = 0.0014
+        val dLng = 0.0020
+        val nearCursor = db.rawQuery(
+            "SELECT $COL_CONTEXT_JSON, $COL_TIMESTAMP, $COL_LAT, $COL_LNG FROM $TABLE_OUTDOOR_CACHE WHERE $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ?",
+            arrayOf(
+                (lat - dLat).toString(),
+                (lat + dLat).toString(),
+                (lng - dLng).toString(),
+                (lng + dLng).toString()
+            )
+        )
+        var bestDistSq = Double.MAX_VALUE
+        var bestJson: String? = null
+        nearCursor.use { c ->
+            while (c.moveToNext()) {
+                val timestamp = c.getLong(1)
+                if (maxAgeMs != null && (nowMs - timestamp) > maxAgeMs) continue
+                val rowLat = c.getDouble(2)
+                val rowLng = c.getDouble(3)
+                val distSq = (rowLat - lat) * (rowLat - lat) + (rowLng - lng) * (rowLng - lng)
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq
+                    bestJson = c.getString(0)
+                }
+            }
+        }
+        return bestJson?.let { deserializeOutdoorContext(it) }
     }
 
     fun putOutdoorContext(lat: Double, lng: Double, outdoorContext: OutdoorContext) {

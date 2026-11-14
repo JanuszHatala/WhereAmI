@@ -82,7 +82,8 @@ data class OutdoorContext(
     val activeTrails: List<ActiveTrailInfo> = emptyList(),
     val nearestFeatures: List<OutdoorFeatureInfo> = emptyList(),
     val waterBody: OutdoorFeatureInfo? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isAuthoritative: Boolean = true
 ) {
     val hasAnyOutdoor: Boolean
         get() = mountainRange != null || protectedAreas.isNotEmpty() || valley != null ||
@@ -99,7 +100,19 @@ data class OutdoorContext(
 }
 
 enum class TrailThickness(val label: String, val widthMultiplier: Float) {
+    NORMAL("Standard", 1.0f),
+    THICK("Thick", 2.0f),
+    EXTRA_THICK("Bold", 2.5f)
+}
+
+enum class TrailLineStyle(val label: String) {
+    SOLID("Solid"),
+    DASHED("Dashed"),
+    DOTTED("Dotted")
+}
+
+enum class TrailOpacity(val label: String, val alphaFraction: Float) {
     NORMAL("Normal", 1.0f),
-    THICK("Thick", 1.6f),
-    EXTRA_THICK("Extra Thick", 2.4f)
+    SOFT("Soft", 0.65f),
+    SUBTLE("Transparent", 0.35f)
 }

@@ -187,10 +187,10 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
 ### MAP-03: Filterable Vector Trails & Waymarked Overlay
-- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) fetched globally via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) with hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, plus optional mutually exclusive Waymarked Trails raster overlay.
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, with user-configurable zoom-tapered thickness (`Standard`/`Thick`/`Bold`), line style (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`), `TrailVectorRepository.kt`, `OsmMapView.kt` (`MapSettingsDialog` selective filter chips), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `TrailOverlayMode`).
+  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`).
 
 ### MAP-04: Map Recenter & Floating Recenter Pill
 - **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.

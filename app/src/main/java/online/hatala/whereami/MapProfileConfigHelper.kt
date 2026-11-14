@@ -15,6 +15,8 @@ data class ProfileMapConfig(
     val trackColorHex: String = "#EF4444",
     val showOutdoorAreasOverlay: Boolean = false,
     val trailThickness: TrailThickness = TrailThickness.NORMAL,
+    val trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
+    val trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
     val trailOverlayMode: TrailOverlayMode = TrailOverlayMode.VECTOR,
     val enabledTrailKinds: Set<TrailRouteKind> = emptySet(),
     val enabledTrailColors: Set<TrailColor> = emptySet()
@@ -51,7 +53,7 @@ object MapProfileConfigHelper {
             fontScale = MapFontScale.NORMAL,
             trackColorHex = "#10B981",
             showOutdoorAreasOverlay = true,
-            trailThickness = TrailThickness.THICK,
+            trailThickness = TrailThickness.NORMAL,
             trailOverlayMode = TrailOverlayMode.VECTOR,
             enabledTrailKinds = setOf(TrailRouteKind.MTB, TrailRouteKind.CYCLING)
         )
@@ -62,7 +64,7 @@ object MapProfileConfigHelper {
             fontScale = MapFontScale.NORMAL,
             trackColorHex = "#F59E0B",
             showOutdoorAreasOverlay = true,
-            trailThickness = TrailThickness.THICK,
+            trailThickness = TrailThickness.NORMAL,
             trailOverlayMode = TrailOverlayMode.VECTOR,
             enabledTrailKinds = setOf(TrailRouteKind.HIKING, TrailRouteKind.EDUCATIONAL)
         )
@@ -87,7 +89,7 @@ object MapProfileConfigHelper {
             fontScale = MapFontScale.NORMAL,
             trackColorHex = "#06B6D4",
             showOutdoorAreasOverlay = true,
-            trailThickness = TrailThickness.THICK,
+            trailThickness = TrailThickness.NORMAL,
             trailOverlayMode = TrailOverlayMode.VECTOR,
             enabledTrailKinds = setOf(TrailRouteKind.KAYAKING)
         )
@@ -121,6 +123,8 @@ object MapProfileConfigHelper {
             prefs.getBoolean("profile_${profile.name}_outdoor_areas", default.showOutdoorAreasOverlay)
         } else default.showOutdoorAreasOverlay
         val trailThicknessName = prefs.getString("profile_${profile.name}_trail_thickness", null)
+        val trailLineStyleName = prefs.getString("profile_${profile.name}_trail_line_style", null)
+        val trailOpacityName = prefs.getString("profile_${profile.name}_trail_opacity", null)
         val trailOverlayModeName = prefs.getString("profile_${profile.name}_trail_overlay_mode", null)
         val trailKindsRaw = prefs.getString("profile_${profile.name}_trail_kinds", null)
         val trailColorsRaw = prefs.getString("profile_${profile.name}_trail_colors", null)
@@ -140,6 +144,14 @@ object MapProfileConfigHelper {
         val trailThickness = trailThicknessName?.let {
             try { TrailThickness.valueOf(it) } catch (_: Exception) { null }
         } ?: default.trailThickness
+
+        val trailLineStyle = trailLineStyleName?.let {
+            try { TrailLineStyle.valueOf(it) } catch (_: Exception) { null }
+        } ?: default.trailLineStyle
+
+        val trailOpacity = trailOpacityName?.let {
+            try { TrailOpacity.valueOf(it) } catch (_: Exception) { null }
+        } ?: default.trailOpacity
 
         val trailOverlayMode = trailOverlayModeName?.let {
             try { TrailOverlayMode.valueOf(it) } catch (_: Exception) { null }
@@ -173,6 +185,8 @@ object MapProfileConfigHelper {
             trackColorHex = trackColorHex,
             showOutdoorAreasOverlay = outdoorAreasOverlay,
             trailThickness = trailThickness,
+            trailLineStyle = trailLineStyle,
+            trailOpacity = trailOpacity,
             trailOverlayMode = trailOverlayMode,
             enabledTrailKinds = enabledTrailKinds,
             enabledTrailColors = enabledTrailColors
@@ -202,6 +216,16 @@ object MapProfileConfigHelper {
     fun setTrailThickness(context: Context, profile: ActivityProfile, thickness: TrailThickness) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString("profile_${profile.name}_trail_thickness", thickness.name).apply()
+    }
+
+    fun setTrailLineStyle(context: Context, profile: ActivityProfile, style: TrailLineStyle) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_${profile.name}_trail_line_style", style.name).apply()
+    }
+
+    fun setTrailOpacity(context: Context, profile: ActivityProfile, opacity: TrailOpacity) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_${profile.name}_trail_opacity", opacity.name).apply()
     }
 
     fun setTrailOverlayMode(context: Context, profile: ActivityProfile, mode: TrailOverlayMode) {
@@ -239,6 +263,8 @@ object MapProfileConfigHelper {
             .remove("profile_${profile.name}_hiking_overlay")
             .remove("profile_${profile.name}_outdoor_areas")
             .remove("profile_${profile.name}_trail_thickness")
+            .remove("profile_${profile.name}_trail_line_style")
+            .remove("profile_${profile.name}_trail_opacity")
             .remove("profile_${profile.name}_trail_overlay_mode")
             .remove("profile_${profile.name}_trail_kinds")
             .remove("profile_${profile.name}_trail_colors")
@@ -256,6 +282,8 @@ object MapProfileConfigHelper {
             editor.remove("profile_${profile.name}_hiking_overlay")
             editor.remove("profile_${profile.name}_outdoor_areas")
             editor.remove("profile_${profile.name}_trail_thickness")
+            editor.remove("profile_${profile.name}_trail_line_style")
+            editor.remove("profile_${profile.name}_trail_opacity")
             editor.remove("profile_${profile.name}_trail_overlay_mode")
             editor.remove("profile_${profile.name}_trail_kinds")
             editor.remove("profile_${profile.name}_trail_colors")

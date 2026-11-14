@@ -11,6 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.osmdroid.util.BoundingBox
+import org.osmdroid.util.GeoPoint
 import java.io.File
 import java.net.InetSocketAddress
 import java.nio.file.Files
@@ -121,10 +122,28 @@ class TrailVectorRepositoryTest {
     @Test
     fun trailThicknessMultipliers_provideDistinctBoldDifferentiations() {
         assertEquals(1.0f, TrailThickness.NORMAL.widthMultiplier, 0.001f)
-        assertEquals(1.6f, TrailThickness.THICK.widthMultiplier, 0.001f)
-        assertEquals(2.4f, TrailThickness.EXTRA_THICK.widthMultiplier, 0.001f)
+        assertEquals(2.0f, TrailThickness.THICK.widthMultiplier, 0.001f)
+        assertEquals(2.5f, TrailThickness.EXTRA_THICK.widthMultiplier, 0.001f)
         assertTrue(TrailThickness.EXTRA_THICK.widthMultiplier > TrailThickness.THICK.widthMultiplier)
         assertTrue(TrailThickness.THICK.widthMultiplier > TrailThickness.NORMAL.widthMultiplier)
+    }
+
+    @Test
+    fun computeStrokeWidthDp_tapersSmoothlyAcrossAllZoomLevelsAndMatchesStandardBoldTargets() {
+        val z17Normal = VectorTrailOverlay.computeStrokeWidthDp(17.0, TrailThickness.NORMAL)
+        val z17Thick = VectorTrailOverlay.computeStrokeWidthDp(17.0, TrailThickness.THICK)
+        val z17Bold = VectorTrailOverlay.computeStrokeWidthDp(17.0, TrailThickness.EXTRA_THICK)
+        val z15Normal = VectorTrailOverlay.computeStrokeWidthDp(15.2, TrailThickness.NORMAL)
+        val z13Normal = VectorTrailOverlay.computeStrokeWidthDp(13.8, TrailThickness.NORMAL)
+        val z11Normal = VectorTrailOverlay.computeStrokeWidthDp(11.8, TrailThickness.NORMAL)
+        val z9Normal = VectorTrailOverlay.computeStrokeWidthDp(9.5, TrailThickness.NORMAL)
+        val z7Normal = VectorTrailOverlay.computeStrokeWidthDp(7.0, TrailThickness.NORMAL)
+
+        assertEquals(2.8f, z17Normal, 0.001f)
+        assertEquals(z17Normal * 2.0f, z17Thick, 0.001f)
+        assertEquals(7.0f, z17Bold, 0.001f)
+        assertTrue(z17Normal > z15Normal && z15Normal > z13Normal && z13Normal > z11Normal)
+        assertTrue(z11Normal > z9Normal && z9Normal > z7Normal && z7Normal > 0.5f)
     }
 
     @Test
@@ -378,5 +397,115 @@ class TrailVectorRepositoryTest {
         assertFalse(VectorTrailOverlay.resolveStrokeColorHex(cyc).equals("#94A3B8", ignoreCase = true))
         assertFalse(VectorTrailOverlay.resolveStrokeColorHex(mtb).equals("#94A3B8", ignoreCase = true))
         assertEquals(TrailColor.BLUE.hexColor, VectorTrailOverlay.resolveStrokeColorHex(blue))
+    }
+
+    @Test
+    fun wideZoomLoadsCachedTilesAndMacroRoutesAndRouteFetcherRespectsProximity() = runBlocking {
+        var macroHitCount = 0
+        var waterFallbackHitCount = 0
+        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/tiles/") { ex ->
+                val json = """
+                {
+                  "type": "FeatureCollection",
+                  "features": [
+                    {
+                      "type": "Feature",
+                      "geometry": { "type": "LineString", "coordinates": [[1874000.0, 6570500.0], [1874200.0, 6570700.0]] },
+                      "properties": { "type": "way", "top_relations": [8001], "shields": ["osmc_REG_white_red-bar"] }
+                    }
+                  ]
+                }
+                """.trimIndent()
+                val b = json.toByteArray()
+                ex.sendResponseHeaders(200, b.size.toLong())
+                ex.responseBody.use { it.write(b) }
+            }
+            createContext("/details/") { ex ->
+                val b = """{"id":8001,"name":"Local Valley Path","tags":{"route":"hiking","colour":"red"}}""".toByteArray()
+                ex.sendResponseHeaders(200, b.size.toLong())
+                ex.responseBody.use { it.write(b) }
+            }
+            createContext("/overpass") { ex ->
+                val rawQuery = ex.requestURI.rawQuery ?: ""
+                val decodedQuery = java.net.URLDecoder.decode(rawQuery, "UTF-8")
+                val req = decodedQuery + ex.requestBody.bufferedReader().readText()
+                val json = if (req.contains("iwn|nwn|icn|ncn")) {
+                    macroHitCount++
+                    """
+                    {
+                      "elements": [
+                        {
+                          "type": "relation",
+                          "id": 9100,
+                          "tags": { "type": "route", "route": "hiking", "network": "iwn", "name": "European E8", "colour": "red" },
+                          "members": [
+                            { "type": "way", "ref": 9101, "geometry": [{"lat":50.5,"lon":16.5},{"lat":50.8,"lon":16.9}] }
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                } else if (req.contains("way(555)")) {
+                    waterFallbackHitCount++
+                    """
+                    {
+                      "elements": [
+                        { "type": "way", "id": 555, "geometry": [{"lat":50.713,"lon":16.835},{"lat":50.715,"lon":16.838}] }
+                      ]
+                    }
+                    """.trimIndent()
+                } else {
+                    """{"elements":[]}"""
+                }
+                val b = json.toByteArray()
+                ex.sendResponseHeaders(200, b.size.toLong())
+                ex.responseBody.use { it.write(b) }
+            }
+            start()
+        }
+        server = srv
+        val base = "http://127.0.0.1:${srv.address.port}"
+        val ctx = fakeContext()
+
+        // 1. Prime a local z=12 tile
+        val localBbox = BoundingBox(50.716, 16.840, 50.710, 16.830)
+        val localTrails = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = localBbox,
+            allowNetwork = true,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass")
+        )
+        assertTrue(localTrails.any { it.name == "Local Valley Path" })
+
+        // 2. Zoom way out (wide viewport > 1.5 deg span): cached local tile PLUS macro route must both appear
+        val wideBbox = BoundingBox(51.8, 17.8, 50.0, 15.8)
+        val wideTrails = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = wideBbox,
+            allowNetwork = true,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass")
+        )
+        assertTrue(macroHitCount >= 1)
+        assertTrue("Expected Local Valley Path in wideTrails=${wideTrails.map { it.name }}", wideTrails.any { it.name == "Local Valley Path" })
+        assertTrue("Expected European E8 in wideTrails=${wideTrails.map { it.name }}", wideTrails.any { it.name == "European E8" })
+
+        // 3. Waterway click resolution works via preferRelation = false without route tags
+        val riverLines = TrailVectorRepository.fetchTrailRouteByOsmId(
+            context = ctx,
+            osmId = 555L,
+            preferRelation = false,
+            nearLatLng = GeoPoint(50.714, 16.836),
+            overpassEndpoints = listOf("$base/overpass")
+        )
+        assertEquals(1, waterFallbackHitCount)
+        assertEquals(1, riverLines.size)
+        assertEquals(2, riverLines[0].size)
     }
 }
