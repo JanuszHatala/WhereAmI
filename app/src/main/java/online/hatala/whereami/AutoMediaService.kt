@@ -187,6 +187,13 @@ class AutoMediaService : MediaBrowserServiceCompat() {
         val country = primaryPlace?.country?.takeIf { it != "Unknown Country" } ?: ""
 
         // Line 1: [City] • [Street / RoadRef]
+        val staleWarningPrefix = if (
+            data.dataFreshness == PlaceDataFreshness.STALE_FALLBACK &&
+            (data.staleSinceDistanceMeters ?: 0f) > 400f
+        ) {
+            "⚠ "
+        } else ""
+
         val title = if (primaryPlace != null && primaryPlace.city != "Unknown City") {
             val shortenedStreet = StreetAbbreviator.abbreviate(primaryPlace.street, primaryPlace.countryCode)
             val streetOrRef = RoadNameNormalizer.formatStreetDisplay(
@@ -196,9 +203,9 @@ class AutoMediaService : MediaBrowserServiceCompat() {
             ).orEmpty()
 
             if (streetOrRef.isNotEmpty()) {
-                "${primaryPlace.city} • $streetOrRef"
+                "$staleWarningPrefix${primaryPlace.city} • $streetOrRef"
             } else {
-                primaryPlace.city
+                "$staleWarningPrefix${primaryPlace.city}"
             }
         } else if (data.error != null) {
             data.error

@@ -423,6 +423,9 @@ class TripManager private constructor(private val context: Context) {
         val entryDistanceMeters: Double
     )
     private var pendingCandidate: PendingPlaceCandidate? = null
+    private var pendingTrailKey: String? = null
+    private var pendingTrailFirstSeenMs: Long = 0L
+    private var pendingTrailEntryDistanceM: Double = 0.0
 
     // Speed samples for running average
     private var totalSpeedSamples = 0
@@ -665,6 +668,7 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = now
         movingSinceTimestamp = null
         pendingCandidate = null
+        pendingTrailKey = null
         synchronized(rowLock) {
             pendingRows.clear()
             persistedPointCount = 0
@@ -898,6 +902,7 @@ class TripManager private constructor(private val context: Context) {
         pauseAnchorDistanceMeters = null
         movingSinceInPauseTimestamp = null
         pendingCandidate = null
+        pendingTrailKey = null
 
         // Stop foreground service or transition to low-power standby
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
@@ -1230,7 +1235,7 @@ class TripManager private constructor(private val context: Context) {
             totalSpeedSamples++
             sumSpeedKmh += speedKmh
         }
-        val newMaxSpeed = maxOf(current.maxSpeedKmh, speedKmh)
+        val newMaxSpeed = current.maxSpeedKmh // Committed strictly from finalized RTS smoother points in onSmoothedPoints
         val elapsedMs = (now - current.startTime).coerceAtLeast(0L)
         val pauseMs = updatedPauses.sumOf { it.durationMs } + (activePause?.durationMs ?: 0L)
         val movingMs = (elapsedMs - pauseMs).coerceAtLeast(1000L)
@@ -1286,6 +1291,7 @@ class TripManager private constructor(private val context: Context) {
         val newPoints = ArrayList<GeoPoint>(current.points.size + points.size + 1)
         newPoints.addAll(current.points)
         var distance = current.distanceMeters
+        var smoothedMaxSpeedKmh = current.maxSpeedKmh
         var committed = 0
         val res = FloatArray(1)
 
@@ -1296,6 +1302,9 @@ class TripManager private constructor(private val context: Context) {
             }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
             newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
+            if (!p.isStationary && newPoints.size >= 2 && p.speedMps.isFinite() && p.speedMps > 0.0) {
+                smoothedMaxSpeedKmh = maxOf(smoothedMaxSpeedKmh, (p.speedMps * 3.6).toFloat())
+            }
             val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
             synchronized(rowLock) { pendingRows.add(row) }
             lastCommittedElapsedMs = p.tElapsedMs
@@ -1411,8 +1420,13 @@ class TripManager private constructor(private val context: Context) {
         }
         if (drainSampler) trackSampler.drain().forEach(::commit)
 
-        if (committed == 0 && distance == current.distanceMeters) return
-        val updated = current.copy(points = newPoints, rawPoints = liveRawPoints.toList(), distanceMeters = distance)
+        if (committed == 0 && distance == current.distanceMeters && smoothedMaxSpeedKmh == current.maxSpeedKmh) return
+        val updated = current.copy(
+            points = newPoints,
+            rawPoints = liveRawPoints.toList(),
+            distanceMeters = distance,
+            maxSpeedKmh = smoothedMaxSpeedKmh
+        )
         _activeTrip.value = updated
         if (committed > 0) persistTripAsync(updated, force = false, alwaysMeta = false)
     }
@@ -1519,34 +1533,38 @@ class TripManager private constructor(private val context: Context) {
         if (currentPlace == null) return false
         var listModified = false
 
-        // 1. Structured Outdoor Waypoint detection (Peaks, Passes, Mountain Huts, Valleys)
-        if (_activityProfile.value.isOutdoorProfile && outdoorContext != null) {
-            val nearest = outdoorContext.nearestFeatures.firstOrNull { it.distanceMeters <= 70f }
-            if (nearest != null && nearest.kind in setOf(PlaceKind.PEAK, PlaceKind.MOUNTAIN_PASS, PlaceKind.MOUNTAIN_HUT)) {
+        // 1. Structured Outdoor Waypoint, Enclosing Area & Sustained Trail detection
+        val includeOutdoorPlaces = _activityProfile.value.isOutdoorProfile ||
+            MapProfileConfigHelper.getConfig(context, _activityProfile.value).showOutdoorAreasOverlay
+        if (outdoorContext != null && includeOutdoorPlaces) {
+            val cityLabel = currentPlace.city.takeIf { it != "Unknown City" && it != "--" }
+            val ccLower = currentPlace.countryCode.lowercase(java.util.Locale.ROOT)
+
+            // 1a. Peaks, Passes, Mountain Huts & nearby Viewpoints/Springs
+            val qualifyingPois = outdoorContext.nearestFeatures.filter { feat ->
+                when (feat.kind) {
+                    PlaceKind.PEAK, PlaceKind.MOUNTAIN_PASS, PlaceKind.MOUNTAIN_HUT -> feat.distanceMeters <= 100f
+                    PlaceKind.POI -> feat.distanceMeters <= 85f
+                    else -> false
+                }
+            }
+            for (nearest in qualifyingPois) {
                 val outdoorName = if (nearest.kind == PlaceKind.PEAK && nearest.elevationMeters != null) {
                     "${nearest.name} (${nearest.elevationMeters}m)"
                 } else {
                     nearest.name
                 }
-
-                val alreadyVisitedRecent = placesList.takeLast(6).any {
+                val alreadyVisitedRecent = placesList.takeLast(8).any {
                     it.placeName.equals(outdoorName, ignoreCase = true) ||
-                    (it.placeKind == nearest.kind && Math.abs(it.distanceAtEntryMeters - currentDistance) < 500.0)
+                        (it.placeKind == nearest.kind && Math.abs(it.distanceAtEntryMeters - currentDistance) < 500.0)
                 }
-
                 if (!alreadyVisitedRecent) {
-                    val subtitleParts = listOfNotNull(
-                        outdoorContext.mountainRange?.name,
-                        currentPlace.city.takeIf { it != "Unknown City" && it != "--" }
-                    )
-                    val outdoorSubtitle = subtitleParts.joinToString(" • ")
-
+                    val outdoorSubtitle = listOfNotNull(outdoorContext.mountainRange?.name, cityLabel).joinToString(" • ")
                     TelemetryLogger.logTrip(
                         "OUTDOOR_POI_COMMITTED",
                         tripId,
                         "Committed outdoor feature $outdoorName (${nearest.kind}) at dist=${nearest.distanceMeters.toInt()}m"
                     )
-
                     placesList.add(
                         VisitedPlace(
                             placeName = outdoorName,
@@ -1555,10 +1573,123 @@ class TripManager private constructor(private val context: Context) {
                             latitude = nearest.latitude,
                             longitude = nearest.longitude,
                             distanceAtEntryMeters = currentDistance,
-                            placeKind = nearest.kind
+                            placeKind = nearest.kind,
+                            countryCode = ccLower
                         )
                     )
                     listModified = true
+                }
+            }
+
+            // 1b. Enclosing Mountain Range, Protected Areas & Valley
+            outdoorContext.mountainRange?.let { range ->
+                val rangeRecorded = placesList.takeLast(12).any {
+                    it.placeKind == PlaceKind.MOUNTAIN_RANGE && it.placeName.equals(range.name, ignoreCase = true)
+                }
+                if (!rangeRecorded) {
+                    val subtitle = listOfNotNull(OutdoorAreaKind.MOUNTAIN_RANGE.displayName, cityLabel).joinToString(" • ")
+                    placesList.add(
+                        VisitedPlace(
+                            placeName = range.name,
+                            hierarchySubtitle = subtitle,
+                            timestamp = now,
+                            latitude = lat,
+                            longitude = lng,
+                            distanceAtEntryMeters = currentDistance,
+                            placeKind = PlaceKind.MOUNTAIN_RANGE,
+                            countryCode = ccLower
+                        )
+                    )
+                    listModified = true
+                }
+            }
+            for (area in outdoorContext.protectedAreas) {
+                val areaRecorded = placesList.takeLast(12).any {
+                    it.placeKind == PlaceKind.PROTECTED_AREA && it.placeName.equals(area.name, ignoreCase = true)
+                }
+                if (!areaRecorded) {
+                    val subtitle = listOfNotNull(area.kind.displayName, cityLabel).joinToString(" • ")
+                    placesList.add(
+                        VisitedPlace(
+                            placeName = area.name,
+                            hierarchySubtitle = subtitle,
+                            timestamp = now,
+                            latitude = lat,
+                            longitude = lng,
+                            distanceAtEntryMeters = currentDistance,
+                            placeKind = PlaceKind.PROTECTED_AREA,
+                            countryCode = ccLower
+                        )
+                    )
+                    listModified = true
+                }
+            }
+            outdoorContext.valley?.let { valley ->
+                val valleyRecorded = placesList.takeLast(8).any {
+                    it.placeKind == PlaceKind.VALLEY && it.placeName.equals(valley.name, ignoreCase = true)
+                }
+                if (!valleyRecorded) {
+                    val subtitle = listOfNotNull(OutdoorAreaKind.VALLEY.displayName, cityLabel).joinToString(" • ")
+                    placesList.add(
+                        VisitedPlace(
+                            placeName = valley.name,
+                            hierarchySubtitle = subtitle,
+                            timestamp = now,
+                            latitude = lat,
+                            longitude = lng,
+                            distanceAtEntryMeters = currentDistance,
+                            placeKind = PlaceKind.VALLEY,
+                            countryCode = ccLower
+                        )
+                    )
+                    listModified = true
+                }
+            }
+
+            // 1c. Sustained Active Trail (committed after >= 150m or >= 45s along trail on outdoor profiles)
+            val activeTrail = if (_activityProfile.value.isOutdoorProfile) outdoorContext.activeTrail else null
+            if (activeTrail != null && activeTrail.name.isNotBlank()) {
+                val colorLabel = if (activeTrail.color != TrailColor.NONE) {
+                    activeTrail.color.displayName
+                } else null
+                val trailTitle = if (colorLabel != null && !activeTrail.name.contains(colorLabel, ignoreCase = true)) {
+                    "${activeTrail.name} ($colorLabel)"
+                } else {
+                    activeTrail.name
+                }
+                val candidateKey = "${activeTrail.kind.name}:${activeTrail.name.lowercase(java.util.Locale.ROOT)}"
+                if (pendingTrailKey != candidateKey) {
+                    pendingTrailKey = candidateKey
+                    pendingTrailFirstSeenMs = now
+                    pendingTrailEntryDistanceM = currentDistance
+                } else {
+                    val trailDistM = (currentDistance - pendingTrailEntryDistanceM).coerceAtLeast(0.0)
+                    val trailDurMs = (now - pendingTrailFirstSeenMs).coerceAtLeast(0L)
+                    if (trailDistM >= 150.0 || trailDurMs >= 45_000L) {
+                        val trailAlreadyLogged = placesList.takeLast(8).any {
+                            it.placeKind == PlaceKind.TRAIL && it.placeName.equals(trailTitle, ignoreCase = true)
+                        }
+                        if (!trailAlreadyLogged) {
+                            val trailSub = listOfNotNull(
+                                activeTrail.kind.displayName,
+                                outdoorContext.mountainRange?.name,
+                                cityLabel
+                            ).joinToString(" • ")
+                            placesList.add(
+                                VisitedPlace(
+                                    placeName = trailTitle,
+                                    hierarchySubtitle = trailSub,
+                                    timestamp = pendingTrailFirstSeenMs,
+                                    latitude = lat,
+                                    longitude = lng,
+                                    distanceAtEntryMeters = pendingTrailEntryDistanceM,
+                                    placeKind = PlaceKind.TRAIL,
+                                    countryCode = ccLower
+                                )
+                            )
+                            listModified = true
+                        }
+                    }
                 }
             }
         }

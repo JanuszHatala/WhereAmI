@@ -72,16 +72,8 @@ object StorageMigrationHelper {
                 if (legacyAll.isNotEmpty() && canonicalPrefs.all.isEmpty()) {
                     val editor = canonicalPrefs.edit()
                     for ((key, value) in legacyAll) {
-                        // Sanitize poisoned gmina keys (e.g. loc_gmina_bielsko-biała = "gmina Porąbka")
                         if (key.startsWith("loc_gmina_")) {
-                            val locality = key.removePrefix("loc_gmina_").lowercase()
                             val gminaStr = value as? String ?: ""
-                            // Suppress poisoned keys where city with county rights inherited a rural gmina
-                            if (locality == "bielsko-biała" && gminaStr.contains("porąbka", ignoreCase = true)) {
-                                TelemetryLogger.log("MIGRATION", "Purged poisoned cache key: $key -> $gminaStr")
-                                continue
-                            }
-                            // Strip invalid gminas that don't belong
                             if (gminaStr.isBlank()) continue
                         }
 
@@ -102,7 +94,7 @@ object StorageMigrationHelper {
                 }
             }
 
-            // Comprehensive gmina cache sanitization: purge autonomous county cities (UTF-8 & ASCII) and corrupt tokens
+            // Generic municipality cache sanitization: purge self-referential county-city entries
             val canonicalWhereAmIPrefs = context.getSharedPreferences("where_am_i_prefs", Context.MODE_PRIVATE)
             val editor = canonicalWhereAmIPrefs.edit()
             var modified = false
@@ -110,25 +102,21 @@ object StorageMigrationHelper {
                 val key = entry.key
                 if (key.startsWith("loc_gmina_")) {
                     val locKey = key.removePrefix("loc_gmina_").lowercase()
-                    val normalizedLoc = locKey.replace("ł", "l")
-                        .replace("ą", "a")
-                        .replace("ę", "e")
-                        .replace("ć", "c")
-                        .replace("ó", "o")
-                        .replace("ś", "s")
-                        .replace("ź", "z")
-                        .replace("ż", "z")
+                    val normalizedLoc = java.text.Normalizer.normalize(locKey, java.text.Normalizer.Form.NFD)
+                        .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
                         .replace("-", " ")
                     val gminaVal = entry.value as? String
-                    val cleanVal = gminaVal?.replace("gmina ", "", ignoreCase = true)?.trim()?.lowercase()
-                    val isCounty = cleanVal != null && (cleanVal == locKey || cleanVal == normalizedLoc)
-                    val isCorrupt = locKey.contains("powiat") || locKey.contains("gmina") ||
-                            locKey.contains("wojewodztwo") || locKey.contains("województwo") ||
-                            locKey.contains("polska") || locKey.contains("poland")
-                    if (isCounty || isCorrupt) {
+                    val cleanVal = gminaVal?.trim()?.lowercase()
+                    val cleanValNorm = cleanVal?.let {
+                        java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFD)
+                            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+                            .replace("-", " ")
+                    }
+                    val isSelfCounty = cleanVal != null && (cleanVal == locKey || cleanValNorm == normalizedLoc)
+                    if (isSelfCounty || cleanVal.isNullOrBlank()) {
                         editor.remove(key)
                         modified = true
-                        TelemetryLogger.log("MIGRATION", "Purged invalid/county gmina cache key: $key")
+                        TelemetryLogger.log("MIGRATION", "Purged redundant municipality cache key: $key")
                     }
                 }
             }

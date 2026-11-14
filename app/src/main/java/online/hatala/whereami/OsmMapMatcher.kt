@@ -62,13 +62,16 @@ object OsmMapMatcher : online.hatala.whereami.tracking.RouteMatchApi {
             conn.connectTimeout = 4000
             conn.readTimeout = 4000
 
-            if (conn.responseCode == 429) {
+            val code = conn.responseCode
+            if (code == 429) {
                 rateLimitCooldownUntil = System.currentTimeMillis() + 60_000L
+                DataAcquisitionManager.reportRateLimited(60)
                 TelemetryLogger.log("OSRM", "HTTP 429 Too Many Requests; 60s cooldown active")
                 return null
             }
 
-            if (conn.responseCode == 200) {
+            if (code == 200) {
+                DataAcquisitionManager.reportSuccess()
                 val body = conn.inputStream.bufferedReader().readText()
                 val root = JSONObject(body)
                 val waypoints = root.optJSONArray("waypoints")
@@ -85,8 +88,12 @@ object OsmMapMatcher : online.hatala.whereami.tracking.RouteMatchApi {
                     return OsrmNearest(name, snapLat, snapLng, dist)
                 }
             }
+            if (code in 500..599) {
+                DataAcquisitionManager.reportError(java.io.IOException("OSRM HTTP $code"))
+            }
             null
         } catch (e: Exception) {
+            DataAcquisitionManager.reportError(e)
             TelemetryLogger.log("OSRM", "Error fetching from OSRM: ${e.message}")
             null
         }

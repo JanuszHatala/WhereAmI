@@ -176,21 +176,21 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: Driving localization felt sluggish and map pan had visual stutter.
   - *Resolution*: Discovered and removed legacy `LAYER_TYPE_SOFTWARE` flag. Panning and tile blitting now run on GPU hardware acceleration. Explored vector rendering (MapLibre Native Android) in `docs/VECTOR_MAP_ENGINE_ANALYSIS.md`.
 
-### MAP-02: Freemap Outdoor Hi-DPI (@2x) PTTK Trail Layer
-- **Core Value**: Official Polish PTTK colored hiking trails (Red, Blue, Green, Yellow, Black) with native shaded terrain relief, elevation contours, and Polish peak labels.
+### MAP-02: Clean Map Base Layers & Pre-Rendered Trail Separation
+- **Core Value**: Clean, unambiguous base map selection without double-rendered or triple-stacked hiking overlays, preserving legibility across terrain and satellite styles.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: `FREEMAP_OUTDOOR` base layer using 512x512 `@2x` tiles from `outdoor.tiles.freemap.sk`.
-  - Tile caching in `MapCacheHelper.kt` under `tiles/FreemapOutdoor`.
+  - `OsmMapView.kt` & `MapProfileConfigHelper.kt`: Separates base map styles (`STANDARD`, `TOPO`, `SATELLITE`, `TERRAIN`, `FREEMAP_OUTDOOR`) from trail overlays (`TrailOverlayMode.VECTOR` vs `TrailOverlayMode.WAYMARKED`). When `FREEMAP_OUTDOOR` (which already bakes trails into tiles) is active, separate trail overlays are disabled to prevent clutter.
+  - `MapCacheHelper.kt`: Tile caching under `tiles/FreemapOutdoor`.
 - **Decision History & Evolution**:
-  - *User Request*: "I don't see the PTTK tourist trail marker line in their color, they're always yellow/orange... Do you have access to any PTTK map overlays or data or other resources that we could use especially in the Hiking mode?"
-  - *Resolution*: Integrated Freemap Slovakia/Poland Outdoor layer rendering official PTTK markers in crisp high-DPI resolution. Auto-activated when selecting Hiking profile.
+  - *Original*: Integrated Freemap Slovakia/Poland Outdoor `@2x` tiles for trails.
+  - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
-### MAP-03: Waymarked Trails Hiking Overlay
-- **Core Value**: Transparent route overlay rendering hiking routes, difficulty markers, and trail colors on top of standard OSM or satellite imagery.
+### MAP-03: Filterable Vector Trails & Waymarked Overlay
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, with user-configurable zoom-tapered thickness (`Standard`/`Thick`/`Bold`), halo-compensated line style (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: Transparent `TilesOverlay` pointing to `tile.waymarkedtrails.org/hiking`.
+  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`, `computeDashIntervals`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`, `parseOsmFullXmlLines`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`).
 
 ### MAP-04: Map Recenter & Floating Recenter Pill
 - **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.
@@ -306,9 +306,11 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: Splitting trips caused duplicate title prefixes (`Trip - Part 1 - Part 1`).
   - *Fix*: Sanitized naming logic: strips existing `- Part X` before applying new suffixes.
 
-### TRP-07: Active Trip Visited Places Chronology
-- **Core Value**: Real-time chronology of towns and settlements visited during the current active trip, accessible by tapping the locality card header.
+### TRP-07: Active Trip Visited Places Chronology & Outdoor Discovery Log
+- **Core Value**: Real-time chronology of towns, settlements, mountain ranges, protected areas, valleys, sustained trails, peaks, passes, huts, and outdoor POIs visited during the active trip, accessible from the locality card and trip detail view.
 - **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `TripManager.kt` (`updateVisitedPlaces`): Logs enclosing areas (`MOUNTAIN_RANGE`, `PROTECTED_AREA`, `VALLEY`), sustained trails (`>= 150 m` or `>= 45 s` with blaze color), and nearby peaks/passes/huts/POIs alongside administrative localities.
 
 ### TRP-08: Trip Altitude Tracking, Elevation Profile Chart & DEM Correction
 - **Core Value**: End-to-end altitude recording, visualization, and correction for recorded trips and live tracking.

@@ -48,13 +48,16 @@ class SpatialCacheGridTest {
     }
 
     @Test
-    fun testDeserializePolandCanonicalization() {
-        val legacyPolandJson = """{"city":"Czaniec","street":"Zielona","country":"Poland","countryCode":"PL","voivodeship":"śląskie"}"""
-        val place = SpatialCacheHelper.deserializePlaceInfo(legacyPolandJson)
+    fun testDeserializeCountryPreservationAndFallback() {
+        val enPolandJson = """{"city":"Czaniec","street":"Zielona","country":"Poland","countryCode":"PL","voivodeship":"śląskie"}"""
+        val enPlace = SpatialCacheHelper.deserializePlaceInfo(enPolandJson)
+        assertEquals("Czaniec", enPlace?.city)
+        assertEquals("Zielona", enPlace?.street)
+        assertEquals("Poland", enPlace?.country)
 
-        assertEquals("Czaniec", place?.city)
-        assertEquals("Zielona", place?.street)
-        assertEquals("Polska", place?.country)
+        val missingCountryJson = """{"city":"Bern","street":"Marktgasse","country":"","countryCode":"CH","voivodeship":"Bern"}"""
+        val chPlace = SpatialCacheHelper.deserializePlaceInfo(missingCountryJson)
+        assertEquals("Switzerland", chPlace?.country)
     }
 
     @Test

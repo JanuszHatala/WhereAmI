@@ -6,15 +6,30 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.xml.sax.InputSource
+import java.io.StringReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import javax.xml.parsers.DocumentBuilderFactory
 
 object OutdoorContextResolver {
 
-    private const val USER_AGENT = "WhereAmIPersonalApp/2.2 (outdoor-context)"
+    private const val USER_AGENT = "WhereAmIPersonalApp/2.4 (outdoor-context)"
+    private val OVERPASS_MIRRORS = listOf(
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter"
+    )
+    private const val OSM_API_BASE_URL = "https://api.openstreetmap.org/api/0.6/map"
+
     private val queryMutex = Mutex()
+    private val mirrorCursor = AtomicInteger(0)
+    private val mirrorCooldownUntilMs = ConcurrentHashMap<String, Long>()
+
     @Volatile
     private var lastQueryTime = 0L
     @Volatile
@@ -25,24 +40,23 @@ object OutdoorContextResolver {
     private const val MIN_QUERY_INTERVAL_MS = 15_000L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
 
+    internal fun resetCooldownsForTest() {
+        mirrorCooldownUntilMs.clear()
+        cooldownUntil = 0L
+        consecutiveFailures = 0
+        lastQueryTime = 0L
+    }
+
+    /**
+     * Reads cached outdoor context for `(lat, lng)` strictly from the SQLite spatial cache
+     * without performing network I/O or referencing any hardcoded regional lists.
+     */
     fun resolveOffline(lat: Double, lng: Double, context: Context): OutdoorContext {
-        OfflineOutdoorRegionIndex.initIfNeeded(context)
-        val offlineMatches = OfflineOutdoorRegionIndex.findContainingRegions(lat, lng)
-        var offlineMountainRange: OutdoorArea? = null
-        val offlineProtected = mutableListOf<OutdoorArea>()
-        for (item in offlineMatches) {
-            when (item.area.kind) {
-                OutdoorAreaKind.MOUNTAIN_RANGE -> if (offlineMountainRange == null) offlineMountainRange = item.area
-                OutdoorAreaKind.NATIONAL_PARK,
-                OutdoorAreaKind.LANDSCAPE_PARK,
-                OutdoorAreaKind.NATURE_RESERVE -> offlineProtected.add(item.area)
-                OutdoorAreaKind.VALLEY -> {}
-            }
-        }
-        return OutdoorContext(
-            mountainRange = offlineMountainRange,
-            protectedAreas = offlineProtected
-        )
+        return try {
+            SpatialCacheHelper.getInstance(context).getOutdoorContext(lat, lng)
+        } catch (_: Exception) {
+            null
+        } ?: OutdoorContext(isAuthoritative = false)
     }
 
     suspend fun resolveOutdoorContext(
@@ -51,111 +65,202 @@ object OutdoorContextResolver {
         context: Context,
         allowNetwork: Boolean = true
     ): OutdoorContext = withContext(Dispatchers.IO) {
-        OfflineOutdoorRegionIndex.initIfNeeded(context)
-
-        // 1. Offline Bundled Regions (0 ms, always available)
-        val offlineMatches = OfflineOutdoorRegionIndex.findContainingRegions(lat, lng)
-        var offlineMountainRange: OutdoorArea? = null
-        val offlineProtected = mutableListOf<OutdoorArea>()
-        for (item in offlineMatches) {
-            when (item.area.kind) {
-                OutdoorAreaKind.MOUNTAIN_RANGE -> if (offlineMountainRange == null) offlineMountainRange = item.area
-                OutdoorAreaKind.NATIONAL_PARK,
-                OutdoorAreaKind.LANDSCAPE_PARK,
-                OutdoorAreaKind.NATURE_RESERVE -> offlineProtected.add(item.area)
-                OutdoorAreaKind.VALLEY -> {}
-            }
-        }
-
-        // 2. Check persistent SQLite spatial cache
+        // 1. Check persistent SQLite spatial cache (populated dynamically anywhere worldwide)
         try {
             val cached = SpatialCacheHelper.getInstance(context).getOutdoorContext(lat, lng)
             if (cached != null) {
-                // Merge offline regions in case offline asset has tighter name
-                val mergedRange = cached.mountainRange ?: offlineMountainRange
-                val mergedProtected = (cached.protectedAreas + offlineProtected).distinctBy { it.id }
-                return@withContext cached.copy(
-                    mountainRange = mergedRange,
-                    protectedAreas = mergedProtected
-                )
+                return@withContext cached
             }
         } catch (_: Exception) {}
 
         if (!allowNetwork) {
-            return@withContext OutdoorContext(
-                mountainRange = offlineMountainRange,
-                protectedAreas = offlineProtected
-            )
+            return@withContext OutdoorContext(isAuthoritative = false)
         }
 
-        // 3. Network query via Overpass API
+        // 2. Network query via rotating Overpass mirrors, falling back to OSM 0.6 XML map endpoint
         val now = System.currentTimeMillis()
         if (now < cooldownUntil) {
-            return@withContext OutdoorContext(
-                mountainRange = offlineMountainRange,
-                protectedAreas = offlineProtected
-            )
+            return@withContext OutdoorContext(isAuthoritative = false)
         }
 
         queryMutex.withLock {
+            // Re-check cache after lock in case a sibling coroutine just populated this tile
+            try {
+                val cachedAfterLock = SpatialCacheHelper.getInstance(context).getOutdoorContext(lat, lng)
+                if (cachedAfterLock != null) return@withContext cachedAfterLock
+            } catch (_: Exception) {}
+
             val elapsed = System.currentTimeMillis() - lastQueryTime
             if (elapsed < MIN_QUERY_INTERVAL_MS) {
-                // If queried recently, return offline baseline
-                return@withContext OutdoorContext(
-                    mountainRange = offlineMountainRange,
-                    protectedAreas = offlineProtected
-                )
+                return@withContext OutdoorContext(isAuthoritative = false)
             }
 
             try {
                 lastQueryTime = System.currentTimeMillis()
                 val ql = buildOverpassQuery(lat, lng)
-                val urlStr = "https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(ql, "UTF-8")
-                val conn = URL(urlStr).openConnection() as HttpURLConnection
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.connectTimeout = 4000
-                conn.readTimeout = 6000
-
-                if (conn.responseCode == 429 || conn.responseCode >= 500) {
-                    consecutiveFailures++
-                    val backoffMs = (30_000L * (1L shl consecutiveFailures.coerceAtMost(5))).coerceAtMost(600_000L)
-                    cooldownUntil = System.currentTimeMillis() + backoffMs
-                    TelemetryLogger.log("OUTDOOR", "Overpass HTTP ${conn.responseCode}; backoff active for ${backoffMs / 1000}s (failure #$consecutiveFailures)")
-                    return@withContext OutdoorContext(
-                        mountainRange = offlineMountainRange,
-                        protectedAreas = offlineProtected
-                    )
-                }
-
-                if (conn.responseCode == 200) {
+                val body = executeOverpassQuery(
+                    ql = ql,
+                    connectTimeoutMs = 5000,
+                    readTimeoutMs = 12000,
+                    tag = "OUTDOOR"
+                )
+                if (body != null) {
                     consecutiveFailures = 0
-                    val body = conn.inputStream.bufferedReader().readText()
                     val parsed = parseOverpassResponse(body, lat, lng)
-                    val mergedRange = parsed.mountainRange ?: offlineMountainRange
-                    val mergedProtected = (parsed.protectedAreas + offlineProtected).distinctBy { it.name.lowercase(Locale.ROOT) }
-                    val finalContext = parsed.copy(
-                        mountainRange = mergedRange,
-                        protectedAreas = mergedProtected
-                    )
-
                     try {
-                        SpatialCacheHelper.getInstance(context).putOutdoorContext(lat, lng, finalContext)
+                        SpatialCacheHelper.getInstance(context).putOutdoorContext(lat, lng, parsed)
                     } catch (_: Exception) {}
-
-                    return@withContext finalContext
+                    return@withContext parsed
                 }
+
+                // Overpass mirrors exhausted -> fallback to bounded OSM 0.6 XML map query
+                val xml = fetchOsmMapXml(
+                    minLat = lat - 0.006,
+                    minLon = lng - 0.008,
+                    maxLat = lat + 0.006,
+                    maxLon = lng + 0.008,
+                    connectTimeoutMs = 5000,
+                    readTimeoutMs = 10000
+                )
+                if (xml != null) {
+                    consecutiveFailures = 0
+                    val parsedXml = parseOsmMapXmlOutdoorContext(xml, lat, lng)
+                    if (parsedXml.hasAnyOutdoor) {
+                        try {
+                            SpatialCacheHelper.getInstance(context).putOutdoorContext(lat, lng, parsedXml)
+                        } catch (_: Exception) {}
+                    }
+                    return@withContext parsedXml
+                }
+
+                consecutiveFailures++
+                val backoffMs = (RATE_LIMIT_COOLDOWN_MS * (1L shl consecutiveFailures.coerceAtMost(4))).coerceAtMost(300_000L)
+                cooldownUntil = System.currentTimeMillis() + backoffMs
+                TelemetryLogger.log("OUTDOOR", "All Overpass mirrors & OSM 0.6 fallback failed; backoff ${backoffMs / 1000}s")
             } catch (e: Exception) {
                 consecutiveFailures++
-                val backoffMs = (30_000L * (1L shl consecutiveFailures.coerceAtMost(5))).coerceAtMost(600_000L)
+                val backoffMs = (RATE_LIMIT_COOLDOWN_MS * (1L shl consecutiveFailures.coerceAtMost(4))).coerceAtMost(300_000L)
                 cooldownUntil = System.currentTimeMillis() + backoffMs
-                TelemetryLogger.log("OUTDOOR", "Overpass resolve error: ${e.message}; backoff active for ${backoffMs / 1000}s (failure #$consecutiveFailures)")
+                DataAcquisitionManager.reportError(e)
+                TelemetryLogger.log("OUTDOOR", "Outdoor resolve error: ${e.message}; backoff ${backoffMs / 1000}s")
             }
         }
 
-        return@withContext OutdoorContext(
-            mountainRange = offlineMountainRange,
-            protectedAreas = offlineProtected
-        )
+        return@withContext OutdoorContext(isAuthoritative = false)
+    }
+
+    /**
+     * Executes an Overpass QL query across rotating public mirrors with HTTP 429/5xx failover
+     * and health reporting to [DataAcquisitionManager].
+     */
+    internal fun executeOverpassQuery(
+        ql: String,
+        connectTimeoutMs: Int = 5000,
+        readTimeoutMs: Int = 12000,
+        tag: String = "OUTDOOR",
+        endpoints: List<String> = OVERPASS_MIRRORS
+    ): String? {
+        if (endpoints.isEmpty()) return null
+        val now = System.currentTimeMillis()
+        val start = Math.floorMod(mirrorCursor.getAndIncrement(), endpoints.size)
+        var saw429 = false
+        var lastError: Throwable? = null
+
+        for (offset in endpoints.indices) {
+            val endpoint = endpoints[(start + offset) % endpoints.size]
+            val mirrorCooldown = mirrorCooldownUntilMs[endpoint] ?: 0L
+            if (now < mirrorCooldown) continue
+
+            try {
+                val sep = if (endpoint.contains("?")) "&" else "?"
+                val urlStr = endpoint + "${sep}data=" + URLEncoder.encode(ql, "UTF-8")
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.setRequestProperty("Accept", "application/json")
+                conn.setRequestProperty("Accept-Charset", "utf-8")
+                conn.connectTimeout = connectTimeoutMs
+                conn.readTimeout = readTimeoutMs
+
+                val code = conn.responseCode
+                if (code == 429) {
+                    saw429 = true
+                    mirrorCooldownUntilMs[endpoint] = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                    TelemetryLogger.log(tag, "Overpass HTTP 429 on $endpoint; switching mirror")
+                    continue
+                }
+                if (code >= 500) {
+                    mirrorCooldownUntilMs[endpoint] = System.currentTimeMillis() + 20_000L
+                    lastError = java.io.IOException("Overpass HTTP $code")
+                    TelemetryLogger.log(tag, "Overpass HTTP $code on $endpoint; switching mirror")
+                    continue
+                }
+                if (code == 200) {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    if (body.trimStart().startsWith("{")) {
+                        mirrorCooldownUntilMs.remove(endpoint)
+                        DataAcquisitionManager.reportSuccess()
+                        return body
+                    }
+                    lastError = java.io.IOException("Non-JSON Overpass response from $endpoint")
+                } else {
+                    lastError = java.io.IOException("Overpass HTTP $code")
+                }
+            } catch (e: Exception) {
+                lastError = e
+                TelemetryLogger.log(tag, "Overpass error ($endpoint): ${e.message}")
+            }
+        }
+
+        if (saw429) {
+            DataAcquisitionManager.reportRateLimited(30)
+        } else if (lastError != null) {
+            DataAcquisitionManager.reportError(lastError)
+        }
+        return null
+    }
+
+    /**
+     * Fetches bounded raw OSM XML elements from the OSM 0.6 `/api/0.6/map` endpoint
+     * as a lightweight emergency fallback when Overpass mirrors are unavailable.
+     */
+    internal fun fetchOsmMapXml(
+        minLat: Double,
+        minLon: Double,
+        maxLat: Double,
+        maxLon: Double,
+        connectTimeoutMs: Int = 5000,
+        readTimeoutMs: Int = 10000,
+        baseUrl: String = OSM_API_BASE_URL
+    ): String? {
+        return try {
+            val bboxParam = String.format(Locale.US, "%.6f,%.6f,%.6f,%.6f", minLon, minLat, maxLon, maxLat)
+            val urlStr = "$baseUrl?bbox=$bboxParam"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Accept", "application/xml")
+            conn.connectTimeout = connectTimeoutMs
+            conn.readTimeout = readTimeoutMs
+
+            val code = conn.responseCode
+            if (code == 429) {
+                DataAcquisitionManager.reportRateLimited(30)
+                return null
+            }
+            if (code == 200) {
+                val body = conn.inputStream.bufferedReader().readText()
+                if (body.trimStart().startsWith("<")) {
+                    DataAcquisitionManager.reportSuccess()
+                    return body
+                }
+            } else if (code >= 500) {
+                DataAcquisitionManager.reportError(java.io.IOException("OSM 0.6 HTTP $code"))
+            }
+            null
+        } catch (e: Exception) {
+            DataAcquisitionManager.reportError(e)
+            TelemetryLogger.log("OUTDOOR", "OSM 0.6 fallback error: ${e.message}")
+            null
+        }
     }
 
     fun buildOverpassQuery(lat: Double, lng: Double): String {
@@ -173,6 +278,12 @@ object OutdoorContextResolver {
             rel(bw)[type=route][route~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"];
             out tags;
             (
+              node(around:12000,$lat,$lng)[natural~"^(mountain_range|massif)$"][name];
+              way(around:12000,$lat,$lng)[natural~"^(mountain_range|massif)$"][name];
+              node(around:3000,$lat,$lng)[natural="valley"][name];
+              way(around:3000,$lat,$lng)[natural="valley"][name];
+              rel(around:400,$lat,$lng)[boundary~"^(national_park|protected_area)$"][name];
+              way(around:400,$lat,$lng)[leisure="nature_reserve"][name];
               node(around:400,$lat,$lng)[natural~"^(peak|saddle|volcano|spring|cave_entrance)$"][name];
               node(around:400,$lat,$lng)[mountain_pass="yes"][name];
               node(around:450,$lat,$lng)[tourism~"^(alpine_hut|wilderness_hut|viewpoint)$"][name];
@@ -191,8 +302,10 @@ object OutdoorContextResolver {
         val elements = root.optJSONArray("elements") ?: return OutdoorContext()
 
         var range: OutdoorArea? = null
+        val fallbackRanges = mutableListOf<Pair<Float, OutdoorArea>>()
         val protected = mutableListOf<OutdoorArea>()
         var valley: OutdoorArea? = null
+        val fallbackValleys = mutableListOf<Pair<Float, OutdoorArea>>()
         val trails = mutableListOf<ActiveTrailInfo>()
         val features = mutableListOf<OutdoorFeatureInfo>()
         var water: OutdoorFeatureInfo? = null
@@ -348,7 +461,7 @@ object OutdoorContextResolver {
                         longitude = lon
                     )
                 )
-            } else if (tourism == "viewpoint") {
+            } else if (tourism == "viewpoint" || natural in listOf("spring", "cave_entrance")) {
                 features.add(
                     OutdoorFeatureInfo(
                         osmId = id,
@@ -372,20 +485,215 @@ object OutdoorContextResolver {
                         longitude = lon
                     )
                 }
+            } else if (
+                (natural in listOf("mountain_range", "massif") || tags.optString("region:type") == "mountain_area") &&
+                dist <= 15_000f
+            ) {
+                fallbackRanges.add(
+                    dist to OutdoorArea(
+                        id = "osm_${elType}_$id",
+                        name = name,
+                        nameEn = tags.optString("name:en").takeIf { it.isNotBlank() },
+                        kind = OutdoorAreaKind.MOUNTAIN_RANGE,
+                        osmRelationId = id
+                    )
+                )
+            } else if (natural == "valley" && dist <= 3_000f) {
+                fallbackValleys.add(
+                    dist to OutdoorArea(
+                        id = "osm_${elType}_$id",
+                        name = name,
+                        nameEn = tags.optString("name:en").takeIf { it.isNotBlank() },
+                        kind = OutdoorAreaKind.VALLEY,
+                        osmRelationId = id
+                    )
+                )
+            } else if ((boundary == "national_park" || boundary == "protected_area" || leisure == "nature_reserve") && dist <= 1_000f) {
+                val pKind = when {
+                    boundary == "national_park" -> OutdoorAreaKind.NATIONAL_PARK
+                    leisure == "nature_reserve" || tags.optString("protect_class") == "4" -> OutdoorAreaKind.NATURE_RESERVE
+                    else -> OutdoorAreaKind.LANDSCAPE_PARK
+                }
+                protected.add(
+                    OutdoorArea(
+                        id = "osm_${elType}_$id",
+                        name = name,
+                        nameEn = tags.optString("name:en").takeIf { it.isNotBlank() },
+                        kind = pKind,
+                        osmRelationId = id
+                    )
+                )
             }
         }
 
         val sortedFeatures = features.sortedBy { it.distanceMeters }
         val distinctTrails = trails.distinctBy { it.name + "_" + it.kind }
+        val resolvedRange = range ?: fallbackRanges.minByOrNull { it.first }?.second
+        val resolvedValley = valley ?: fallbackValleys.minByOrNull { it.first }?.second
 
         return OutdoorContext(
-            mountainRange = range,
+            mountainRange = resolvedRange,
             protectedAreas = protected.distinctBy { it.name },
-            valley = valley,
+            valley = resolvedValley,
             activeTrails = distinctTrails,
             nearestFeatures = sortedFeatures,
             waterBody = water
         )
+    }
+
+    /**
+     * Parses OSM 0.6 `/api/0.6/map` XML payload into [OutdoorContext] when Overpass mirrors
+     * are unreachable or rate-limited. Works with point nodes, tagged ways, and route relations.
+     */
+    fun parseOsmMapXmlOutdoorContext(xmlStr: String, queryLat: Double, queryLon: Double): OutdoorContext {
+        return try {
+            val dbf = DocumentBuilderFactory.newInstance()
+            try {
+                dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            } catch (_: Exception) {}
+            val doc = dbf.newDocumentBuilder().parse(InputSource(StringReader(xmlStr)))
+
+            val nodesLatLon = HashMap<Long, Pair<Double, Double>>()
+            var range: OutdoorArea? = null
+            var bestRangeDist = Float.MAX_VALUE
+            var valley: OutdoorArea? = null
+            var bestValleyDist = Float.MAX_VALUE
+            val protected = mutableListOf<OutdoorArea>()
+            val trails = mutableListOf<ActiveTrailInfo>()
+            val features = mutableListOf<OutdoorFeatureInfo>()
+            var water: OutdoorFeatureInfo? = null
+
+            fun readTags(el: org.w3c.dom.Element): Map<String, String> {
+                val map = HashMap<String, String>()
+                val children = el.childNodes
+                for (i in 0 until children.length) {
+                    val child = children.item(i) as? org.w3c.dom.Element ?: continue
+                    if (child.tagName == "tag") {
+                        val k = child.getAttribute("k")
+                        val v = child.getAttribute("v")
+                        if (k.isNotEmpty()) map[k] = v
+                    }
+                }
+                return map
+            }
+
+            fun classifyTagElement(id: Long, prefix: String, tags: Map<String, String>, lat: Double?, lon: Double?) {
+                val name = tags["name"]?.takeIf { it.isNotBlank() } ?: return
+                val natural = tags["natural"].orEmpty()
+                val boundary = tags["boundary"].orEmpty()
+                val leisure = tags["leisure"].orEmpty()
+                val tourism = tags["tourism"].orEmpty()
+                val waterway = tags["waterway"].orEmpty()
+                val ele = tags["ele"]?.toIntOrNull()
+
+                if (boundary == "national_park") {
+                    protected.add(OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, OutdoorAreaKind.NATIONAL_PARK, id))
+                } else if (boundary == "protected_area" || leisure == "nature_reserve") {
+                    val kind = if (leisure == "nature_reserve" || tags["protect_class"] == "4") OutdoorAreaKind.NATURE_RESERVE else OutdoorAreaKind.LANDSCAPE_PARK
+                    protected.add(OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, kind, id))
+                }
+
+                if (lat == null || lon == null) {
+                    if (natural == "mountain_range" || natural == "massif" || tags["region:type"] == "mountain_area") {
+                        if (range == null) {
+                            range = OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, OutdoorAreaKind.MOUNTAIN_RANGE, id)
+                        }
+                    } else if (natural == "valley" && valley == null) {
+                        valley = OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, OutdoorAreaKind.VALLEY, id)
+                    }
+                    return
+                }
+
+                val dist = SearchHelper.computeDistanceMeters(queryLat, queryLon, lat, lon)
+                if ((natural == "mountain_range" || natural == "massif" || tags["region:type"] == "mountain_area") && dist < bestRangeDist && dist <= 15_000f) {
+                    bestRangeDist = dist
+                    range = OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, OutdoorAreaKind.MOUNTAIN_RANGE, id)
+                } else if (natural == "valley" && dist < bestValleyDist && dist <= 3_000f) {
+                    bestValleyDist = dist
+                    valley = OutdoorArea("osm_${prefix}_$id", name, tags["name:en"]?.takeIf { it.isNotBlank() }, OutdoorAreaKind.VALLEY, id)
+                } else if (natural in listOf("peak", "volcano")) {
+                    features.add(OutdoorFeatureInfo(id, name, PlaceKind.PEAK, ele, dist, lat, lon))
+                } else if (natural == "saddle" || tags["mountain_pass"] == "yes") {
+                    features.add(OutdoorFeatureInfo(id, name, PlaceKind.MOUNTAIN_PASS, ele, dist, lat, lon))
+                } else if (tourism in listOf("alpine_hut", "wilderness_hut")) {
+                    features.add(OutdoorFeatureInfo(id, name, PlaceKind.MOUNTAIN_HUT, ele, dist, lat, lon))
+                } else if (tourism == "viewpoint" || natural in listOf("spring", "cave_entrance")) {
+                    features.add(OutdoorFeatureInfo(id, name, PlaceKind.POI, ele, dist, lat, lon))
+                } else if (waterway in listOf("river", "stream", "canal") || natural == "water") {
+                    if (water == null || dist < water!!.distanceMeters) {
+                        water = OutdoorFeatureInfo(id, name, PlaceKind.WATER_BODY, ele, dist, lat, lon)
+                    }
+                }
+            }
+
+            val nodeEls = doc.getElementsByTagName("node")
+            for (i in 0 until nodeEls.length) {
+                val el = nodeEls.item(i) as? org.w3c.dom.Element ?: continue
+                val id = el.getAttribute("id").toLongOrNull() ?: continue
+                val lat = el.getAttribute("lat").toDoubleOrNull() ?: continue
+                val lon = el.getAttribute("lon").toDoubleOrNull() ?: continue
+                nodesLatLon[id] = lat to lon
+                val tags = readTags(el)
+                if (tags.isNotEmpty()) classifyTagElement(id, "node", tags, lat, lon)
+            }
+
+            val wayEls = doc.getElementsByTagName("way")
+            for (i in 0 until wayEls.length) {
+                val el = wayEls.item(i) as? org.w3c.dom.Element ?: continue
+                val id = el.getAttribute("id").toLongOrNull() ?: continue
+                val tags = readTags(el)
+                if (tags.isEmpty()) continue
+                var firstLatLon: Pair<Double, Double>? = null
+                val children = el.childNodes
+                for (c in 0 until children.length) {
+                    val child = children.item(c) as? org.w3c.dom.Element ?: continue
+                    if (child.tagName == "nd") {
+                        val refId = child.getAttribute("ref").toLongOrNull()
+                        if (refId != null && nodesLatLon.containsKey(refId)) {
+                            firstLatLon = nodesLatLon[refId]
+                            break
+                        }
+                    }
+                }
+                if (tags["educational"] == "yes" && tags["name"] != null) {
+                    trails.add(ActiveTrailInfo(id, tags["name"]!!, kind = TrailRouteKind.EDUCATIONAL, color = TrailColor.GREEN))
+                }
+                classifyTagElement(id, "way", tags, firstLatLon?.first, firstLatLon?.second)
+            }
+
+            val relEls = doc.getElementsByTagName("relation")
+            val validRoutes = setOf("hiking", "foot", "mtb", "bicycle", "canoe", "kayak")
+            for (i in 0 until relEls.length) {
+                val el = relEls.item(i) as? org.w3c.dom.Element ?: continue
+                val id = el.getAttribute("id").toLongOrNull() ?: continue
+                val tags = readTags(el)
+                if (tags.isEmpty()) continue
+                if (tags["type"] == "route" && tags["route"] in validRoutes) {
+                    val name = tags["name"] ?: tags["ref"] ?: continue
+                    val trailKind = when (tags["route"]) {
+                        "mtb" -> TrailRouteKind.MTB
+                        "bicycle" -> TrailRouteKind.CYCLING
+                        "canoe", "kayak" -> TrailRouteKind.KAYAKING
+                        else -> if (tags["educational"] == "yes") TrailRouteKind.EDUCATIONAL else TrailRouteKind.HIKING
+                    }
+                    val color = parseTrailColor(tags["osmc:symbol"], tags["colour"] ?: tags["color"])
+                    trails.add(ActiveTrailInfo(id, name, tags["ref"]?.takeIf { it.isNotBlank() }, trailKind, color, tags["network"]?.takeIf { it.isNotBlank() }))
+                } else {
+                    classifyTagElement(id, "relation", tags, null, null)
+                }
+            }
+
+            OutdoorContext(
+                mountainRange = range,
+                protectedAreas = protected.distinctBy { it.name },
+                valley = valley,
+                activeTrails = trails.distinctBy { it.name + "_" + it.kind },
+                nearestFeatures = features.sortedBy { it.distanceMeters },
+                waterBody = water
+            )
+        } catch (_: Exception) {
+            OutdoorContext()
+        }
     }
 
     fun parseTrailColor(osmcSymbol: String? = null, colourTag: String? = null): TrailColor {

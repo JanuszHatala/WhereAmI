@@ -24,12 +24,18 @@ object DataAcquisitionManager {
     private val _health = MutableStateFlow(DataAcquisitionHealth())
     val health: StateFlow<DataAcquisitionHealth> = _health.asStateFlow()
 
+    private fun safeElapsedMs(): Long = try {
+        android.os.SystemClock.elapsedRealtime()
+    } catch (_: Throwable) {
+        System.currentTimeMillis()
+    }
+
     fun reportSuccess() {
         if (_health.value.status != DataAcquisitionStatus.HEALTHY) {
             _health.value = DataAcquisitionHealth(
                 status = DataAcquisitionStatus.HEALTHY,
                 detailMessage = null,
-                lastUpdatedElapsedMs = android.os.SystemClock.elapsedRealtime()
+                lastUpdatedElapsedMs = safeElapsedMs()
             )
         }
     }
@@ -38,7 +44,7 @@ object DataAcquisitionManager {
         _health.value = DataAcquisitionHealth(
             status = DataAcquisitionStatus.RATE_LIMITED_429,
             detailMessage = "OSM Rate Limited (HTTP 429)",
-            lastUpdatedElapsedMs = android.os.SystemClock.elapsedRealtime(),
+            lastUpdatedElapsedMs = safeElapsedMs(),
             cooldownRemainingSec = cooldownSec
         )
     }
@@ -56,7 +62,7 @@ object DataAcquisitionManager {
         _health.value = DataAcquisitionHealth(
             status = status,
             detailMessage = msg,
-            lastUpdatedElapsedMs = android.os.SystemClock.elapsedRealtime()
+            lastUpdatedElapsedMs = safeElapsedMs()
         )
     }
 
@@ -65,7 +71,7 @@ object DataAcquisitionManager {
             _health.value = DataAcquisitionHealth(
                 status = DataAcquisitionStatus.CACHED_ONLY,
                 detailMessage = reason ?: "Offline Spatial Cache",
-                lastUpdatedElapsedMs = android.os.SystemClock.elapsedRealtime()
+                lastUpdatedElapsedMs = safeElapsedMs()
             )
         }
     }

@@ -82,8 +82,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 53** | Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync (v2.1.2) | 5 | 5 | 0 | 0 |
 | **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
 | **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
+| **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
+| **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **376** | **368** | **0** | **8** |
+| **Total** | | **391** | **383** | **0** | **8** |
 
 
 ---
@@ -1815,6 +1817,67 @@ Fix:
 | :--- | :--- | :--- | :--- | :--- |
 | **OPT-318-01** | Data-driven optical centering for activity profile emojis and `EmojiText`. | `TripModels.kt`, `MainActivity.kt`, `EmojiOpticalCenteringTest.kt` | Implemented | `opticalYOffsetRatio` and `emojiOpticalYOffset` align both flat and upright emoji glyphs with Latin cap-height center. |
 | **VER-318-2** | Version bump to 2.3.8 (198). | `app/build.gradle.kts` | Implemented | 662 unit tests passing, APK assembled and verified on device. |
+
+---
+
+## Round 58 - Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1)
+
+Evidence & Diagnostics:
+- Regional Hardcoding Audit: Purged `OfflineOutdoorRegionIndex.kt`, `outdoor_regions_pl_border.json`, and all silent `"pl"`/`"PL"` fallbacks, local landmark/city/shop lists, and hardcoded coordinates across production files, enforced permanently by `GlobalUniversalityInvariantTest`. Only country-mandated road schemas (`PL` `DK*`/`DW*`, `SK` `I/*`/`II/*`), Polish admin prefixes (`gm.`/`pow.`/`woj.` when `PL`), and private `AutoMediaService.kt` / `StreetAbbreviator.kt` remain.
+- Outdoor Context Global Resolution & Mirror Failover: Added rotating 3-mirror `OVERPASS_MIRRORS` pool with per-mirror cooldowns (`executeOverpassQuery`), emergency OSM `/api/0.6/map` XML fallback (`fetchOsmMapXml`, `parseOsmMapXmlOutdoorContext`, `TrailVectorRepository.parseOsmMapXmlTrails`), global point `mountain_range`/`massif` (`<= 15 km`), `valley` (`<= 3 km`), and `spring`/`cave_entrance` (`PlaceKind.POI`) parsing, screen-off active outdoor enrichment, Pass `1b` post-trip `OutdoorContextResolver` backfill in `CacheManager`, and enriched `VisitedPlace` tracking (`MOUNTAIN_RANGE`, `PROTECTED_AREA`, `VALLEY`, sustained `TRAIL`, peaks/passes/huts/POIs).
+- Locality Card & Degradation UX: Relocated `DataAcquisitionStatusPill` out of `LocalityCard` headers to Option A directly below the card (`0.dp` flush bottom tab in `COMPACT`, `3.dp`-gapped pill when expanded; centered Portrait / left-aligned Landscape), wired `OsmMapMatcher` and `BoundaryHelper` into `DataAcquisitionManager`, propagated `PlaceDataFreshness.STALE_FALLBACK` (`> 400 m` unverified) inline warnings and Android Auto `"⚠ "` title prefixes without overwriting `last_good_lat`/`last_good_lng` offline, and widened `Auto-Stop Timeout` dropdown (`widthIn(min = 138.dp)`).
+- Boundary, Cross-Locality Decay & Road Prefetch Fixes: Added `lastCommittedStreetLocality` check to the 15s blank-street decay window (`applyStreetHysteresis`), `BoundaryHelper` validate-before-save + `CACHE_GEN = "v4"` municipality-scoped keys, and `speedKmh = 30f` road-level prefetch in `CacheManager`.
+- Kinematics & Recorded Max Speed Alignment: Lowered stationary dwell sampling interval (`AppStateManager`: `7_500L`) to stay within `8_000L` EKF propagation, preserved anchored stationary state across gaps with `externalStationary` (`TrackingEngine.continuesStationary`), clamped isolated reset Doppler spikes against step displacement (`TrackingEngine.seed`), and computed `TripManager` `maxSpeedKmh` strictly from finalized `onSmoothedPoints`.
+  - Replay (`FieldReplayTest` via `replay.sh`, which runs without live `StationaryDetector` accelerometer flag): `trip323` (`HIKING`, 4825 fixes): `ACCEPTED_AFTER_RESET=123` (baseline 123), `offRaw p50=1.1 p90=3.7 episodes>10m=3`, `stopDrift max=6.5`; `trip325` (`HIKING`, 1755 fixes): `ACCEPTED_AFTER_RESET=53` (baseline 53), `offRaw p50=1.6 p90=4.7 episodes>10m=3`, `stopDrift max=4.3`; `trip326` (`CAR`, 3833 fixes): `ACCEPTED_AFTER_RESET=16` (baseline 16), `offRaw p50=0.8 p90=2.6 episodes>10m=0`, `stopDrift max=1.6`. Dwell continuity with `externalStationary = true` and `seed()` Doppler clamping are guarded directly in `TrackingEngineTest`.
+- Clean Map Base Views & Selective Trail Filters (Workstream G): Separated pre-rendered `FREEMAP_OUTDOOR` from separate trail overlays, defaulted `MTB`/`HIKING`/`KAYAKING` to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with one-time `pref_migrated_clean_map_views_v240` migration), made `VECTOR` vs `WAYMARKED` mutually exclusive, and added persisted selective `TrailRouteKind` and `TrailColor` filter chips in `MapSettingsDialog` and `VectorTrailOverlay.matchesFilters`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GLB-58-01** | Remove hardcoded regions (`OfflineOutdoorRegionIndex`, Beskidy JSON, silent `"pl"` fallbacks, city/shop lists) worldwide. | `OfflineOutdoorRegionIndex.kt` (deleted), `SearchHelper.kt`, `RoadNameNormalizer.kt`, `BoundaryHelper.kt`, `LocationManager.kt`, `SpatialCacheHelper.kt`, `CacheManager.kt`, `OsmMapView.kt`, `MainActivity.kt`, `GlobalUniversalityInvariantTest.kt` | Implemented | Static codebase invariant test + clean build/tests pass. |
+| **OUT-58-02** | Worldwide outdoor areas/valleys/POIs, 3-mirror Overpass failover + OSM `0.6/map` XML fallback, Pass `1b` backfill & enriched `VisitedPlace` commits. | `OutdoorContextResolver.kt`, `TrailVectorRepository.kt`, `OutdoorModels.kt`, `TripManager.kt`, `CacheManager.kt`, `LocationManager.kt`, `OutdoorResilienceTest.kt` | Implemented | Overpass 429/503 mirror failover, XML fallback, and global geometry tests pass. |
+| **UI-58-03** | Option A docked/floating `DataAcquisitionStatusPill`, inline `STALE_FALLBACK` (>400m) warning, Android Auto warning, wide `Auto-Stop Timeout` dropdown. | `MainActivity.kt`, `AutoMediaService.kt`, `OsmMapMatcher.kt`, `DataAcquisitionManager.kt`, `OutdoorResilienceTest.kt` | Implemented | Freshness propagation & `OsmMapMatcher` 429 transitions verified by tests. |
+| **GEO-58-04** | Cross-locality blank-street decay fix, `BoundaryHelper` `v4` validated cache, and `speedKmh = 30f` road prefetch. | `LocationManager.kt`, `BoundaryHelper.kt`, `CacheManager.kt`, `OutdoorResilienceTest.kt` | Implemented | Polygon envelope/containment and locality decay tests pass. |
+| **KIN-58-05** | 7.5s stationary dwell cadence, `externalStationary` anchor continuity, `seed()` Doppler clamp, and finalized `onSmoothedPoints` `maxSpeedKmh`. | `TrackingEngine.kt`, `AppStateManager.kt`, `TripManager.kt`, `TrackingEngineTest.kt`, `FieldReplayTest.kt` | Implemented | `TrackingEngineTest` regression suite & `trip323`/`325`/`326` replays pass. |
+| **MAP-58-06** | Clean Map Base Views (`TOPO` + `VECTOR` defaults for outdoor profiles), layer mutual exclusion, and selective Trail Type / Blaze Color filters. | `MapProfileConfigHelper.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt`, `strings.xml` | Implemented | `MapProfileConfigTest` covers migration, defaults, persistence, and `matchesFilters`. |
+| **SKL-58-07** | Fix `jh-field-test-feedback` SQL `activity_profile` column, outdoor/429/max_speed audit checks, and Question-Only Gate. | `.agents/skills/jh-field-test-feedback/SKILL.md`, `pull_device_data.sh` | Implemented | Updated skill documentation and telemetry script. |
+| **VEC-58-08** | Fix invisible Vector Trails: Waymarked `z=12` GeoJSON vector tiles + relation meta cache, drop broken `maps.mail.ru` mirror, split OverpassQL, viewport-centered OSM `0.6/map` XML fallback, `floor()` tile math, 15s overlay cooldown/filter refetch, `TrailColor.NONE` kind accents, and Z-order index `1`. | `TrailVectorRepository.kt`, `OutdoorContextResolver.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `TrailVectorRepositoryTest.kt` | Implemented | 9/9 tests in `TrailVectorRepositoryTest` + full 684-test suite pass. |
+| **VER-58** | Bump to `versionCode = 202`, `versionName = "2.4.1"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest`, `assembleDebug`, and server tests pass. |
+
+---
+
+## Round 59 - Zoom-Out Vector Trails, Line Styles/Opacity, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2)
+
+User feedback & root causes:
+- Trails disappeared below `z=12.0`: `VectorTrailOverlay` cleared `currentTrails` and returned early when `zoomLevelDouble < 12.0`. Added cached `z=12` tile retention up to `144` tiles plus Overpass `fetchMacroRoutesForWideZoom` (`iwn|nwn|icn|ncn` and `canoe|kayak`) up to `6.0` deg viewport span.
+- Thick vector trails & style controls: calibrated `TrailThickness` (`1.0f` Standard `2.8dp..0.85dp`, `2.0f` Thick, `2.5f` Bold) with smooth zoom tapering (`computeStrokeWidthDp`), plus persisted `TrailLineStyle` (`SOLID`, `DASHED`, `DOTTED`) and `TrailOpacity` (`NORMAL = 1.0f`, `SOFT = 0.65f`, `SUBTLE = 0.35f`) in `MapSettingsDialog` and `MapProfileConfigHelper`.
+- Outdoor badges disappearing (`22:24` -> `22:26`) & truncation: ~11m `%.4f_%.4f` cache misses + non-authoritative empty responses overwrote `lastOutdoorContext`. Added `~150m` nearest-fresh fallback in `SpatialCacheHelper`, `OutdoorContext.isAuthoritative`, anchor retention (`<= 1500f` m) in `LocationManager`, and multi-line wrapping (`maxLines = 3`) in `OutdoorContextRow`.
+- Protected area, trail, and waterway pill clicks & contrast: fixed MultiPolygon ring sorting/preservation (`BoundaryHelper.parseGeoJsonPolygons`), fixed `GeoPoint(0.0, 0.0)` center fallback (`MainViewModel`), updated `lastMapInteractionElapsedMs` on explicit area fit (`OsmMapView`) + `BackHandler` clear, wired `selectActiveTrail` / `selectOutdoorFeature` via `TrailVectorRepository.fetchTrailRouteByOsmId` (`out body geom;` + proximity check), and improved `PlaceKind.WATER_BODY` contrast (`#0284C7`/`#38BDF8`).
+- Pinned Location Card (`DestinationPlaceCard`): resolved `destinationOutdoorContext` on map taps, search picks, and saved places, rendered `OutdoorContextRow`, and condensed gray subtitle spacing (`lineHeight = 14.sp`, `includeFontPadding = false`).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VEC-59-01** | Keep vector trails visible across all zoom levels (`<= 144` cached `z=12` tiles + `iwn|nwn|icn|ncn` / kayak macro routes). | `VectorTrailOverlay.kt`, `TrailVectorRepository.kt`, `TrailVectorRepositoryTest.kt` | Implemented | Zoom-out cached tile + macro Overpass tests pass. |
+| **VEC-59-02** | Calibrate zoomed trail tapering (`Standard` 1.0x / `Thick` 2.0x / `Bold` 2.5x) and add persisted `TrailLineStyle` & `TrailOpacity`. | `OutdoorModels.kt`, `MapProfileConfigHelper.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt` | Implemented | `computeStrokeWidthDp` & config persistence tests pass. |
+| **OUT-59-03** | Prevent non-authoritative/drift badge clears (`~150m` cache fallback, `isAuthoritative`, anchor retention) and allow multi-line badge wrap. | `OutdoorModels.kt`, `SpatialCacheHelper.kt`, `OutdoorContextResolver.kt`, `LocationManager.kt`, `MainActivity.kt`, `OutdoorResilienceTest.kt` | Implemented | `OutdoorContext.isAuthoritative` unit tests pass. |
+| **OUT-59-04** | Fix MultiPolygon parsing, explicit boundary fit/recents interaction timer, active trail click, waterway click & contrast, and `BackHandler` clear. | `BoundaryHelper.kt`, `SearchHelper.kt`, `TrailVectorRepository.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `OutdoorResilienceTest.kt` | Implemented | MultiPolygon ring sorting & river `way` fetch unit tests pass. |
+| **PIN-59-05** | Resolve outdoor regions inside `DestinationPlaceCard` and condense gray address subtitle line spacing. | `MainViewModel.kt`, `MainActivity.kt` | Implemented | UI & state wiring verified via build and unit suite. |
+| **VER-59** | Bump to `versionCode = 203`, `versionName = "2.4.2"`. | `app/build.gradle.kts` | Implemented | 689 passed / 1 skipped (`FieldReplayTest` fixture absent) + `assembleDebug` + 16 server tests pass. |
+
+---
+
+## Round 60 - Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3)
+
+User feedback & root causes:
+- Huge vertical spacing between outdoor pills in `LocalityCard` (both expanded & collapsed) and `DestinationPlaceCard`: Material 3 `Surface(onClick = ...)` in `OutdoorContextRow` automatically injected `Modifier.minimumInteractiveComponentSize()`, inflating every ~21dp pill slot to 48dp tall. Replaced with non-clickable `Surface` + `.clip(pillShape).clickable { ... }`, compacted internal pill padding to `horizontal = 6.dp, vertical = 2.dp`, `spacedBy(2.dp)`, removed redundant spacers/margins in `LocalityCard` and `DestinationPlaceCard`.
+- Tight dashed trail gaps (`TrailLineStyle.DASHED`): `Paint.Cap.ROUND` endcaps (`+strokeWidthPx`) plus `haloPaint` (`+2.4dp`) encroached on the prior `2.0 * strokeWidthPx` gap. Calibrated `VectorTrailOverlay.computeDashIntervals` to dash `(strokeWidthPx * 2.8f).coerceAtLeast(6.5f * density)` and gap `(strokeWidthPx * 5.2f).coerceAtLeast(15.0f * density)` (`DOTTED` gap `(strokeWidthPx * 2.8f).coerceAtLeast(7.0f * density)`).
+- Clicking active trail (`Szklary - Bielawa...`) and water body (`Ślęża`) pills appeared unresponsive when Overpass timed out (`Cache Only`): `fetchTrailRouteByOsmId` blocked up to ~120s across failing Overpass mirrors before touching `memoryCache`, never checked cached `tile_*.json` / `wm_*.geojson` disk tiles, and lacked an OSM `0.6/{way,relation}/{id}/full` XML fallback (`parseOsmFullXmlLines` via `SAXParserFactory`). Added direct OSM `0.6/full` resolution, upfront local `memoryCache` + `wm_*.geojson` + `tile_*.json` lookup, and `searchRouteFitTrigger` camera refit on repeat taps.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI-60-01** | Remove Material 3 48dp minimum-touch bloat in `OutdoorContextRow` and tighten vertical spacing in `LocalityCard` (Normal/Compact) & `DestinationPlaceCard`. | `MainActivity.kt` | Implemented | Compact chip modifiers & card spacing verified by compilation and layout inspection. |
+| **VEC-60-02** | Widen `TrailLineStyle.DASHED` and `DOTTED` clear intervals via `computeDashIntervals`. | `VectorTrailOverlay.kt`, `TrailVectorRepositoryTest.kt` | Implemented | `computeDashIntervals` unit test verifies clear gap exceeds stroke/halo width. |
+| **OUT-60-03** | Fast OSM `0.6/{way,relation}/{id}/full` resolution, cached `wm_*.geojson`/`memoryCache` fallback, `searchRouteFitTrigger`, and `selectOutdoorFeature` null-anchor Toast. | `TrailVectorRepository.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `TrailVectorRepositoryTest.kt` | Implemented | OSM `0.6/full` relation/way fallback & cached GeoJSON unit tests pass. |
+| **VER-60** | Bump to `versionCode = 204`, `versionName = "2.4.3"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and server tests pass. |
 
 
 

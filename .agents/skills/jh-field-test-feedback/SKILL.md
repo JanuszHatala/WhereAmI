@@ -61,9 +61,9 @@ Inspect the downloaded data to identify anomalies, kinematic violations, or boun
 
 1. **Trip & Kinematics Diagnostics**:
    ```bash
-   sqlite3 "$ROUND_DIR/where_am_i_trips.db" "SELECT id, title, datetime(start_time/1000, 'unixepoch', 'localtime'), distance_meters, avg_speed_kmh, profile FROM trips ORDER BY id DESC LIMIT 5;"
+   sqlite3 "$ROUND_DIR/where_am_i_trips.db" "SELECT id, title, datetime(start_time/1000, 'unixepoch', 'localtime'), distance_meters, avg_speed_kmh, max_speed_kmh, activity_profile FROM trips ORDER BY id DESC LIMIT 5;"
    ```
-   - Check point frequency, accuracy distribution, displacement jumps, and stationary pauses (`track_points` table: `t_utc`, `speed`, `h_acc`, `bearing`, `flags`).
+   - Check point frequency, accuracy distribution, displacement jumps, and stationary pauses (`track_points` table: `t_utc`, `speed`, `h_acc`, `bearing`, `flags`), and compare recorded `max_speed_kmh` against committed `MAX(speed) * 3.6` from `track_points` to spot any unsmoothed spike leakage.
    - Before calling a missing pause a bug, read `pref_trip_mode` and `pref_auto_stop_min*` in `where_am_i_trip_prefs.xml`: a trip ended by auto-stop drops its trailing pause by design.
    - Validate if pause detection correctly captured turnaround stops ($\ge 45\text{s}$) or if auto-stop triggered as configured.
 
@@ -71,15 +71,17 @@ Inspect the downloaded data to identify anomalies, kinematic violations, or boun
    - From the JSONL: decision counts (`d`), fix interval and accuracy percentiles, heading confidence while moving (`s.hc`), filter resets (`ACCEPTED_AFTER_RESET`) and what preceded them.
    - Replay baseline: `sh .agents/skills/jh-tracking-change/scripts/replay.sh <trace> <PROFILE>`; keep the `REPLAY` line for the before/after comparison. Follow `jh-tracking-change` for any fix.
 
-3. **Geocoding & Street Hysteresis Inspection**:
-   - Check `where_am_i_spatial_cache.db` and app logcat for:
-     - Boundary transitions (locality changes across gminas/powiats).
+3. **Geocoding, Outdoor Context & Street Hysteresis Inspection**:
+   - Check `where_am_i_spatial_cache.db` (`spatial_cache` and `outdoor_context_cache` tables), trail vector cache (`files/trail_vectors/` / `cache/trail_vectors/`), and app logcat for:
+     - Boundary transitions (locality changes across gminas/powiats and cross-locality street decay).
      - Street name switches, candidate debounce counts, and viaduct/corridor inertia.
-     - HTTP 429 rate-limiting responses from OpenStreetMap Nominatim.
-     - Out-of-order geocoding drops or timestamp reversals.
+     - Outdoor region/park/valley/trail coverage (`OUTDOOR` tag) and `VisitedPlace` enrichment (`visited_places` table).
+     - Overpass mirror failover, HTTP 429 rate-limiting, `DataAcquisitionManager` transitions, and `OsmMapMatcher` health logs.
+     - Out-of-order geocoding drops, timestamp reversals, and pending offline cache backfill queue.
 
-4. **Logcat Error & Lifecycle Auditing**:
+4. **Logcat Error, Battery & Overnight Lifecycle Auditing**:
    - Search for fatal exceptions, ANRs, wake-lock leak warnings, or unexpected service restarts.
+   - For overnight battery/Doze diagnostics (logcat + any user-attached bugreport), check `IDLE` / `LIVE_ONLY` / standby transitions, screen-off GPS active intervals, notification wake-lock churn, and alarm/motion wake triggers.
 
 ---
 
@@ -90,9 +92,9 @@ Inspect the downloaded data to identify anomalies, kinematic violations, or boun
    - Screen recordings (`.mp4`): follow `jh-screen-recording-analysis` (frame extraction, montages, video time <-> telemetry via the epoch in the file name).
    - Cross-reference timestamps, coordinates, and visual discrepancies against telemetry (or code layout if telemetry was bypassed).
 
-2. **Confront Every Single Item**:
+2. **Confront Every Single Item & Question-Only Gate**:
    - For every point raised by the user, isolate the root cause in the code or database.
-   - If user asks a question or proposes a feature, formulate a technically rigorous response with trade-offs.
+   - If the user asks an exploratory question or explicitly asks not to act yet (e.g. "Just question, don't make any action on this yet"), formulate a technically rigorous answer with trade-offs and **do NOT** edit code or propose unrequested feature work unless explicitly approved.
 
 3. **Formulate Plan**:
    - Present a concise implementation plan, or switch to planning mode if substantial architectural decisions are required.

@@ -349,14 +349,20 @@ fun LocationScreen(viewModel: MainViewModel) {
     val boundaryPoints by viewModel.boundaryPoints.collectAsState()
     val pinnedBoundaryPoints by viewModel.pinnedBoundaryPoints.collectAsState()
     val selectedOutdoorAreaBoundary by viewModel.selectedOutdoorAreaBoundary.collectAsState()
+    val selectedOutdoorAreaPolygons by viewModel.selectedOutdoorAreaPolygons.collectAsState()
+    val selectedOutdoorAreaIsExplicit by viewModel.selectedOutdoorAreaIsExplicit.collectAsState()
     val selectedOutdoorAreaKind by viewModel.selectedOutdoorAreaKind.collectAsState()
     val selectedOutdoorAreaName by viewModel.selectedOutdoorAreaName.collectAsState()
     val selectedOutdoorAreaCenter by viewModel.selectedOutdoorAreaCenter.collectAsState()
     val fitOutdoorAreaTrigger by viewModel.fitOutdoorAreaTrigger.collectAsState()
     val liveOutdoorAreaBoundary by viewModel.liveOutdoorAreaBoundary.collectAsState()
+    val liveOutdoorAreaPolygons by viewModel.liveOutdoorAreaPolygons.collectAsState()
     val liveOutdoorAreaKind by viewModel.liveOutdoorAreaKind.collectAsState()
     val liveOutdoorAreaName by viewModel.liveOutdoorAreaName.collectAsState()
     val searchRoutePolylines by viewModel.searchRoutePolylines.collectAsState()
+    val searchRouteColorHex by viewModel.searchRouteColorHex.collectAsState()
+    val searchRouteFitTrigger by viewModel.searchRouteFitTrigger.collectAsState()
+    val destinationOutdoorContext by viewModel.destinationOutdoorContext.collectAsState()
     val searchCategory by viewModel.searchCategory.collectAsState()
     val fitTrackTrigger by viewModel.fitTrackTrigger.collectAsState()
     val fitPlacesTrigger by viewModel.fitPlacesTrigger.collectAsState()
@@ -734,6 +740,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     // or recenter the map before allowing the system to minimize the app.
     val hasOverlaySelection = selectedSavedPlace != null ||
             destinationPoint != null ||
+            selectedOutdoorAreaIsExplicit ||
+            searchRoutePolylines != null ||
             selectedGuestDetails != null ||
             selectedTripsList.isNotEmpty()
     BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
@@ -745,10 +753,16 @@ fun LocationScreen(viewModel: MainViewModel) {
                     showLiveViewsDetailsModal = true
                 }
             }
-            selectedSavedPlace != null -> selectedSavedPlace = null
+            selectedSavedPlace != null -> {
+                selectedSavedPlace = null
+                viewModel.resolveSavedPlaceOutdoor(null)
+            }
             destinationPoint != null -> {
                 viewModel.setDestination(null)
                 viewModel.clearPinnedBorders()
+            }
+            selectedOutdoorAreaIsExplicit || searchRoutePolylines != null -> {
+                viewModel.clearOutdoorAreaBoundary()
             }
             selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
             !isMapFollowing -> {
@@ -812,6 +826,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             onSavedPlaceClick = { sp ->
                 selectedSavedPlace = sp
                 viewModel.setDestination(null)
+                viewModel.resolveSavedPlaceOutdoor(sp.geoPoint)
             },
             onClearDestination = {
                 selectedSavedPlace = null
@@ -849,11 +864,15 @@ fun LocationScreen(viewModel: MainViewModel) {
             showMapSettingsExternal = showMapSettingsDialog,
             onDismissMapSettings = { showMapSettingsDialog = false },
             outdoorAreaBoundaryPoints = selectedOutdoorAreaBoundary ?: liveOutdoorAreaBoundary,
+            outdoorAreaBoundaryPolygons = selectedOutdoorAreaPolygons ?: liveOutdoorAreaPolygons,
+            outdoorAreaIsExplicit = selectedOutdoorAreaIsExplicit,
             outdoorAreaKind = selectedOutdoorAreaKind ?: liveOutdoorAreaKind,
             outdoorAreaName = selectedOutdoorAreaName ?: liveOutdoorAreaName,
             outdoorAreaCenter = selectedOutdoorAreaCenter,
             fitOutdoorAreaTrigger = fitOutdoorAreaTrigger,
             searchRoutePolylines = searchRoutePolylines,
+            searchRouteColorHex = searchRouteColorHex,
+            searchRouteFitTrigger = searchRouteFitTrigger,
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
                     SearchResultItem(
@@ -919,6 +938,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             preferPace = preferPaceForCurrentProfile,
                             onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                             onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                            onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                            onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                             modifier = Modifier.widthIn(max = 410.dp)
                         )
                     }
@@ -938,6 +959,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         savedPlace = selectedSavedPlace,
                         destinationAltitude = destinationAltitude,
                         destinationAltitudeLoading = destinationAltitudeLoading,
+                        destinationOutdoorContext = destinationOutdoorContext,
+                        onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                        onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                        onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                         onClearDestination = {
                             selectedSavedPlace = null
                             viewModel.setDestination(null)
@@ -969,10 +994,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                         onTogglePinBorders = {
                             if (selectedSavedPlace != null) {
                                 val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
-                                viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                                viewModel.togglePinnedBorders(loc, "", null, selectedSavedPlace!!.geoPoint)
                             } else {
                                 val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                                viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "", destinationItem?.municipalityName, destinationPoint)
                             }
                         },
                         isPinBorderVisible = pinnedBoundaryPoints != null,
@@ -1042,6 +1067,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                     preferPace = preferPaceForCurrentProfile,
                     onToggleSpeedPace = { viewModel.toggleSpeedPaceForProfile(activityProfile) },
                     onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                    onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                    onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
@@ -1066,6 +1093,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                     savedPlace = selectedSavedPlace,
                     destinationAltitude = destinationAltitude,
                     destinationAltitudeLoading = destinationAltitudeLoading,
+                    destinationOutdoorContext = destinationOutdoorContext,
+                    onOutdoorAreaClick = { area -> viewModel.selectOutdoorArea(area) },
+                    onTrailClick = { trail -> viewModel.selectActiveTrail(trail) },
+                    onFeatureClick = { feature -> viewModel.selectOutdoorFeature(feature) },
                     onClearDestination = {
                         selectedSavedPlace = null
                         viewModel.setDestination(null)
@@ -1097,10 +1128,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onTogglePinBorders = {
                         if (selectedSavedPlace != null) {
                             val loc = selectedSavedPlace!!.locality.ifBlank { selectedSavedPlace!!.name }
-                            viewModel.togglePinnedBorders(loc, "pl", null, selectedSavedPlace!!.geoPoint)
+                            viewModel.togglePinnedBorders(loc, "", null, selectedSavedPlace!!.geoPoint)
                         } else {
                             val loc = destinationItem?.localityName ?: destinationItem?.subtitle?.split(",")?.firstOrNull()?.trim()
-                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "pl", destinationItem?.municipalityName, destinationPoint)
+                            viewModel.togglePinnedBorders(loc, destinationItem?.countryCode ?: "", destinationItem?.municipalityName, destinationPoint)
                         }
                     },
                     isPinBorderVisible = pinnedBoundaryPoints != null,
@@ -9287,10 +9318,10 @@ private fun ProfileConfigSheet(
                         shape = RoundedCornerShape(10.dp),
                         color = Color(0xFF1E293B),
                         border = BorderStroke(1.dp, Color(0xFF475569)),
-                        modifier = Modifier.width(115.dp).height(40.dp)
+                        modifier = Modifier.widthIn(min = 138.dp).height(40.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp).fillMaxHeight(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -9299,8 +9330,10 @@ private fun ProfileConfigSheet(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
-                                maxLines = 1
+                                maxLines = 1,
+                                softWrap = false
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = "Select Auto-Stop Timeout",
@@ -9321,7 +9354,9 @@ private fun ProfileConfigSheet(
                                     Text(
                                         text = label,
                                         color = if (autoStopMin == mins) Color(0xFF10B981) else Color.White,
-                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (autoStopMin == mins) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 },
                                 onClick = {
@@ -10135,6 +10170,8 @@ private fun OutdoorContextRow(
     outdoor: OutdoorContext,
     isCompact: Boolean,
     onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (!outdoor.hasAnyOutdoor) return
@@ -10142,21 +10179,22 @@ private fun OutdoorContextRow(
     FlowRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = if (isCompact) Arrangement.spacedBy(4.dp) else Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // 1. Mountain Range Pill
+        // 1. Mountain Range Pill (use non-clickable Surface + Modifier.clickable to avoid M3 48dp min-touch padding bloat)
         outdoor.primaryRange?.let { range ->
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onOutdoorAreaClick?.invoke(range) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x28F59E0B),
                 border = BorderStroke(1.dp, Color(0x66F59E0B)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onOutdoorAreaClick?.invoke(range) }
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = "⛰️", fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10166,16 +10204,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFBBF24),
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10184,17 +10221,18 @@ private fun OutdoorContextRow(
 
         // 2. Protected Area / Park Pill
         outdoor.parkOrReserve?.let { park ->
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                onClick = { onOutdoorAreaClick?.invoke(park) },
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x2810B981),
                 border = BorderStroke(1.dp, Color(0x6610B981)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onOutdoorAreaClick?.invoke(park) }
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = if (park.kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
@@ -10205,16 +10243,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF34D399),
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10231,16 +10268,18 @@ private fun OutdoorContextRow(
                 TrailColor.BLACK -> Color(0xFFCBD5E1)
                 else -> Color(0xFF38BDF8)
             }
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                shape = RoundedCornerShape(6.dp),
+                shape = pillShape,
                 color = Color(0x280284C7),
-                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.5f)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.55f)),
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onTrailClick?.invoke(trail) }
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EmojiText(emoji = trail.kind.iconEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
@@ -10250,16 +10289,15 @@ private fun OutdoorContextRow(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = trailBadgeColor,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10269,16 +10307,22 @@ private fun OutdoorContextRow(
         // 4. Nearest Peak or Pass or Hut or Water Body
         val feature = outdoor.nearestPeak ?: outdoor.nearestHut ?: outdoor.nearestPass ?: outdoor.nearestWater
         if (feature != null) {
+            val isWater = feature.kind == PlaceKind.WATER_BODY
+            val featBg = if (isWater) Color(0x280284C7) else Color(0x331E293B)
+            val featBorder = if (isWater) Color(0x8838BDF8) else Color(0x77CBD5E1)
+            val featTextColor = if (isWater) Color(0xFF38BDF8) else Color(0xFFF1F5F9)
+            val pillShape = RoundedCornerShape(6.dp)
             Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = Color(0x28475569),
-                border = BorderStroke(1.dp, Color(0x6694A3B8)),
-                modifier = Modifier.height(20.dp).widthIn(max = 260.dp)
+                shape = pillShape,
+                color = featBg,
+                border = BorderStroke(1.dp, featBorder),
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(pillShape)
+                    .clickable { onFeatureClick?.invoke(feature) }
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val featureEmoji = when (feature.kind) {
@@ -10300,18 +10344,17 @@ private fun OutdoorContextRow(
                     Text(
                         text = label,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFFE2E8F0),
-                        maxLines = 1,
+                        fontWeight = FontWeight.SemiBold,
+                        color = featTextColor,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        softWrap = false,
                         style = TextStyle(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both
                             ),
-                            lineHeight = 11.sp
+                            lineHeight = 12.sp
                         )
                     )
                 }
@@ -10331,56 +10374,94 @@ private data class QualityPillConfig(
 @Composable
 private fun DataAcquisitionStatusPill(
     health: DataAcquisitionHealth,
-    heightDp: Dp = 34.dp
+    staleUnverifiedMeters: Float? = null,
+    isCompactDocked: Boolean = false,
+    isLandscape: Boolean = false
 ) {
-    if (health.status == DataAcquisitionStatus.HEALTHY) return
+    val isStaleUnverified = staleUnverifiedMeters != null && staleUnverifiedMeters > 400f
+    if (health.status == DataAcquisitionStatus.HEALTHY && !isStaleUnverified) return
     val context = LocalContext.current
-    val config = when (health.status) {
-        DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
-            bg = Color(0x33F59E0B),
+    val distLabel = if (isStaleUnverified) {
+        val m = staleUnverifiedMeters ?: 0f
+        if (m >= 1000f) String.format(java.util.Locale.US, "%.1f km", m / 1000f) else "${m.toInt()} m"
+    } else null
+
+    val config = when {
+        health.status == DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
+            bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.HourglassTop,
-            label = "429 Throttled",
+            label = if (distLabel != null) "429 Throttled • Unverified ($distLabel)" else "429 Throttled",
             tooltip = "OSM Nominatim rate limit (HTTP 429). Using offline spatial cache & OSM vector roads."
         )
-        DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
-            bg = Color(0x33EF4444),
+        health.status == DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
+            bg = Color(0xEE1F1622),
             fg = Color(0xFFF87171),
             icon = Icons.Default.CloudOff,
-            label = "Offline",
-            tooltip = "No internet connection. Locality and roads resolved from offline spatial cache."
+            label = if (distLabel != null) "Offline • Unverified ($distLabel)" else "Offline",
+            tooltip = if (distLabel != null) {
+                "No internet connection and $distLabel from last verified locality. Queued for post-trip cache backfill."
+            } else {
+                "No internet connection. Locality and roads resolved from offline spatial cache."
+            }
         )
-        DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
-            bg = Color(0x33F59E0B),
+        health.status == DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
+            bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.Storage,
-            label = "Cache Only",
-            tooltip = "Network geocoding failed or unavailable. Displaying cached spatial data."
+            label = if (distLabel != null) "Cache Miss • Unverified ($distLabel)" else "Cache Only",
+            tooltip = if (distLabel != null) {
+                "Network geocoding unavailable and $distLabel from last verified locality. Queued for post-trip cache backfill."
+            } else {
+                "Network geocoding failed or unavailable. Displaying cached spatial data."
+            }
         )
-        DataAcquisitionStatus.HEALTHY -> null
+        isStaleUnverified -> QualityPillConfig(
+            bg = Color(0xEE182032),
+            fg = Color(0xFFFBBF24),
+            icon = Icons.Default.Warning,
+            label = "Unverified ($distLabel)",
+            tooltip = "Display relies on last verified place $distLabel away; live locality lookup pending."
+        )
+        else -> null
     } ?: return
 
+    val pillShape = if (isCompactDocked) {
+        RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
+    } else {
+        RoundedCornerShape(12.dp)
+    }
+    val startPadding = if (isLandscape) if (isCompactDocked) 16.dp else 12.dp else 0.dp
+    val heightDp = if (isCompactDocked) 22.dp else 24.dp
+
+    if (!isCompactDocked) {
+        Spacer(modifier = Modifier.height(3.dp))
+    }
     Surface(
         onClick = {
             android.widget.Toast.makeText(context, config.tooltip, android.widget.Toast.LENGTH_LONG).show()
         },
-        shape = RoundedCornerShape(12.dp),
+        shape = pillShape,
         color = config.bg,
-        modifier = Modifier.height(heightDp)
+        border = BorderStroke(1.dp, config.fg.copy(alpha = 0.45f)),
+        shadowElevation = 4.dp,
+        modifier = Modifier
+            .padding(start = startPadding)
+            .height(heightDp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxHeight()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 10.dp)
         ) {
             Icon(
                 imageVector = config.icon,
                 contentDescription = config.label,
                 tint = config.fg,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(13.dp)
             )
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = config.label,
                 fontSize = 11.sp,
@@ -10422,19 +10503,28 @@ private fun LocalityCard(
     preferPace: Boolean = false,
     onToggleSpeedPace: () -> Unit = {},
     onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val isCompact = localityCardStyle == LocalityCardStyle.COMPACT
     val isStationary by remember { StationaryDetector.getInstance(context).isPhysicallyStationary }.collectAsState()
     val dataHealth by remember { DataAcquisitionManager.health }.collectAsState()
+    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isStaleUnverified = locationData.dataFreshness == PlaceDataFreshness.STALE_FALLBACK &&
+        (locationData.staleSinceDistanceMeters ?: 0f) > 400f
 
-    Card(
+    Column(
         modifier = modifier,
-        shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        horizontalAlignment = if (isLandscape) Alignment.Start else Alignment.CenterHorizontally
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(if (isCompact) 14.dp else 22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xEE0F172A)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -10581,8 +10671,6 @@ private fun LocalityCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 34.dp)
-
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -10719,7 +10807,12 @@ private fun LocalityCard(
                 }
 
                 // ── Row 2: Dedicated Full-Width Street Name & Number (NEVER Truncated) ──
-                if (streetOrRoad.isNotEmpty()) {
+                val displayStreetCompact = when {
+                    streetOrRoad.isNotEmpty() -> streetOrRoad
+                    isStaleUnverified -> "Offline • Unverified"
+                    else -> ""
+                }
+                if (displayStreetCompact.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -10728,11 +10821,20 @@ private fun LocalityCard(
                     ) {
                         EmojiText(emoji = "📍", fontSize = 13.sp)
                         Spacer(modifier = Modifier.width(4.dp))
+                        if (isStaleUnverified) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Unverified fallback",
+                                tint = Color(0xFFFCA5A5),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
                         Text(
-                            text = streetOrRoad,
+                            text = displayStreetCompact,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFFBBF24), // Vivid Amber Gold
+                            color = if (isStaleUnverified) Color(0xFFFCA5A5) else Color(0xFFFBBF24), // Vivid Amber Gold
                             maxLines = 2,
                             style = TextStyle(
                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -10746,13 +10848,15 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Compact Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                // ── Compact Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
                     OutdoorContextRow(
                         outdoor = outdoor,
                         isCompact = true,
                         onOutdoorAreaClick = onOutdoorAreaClick,
-                        modifier = Modifier.padding(vertical = 1.dp)
+                        onTrailClick = onTrailClick,
+                        onFeatureClick = onFeatureClick,
+                        modifier = Modifier.padding(top = 1.dp)
                     )
                 }
 
@@ -10932,8 +11036,6 @@ private fun LocalityCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        DataAcquisitionStatusPill(health = dataHealth, heightDp = 40.dp)
-
                         // Open in Google Maps
                         IconButton(
                             onClick = {
@@ -11264,23 +11366,42 @@ private fun LocalityCard(
                     allowHouseNumber = allowHouseNum
                 ).orEmpty()
 
-                if (streetOrRoad.isNotEmpty()) {
-                    Text(
-                        text = streetOrRoad,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFFFBBF24), // Amber gold for street
-                        textAlign = TextAlign.Center,
+                val displayStreetNormal = when {
+                    streetOrRoad.isNotEmpty() -> streetOrRoad
+                    isStaleUnverified -> "Offline • Unverified"
+                    else -> ""
+                }
+                if (displayStreetNormal.isNotEmpty()) {
+                    Row(
                         modifier = Modifier.padding(top = 1.dp),
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 15.sp
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        if (isStaleUnverified) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Unverified fallback",
+                                tint = Color(0xFFFCA5A5),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = displayStreetNormal,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isStaleUnverified) Color(0xFFFCA5A5) else Color(0xFFFBBF24), // Amber gold for street
+                            textAlign = TextAlign.Center,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 15.sp
+                            )
                         )
-                    )
+                    }
                 }
 
                 // Administrative Hierarchy (Gmina, Powiat, Województwo, Country)
@@ -11312,14 +11433,15 @@ private fun LocalityCard(
                     )
                 }
 
-                // ── Outdoor Awareness Row (Beskidy, Tatry, Parks, Active Trail, Summits) ──
+                // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
-                    Spacer(modifier = Modifier.height(4.dp))
                     OutdoorContextRow(
                         outdoor = outdoor,
                         isCompact = false,
                         onOutdoorAreaClick = onOutdoorAreaClick,
-                        modifier = Modifier.padding(vertical = 1.dp)
+                        onTrailClick = onTrailClick,
+                        onFeatureClick = onFeatureClick,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
@@ -11337,7 +11459,7 @@ private fun LocalityCard(
                 // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
                 Row(
                     modifier = Modifier
-                        .padding(top = 3.dp)
+                        .padding(top = 2.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF1E293B))
                         .padding(horizontal = 8.dp)
@@ -11489,6 +11611,13 @@ private fun LocalityCard(
                 }
             }
         }
+        }
+        DataAcquisitionStatusPill(
+            health = dataHealth,
+            staleUnverifiedMeters = if (isStaleUnverified) locationData.staleSinceDistanceMeters else null,
+            isCompactDocked = isCompact,
+            isLandscape = isLandscape
+        )
     }
 }
 
@@ -11893,6 +12022,10 @@ private fun DestinationPlaceCard(
     savedPlace: SavedPlace? = null,
     destinationAltitude: Double? = null,
     destinationAltitudeLoading: Boolean = false,
+    destinationOutdoorContext: OutdoorContext? = null,
+    onOutdoorAreaClick: ((OutdoorArea) -> Unit)? = null,
+    onTrailClick: ((ActiveTrailInfo) -> Unit)? = null,
+    onFeatureClick: ((OutdoorFeatureInfo) -> Unit)? = null,
     onClearDestination: () -> Unit,
     onNavigate: (Double, Double) -> Unit,
     onGoogleMaps: (Double, Double, String) -> Unit,
@@ -11907,11 +12040,11 @@ private fun DestinationPlaceCard(
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFA0F172A)),
         elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -12022,8 +12155,28 @@ private fun DestinationPlaceCard(
                     text = subtitleText,
                     color = Color(0xFF94A3B8),
                     fontSize = 12.sp,
-                    maxLines = 2,
-                    modifier = Modifier.padding(top = 2.dp, start = 26.dp)
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        ),
+                        lineHeight = 13.sp
+                    ),
+                    modifier = Modifier.padding(top = 1.dp, start = 26.dp)
+                )
+            }
+
+            destinationOutdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                OutdoorContextRow(
+                    outdoor = outdoor,
+                    isCompact = true,
+                    onOutdoorAreaClick = onOutdoorAreaClick,
+                    onTrailClick = onTrailClick,
+                    onFeatureClick = onFeatureClick,
+                    modifier = Modifier.padding(top = 3.dp)
                 )
             }
 
@@ -12031,7 +12184,7 @@ private fun DestinationPlaceCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
@@ -12044,7 +12197,7 @@ private fun DestinationPlaceCard(
                     ),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Navigation, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12059,7 +12212,7 @@ private fun DestinationPlaceCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Map, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12071,7 +12224,7 @@ private fun DestinationPlaceCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(3.dp))
@@ -12083,7 +12236,7 @@ private fun DestinationPlaceCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp),
+                    .padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (savedPlace != null) {
@@ -12092,8 +12245,8 @@ private fun DestinationPlaceCard(
                         onClick = { onReadAndSaveAltitude?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.Landscape, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12104,8 +12257,8 @@ private fun DestinationPlaceCard(
                         onClick = { onEditSavedPlace?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12116,8 +12269,8 @@ private fun DestinationPlaceCard(
                         onClick = { onDeleteSavedPlace?.invoke(savedPlace) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12131,8 +12284,8 @@ private fun DestinationPlaceCard(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
                     ) {
                         Icon(Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -12146,8 +12299,8 @@ private fun DestinationPlaceCard(
                         containerColor = if (isPinBorderVisible) Color(0xFFDC2626) else Color(0xFF1E293B)
                     ),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                    modifier = Modifier.weight(1f).height(36.dp)
                 ) {
                     Icon(
                         imageVector = if (isPinBorderVisible) Icons.Default.LayersClear else Icons.Default.Layers,

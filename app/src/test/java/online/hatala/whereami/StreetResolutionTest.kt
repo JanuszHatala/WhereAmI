@@ -25,13 +25,14 @@ class StreetResolutionTest {
         osmHouseNum: String?,
         geocoderThoroughfare: String?,
         geocoderSubThoroughfare: String?,
-        basePlaceStreet: String?
+        basePlaceStreet: String?,
+        countryCode: String? = "PL"
     ): String? {
         return when {
             // 1. Highest precision: OSRM Map Matching road centerline
             !osrmStreet.isNullOrBlank() -> {
                 val houseNumber = osmHouseNum ?: geocoderSubThoroughfare
-                RoadNameNormalizer.normalize(osrmStreet, osmRoadRef, houseNumber)
+                RoadNameNormalizer.normalize(osrmStreet, osmRoadRef, houseNumber, countryCode = countryCode)
             }
             // 2. Primary road awareness: OpenStreetMap Nominatim street vector
             !osmStreet.isNullOrBlank() -> {
@@ -39,7 +40,7 @@ class StreetResolutionTest {
             }
             // 3. Road ref enrichment if thoroughfare provided
             osmRoadRef != null && osmRoadRef.isNotBlank() -> {
-                RoadNameNormalizer.normalize(geocoderThoroughfare ?: osmStreet, osmRoadRef, geocoderSubThoroughfare)
+                RoadNameNormalizer.normalize(geocoderThoroughfare ?: osmStreet, osmRoadRef, geocoderSubThoroughfare, countryCode = countryCode)
             }
             // 4. Fallback to Android native Geocoder thoroughfare
             else -> {

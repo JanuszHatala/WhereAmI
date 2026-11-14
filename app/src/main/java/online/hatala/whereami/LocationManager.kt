@@ -67,10 +67,18 @@ data class PlaceInfo(
     fun isValid(): Boolean = city.isNotBlank() && city != "Unknown City" && city != "--"
 }
 
+enum class PlaceDataFreshness {
+    FRESH_LIVE,
+    LOCAL_CACHE_HIT,
+    STALE_FALLBACK
+}
+
 data class MultiLanguagePlaceInfo(
     val en: PlaceInfo,
     val pl: PlaceInfo,
-    val native: PlaceInfo
+    val native: PlaceInfo,
+    val freshness: PlaceDataFreshness = PlaceDataFreshness.FRESH_LIVE,
+    val staleDistanceMeters: Float? = null
 )
 
 data class LocationData(
@@ -81,7 +89,9 @@ data class LocationData(
     val isLoading: Boolean = false,
     val altitude: Double? = null,
     val accuracy: Float? = null,
-    val outdoorContext: OutdoorContext? = null
+    val outdoorContext: OutdoorContext? = null,
+    val dataFreshness: PlaceDataFreshness = PlaceDataFreshness.FRESH_LIVE,
+    val staleSinceDistanceMeters: Float? = null
 )
 
 /** Unified location snapshot broadcast to all consumers (Single Source of Truth). */
@@ -121,7 +131,9 @@ data class MultiLocationSnapshot(
             accuracy = accuracy,
             error = error,
             isLoading = isLoading,
-            outdoorContext = outdoorContext
+            outdoorContext = outdoorContext,
+            dataFreshness = multiPlace?.freshness ?: PlaceDataFreshness.FRESH_LIVE,
+            staleSinceDistanceMeters = multiPlace?.staleDistanceMeters
         )
     }
 }
@@ -394,6 +406,8 @@ class LocationManager private constructor(private val context: Context) {
     private var lastOutdoorResolvedLat: Double = 0.0
     private var lastOutdoorResolvedLng: Double = 0.0
     private var lastOutdoorResolvedTimeMs: Long = 0L
+    private var lastOutdoorAnchorLat: Double = 0.0
+    private var lastOutdoorAnchorLng: Double = 0.0
     private var outdoorWorkerJob: Job? = null
     private val outdoorLock = Any()
     private var lastScreenOffGeocodeMs = 0L
@@ -874,9 +888,13 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // GEO-02: 15-second decay grace period when reverse geocoding temporarily returns no street
+        // GEO-02: 15-second decay grace period when reverse geocoding temporarily returns no street,
+        // strictly scoped to the same locality (never bleed a previous town's street across boundaries).
         if (rawStreetPl.isNullOrBlank()) {
-            if (committedStreetPl != null && (now - lastStreetSeenTimestamp) < 15_000L) {
+            val sameLocality = lastCommittedStreetLocality == null ||
+                multiData.pl.city == "Unknown City" ||
+                multiData.pl.city.equals(lastCommittedStreetLocality, ignoreCase = true)
+            if (sameLocality && committedStreetPl != null && (now - lastStreetSeenTimestamp) < 15_000L) {
                 return multiData.copy(
                     en = multiData.en.copy(street = committedStreetPl),
                     pl = multiData.pl.copy(street = committedStreetPl),
@@ -885,6 +903,7 @@ class LocationManager private constructor(private val context: Context) {
             }
             committedStreetPl = null
             committedStreetBase = null
+            lastCommittedStreetLocality = null
             return multiData
         }
 
@@ -1454,21 +1473,46 @@ class LocationManager private constructor(private val context: Context) {
             outdoorWorkerJob = ioScope.launch {
                 try {
                     val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
+                    val tripMgr = TripManager.getInstance(context)
+                    val activeTrip = tripMgr.activeTrip.value
+                    val activeOutdoorRecording = (activeTrip?.activityProfile?.isOutdoorProfile == true) && !tripMgr.isPaused.value
                     val outdoorCtx = OutdoorContextResolver.resolveOutdoorContext(
                         lat = lat,
                         lng = lng,
                         context = context,
-                        allowNetwork = realTimeNeeded
+                        allowNetwork = realTimeNeeded || activeOutdoorRecording
                     )
                     if (outdoorCtx != null) {
-                        lastOutdoorContext = outdoorCtx
+                        val movedFromAnchor = if (lastOutdoorAnchorLat != 0.0 || lastOutdoorAnchorLng != 0.0) {
+                            val anchorDist = FloatArray(1)
+                            AndroidLocation.distanceBetween(lastOutdoorAnchorLat, lastOutdoorAnchorLng, lat, lng, anchorDist)
+                            anchorDist[0]
+                        } else {
+                            Float.MAX_VALUE
+                        }
+                        val keepExisting = !outdoorCtx.hasAnyOutdoor &&
+                            lastOutdoorContext?.hasAnyOutdoor == true &&
+                            (!outdoorCtx.isAuthoritative || movedFromAnchor <= 1_500f)
+
+                        if (outdoorCtx.hasAnyOutdoor) {
+                            lastOutdoorAnchorLat = lat
+                            lastOutdoorAnchorLng = lng
+                        } else if (!keepExisting) {
+                            lastOutdoorAnchorLat = 0.0
+                            lastOutdoorAnchorLng = 0.0
+                        }
+
                         lastOutdoorResolvedLat = lat
                         lastOutdoorResolvedLng = lng
                         lastOutdoorResolvedTimeMs = SystemClock.elapsedRealtime()
-                        lastLocationSnapshot?.let { snap ->
-                            val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
-                            lastLocationSnapshot = updatedSnap
-                            snapshotChannelSend?.invoke(updatedSnap)
+
+                        if (!keepExisting) {
+                            lastOutdoorContext = outdoorCtx
+                            lastLocationSnapshot?.let { snap ->
+                                val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
+                                lastLocationSnapshot = updatedSnap
+                                snapshotChannelSend?.invoke(updatedSnap)
+                            }
                         }
                     }
                 } catch (_: Exception) {}
@@ -1923,19 +1967,35 @@ class LocationManager private constructor(private val context: Context) {
             try {
                 val fallbackDisk = SpatialCacheHelper.getInstance(context).get(lat, lng, maxAgeMs = null)
                 if (fallbackDisk != null) {
-                    spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, fallbackDisk)
-                    return sanitizeMultiDataHouseNumbers(fallbackDisk, speedKmh, accuracyMeters)
+                    val cachedMulti = fallbackDisk.copy(freshness = PlaceDataFreshness.LOCAL_CACHE_HIT, staleDistanceMeters = null)
+                    spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, cachedMulti)
+                    return sanitizeMultiDataHouseNumbers(cachedMulti, speedKmh, accuracyMeters)
                 }
             } catch (_: Exception) {}
         }
 
-        if (enPlace.city != "Unknown City")     saveLastGood(prefs, "en",     lat, lng, enPlace)
-        if (plPlace.city != "Unknown City")     saveLastGood(prefs, "pl",     lat, lng, plPlace)
-        if (nativePlace.city != "Unknown City") saveLastGood(prefs, "native", lat, lng, nativePlace)
+        val lastGoodLat = prefs.getFloat("last_good_lat", Float.MIN_VALUE).toDouble()
+        val lastGoodLng = prefs.getFloat("last_good_lng", Float.MIN_VALUE).toDouble()
+        val distToVerifiedM = if (lastGoodLat != Float.MIN_VALUE.toDouble()) {
+            distanceBetween(lat, lng, lastGoodLat, lastGoodLng)
+        } else 0f
 
-        val result = MultiLanguagePlaceInfo(en = enPlace, pl = plPlace, native = nativePlace)
-        val lastGoodPl = loadLastGood(prefs, "pl")
-        val isFallbackToLastGood = lastGoodPl != null && plPlace.street == lastGoodPl.street && plPlace.city == lastGoodPl.city && enAddress == null && plAddress == null && sharedOsm == null
+        val hasVerifiedOnlineLocality = sharedOsm != null || enAddress?.locality != null || plAddress?.locality != null
+        val isFallbackToLastGood = !hasVerifiedOnlineLocality
+
+        if (!isFallbackToLastGood) {
+            if (enPlace.city != "Unknown City")     saveLastGood(prefs, "en",     lat, lng, enPlace)
+            if (plPlace.city != "Unknown City")     saveLastGood(prefs, "pl",     lat, lng, plPlace)
+            if (nativePlace.city != "Unknown City") saveLastGood(prefs, "native", lat, lng, nativePlace)
+        }
+
+        val result = MultiLanguagePlaceInfo(
+            en = enPlace,
+            pl = plPlace,
+            native = nativePlace,
+            freshness = if (isFallbackToLastGood) PlaceDataFreshness.STALE_FALLBACK else PlaceDataFreshness.FRESH_LIVE,
+            staleDistanceMeters = if (isFallbackToLastGood) distToVerifiedM else null
+        )
         val isFirstClass = sharedOsm != null
         if ((enPlace.city != "Unknown City" || plPlace.city != "Unknown City" || forceCache) && !isFallbackToLastGood) {
             spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, result)
@@ -1949,6 +2009,11 @@ class LocationManager private constructor(private val context: Context) {
                     CacheManager.getInstance(context).enqueuePendingRefresh(lat, lng)
                 } catch (_: Exception) {}
             }
+        } else if (isFallbackToLastGood && (enPlace.city != "Unknown City" || plPlace.city != "Unknown City")) {
+            // Queue offline / throttled section so post-trip CacheManager backfills the exact road/locality later
+            try {
+                CacheManager.getInstance(context).enqueuePendingRefresh(lat, lng)
+            } catch (_: Exception) {}
         }
         return sanitizeMultiDataHouseNumbers(result, speedKmh, accuracyMeters)
     }
@@ -2059,13 +2124,16 @@ class LocationManager private constructor(private val context: Context) {
                     ?: if (lastGood?.city.equals(effectiveCity, ignoreCase = true)) lastGood?.gmina else null
             }
             val rawVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
-            val effectiveVoivodeship = if (basePlace.countryCode == "PL" || basePlace.country.equals("Polska", ignoreCase = true) || basePlace.country.equals("Poland", ignoreCase = true)) {
+            val baseCc = basePlace.countryCode.trim().uppercase(Locale.ROOT)
+            val effectiveVoivodeship = if (baseCc == "PL") {
                 canonicalizePolishVoivodeship(rawVoivodeship)
             } else rawVoivodeship
 
-            val resolvedCountry = when (cacheKey) {
-                "pl" -> if (basePlace.countryCode == "PL" || basePlace.country.equals("Poland", ignoreCase = true)) "Polska" else (osm?.country ?: basePlace.country)
-                "en" -> if (basePlace.countryCode == "PL") "Poland" else (osm?.country ?: basePlace.country)
+            val resolvedCountry = when {
+                cacheKey == "pl" && baseCc.isNotBlank() ->
+                    Locale("", baseCc).getDisplayCountry(Locale("pl")).takeIf { it.isNotBlank() } ?: (osm?.country ?: basePlace.country)
+                cacheKey == "en" && baseCc.isNotBlank() ->
+                    Locale("", baseCc).getDisplayCountry(Locale.ENGLISH).takeIf { it.isNotBlank() } ?: (osm?.country ?: basePlace.country)
                 else -> osm?.country ?: basePlace.country
             }
 
@@ -2101,7 +2169,7 @@ class LocationManager private constructor(private val context: Context) {
                 }
 
                 val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
-                val cc = osm.countryCode?.uppercase() ?: countryCode
+                val cc = (osm.countryCode ?: countryCode).trim().uppercase(Locale.ROOT)
                 val osmNorm = osm.street?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
                     val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !osm.houseNumber.isNullOrBlank()
@@ -2112,13 +2180,15 @@ class LocationManager private constructor(private val context: Context) {
                     val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !address.subThoroughfare.isNullOrBlank()
                     RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = cacheH, countryCode = cc)
                 }
-                val resolvedCountry = when (cacheKey) {
-                    "pl" -> if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
-                    "en" -> if (cc == "PL") "Poland" else rawCountry
+                val resolvedCountry = when {
+                    cacheKey == "pl" && cc.isNotBlank() ->
+                        Locale("", cc).getDisplayCountry(Locale("pl")).takeIf { it.isNotBlank() } ?: rawCountry
+                    cacheKey == "en" && cc.isNotBlank() ->
+                        Locale("", cc).getDisplayCountry(Locale.ENGLISH).takeIf { it.isNotBlank() } ?: rawCountry
                     else -> rawCountry
                 }
                 val rawV = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region"
-                val effectiveVoivodeship = if (cc == "PL" || resolvedCountry.equals("Polska", ignoreCase = true) || resolvedCountry.equals("Poland", ignoreCase = true)) {
+                val effectiveVoivodeship = if (cc == "PL") {
                     canonicalizePolishVoivodeship(rawV)
                 } else rawV
 
@@ -2316,7 +2386,10 @@ class LocationManager private constructor(private val context: Context) {
         val state = prefs.getString("last_good_state_$key", null) ?: return null
         val rawCountry = prefs.getString("last_good_country_$key", null) ?: return null
         val cc = prefs.getString("last_good_cc_$key", "") ?: ""
-        val canonicalCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+        val ccUpper = cc.trim().uppercase(Locale.ROOT)
+        val canonicalCountry = rawCountry.ifBlank {
+            if (ccUpper.isNotBlank()) Locale("", ccUpper).getDisplayCountry(Locale.ENGLISH) else rawCountry
+        }
         return PlaceInfo(city, street, roadRef, gmina, powiat, state, canonicalCountry, cc)
     }
 
@@ -2369,7 +2442,9 @@ class LocationManager private constructor(private val context: Context) {
             speedMs = speedMs ?: lastValidSpeedMs,
             error = null,
             isLoading = false,
-            outdoorContext = outdoorContext
+            outdoorContext = outdoorContext,
+            dataFreshness = multiData.freshness,
+            staleSinceDistanceMeters = multiData.staleDistanceMeters
         )
     }
 
@@ -2431,8 +2506,10 @@ class LocationManager private constructor(private val context: Context) {
         val cc = this.countryCode?.uppercase() ?: countryCode
         val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true, countryCode = cc)
         val rawCountry = this.countryName ?: "Unknown Country"
-        val resolvedCountry = if (cc == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
-        val isPoland = cc == "PL" || rawCountry.equals("Poland", ignoreCase = true) || rawCountry.equals("Polska", ignoreCase = true)
+        val resolvedCountry = rawCountry.ifBlank {
+            if (cc.isNotBlank()) Locale("", cc).getDisplayCountry(Locale.ENGLISH) else rawCountry
+        }
+        val isPoland = cc == "PL"
         val gminaName = if (isPoland) {
             subLocality?.takeIf { it.startsWith("gmina", ignoreCase = true) }
         } else {
