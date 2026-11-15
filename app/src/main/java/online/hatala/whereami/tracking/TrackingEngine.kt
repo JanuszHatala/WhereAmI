@@ -173,7 +173,7 @@ class TrackingEngine(
         if (!ekf.initialized) {
             return seed(fix, emptyList(), FixDecision.ACCEPTED, externalStationary)
         }
-        if (fix.tElapsedMs - lastAcceptedElapsedMs > MAX_PROPAGATION_GAP_MS && !continuesStationary(fix)) {
+        if (fix.tElapsedMs - lastAcceptedElapsedMs > MAX_PROPAGATION_GAP_MS && !continuesStationary(fix, externalStationary)) {
             val pending = flush()
             return seed(fix, pending, FixDecision.ACCEPTED_AFTER_RESET, externalStationary)
         }
@@ -319,8 +319,10 @@ class TrackingEngine(
      * tracking: re-seeding would jump the anchor to one noisy indoor fix, so the stationary state carries on
      * when the new fix is slow and inside the anchor's uncertainty.
      */
-    private fun continuesStationary(fix: RawFix): Boolean {
-        if (!stationary) return false
+    private fun continuesStationary(fix: RawFix, externalStationary: Boolean = false): Boolean {
+        val gapMs = fix.tElapsedMs - lastAcceptedElapsedMs
+        val dwellAnchor = stationary || (externalStationary && lowSpeedCount >= 1 && gapMs in 1L..30_000L)
+        if (!dwellAnchor) return false
         val v = fix.speedMps
         if (v != null && v >= STATIONARY_SPEED_MPS) return false
         val fr = frame ?: return false
@@ -442,9 +444,39 @@ class TrackingEngine(
             }
         }
         val fr = frame!!
-        val speed = fix.speedMps?.toDouble() ?: 0.0
+        val prevFix = lastAcceptedFix
+        val rawSpeed = fix.speedMps?.toDouble()
+        val dtS = prevFix?.let { (fix.tElapsedMs - it.tElapsedMs) / 1000.0 }
+        val impliedResetSpeed = if (decision == FixDecision.ACCEPTED_AFTER_RESET && prevFix != null && dtS != null && dtS in 0.5..120.0) {
+            val de = fr.east(fix.lng) - fr.east(prevFix.lng)
+            val dn = fr.north(fix.lat) - fr.north(prevFix.lat)
+            hypot(de, dn) / dtS
+        } else null
+        val speedTrusted: Boolean
+        val speed: Double = when {
+            rawSpeed == null -> {
+                speedTrusted = false
+                0.0
+            }
+            decision == FixDecision.ACCEPTED_AFTER_RESET && impliedResetSpeed != null &&
+                rawSpeed > maxOf(activeProfile.minHeadingSpeedMps * 3.0, impliedResetSpeed * 2.5 + 2.0) &&
+                rawSpeed > 4.5 -> {
+                // Single reset fix reports wild Doppler contradicting recent step displacement (e.g. multipath under canopy).
+                speedTrusted = false
+                impliedResetSpeed.coerceIn(0.0, activeProfile.maxSpeedMps)
+            }
+            decision == FixDecision.ACCEPTED_AFTER_RESET && impliedResetSpeed == null && rawSpeed > activeProfile.maxSpeedMps -> {
+                // Multi-minute gap reset without short-window geometry: obey profile ceiling.
+                speedTrusted = false
+                activeProfile.maxSpeedMps
+            }
+            else -> {
+                speedTrusted = true
+                rawSpeed
+            }
+        }
         val acc = (fix.accuracyM ?: 8f).toDouble()
-        val courseOk = fix.bearingDeg != null && speed >= activeProfile.minHeadingSpeedMps
+        val courseOk = speedTrusted && fix.bearingDeg != null && speed >= activeProfile.minHeadingSpeedMps
         val heading: Double? = if (courseOk) Math.toRadians(fix.bearingDeg.toDouble()) else prevHeading
         ekf.init(
             east = fr.east(fix.lng),

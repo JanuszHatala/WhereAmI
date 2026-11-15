@@ -66,5 +66,10 @@ ls -lh "$TARGET_DIR"
 if [ -f "$TARGET_DIR/where_am_i_trips.db" ]; then
     echo ""
     echo "📊 Quick Trip Database Summary:"
-    sqlite3 "$TARGET_DIR/where_am_i_trips.db" "SELECT count(*) AS total_trips FROM trips; SELECT id, title, start_time, distance_meters, avg_speed_kmh, profile FROM trips ORDER BY id DESC LIMIT 3;" 2>/dev/null || true
+    sqlite3 "$TARGET_DIR/where_am_i_trips.db" "SELECT count(*) AS total_trips FROM trips; SELECT id, title, start_time, distance_meters, avg_speed_kmh, max_speed_kmh, activity_profile FROM trips ORDER BY id DESC LIMIT 3;" 2>/dev/null || true
+fi
+if [ -f "$TARGET_DIR/where_am_i_spatial_cache.db" ]; then
+    echo ""
+    echo "🗺️ Spatial & Outdoor Cache Summary:"
+    sqlite3 "$TARGET_DIR/where_am_i_spatial_cache.db" "SELECT count(*) AS spatial_cells FROM spatial_cache; SELECT count(*) AS outdoor_cells FROM outdoor_context_cache;" 2>/dev/null || true
 fi

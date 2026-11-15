@@ -41,6 +41,15 @@ class CacheManager private constructor(private val context: Context) {
         @Volatile
         private var instance: CacheManager? = null
 
+        internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
+            isRecording || isGeocoderRateLimited
+
+        internal fun filterMissingBoundaryTargetsInDir(
+            dir: File,
+            targets: List<BoundaryTarget>
+        ): List<BoundaryTarget> =
+            targets.filter { !BoundaryHelper.hasBoundaryInDir(dir, it.name, it.countryCode, it.municipality) }
+
         fun getInstance(context: Context): CacheManager {
             return instance ?: synchronized(this) {
                 instance ?: CacheManager(context.applicationContext).also { instance = it }
@@ -97,6 +106,10 @@ class CacheManager private constructor(private val context: Context) {
 
     suspend fun getSpatialCacheCount(): Long = withContext(Dispatchers.IO) {
         SpatialCacheHelper.getInstance(context).getRecordCount()
+    }
+
+    suspend fun getElevationCacheBytes(): Long = withContext(Dispatchers.IO) {
+        TripDatabaseHelper.getInstance(context).getElevationCacheBytes()
     }
 
     private fun computeDirSize(dir: File?): Long {
@@ -187,7 +200,15 @@ class CacheManager private constructor(private val context: Context) {
     private val _prefetchState = kotlinx.coroutines.flow.MutableStateFlow<PrefetchState>(PrefetchState.Idle)
     val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
 
-    data class CacheDeficit(val missingRoutes: Int, val missingBoundaries: Int)
+    data class CacheDeficit(
+        val missingRoutes: Int,
+        val missingBoundaries: Int,
+        val missingDemTrips: Int = 0,
+        val missingDemPoints: Int = 0
+    )
+
+    internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
+        Companion.shouldAutoPausePrefetch(isRecording, isGeocoderRateLimited)
     fun resetPrefetchState() {
         if (_prefetchState.value is PrefetchState.Completed || _prefetchState.value is PrefetchState.Error || _prefetchState.value is PrefetchState.Blocked) {
             _prefetchState.value = PrefetchState.Idle
@@ -207,7 +228,7 @@ class CacheManager private constructor(private val context: Context) {
 
     fun getDistinctBoundaryTargets(): List<BoundaryTarget> {
         val targets = mutableMapOf<String, BoundaryTarget>()
-        val junkNames = setOf("likwidacja", "serwis", "powiat", "koło", "unknown city", "--")
+        val junkNames = setOf("unknown city", "--")
 
         // 1. From Trips placesVisited
         try {
@@ -215,34 +236,18 @@ class CacheManager private constructor(private val context: Context) {
             val allTrips = dbHelper.getAllTrips()
             for (trip in allTrips) {
                 for (p in trip.placesVisited) {
+                    if (p.placeKind != PlaceKind.LOCALITY) continue
                     val name = p.placeName.trim()
                     if (name.isBlank() || junkNames.contains(name.lowercase(Locale.ROOT)) || name.contains(",") || name.contains("°")) {
                         continue
                     }
-                    var mun: String? = null
-                    if (!p.hierarchySubtitle.isNullOrBlank()) {
-                        val parts = p.hierarchySubtitle.split("•", ",")
-                        for (part in parts) {
-                            val trimmed = part.trim()
-                            if (trimmed.startsWith("gm.", ignoreCase = true) || trimmed.startsWith("gmina", ignoreCase = true) || trimmed.startsWith("okres", ignoreCase = true)) {
-                                mun = trimmed
-                                break
-                            }
-                        }
-                    }
-                    val cc = if (p.countryCode.isNotBlank()) {
-                        p.countryCode.lowercase(Locale.ROOT)
-                    } else {
-                        val sub = p.hierarchySubtitle
-                        when {
-                            sub.contains("Slovensko", ignoreCase = true) || sub.contains("Slovakia", ignoreCase = true) || sub.contains("kraj", ignoreCase = true) -> "sk"
-                            sub.contains("Česko", ignoreCase = true) || sub.contains("Czech", ignoreCase = true) -> "cz"
-                            sub.contains("Deutschland", ignoreCase = true) || sub.contains("Germany", ignoreCase = true) -> "de"
-                            sub.contains("Österreich", ignoreCase = true) || sub.contains("Austria", ignoreCase = true) -> "at"
-                            else -> "pl"
-                        }
-                    }
-                    val key = "${name.lowercase(Locale.ROOT)}_$cc"
+                    val mun = p.hierarchySubtitle
+                        .split("•", ",")
+                        .firstOrNull()
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                    val cc = p.countryCode.lowercase(Locale.ROOT)
+                    val key = "${name.lowercase(Locale.ROOT)}_${mun.orEmpty().lowercase(Locale.ROOT)}_$cc"
                     if (!targets.containsKey(key)) {
                         targets[key] = BoundaryTarget(
                             name = name,
@@ -261,7 +266,7 @@ class CacheManager private constructor(private val context: Context) {
             val spatialHelper = SpatialCacheHelper.getInstance(context)
             val db = spatialHelper.readableDatabase
             val cursor = db.rawQuery(
-                "SELECT city, latitude, longitude, native_json FROM spatial_cache WHERE city IS NOT NULL AND city != 'Unknown City' AND city != '--' GROUP BY city",
+                "SELECT city, latitude, longitude, native_json FROM spatial_cache WHERE city IS NOT NULL AND TRIM(city) != '' AND city != 'Unknown City' AND city != '--'",
                 null
             )
             while (cursor.moveToNext()) {
@@ -272,16 +277,16 @@ class CacheManager private constructor(private val context: Context) {
                 val lat = cursor.getDouble(1)
                 val lng = cursor.getDouble(2)
                 val nativeJson = cursor.getString(3)
-                var cc = "pl"
+                var cc = ""
                 var mun: String? = null
                 if (!nativeJson.isNullOrBlank()) {
                     try {
                         val obj = JSONObject(nativeJson)
-                        cc = obj.optString("countryCode", "pl").takeIf { it.isNotBlank() }?.lowercase(Locale.ROOT) ?: "pl"
+                        cc = obj.optString("countryCode", "").trim().lowercase(Locale.ROOT)
                         mun = obj.optString("gmina").takeIf { it.isNotBlank() }
                     } catch (_: Exception) {}
                 }
-                val key = "${name.lowercase(Locale.ROOT)}_$cc"
+                val key = "${name.lowercase(Locale.ROOT)}_${mun.orEmpty().lowercase(Locale.ROOT)}_$cc"
                 if (!targets.containsKey(key)) {
                     targets[key] = BoundaryTarget(
                         name = name,
@@ -499,8 +504,12 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                 for (pt in pass1Candidates) {
-                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
-                        kotlinx.coroutines.delay(1000L)
+                    while (isPrefetchPaused || shouldAutoPausePrefetch(
+                            TripManager.getInstance(context).activeTrip.value != null,
+                            locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                        )
+                    ) {
+                        kotlinx.coroutines.delay(1500L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -512,7 +521,7 @@ class CacheManager private constructor(private val context: Context) {
                     // Skip if now cached by an adjacent query
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
-                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
+                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true, speedKmh = 30f)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++
@@ -542,8 +551,12 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
 
                 for (pt in pass2Candidates) {
-                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
-                        kotlinx.coroutines.delay(1000L)
+                    while (isPrefetchPaused || shouldAutoPausePrefetch(
+                            TripManager.getInstance(context).activeTrip.value != null,
+                            locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                        )
+                    ) {
+                        kotlinx.coroutines.delay(1500L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -554,7 +567,7 @@ class CacheManager private constructor(private val context: Context) {
 
                     val key = SpatialCacheHelper.toGridKey(pt.latitude, pt.longitude)
                     if (key !in cachedKeys && !spatialHelper.hasNearbyCache(pt.latitude, pt.longitude, 30.0)) {
-                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true)
+                        val resolved = locManager.resolveMultiLanguageData(pt.latitude, pt.longitude, allowNetwork = true, forceCache = true, speedKmh = 30f)
                         if (spatialHelper.get(pt.latitude, pt.longitude) != null) {
                             cachedKeys.add(key)
                             addedRoutes++
@@ -571,10 +584,10 @@ class CacheManager private constructor(private val context: Context) {
                     updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
                 }
 
-                // PASS 3: Administrative Boundaries 
+                // PASS 3: Administrative Boundaries
                 BoundaryHelper.clearMemoryCache()
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingTargets = boundaryTargets.filter { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
+                val missingTargets = filterMissingBoundaryTargets(boundaryTargets)
                 val pass3Total = missingTargets.size
                 var pass3Current = 0
                 _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
@@ -588,14 +601,7 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    BoundaryHelper.getLocalityBoundary(
-                        context = context,
-                        cityName = target.name,
-                        countryCode = target.countryCode,
-                        fallbackMunicipality = target.municipality,
-                        geoPoint = if (target.lat != null && target.lng != null) org.osmdroid.util.GeoPoint(target.lat, target.lng) else null
-                    )
-                    if (BoundaryHelper.hasBoundary(context, target.name, target.countryCode)) {
+                    if (fetchBoundaryTargetWithRetry(target)) {
                         addedBoundaries++
                     }
                     pass3Current++
@@ -702,7 +708,7 @@ class CacheManager private constructor(private val context: Context) {
             try {
                 BoundaryHelper.clearMemoryCache()
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingTargets = boundaryTargets.filter { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
+                val missingTargets = filterMissingBoundaryTargets(boundaryTargets)
                 val total = missingTargets.size
                 var current = 0
                 var added = 0
@@ -721,14 +727,7 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    val boundary = BoundaryHelper.getLocalityBoundary(
-                        context = context,
-                        cityName = target.name,
-                        countryCode = target.countryCode,
-                        fallbackMunicipality = target.municipality,
-                        geoPoint = if (target.lat != null && target.lng != null) org.osmdroid.util.GeoPoint(target.lat, target.lng) else null
-                    )
-                    if (boundary != null && boundary.isNotEmpty()) {
+                    if (fetchBoundaryTargetWithRetry(target)) {
                         added++
                     }
 
@@ -741,11 +740,45 @@ class CacheManager private constructor(private val context: Context) {
                 _prefetchState.value = PrefetchState.Completed(0, added)
                 dismissNotification()
                 calculateCacheDeficit()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                dismissNotification()
             } catch (e: Exception) {
                 _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
                 dismissNotification()
             }
         }
+    }
+
+    private fun filterMissingBoundaryTargets(targets: List<BoundaryTarget>): List<BoundaryTarget> =
+        filterMissingBoundaryTargetsInDir(BoundaryHelper.getCacheDir(context), targets)
+
+    private suspend fun fetchBoundaryTargetWithRetry(target: BoundaryTarget): Boolean {
+        val targetPoint = if (target.lat != null && target.lng != null) {
+            org.osmdroid.util.GeoPoint(target.lat, target.lng)
+        } else null
+        BoundaryHelper.getLocalityBoundary(
+            context = context,
+            cityName = target.name,
+            countryCode = target.countryCode,
+            fallbackMunicipality = target.municipality,
+            geoPoint = targetPoint
+        )
+        if (!BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality) &&
+            BoundaryHelper.isCoolingDown()
+        ) {
+            val waitMs = BoundaryHelper.remainingCooldownMs()
+            if (waitMs > 0L) {
+                kotlinx.coroutines.delay(waitMs + 250L)
+            }
+            BoundaryHelper.getLocalityBoundary(
+                context = context,
+                cityName = target.name,
+                countryCode = target.countryCode,
+                fallbackMunicipality = target.municipality,
+                geoPoint = targetPoint
+            )
+        }
+        return BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality)
     }
 
     // Queue of points that were encountered during driving and determined to be stale (> 60 days) or obsolete (> 1 year without internet)
@@ -786,13 +819,37 @@ class CacheManager private constructor(private val context: Context) {
                         val locManager = LocationManager.getInstance(context)
                         for (pt in pointsToRefresh) {
                             if (!allowOnBattery && !isDeviceCharging()) break
-                            while (locManager.isOsmRateLimited()) {
-                                kotlinx.coroutines.delay(1000L)
+                            while (shouldAutoPausePrefetch(
+                                    TripManager.getInstance(context).activeTrip.value != null,
+                                    locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                                )
+                            ) {
+                                kotlinx.coroutines.delay(1500L)
                             }
                             locManager.resolveMultiLanguageData(
-                                pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true
+                                pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true, speedKmh = 30f
                             )
                             kotlinx.coroutines.delay(1100L)
+                        }
+                    }
+
+                    // 1b. Post-trip outdoor context backfill for offline outdoor trips (sampled every >= 600m)
+                    val lastOutdoorTrip = dbHelper.getAllTrips().filter { it.endTime != null && it.endTime > 0 }.maxByOrNull { it.endTime ?: 0L }
+                    if (lastOutdoorTrip != null && lastOutdoorTrip.activityProfile.isOutdoorProfile && (canAutoWifi || canAutoCharger)) {
+                        var lastOutPt: org.osmdroid.util.GeoPoint? = null
+                        var backfilled = 0
+                        val spatialHelper = SpatialCacheHelper.getInstance(context)
+                        for (pt in lastOutdoorTrip.points) {
+                            if (backfilled >= 6) break
+                            if (lastOutPt == null || lastOutPt.distanceToAsDouble(pt) >= 600.0) {
+                                lastOutPt = pt
+                                val existingOut = try { spatialHelper.getOutdoorContext(pt.latitude, pt.longitude) } catch (_: Exception) { null }
+                                if (existingOut == null) {
+                                    OutdoorContextResolver.resolveOutdoorContext(pt.latitude, pt.longitude, context, allowNetwork = true)
+                                    backfilled++
+                                    kotlinx.coroutines.delay(15_500L)
+                                }
+                            }
                         }
                     }
                 }
@@ -838,8 +895,14 @@ class CacheManager private constructor(private val context: Context) {
                 }
                 
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingBoundaries = boundaryTargets.count { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
-                val deficit = CacheDeficit(missingRoutes, missingBoundaries)
+                val missingBoundaries = filterMissingBoundaryTargets(boundaryTargets).size
+                val missingDem = TripDatabaseHelper.getInstance(context).getMissingDemSummary()
+                val deficit = CacheDeficit(
+                    missingRoutes = missingRoutes,
+                    missingBoundaries = missingBoundaries,
+                    missingDemTrips = missingDem.tripCount,
+                    missingDemPoints = missingDem.pointCount
+                )
                 _cacheDeficit.value = deficit
 
                 val totalMissing = missingRoutes + missingBoundaries

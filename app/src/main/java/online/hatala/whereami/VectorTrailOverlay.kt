@@ -3,8 +3,10 @@ package online.hatala.whereami
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathEffect
 import android.graphics.Point
 import android.view.MotionEvent
 import kotlinx.coroutines.CoroutineScope
@@ -22,8 +24,170 @@ class VectorTrailOverlay(
     private val context: Context,
     private val scope: CoroutineScope,
     var trailThickness: TrailThickness = TrailThickness.NORMAL,
+    var trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
+    var trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
+    var enabledKinds: Set<TrailRouteKind> = emptySet(),
+    var enabledColors: Set<TrailColor> = emptySet(),
+    var supplementOsmTrails: Boolean = true,
     var onTrailSelected: ((TrailVectorSegment) -> Unit)? = null
 ) : Overlay() {
+
+    companion object {
+        private val ZOOM_WIDTH_ANCHORS = floatArrayOf(7.0f, 9.0f, 11.0f, 13.0f, 14.3f, 16.5f)
+        private val ZOOM_WIDTH_DPS = floatArrayOf(1.00f, 1.30f, 1.65f, 2.00f, 2.35f, 2.80f)
+
+        /**
+         * Piecewise-linear zoom-tapered stroke width calibrated against the reference hiking zooms:
+         * ~2.35 dp at 500 m (z~14.3), ~2.00 dp at 1 km (z~13.0), ~1.65 dp at 5 km (z~11.0).
+         */
+        fun computeStrokeWidthDp(zoom: Double, thickness: TrailThickness): Float {
+            val z = zoom.toFloat()
+            val baseWidthDp = when {
+                z <= ZOOM_WIDTH_ANCHORS[0] -> ZOOM_WIDTH_DPS[0]
+                z >= ZOOM_WIDTH_ANCHORS[ZOOM_WIDTH_ANCHORS.lastIndex] -> ZOOM_WIDTH_DPS[ZOOM_WIDTH_DPS.lastIndex]
+                else -> {
+                    var interpolated = ZOOM_WIDTH_DPS[0]
+                    for (i in 0 until ZOOM_WIDTH_ANCHORS.lastIndex) {
+                        val z0 = ZOOM_WIDTH_ANCHORS[i]
+                        val z1 = ZOOM_WIDTH_ANCHORS[i + 1]
+                        if (z in z0..z1) {
+                            val t = (z - z0) / (z1 - z0)
+                            interpolated = ZOOM_WIDTH_DPS[i] + (ZOOM_WIDTH_DPS[i + 1] - ZOOM_WIDTH_DPS[i]) * t
+                            break
+                        }
+                    }
+                    interpolated
+                }
+            }
+            return baseWidthDp * thickness.widthMultiplier
+        }
+
+        internal fun computeHaloWidthPx(widthDp: Float, density: Float): Float {
+            val strokeWidthPx = widthDp * density
+            val extraDp = 0.65f * (widthDp / 2.2f).coerceIn(0.45f, 1.15f)
+            return strokeWidthPx + extraDp * density
+        }
+
+        internal fun computeStrokeCap(style: TrailLineStyle): Paint.Cap = when (style) {
+            TrailLineStyle.DASHED -> Paint.Cap.BUTT
+            TrailLineStyle.SOLID, TrailLineStyle.DOTTED -> Paint.Cap.ROUND
+        }
+
+        fun matchesFilters(
+            segment: TrailVectorSegment,
+            enabledKinds: Set<TrailRouteKind>,
+            enabledColors: Set<TrailColor>
+        ): Boolean {
+            val kindOk = enabledKinds.isEmpty() || segment.kind in enabledKinds
+            val colorOk = enabledColors.isEmpty() || segment.color in enabledColors
+            return kindOk && colorOk
+        }
+
+        fun resolveStrokeColorHex(trail: TrailVectorSegment): String {
+            if (trail.color != TrailColor.NONE) return trail.color.hexColor
+            return when (trail.kind) {
+                TrailRouteKind.EDUCATIONAL -> "#14B8A6"
+                TrailRouteKind.MTB -> "#F97316"
+                TrailRouteKind.CYCLING -> "#8B5CF6"
+                TrailRouteKind.KAYAKING -> "#06B6D4"
+                TrailRouteKind.HIKING -> "#EF4444"
+            }
+        }
+
+        internal fun resolveVisualColorBit(trail: TrailVectorSegment): Int {
+            val slot = when (trail.color) {
+                TrailColor.NONE -> when (trail.kind) {
+                    TrailRouteKind.HIKING -> TrailColor.RED.ordinal
+                    TrailRouteKind.MTB -> TrailColor.ORANGE.ordinal
+                    TrailRouteKind.CYCLING -> TrailColor.PURPLE.ordinal
+                    TrailRouteKind.KAYAKING -> TrailColor.CYAN.ordinal
+                    TrailRouteKind.EDUCATIONAL -> TrailColor.values().size
+                }
+                else -> trail.color.ordinal
+            }
+            return 1 shl slot
+        }
+
+        /**
+         * Lateral center offset in pixels for coincident stacked trails. Uses [spacingRatio] = 1.38f
+         * so adjacent colors run cleanly side by side without overlapping or muddying each other.
+         */
+        internal fun computeLaneOffsetPx(
+            rank: Int,
+            count: Int,
+            strokeWidthPx: Float,
+            spacingRatio: Float = 1.38f
+        ): Float {
+            if (count <= 1) return 0f
+            val centeredSlot = rank.toFloat() - (count - 1).toFloat() * 0.5f
+            return centeredSlot * strokeWidthPx * spacingRatio
+        }
+
+        internal fun undirectedAngleBucket(dx: Float, dy: Float): Int {
+            var angle = kotlin.math.atan2(dy.toDouble(), dx.toDouble())
+            if (angle < 0.0) angle += kotlin.math.PI
+            if (angle >= kotlin.math.PI) angle -= kotlin.math.PI
+            val bucket = (angle / (kotlin.math.PI / 6.0)).toInt()
+            return bucket.coerceIn(0, 5)
+        }
+
+        internal fun canonicalTangentSign(ux: Float, uy: Float, angleBucket: Int): Float {
+            val needFlip = if (angleBucket == 0 || angleBucket == 5) {
+                ux < 0f
+            } else {
+                uy < 0f
+            }
+            return if (needFlip) -1f else 1f
+        }
+
+        internal fun alignBundleNormal(
+            ux: Float,
+            uy: Float,
+            refUx: Float,
+            refUy: Float,
+            prevNx: Float,
+            prevNy: Float,
+            insideBundle: Boolean
+        ): Pair<Float, Float> {
+            var nx = -uy
+            var ny = ux
+            if (insideBundle && (prevNx != 0f || prevNy != 0f)) {
+                if (nx * prevNx + ny * prevNy < 0f) {
+                    nx = -nx
+                    ny = -ny
+                }
+            } else if (ux * refUx + uy * refUy < 0f) {
+                nx = -nx
+                ny = -ny
+            }
+            return nx to ny
+        }
+
+        internal fun bitRankInMask(mask: Int, singleBit: Int): Int =
+            Integer.bitCount(mask and (singleBit - 1))
+
+        /**
+         * Computes `[dashOnPx, dashOffPx]` intervals matching the ~3:1 crisp dash-to-gap proportion
+         * (combined with [Paint.Cap.BUTT] for [TrailLineStyle.DASHED]) across zoom levels.
+         */
+        internal fun computeDashIntervals(
+            style: TrailLineStyle,
+            strokeWidthPx: Float,
+            density: Float
+        ): FloatArray? {
+            return when (style) {
+                TrailLineStyle.SOLID -> null
+                TrailLineStyle.DASHED -> floatArrayOf(
+                    (strokeWidthPx * 5.5f).coerceAtLeast(6.0f * density),
+                    (strokeWidthPx * 1.85f).coerceAtLeast(2.4f * density)
+                )
+                TrailLineStyle.DOTTED -> floatArrayOf(
+                    (0.5f * density).coerceAtLeast(1f),
+                    (strokeWidthPx * 2.1f).coerceAtLeast(3.5f * density)
+                )
+            }
+        }
+    }
 
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -47,19 +211,45 @@ class VectorTrailOverlay(
 
     private val currentTrails = CopyOnWriteArrayList<TrailVectorSegment>()
     private var lastQueriedBbox: BoundingBox? = null
+    private var lastFetchedKinds: Set<TrailRouteKind>? = null
+    private var lastFetchedSupplementOsm: Boolean? = null
+    private var lastFailedAtMs: Long = 0L
+    private var lastFailedBbox: BoundingBox? = null
     private var fetchJob: Job? = null
+    private var cachedEffectStyle: TrailLineStyle? = null
+    private var cachedEffectWidthBucket: Int = -1
+    private var cachedPathEffect: PathEffect? = null
     var selectedTrailId: Long? = null
 
-    fun updateTrailsForViewport(mapView: MapView) {
-        if (mapView.zoomLevelDouble < 12.0) {
-            currentTrails.clear()
-            lastQueriedBbox = null
-            return
+    private fun resolvePathEffect(style: TrailLineStyle, strokeWidthPx: Float, density: Float): PathEffect? {
+        val bucket = (strokeWidthPx * 4f).toInt().coerceAtLeast(1)
+        if (cachedEffectStyle == style && cachedEffectWidthBucket == bucket) {
+            return cachedPathEffect
         }
+        val intervals = computeDashIntervals(style, strokeWidthPx, density)
+        val effect = intervals?.let { DashPathEffect(it, 0f) }
+        cachedEffectStyle = style
+        cachedEffectWidthBucket = bucket
+        cachedPathEffect = effect
+        return effect
+    }
 
+    fun onFiltersUpdated(mapView: MapView) {
+        updateTrailsForViewport(mapView)
+        mapView.invalidate()
+    }
+
+    fun updateTrailsForViewport(mapView: MapView) {
         val bbox = mapView.boundingBox ?: return
+        val kindsScope = enabledKinds.toSet()
+        val supplementScope = supplementOsmTrails
+        val kindsCovered = lastFetchedKinds?.let { prevKinds ->
+            prevKinds.isEmpty() || (kindsScope.isNotEmpty() && kindsScope.all { it in prevKinds })
+        } == true && lastFetchedSupplementOsm == supplementScope
+
         val prev = lastQueriedBbox
-        if (prev != null &&
+        if (kindsCovered &&
+            prev != null &&
             bbox.latSouth >= prev.latSouth &&
             bbox.latNorth <= prev.latNorth &&
             bbox.lonWest >= prev.lonWest &&
@@ -71,6 +261,16 @@ class VectorTrailOverlay(
 
         if (fetchJob?.isActive == true) return
 
+        val now = android.os.SystemClock.elapsedRealtime()
+        val fBox = lastFailedBbox
+        if (kindsCovered && currentTrails.isEmpty() && fBox != null && (now - lastFailedAtMs) < 15_000L) {
+            val sameArea = kotlin.math.abs(bbox.latSouth - fBox.latSouth) < 0.004 &&
+                kotlin.math.abs(bbox.latNorth - fBox.latNorth) < 0.004 &&
+                kotlin.math.abs(bbox.lonWest - fBox.lonWest) < 0.004 &&
+                kotlin.math.abs(bbox.lonEast - fBox.lonEast) < 0.004
+            if (sameArea) return
+        }
+
         // Expand query bbox by 25% to avoid fetching on small pans
         val latSpan = bbox.latNorth - bbox.latSouth
         val lonSpan = bbox.lonEast - bbox.lonWest
@@ -81,11 +281,33 @@ class VectorTrailOverlay(
             bbox.lonWest - lonSpan * 0.25
         )
 
-        lastQueriedBbox = expanded
         fetchJob = scope.launch(Dispatchers.IO) {
-            val trails = TrailVectorRepository.getTrailsForBoundingBox(context, expanded)
-            currentTrails.clear()
-            currentTrails.addAll(trails)
+            val trails = TrailVectorRepository.getTrailsForBoundingBox(
+                context = context,
+                bbox = expanded,
+                requestedKinds = kindsScope,
+                supplementOsmTrails = supplementScope
+            )
+            if (trails.isNotEmpty()) {
+                currentTrails.clear()
+                currentTrails.addAll(trails)
+                lastQueriedBbox = expanded
+                lastFetchedKinds = kindsScope
+                lastFetchedSupplementOsm = supplementScope
+                lastFailedBbox = null
+            } else {
+                val centerInPrev = prev != null &&
+                    bbox.centerLatitude >= prev.latSouth && bbox.centerLatitude <= prev.latNorth &&
+                    bbox.centerLongitude >= prev.lonWest && bbox.centerLongitude <= prev.lonEast
+                if (!centerInPrev) {
+                    currentTrails.clear()
+                }
+                lastQueriedBbox = null
+                lastFetchedKinds = kindsScope
+                lastFetchedSupplementOsm = supplementScope
+                lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
+                lastFailedBbox = bbox
+            }
             launch(Dispatchers.Main) {
                 mapView.invalidate()
             }
@@ -95,63 +317,206 @@ class VectorTrailOverlay(
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
         val zoom = mapView.zoomLevelDouble
-        if (zoom < 12.0) return
 
         updateTrailsForViewport(mapView)
-        val trailsToDraw = currentTrails
+        val trailsToDraw = currentTrails.filter { matchesFilters(it, enabledKinds, enabledColors) }
         if (trailsToDraw.isEmpty()) return
 
         val proj = mapView.projection ?: return
         val density = context.resources.displayMetrics.density
 
-        val baseWidthDp = when {
-            zoom >= 16.5 -> 7.0f
-            zoom >= 15.0 -> 5.5f
-            zoom >= 13.5 -> 4.5f
-            else -> 3.2f
-        }
-        val strokeWidthPx = baseWidthDp * trailThickness.widthMultiplier * density
-        val haloWidthPx = strokeWidthPx + 3.0f * density
+        val widthDp = computeStrokeWidthDp(zoom, trailThickness)
+        val strokeWidthPx = widthDp * density
+        val haloWidthPx = computeHaloWidthPx(widthDp, density)
+
+        val pathEffect = resolvePathEffect(trailLineStyle, strokeWidthPx, density)
+        val strokeCap = computeStrokeCap(trailLineStyle)
+        val trailAlpha = (255f * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
+        val darkHaloAlpha = (0x45 * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
+        val lightColorHaloAlpha = (0x88 * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
 
         haloPaint.strokeWidth = haloWidthPx
-        trailPaint.strokeWidth = strokeWidthPx
-        highlightPaint.strokeWidth = strokeWidthPx + 4.0f * density
+        haloPaint.strokeCap = strokeCap
+        haloPaint.pathEffect = pathEffect
 
+        trailPaint.strokeWidth = strokeWidthPx
+        trailPaint.strokeCap = strokeCap
+        trailPaint.pathEffect = pathEffect
+
+        highlightPaint.strokeWidth = strokeWidthPx + 3.5f * density
+        highlightPaint.strokeCap = strokeCap
+
+        val minStepPxSq = (1.5f * density) * (1.5f * density)
         val p1 = Point()
         val p2 = Point()
-        val path = Path()
 
-        // 1. Draw Halo Casing
-        for (trail in trailsToDraw) {
-            val pts = trail.points
-            if (pts.size < 2) continue
-            path.reset()
-            proj.toPixels(pts[0], p1)
-            path.moveTo(p1.x.toFloat(), p1.y.toFloat())
-            for (i in 1 until pts.size) {
-                proj.toPixels(pts[i], p2)
-                path.lineTo(p2.x.toFloat(), p2.y.toFloat())
+        // Tightly quantize undirected screen cells so coincident trails separate cleanly without pulling distant neighbors.
+        val cellPx = (strokeWidthPx * 2.4f).coerceIn(4.5f * density, 8.0f * density)
+        val tolPx = (strokeWidthPx * 0.9f).coerceIn(1.5f * density, 2.8f * density)
+        val screenCoords = ArrayList<FloatArray?>(trailsToDraw.size)
+        val colorBits = IntArray(trailsToDraw.size)
+        val cellColorMask = HashMap<Long, Int>(trailsToDraw.size * 6)
+        val cellRefUx = HashMap<Long, Float>(trailsToDraw.size * 6)
+        val cellRefUy = HashMap<Long, Float>(trailsToDraw.size * 6)
+
+        fun cellKey(cx: Int, cy: Int, ang: Int): Long =
+            ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
+
+        fun markCell(sx: Float, sy: Float, ang: Int, bit: Int, refUx: Float, refUy: Float) {
+            val cx0 = kotlin.math.floor((sx - tolPx) / cellPx).toInt()
+            val cx1 = kotlin.math.floor((sx + tolPx) / cellPx).toInt()
+            val cy0 = kotlin.math.floor((sy - tolPx) / cellPx).toInt()
+            val cy1 = kotlin.math.floor((sy + tolPx) / cellPx).toInt()
+            for (cx in cx0..cx1) {
+                for (cy in cy0..cy1) {
+                    val k = cellKey(cx, cy, ang)
+                    cellColorMask[k] = (cellColorMask[k] ?: 0) or bit
+                    if (!cellRefUx.containsKey(k)) {
+                        cellRefUx[k] = refUx
+                        cellRefUy[k] = refUy
+                    }
+                }
             }
+        }
+
+        for (tIdx in trailsToDraw.indices) {
+            val trail = trailsToDraw[tIdx]
+            val pts = trail.points
+            if (pts.size < 2) {
+                screenCoords.add(null)
+                continue
+            }
+            val coords = projectDecimatedScreenCoords(proj, pts, p1, p2, minStepPxSq)
+            if (coords.size < 4) {
+                screenCoords.add(null)
+                continue
+            }
+            screenCoords.add(coords)
+            val bit = resolveVisualColorBit(trail)
+            colorBits[tIdx] = bit
+
+            val vCount = coords.size / 2
+            for (i in 0 until vCount - 1) {
+                val ax = coords[i * 2]
+                val ay = coords[i * 2 + 1]
+                val bx = coords[(i + 1) * 2]
+                val by = coords[(i + 1) * 2 + 1]
+                val dx = bx - ax
+                val dy = by - ay
+                val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                if (segLen < 0.5f) continue
+                val ang = undirectedAngleBucket(dx, dy)
+                val ux = dx / segLen
+                val uy = dy / segLen
+                val sign = canonicalTangentSign(ux, uy, ang)
+                val refUx = ux * sign
+                val refUy = uy * sign
+                val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
+                for (s in 0..steps) {
+                    val t = s.toFloat() / steps.toFloat()
+                    markCell(ax + dx * t, ay + dy * t, ang, bit, refUx, refUy)
+                }
+            }
+        }
+
+        fun lookupMaskAndRef(vx: Float, vy: Float, ang: Int, selfBit: Int, fallbackUx: Float, fallbackUy: Float): Triple<Int, Float, Float> {
+            val cx = kotlin.math.floor(vx / cellPx).toInt()
+            val cy = kotlin.math.floor(vy / cellPx).toInt()
+            val prevAng = (ang + 5) % 6
+            val nextAng = (ang + 1) % 6
+            val kExact = cellKey(cx, cy, ang)
+            val kPrev = cellKey(cx, cy, prevAng)
+            val kNext = cellKey(cx, cy, nextAng)
+            var mask = selfBit
+            mask = mask or (cellColorMask[kExact] ?: 0)
+            mask = mask or (cellColorMask[kPrev] ?: 0)
+            mask = mask or (cellColorMask[kNext] ?: 0)
+            val refKey = when {
+                cellRefUx.containsKey(kExact) -> kExact
+                cellRefUx.containsKey(kPrev) -> kPrev
+                cellRefUx.containsKey(kNext) -> kNext
+                else -> -1L
+            }
+            val refUx = if (refKey != -1L) cellRefUx[refKey] ?: fallbackUx else fallbackUx
+            val refUy = if (refKey != -1L) cellRefUy[refKey] ?: fallbackUy else fallbackUy
+            return Triple(mask, refUx, refUy)
+        }
+
+        val paths = ArrayList<Path?>(trailsToDraw.size)
+        for (tIdx in trailsToDraw.indices) {
+            val coords = screenCoords[tIdx]
+            if (coords == null) {
+                paths.add(null)
+                continue
+            }
+            val path = Path()
+            val vCount = coords.size / 2
+            val selfBit = colorBits[tIdx]
+            var prevNx = 0f
+            var prevNy = 0f
+            var prevCount = 0
+            for (i in 0 until vCount) {
+                val vx = coords[i * 2]
+                val vy = coords[i * 2 + 1]
+                val prevIdx = if (i > 0) i - 1 else 0
+                val nextIdx = if (i < vCount - 1) i + 1 else vCount - 1
+                val tx = coords[nextIdx * 2] - coords[prevIdx * 2]
+                val ty = coords[nextIdx * 2 + 1] - coords[prevIdx * 2 + 1]
+                val tLen = kotlin.math.hypot(tx.toDouble(), ty.toDouble()).toFloat()
+                val offsetX: Float
+                val offsetY: Float
+                if (tLen > 0.001f) {
+                    val ux = tx / tLen
+                    val uy = ty / tLen
+                    val ang = undirectedAngleBucket(ux, uy)
+                    val (mask, refUx, refUy) = lookupMaskAndRef(vx, vy, ang, selfBit, ux, uy)
+                    val count = Integer.bitCount(mask)
+                    val (nx, ny) = alignBundleNormal(
+                        ux = ux,
+                        uy = uy,
+                        refUx = refUx,
+                        refUy = refUy,
+                        prevNx = prevNx,
+                        prevNy = prevNy,
+                        insideBundle = prevCount > 1 && count > 1
+                    )
+                    prevNx = nx
+                    prevNy = ny
+                    prevCount = count
+                    val offsetPx = if (count > 1) {
+                        val rank = bitRankInMask(mask, selfBit)
+                        computeLaneOffsetPx(rank, count, strokeWidthPx)
+                    } else 0f
+                    offsetX = vx + nx * offsetPx
+                    offsetY = vy + ny * offsetPx
+                } else {
+                    offsetX = vx
+                    offsetY = vy
+                }
+                if (i == 0) path.moveTo(offsetX, offsetY) else path.lineTo(offsetX, offsetY)
+            }
+            paths.add(path)
+        }
+
+        // 1. Draw Thin Contrast Halo (stronger for Yellow/White so light blazes stay crisp on pale roads)
+        for (tIdx in trailsToDraw.indices) {
+            val path = paths[tIdx] ?: continue
+            val color = trailsToDraw[tIdx].color
+            haloPaint.alpha = if (color == TrailColor.YELLOW || color == TrailColor.WHITE) lightColorHaloAlpha else darkHaloAlpha
             canvas.drawPath(path, haloPaint)
         }
 
         // 2. Draw Colored Strokes
-        for (trail in trailsToDraw) {
-            val pts = trail.points
-            if (pts.size < 2) continue
-            path.reset()
-            proj.toPixels(pts[0], p1)
-            path.moveTo(p1.x.toFloat(), p1.y.toFloat())
-            for (i in 1 until pts.size) {
-                proj.toPixels(pts[i], p2)
-                path.lineTo(p2.x.toFloat(), p2.y.toFloat())
-            }
+        for (tIdx in trailsToDraw.indices) {
+            val path = paths[tIdx] ?: continue
+            val trail = trailsToDraw[tIdx]
             val colorArgb = try {
-                Color.parseColor(trail.color.hexColor)
+                Color.parseColor(resolveStrokeColorHex(trail))
             } catch (_: Exception) {
                 Color.parseColor("#EF4444")
             }
             trailPaint.color = colorArgb
+            trailPaint.alpha = trailAlpha
             canvas.drawPath(path, trailPaint)
 
             if (selectedTrailId != null && trail.id == selectedTrailId) {
@@ -160,8 +525,45 @@ class VectorTrailOverlay(
         }
     }
 
+    private fun projectDecimatedScreenCoords(
+        proj: Projection,
+        pts: List<GeoPoint>,
+        p1: Point,
+        p2: Point,
+        minStepPxSq: Float
+    ): FloatArray {
+        val buf = FloatArray(pts.size * 2)
+        proj.toPixels(pts[0], p1)
+        var lastX = p1.x.toFloat()
+        var lastY = p1.y.toFloat()
+        buf[0] = lastX
+        buf[1] = lastY
+        var count = 1
+        val lastIdx = pts.size - 1
+        for (i in 1 until lastIdx) {
+            proj.toPixels(pts[i], p2)
+            val x = p2.x.toFloat()
+            val y = p2.y.toFloat()
+            val dx = x - lastX
+            val dy = y - lastY
+            if (dx * dx + dy * dy >= minStepPxSq) {
+                buf[count * 2] = x
+                buf[count * 2 + 1] = y
+                count++
+                lastX = x
+                lastY = y
+            }
+        }
+        proj.toPixels(pts[lastIdx], p2)
+        val endX = p2.x.toFloat()
+        val endY = p2.y.toFloat()
+        buf[count * 2] = endX
+        buf[count * 2 + 1] = endY
+        count++
+        return buf.copyOf(count * 2)
+    }
+
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
-        if (mapView.zoomLevelDouble < 12.0) return false
         val proj = mapView.projection ?: return false
         val tapX = e.x
         val tapY = e.y
@@ -175,6 +577,7 @@ class VectorTrailOverlay(
         var minDistancePx = Float.MAX_VALUE
 
         for (trail in currentTrails) {
+            if (!matchesFilters(trail, enabledKinds, enabledColors)) continue
             val pts = trail.points
             for (i in 0 until pts.size - 1) {
                 proj.toPixels(pts[i], p1)
@@ -189,7 +592,16 @@ class VectorTrailOverlay(
 
         if (nearestTrail != null) {
             selectedTrailId = nearestTrail.id
-            onTrailSelected?.invoke(nearestTrail)
+            if (nearestTrail.name.startsWith("Trail #")) {
+                scope.launch(Dispatchers.IO) {
+                    val enriched = TrailVectorRepository.resolveTrailDetailsIfMissing(context, nearestTrail)
+                    launch(Dispatchers.Main) {
+                        onTrailSelected?.invoke(enriched)
+                    }
+                }
+            } else {
+                onTrailSelected?.invoke(nearestTrail)
+            }
             mapView.invalidate()
             return true
         }

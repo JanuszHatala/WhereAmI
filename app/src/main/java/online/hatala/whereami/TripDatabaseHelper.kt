@@ -95,6 +95,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_EC_ELEVATION = "elevation"
         private const val COL_EC_UPDATED_AT = "updated_at"
 
+        internal fun estimateElevationCacheBytes(rowCount: Int, keyBytes: Long): Long {
+            if (rowCount <= 0) return 0L
+            // Table B-tree + PRIMARY KEY autoindex store grid_key twice, plus REAL/INTEGER columns & B-tree slack (~44 B/row).
+            return (keyBytes.coerceAtLeast(0L) * 2L) + (rowCount * 44L)
+        }
+
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
         }
@@ -950,6 +956,205 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
     fun getTripPointsWithSources(id: Long): Pair<List<GeoPoint>, List<String>> {
         val rows = getTrackPointRows(id)
         return Pair(rowsToGeoPoints(rows), rows.map { it.altSource ?: "GPS" })
+    }
+
+    data class MissingDemSummary(
+        val tripCount: Int,
+        val pointCount: Int,
+        val incompleteTripIds: List<Long> = emptyList()
+    )
+
+    fun getTrackPointsWithSeqAndSources(tripId: Long): Triple<List<Int>, List<GeoPoint>, List<String>> {
+        val db = readableDatabase
+        val store = db.rawQuery(
+            "SELECT $COL_POINTS_STORE FROM $TABLE_TRIPS WHERE $COL_ID = ?",
+            arrayOf(tripId.toString())
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 1 }
+
+        if (store == 0) {
+            val json = db.rawQuery(
+                "SELECT $COL_POINTS_JSON FROM $TABLE_TRIPS WHERE $COL_ID = ?",
+                arrayOf(tripId.toString())
+            ).use { c -> if (c.moveToFirst()) c.getString(0) ?: "[]" else "[]" }
+            val (pts, srcs) = jsonToPointsWithSources(json)
+            return Triple(pts.indices.toList(), pts, srcs)
+        }
+
+        val seqs = ArrayList<Int>()
+        val pts = ArrayList<GeoPoint>()
+        val srcs = ArrayList<String>()
+        db.rawQuery(
+            "SELECT $COL_TP_SEQ,$COL_TP_LAT,$COL_TP_LNG,$COL_TP_ALT,$COL_TP_ALT_SRC " +
+                "FROM $TABLE_TRACK_POINTS WHERE $COL_TP_TRIP = ? ORDER BY $COL_TP_SEQ",
+            arrayOf(tripId.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                val seq = c.getInt(0)
+                val lat = c.getDouble(1)
+                val lng = c.getDouble(2)
+                val alt = if (c.isNull(3)) 0.0 else c.getDouble(3)
+                val src = if (c.isNull(4)) "GPS" else c.getString(4)
+                seqs.add(seq)
+                pts.add(if (alt != 0.0 && !alt.isNaN()) GeoPoint(lat, lng, alt) else GeoPoint(lat, lng))
+                srcs.add(src)
+            }
+        }
+        return Triple(seqs, pts, srcs)
+    }
+
+    /**
+     * Updates altitudes and alt_src for existing track_points rows in place by (trip_id, seq)
+     * without deleting rows, preserving concurrent appends on active trips and all kinematics.
+     */
+    fun updateTrackPointElevationsInPlace(
+        tripId: Long,
+        seqAltitudeUpdates: Map<Int, Double>,
+        altSource: String = "DEM"
+    ): Boolean {
+        if (seqAltitudeUpdates.isEmpty()) return true
+        val db = writableDatabase
+        val store = db.rawQuery(
+            "SELECT $COL_POINTS_STORE FROM $TABLE_TRIPS WHERE $COL_ID = ?",
+            arrayOf(tripId.toString())
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 1 }
+
+        if (store == 0) {
+            val json = db.rawQuery(
+                "SELECT $COL_POINTS_JSON FROM $TABLE_TRIPS WHERE $COL_ID = ?",
+                arrayOf(tripId.toString())
+            ).use { c -> if (c.moveToFirst()) c.getString(0) ?: "[]" else "[]" }
+            val (pts, srcs) = jsonToPointsWithSources(json)
+            if (pts.isEmpty()) return true
+            val mutablePts = pts.toMutableList()
+            val mutableSrcs = srcs.toMutableList()
+            for ((idx, alt) in seqAltitudeUpdates) {
+                if (idx in mutablePts.indices && !alt.isNaN()) {
+                    val p = mutablePts[idx]
+                    mutablePts[idx] = GeoPoint(p.latitude, p.longitude, alt)
+                    mutableSrcs[idx] = altSource
+                }
+            }
+            val values = ContentValues().apply {
+                put(COL_POINTS_JSON, pointsToJson(mutablePts, mutableSrcs))
+            }
+            db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(tripId.toString()))
+            return true
+        }
+
+        db.beginTransaction()
+        try {
+            val stmt = db.compileStatement(
+                "UPDATE $TABLE_TRACK_POINTS SET $COL_TP_ALT = ?, $COL_TP_ALT_SRC = ? " +
+                    "WHERE $COL_TP_TRIP = ? AND $COL_TP_SEQ = ?"
+            )
+            for ((seq, alt) in seqAltitudeUpdates) {
+                if (alt.isNaN()) continue
+                stmt.clearBindings()
+                stmt.bindDouble(1, alt)
+                stmt.bindString(2, altSource)
+                stmt.bindLong(3, tripId)
+                stmt.bindLong(4, seq.toLong())
+                stmt.executeUpdateDelete()
+            }
+            stmt.close()
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return true
+    }
+
+    fun getMissingDemSummary(): MissingDemSummary {
+        val db = readableDatabase
+        val incompleteIds = ArrayList<Long>()
+        var missingPoints = 0
+
+        db.rawQuery(
+            """
+            SELECT tp.$COL_TP_TRIP, COUNT(*)
+            FROM $TABLE_TRACK_POINTS tp
+            INNER JOIN $TABLE_TRIPS t ON t.$COL_ID = tp.$COL_TP_TRIP
+            WHERE t.$COL_POINTS_STORE = 1
+              AND t.$COL_END_TIME IS NOT NULL AND t.$COL_END_TIME > 0
+              AND (tp.$COL_TP_ALT IS NULL OR tp.$COL_TP_ALT = 0.0 OR COALESCE(tp.$COL_TP_ALT_SRC, 'GPS') != 'DEM')
+            GROUP BY tp.$COL_TP_TRIP
+            ORDER BY t.$COL_START_TIME DESC
+            """.trimIndent(),
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val cnt = c.getInt(1)
+                if (cnt > 0) {
+                    incompleteIds.add(id)
+                    missingPoints += cnt
+                }
+            }
+        }
+
+        // Legacy pre-v9 rows still in points_json (rare).
+        db.rawQuery(
+            "SELECT $COL_ID, $COL_POINTS_JSON FROM $TABLE_TRIPS WHERE $COL_POINTS_STORE = 0 AND $COL_END_TIME IS NOT NULL AND $COL_END_TIME > 0 ORDER BY $COL_START_TIME DESC",
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val json = c.getString(1) ?: "[]"
+                val (pts, srcs) = jsonToPointsWithSources(json)
+                val cnt = pts.indices.count { i ->
+                    val a = pts[i].altitude
+                    a == 0.0 || a.isNaN() || (srcs.getOrNull(i) ?: "GPS") != "DEM"
+                }
+                if (cnt > 0) {
+                    incompleteIds.add(id)
+                    missingPoints += cnt
+                }
+            }
+        }
+
+        return MissingDemSummary(
+            tripCount = incompleteIds.size,
+            pointCount = missingPoints,
+            incompleteTripIds = incompleteIds
+        )
+    }
+
+    fun getElevationCacheCount(): Int {
+        val db = readableDatabase
+        return try {
+            db.rawQuery("SELECT COUNT(*) FROM $TABLE_ELEVATION_CACHE", null).use { c ->
+                if (c.moveToFirst()) c.getInt(0) else 0
+            }
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    fun getElevationCacheBytes(): Long {
+        val db = readableDatabase
+        try {
+            db.rawQuery(
+                "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name IN (?, ?)",
+                arrayOf(TABLE_ELEVATION_CACHE, "sqlite_autoindex_${TABLE_ELEVATION_CACHE}_1")
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    val exact = c.getLong(0)
+                    if (exact > 0L) return exact
+                }
+            }
+        } catch (_: Exception) {
+            // dbstat virtual table is unavailable on some Android SQLite builds; use schema estimate below.
+        }
+        return try {
+            db.rawQuery(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH($COL_EC_GRID_KEY)), 0) FROM $TABLE_ELEVATION_CACHE",
+                null
+            ).use { c ->
+                if (c.moveToFirst()) estimateElevationCacheBytes(c.getInt(0), c.getLong(1)) else 0L
+            }
+        } catch (_: Exception) {
+            0L
+        }
     }
 
     fun updateTripActivityProfile(id: Long, profile: ActivityProfile) {

@@ -41,7 +41,7 @@ object ElevationCorrectionHelper {
         // The stored rows are the base: a caller's TripRecord may be the in-memory recording, whose points carry
         // raw GPS altitudes. Writing those back under the stored "DEM" labels replaced DEM altitudes with GPS
         // ones on every trip stop (trip 234: GPS curve with DEM spikes, all labelled DEM).
-        val (storedPoints, currentSources) = db.getTripPointsWithSources(trip.id)
+        val (seqs, storedPoints, currentSources) = db.getTrackPointsWithSeqAndSources(trip.id)
         val basePoints = storedPoints.ifEmpty { trip.points }
         if (basePoints.isEmpty()) {
             onProgress(0, 0)
@@ -61,8 +61,20 @@ object ElevationCorrectionHelper {
 
         if (isCancelled()) return false
 
-        val (updatedPoints, updatedSources) = mergeFetched(basePoints, currentSources, indicesToFetch, fetchedAltitudes)
-        db.updateTrip(trip.copy(points = updatedPoints), updatedSources)
+        if (seqs.size == basePoints.size && storedPoints.isNotEmpty()) {
+            val seqToAlt = LinkedHashMap<Int, Double>(indicesToFetch.size)
+            indicesToFetch.forEachIndexed { fetchIdx, origIdx ->
+                val alt = fetchedAltitudes.getOrNull(fetchIdx)
+                val seq = seqs.getOrNull(origIdx)
+                if (alt != null && !alt.isNaN() && seq != null) {
+                    seqToAlt[seq] = alt
+                }
+            }
+            db.updateTrackPointElevationsInPlace(trip.id, seqToAlt, "DEM")
+        } else {
+            val (updatedPoints, updatedSources) = mergeFetched(basePoints, currentSources, indicesToFetch, fetchedAltitudes)
+            db.updateTrip(trip.copy(points = updatedPoints), updatedSources)
+        }
         return true
     }
 

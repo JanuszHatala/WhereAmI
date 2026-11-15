@@ -12,82 +12,34 @@ import org.osmdroid.util.GeoPoint
 class OutdoorFeatureTest {
 
     @Test
-    fun testOfflineOutdoorRegionContainment() {
-        val jsonStr = """
-        {
-          "type": "FeatureCollection",
-          "features": [
-            {
-              "type": "Feature",
-              "properties": {
-                "id": "beskid_maly",
-                "name": "Beskid Mały",
-                "name_en": "Little Beskids",
-                "kind": "mountain_range",
-                "osm_id": 1001,
-                "importance": 0.85
-              },
-              "geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                  [
-                    [19.10, 49.75],
-                    [19.45, 49.75],
-                    [19.45, 49.88],
-                    [19.10, 49.88],
-                    [19.10, 49.75]
-                  ]
-                ]
-              }
-            },
-            {
-              "type": "Feature",
-              "properties": {
-                "id": "tatry",
-                "name": "Tatry",
-                "name_en": "Tatra Mountains",
-                "kind": "mountain_range",
-                "osm_id": 1002,
-                "importance": 0.95
-              },
-              "geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                  [
-                    [19.80, 49.15],
-                    [20.25, 49.15],
-                    [20.25, 49.30],
-                    [19.80, 49.30],
-                    [19.80, 49.15]
-                  ]
-                ]
-              }
-            }
-          ]
-        }
-        """.trimIndent()
+    fun testOutdoorAreaPolygonContainment() {
+        val sampleRange = OutdoorArea(
+            id = "rel_1001",
+            name = "Alpine Sample Range",
+            nameEn = "Alpine Sample Range",
+            kind = OutdoorAreaKind.MOUNTAIN_RANGE,
+            osmRelationId = 1001L
+        )
+        val poly = listOf(
+            GeoPoint(47.10, 11.10),
+            GeoPoint(47.10, 11.45),
+            GeoPoint(47.30, 11.45),
+            GeoPoint(47.30, 11.10),
+            GeoPoint(47.10, 11.10)
+        )
+        val areaWithPoly = OutdoorAreaWithPolygon(
+            area = sampleRange,
+            minLat = 47.10,
+            maxLat = 47.30,
+            minLon = 11.10,
+            maxLon = 11.45,
+            polygon = poly
+        )
 
-        OfflineOutdoorRegionIndex.loadFromJsonString(jsonStr)
-
-        // Point inside Beskid Mały (e.g. Czaniec / Porąbka 49.80, 19.20)
-        val regionsMaly = OfflineOutdoorRegionIndex.findContainingRegions(49.80, 19.20)
-        assertEquals(1, regionsMaly.size)
-        assertEquals("Beskid Mały", regionsMaly[0].area.name)
-        assertEquals(OutdoorAreaKind.MOUNTAIN_RANGE, regionsMaly[0].area.kind)
-
-        // Point inside Tatry (e.g. Morskie Oko 49.20, 20.07)
-        val regionsTatry = OfflineOutdoorRegionIndex.findContainingRegions(49.20, 20.07)
-        assertEquals(1, regionsTatry.size)
-        assertEquals("Tatry", regionsTatry[0].area.name)
-
-        // Point outside both (e.g. Kraków 50.06, 19.94)
-        val regionsKrakow = OfflineOutdoorRegionIndex.findContainingRegions(50.06, 19.94)
-        assertTrue(regionsKrakow.isEmpty())
-
-        // Search by query
-        val hit = OfflineOutdoorRegionIndex.getPolygonByIdOrName("beskid")
-        assertNotNull(hit)
-        assertEquals("Beskid Mały", hit?.area?.name)
+        assertTrue(areaWithPoly.contains(47.20, 11.25))
+        assertFalse(areaWithPoly.contains(47.50, 11.25))
+        assertTrue(BoundaryHelper.polygonContains(poly, 47.20, 11.25))
+        assertFalse(BoundaryHelper.polygonContains(poly, 46.90, 11.25))
     }
 
     @Test

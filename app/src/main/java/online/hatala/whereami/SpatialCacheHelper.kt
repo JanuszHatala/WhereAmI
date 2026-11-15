@@ -72,9 +72,13 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 val obj = JSONObject(jsonStr)
                 val rawCountry = obj.optString("country", "Unknown Country")
                 val cc = obj.optString("countryCode", "")
-                val resolvedCountry = if (cc.uppercase() == "PL" || rawCountry.equals("Poland", ignoreCase = true)) "Polska" else rawCountry
+                val resolvedCountry = when {
+                    rawCountry.isNotBlank() -> rawCountry
+                    cc.isNotBlank() -> Locale("", cc.uppercase(Locale.ROOT)).getDisplayCountry(Locale.ENGLISH).ifBlank { rawCountry }
+                    else -> rawCountry
+                }
                 val rawVoivodeship = obj.optString("voivodeship", "Unknown Region")
-                val resolvedVoivodeship = if (resolvedCountry == "Polska" || cc.uppercase() == "PL") {
+                val resolvedVoivodeship = if (cc.uppercase() == "PL") {
                     LocationManager.canonicalizePolishVoivodeship(rawVoivodeship)
                 } else rawVoivodeship
                 var rawCity = obj.optString("city", "Unknown City")
@@ -82,7 +86,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val stripped = m.groupValues[1].trim()
                     if (stripped.length >= 2) rawCity = stripped
                 }
-                val isPoland = cc.uppercase() == "PL" || resolvedCountry == "Polska"
+                val isPoland = cc.uppercase() == "PL"
                 val rawGmina = obj.optString("gmina").takeIf { it.isNotBlank() }
                 val resolvedGmina = if (isPoland && rawGmina != null) {
                     if (!rawGmina.startsWith("gmina", ignoreCase = true) && !rawGmina.startsWith("gm.", ignoreCase = true)) {
@@ -502,7 +506,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     }
 
     /**
-     * Migrates legacy 3-decimal keys (e.g. "49.822_19.245") to precise 4-decimal keys ("49.8223_19.2451")
+     * Migrates legacy 3-decimal keys (e.g. "12.345_67.890") to precise 4-decimal keys ("12.3456_67.8901")
      * using the saved exact latitude and longitude coordinates so existing recorded trip cache data
      * is 100% preserved and never re-downloaded.
      */
@@ -557,18 +561,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 }
             }
 
-            // One-time canonicalization: migrate any stored "country":"Poland" to "country":"Polska" in JSON columns
-            try {
-                db.execSQL(
-                    "UPDATE $TABLE_CACHE SET " +
-                    "$COL_EN_JSON = REPLACE($COL_EN_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"'), " +
-                    "$COL_PL_JSON = REPLACE($COL_PL_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"'), " +
-                    "$COL_NATIVE_JSON = REPLACE($COL_NATIVE_JSON, '\"country\":\"Poland\"', '\"country\":\"Polska\"') " +
-                    "WHERE $COL_EN_JSON LIKE '%\"country\":\"Poland\"%' " +
-                    "OR $COL_PL_JSON LIKE '%\"country\":\"Poland\"%' " +
-                    "OR $COL_NATIVE_JSON LIKE '%\"country\":\"Poland\"%'"
-                )
-            } catch (_: Exception) {}
+            // Clear legacy PL country override if stored into EN column (EN preserves English country names via Locale/Nominatim)
         } catch (_: Exception) {}
     }
 
@@ -647,7 +640,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
         val currentBytes = getStorageBytes()
         if (currentBytes <= maxBytes) return
         val db = writableDatabase
-        db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_CITY IS NULL OR $COL_CITY IN ('Unknown City', '--', 'Likwidacja', 'Serwis', 'Powiat', 'koło')")
+        db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_CITY IS NULL OR TRIM($COL_CITY) = '' OR $COL_CITY IN ('Unknown City', '--')")
         val oneYearAgo = System.currentTimeMillis() - (365L * 24 * 3600 * 1000L)
         db.execSQL("DELETE FROM $TABLE_CACHE WHERE $COL_TIMESTAMP < $oneYearAgo")
         if (getStorageBytes() > maxBytes) {
@@ -880,6 +873,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
     fun getOutdoorContext(lat: Double, lng: Double, maxAgeMs: Long? = 6 * 3600 * 1000L): OutdoorContext? {
         val key = toGridKey(lat, lng)
         val db = readableDatabase
+        val nowMs = System.currentTimeMillis()
         val cursor = db.rawQuery(
             "SELECT $COL_CONTEXT_JSON, $COL_TIMESTAMP FROM $TABLE_OUTDOOR_CACHE WHERE $COL_GRID_KEY = ?",
             arrayOf(key)
@@ -888,13 +882,39 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             if (it.moveToFirst()) {
                 val json = it.getString(0)
                 val timestamp = it.getLong(1)
-                if (maxAgeMs != null && (System.currentTimeMillis() - timestamp) > maxAgeMs) {
-                    return null
+                if (maxAgeMs == null || (nowMs - timestamp) <= maxAgeMs) {
+                    return deserializeOutdoorContext(json)
                 }
-                return deserializeOutdoorContext(json)
             }
         }
-        return null
+        // Fallback to nearest fresh cached row within ~150m so indoor GPS cell jitter never blanks outdoor badges
+        val dLat = 0.0014
+        val dLng = 0.0020
+        val nearCursor = db.rawQuery(
+            "SELECT $COL_CONTEXT_JSON, $COL_TIMESTAMP, $COL_LAT, $COL_LNG FROM $TABLE_OUTDOOR_CACHE WHERE $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ?",
+            arrayOf(
+                (lat - dLat).toString(),
+                (lat + dLat).toString(),
+                (lng - dLng).toString(),
+                (lng + dLng).toString()
+            )
+        )
+        var bestDistSq = Double.MAX_VALUE
+        var bestJson: String? = null
+        nearCursor.use { c ->
+            while (c.moveToNext()) {
+                val timestamp = c.getLong(1)
+                if (maxAgeMs != null && (nowMs - timestamp) > maxAgeMs) continue
+                val rowLat = c.getDouble(2)
+                val rowLng = c.getDouble(3)
+                val distSq = (rowLat - lat) * (rowLat - lat) + (rowLng - lng) * (rowLng - lng)
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq
+                    bestJson = c.getString(0)
+                }
+            }
+        }
+        return bestJson?.let { deserializeOutdoorContext(it) }
     }
 
     fun putOutdoorContext(lat: Double, lng: Double, outdoorContext: OutdoorContext) {

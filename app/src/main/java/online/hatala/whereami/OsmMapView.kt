@@ -12,6 +12,10 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.TextUtils
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -112,7 +116,7 @@ enum class MapFontScale(val label: String, val scaleFactor: Float) {
 
 enum class MapBaseLayer(val label: String) {
     STANDARD("Standard OSM"),
-    FREEMAP_OUTDOOR("Freemap Outdoor (PTTK Szlaki & Hi-DPI)"),
+    FREEMAP_OUTDOOR("Freemap Outdoor (Central Europe)"),
     TOPO("Topographic (OpenTopo)"),
     SATELLITE("Satellite (Esri)")
 }
@@ -651,7 +655,9 @@ fun OsmMapView(
     isRecording: Boolean = false,
     isAutoStandby: Boolean = false,
     recenterTrigger: Long = 0L,
+    zoomResetTrigger: Long = 0L,
     onFollowingChanged: ((Boolean) -> Unit)? = null,
+    onZoomChanged: ((Double) -> Unit)? = null,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
@@ -661,11 +667,15 @@ fun OsmMapView(
     showMapSettingsExternal: Boolean = false,
     onDismissMapSettings: (() -> Unit)? = null,
     outdoorAreaBoundaryPoints: List<GeoPoint>? = null,
+    outdoorAreaBoundaryPolygons: List<List<GeoPoint>>? = null,
+    outdoorAreaIsExplicit: Boolean = false,
     outdoorAreaKind: OutdoorAreaKind? = null,
     outdoorAreaName: String? = null,
     outdoorAreaCenter: GeoPoint? = null,
     fitOutdoorAreaTrigger: Long = 0L,
     searchRoutePolylines: List<List<GeoPoint>>? = null,
+    searchRouteColorHex: String = "#EF4444",
+    searchRouteFitTrigger: Long = 0L,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -789,6 +799,30 @@ fun OsmMapView(
         mutableStateOf(initialProfileConfig.trailThickness)
     }
 
+    var trailLineStyle by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.trailLineStyle)
+    }
+
+    var trailOpacity by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.trailOpacity)
+    }
+
+    var trailOverlayMode by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.trailOverlayMode)
+    }
+
+    var enabledTrailKinds by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.enabledTrailKinds)
+    }
+
+    var enabledTrailColors by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.enabledTrailColors)
+    }
+
+    var supplementMissingOsmTrails by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.supplementMissingOsmTrails)
+    }
+
     var fontScale by remember(activityProfile) {
         mutableStateOf(initialProfileConfig.fontScale)
     }
@@ -798,7 +832,7 @@ fun OsmMapView(
     }
 
     var vectorTrailOverlayRef by remember { mutableStateOf<VectorTrailOverlay?>(null) }
-    var outdoorBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
+    var outdoorBoundaryPolygons by remember { mutableStateOf<List<org.osmdroid.views.overlay.Polygon>>(emptyList()) }
     var searchRouteOverlays by remember { mutableStateOf<List<Polyline>>(emptyList()) }
 
     var prePinZoom by remember { mutableStateOf<Double?>(null) }
@@ -925,6 +959,12 @@ fun OsmMapView(
         showHikingOverlay = config.showHikingOverlay
         showOutdoorAreasOverlay = config.showOutdoorAreasOverlay
         trailThickness = config.trailThickness
+        trailLineStyle = config.trailLineStyle
+        trailOpacity = config.trailOpacity
+        trailOverlayMode = config.trailOverlayMode
+        enabledTrailKinds = config.enabledTrailKinds
+        enabledTrailColors = config.enabledTrailColors
+        supplementMissingOsmTrails = config.supplementMissingOsmTrails
         fontScale = config.fontScale
         trackColorHex = config.trackColorHex
         if (orientationMode != config.orientationMode) {
@@ -947,42 +987,65 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Dynamic Hiking / Tourist Trail Overlay
-    LaunchedEffect(showHikingOverlay, trailThickness, mapView) {
+    // Dynamic Hiking / Tourist Trail Overlay (base-map-aware; never stacks duplicate overlays or over Freemap Outdoor)
+    LaunchedEffect(baseLayer, showHikingOverlay, trailThickness, trailLineStyle, trailOpacity, trailOverlayMode, enabledTrailKinds, enabledTrailColors, supplementMissingOsmTrails, mapView) {
         val map = mapView ?: return@LaunchedEffect
         MapProfileConfigHelper.setHikingOverlay(context, activityProfile, showHikingOverlay)
         MapProfileConfigHelper.setTrailThickness(context, activityProfile, trailThickness)
-        if (showHikingOverlay) {
-            if (hikingOverlayRef == null) {
-                val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
-                val overlay = TilesOverlay(provider, context).apply {
-                    loadingBackgroundColor = Color.TRANSPARENT
-                    loadingLineColor = Color.TRANSPARENT
-                }
-                hikingProviderRef = provider
-                hikingOverlayRef = overlay
-            }
-            hikingOverlayRef?.let {
-                if (!map.overlays.contains(it)) {
-                    val insertIdx = if (map.overlays.size > 1) 1 else 0
-                    map.overlays.add(insertIdx, it)
-                }
-            }
+        MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, trailLineStyle)
+        MapProfileConfigHelper.setTrailOpacity(context, activityProfile, trailOpacity)
+        MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, trailOverlayMode)
+        MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, enabledTrailKinds)
+        MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, enabledTrailColors)
+        MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, supplementMissingOsmTrails)
 
-            if (vectorTrailOverlayRef == null) {
-                val vOverlay = VectorTrailOverlay(
-                    context = context,
-                    scope = scope,
-                    trailThickness = trailThickness,
-                    onTrailSelected = onTrailSelected
-                )
-                vectorTrailOverlayRef = vOverlay
-            }
-            vectorTrailOverlayRef?.let {
-                it.trailThickness = trailThickness
-                it.onTrailSelected = onTrailSelected
-                if (!map.overlays.contains(it)) {
-                    map.overlays.add(it)
+        val trailsAllowedOnBase = baseLayer != MapBaseLayer.FREEMAP_OUTDOOR
+        if (trailsAllowedOnBase && showHikingOverlay) {
+            if (trailOverlayMode == TrailOverlayMode.WAYMARKED) {
+                vectorTrailOverlayRef?.let { map.overlays.remove(it) }
+                if (hikingOverlayRef == null) {
+                    val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
+                    val overlay = TilesOverlay(provider, context).apply {
+                        loadingBackgroundColor = Color.TRANSPARENT
+                        loadingLineColor = Color.TRANSPARENT
+                    }
+                    hikingProviderRef = provider
+                    hikingOverlayRef = overlay
+                }
+                hikingOverlayRef?.let {
+                    if (!map.overlays.contains(it)) {
+                        val insertIdx = if (map.overlays.size > 1) 1 else 0
+                        map.overlays.add(insertIdx, it)
+                    }
+                }
+            } else {
+                hikingOverlayRef?.let { map.overlays.remove(it) }
+                if (vectorTrailOverlayRef == null) {
+                    val vOverlay = VectorTrailOverlay(
+                        context = context,
+                        scope = scope,
+                        trailThickness = trailThickness,
+                        trailLineStyle = trailLineStyle,
+                        trailOpacity = trailOpacity,
+                        enabledKinds = enabledTrailKinds,
+                        enabledColors = enabledTrailColors,
+                        onTrailSelected = onTrailSelected
+                    )
+                    vectorTrailOverlayRef = vOverlay
+                }
+                vectorTrailOverlayRef?.let {
+                    it.trailThickness = trailThickness
+                    it.trailLineStyle = trailLineStyle
+                    it.trailOpacity = trailOpacity
+                    it.enabledKinds = enabledTrailKinds
+                    it.enabledColors = enabledTrailColors
+                    it.supplementOsmTrails = supplementMissingOsmTrails
+                    it.onTrailSelected = onTrailSelected
+                    if (!map.overlays.contains(it)) {
+                        val insertIdx = if (map.overlays.size > 1) 1 else 0
+                        map.overlays.add(insertIdx, it)
+                    }
+                    it.onFiltersUpdated(map)
                 }
             }
         } else {
@@ -1903,48 +1966,61 @@ fun OsmMapView(
         map.invalidate()
     }
 
-    // Render Outdoor Area Boundary Polygon (Mountain Ranges in Amber #F59E0B, Parks/Reserves in Emerald #10B981)
-    LaunchedEffect(outdoorAreaBoundaryPoints, outdoorAreaKind, showOutdoorAreasOverlay) {
+    // Render Outdoor Area Boundary Polygons (Mountain Ranges in Amber #F59E0B, Parks/Reserves in Emerald #10B981)
+    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaKind, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
         val map = mapView ?: return@LaunchedEffect
-        outdoorBoundaryPolygon?.let { map.overlays.remove(it) }
-        outdoorBoundaryPolygon = null
+        outdoorBoundaryPolygons.forEach { map.overlays.remove(it) }
+        outdoorBoundaryPolygons = emptyList()
 
-        if (showOutdoorAreasOverlay && outdoorAreaBoundaryPoints != null && outdoorAreaBoundaryPoints.size >= 3) {
+        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
+            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
+            ?: emptyList()
+
+        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && effectivePolys.isNotEmpty()) {
             val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
             val strokeCol = if (isRange) Color.parseColor("#F59E0B") else Color.parseColor("#10B981")
             val fillCol = if (isRange) Color.parseColor("#14F59E0B") else Color.parseColor("#1810B981")
             val dashArray = if (isRange) floatArrayOf(24f, 12f) else floatArrayOf(18f, 10f)
 
-            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
-                outlinePaint.color = strokeCol
-                outlinePaint.strokeWidth = if (isRange) 6f else 5.5f
-                outlinePaint.pathEffect = android.graphics.DashPathEffect(dashArray, 0f)
-                fillPaint.color = fillCol
-                points = outdoorAreaBoundaryPoints
-                infoWindow = null
-                setOnClickListener { _, _, _ -> true }
+            val created = mutableListOf<org.osmdroid.views.overlay.Polygon>()
+            for (ringPts in effectivePolys) {
+                val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                    outlinePaint.color = strokeCol
+                    outlinePaint.strokeWidth = if (isRange) 6f else 5.5f
+                    outlinePaint.pathEffect = android.graphics.DashPathEffect(dashArray, 0f)
+                    fillPaint.color = fillCol
+                    points = ringPts
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                }
+                map.overlays.add(0, poly)
+                created.add(poly)
             }
-            map.overlays.add(0, poly)
-            outdoorBoundaryPolygon = poly
+            outdoorBoundaryPolygons = created
         }
         map.invalidate()
     }
 
     // Render Outdoor Area On-Map Badge Marker (sticking to the map at area center, styled with border color)
     var outdoorAreaMarker by remember { mutableStateOf<Marker?>(null) }
-    LaunchedEffect(outdoorAreaBoundaryPoints, outdoorAreaName, outdoorAreaKind, outdoorAreaCenter, showOutdoorAreasOverlay) {
+    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaName, outdoorAreaKind, outdoorAreaCenter, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
         val map = mapView ?: return@LaunchedEffect
         outdoorAreaMarker?.let { map.overlays.remove(it) }
         outdoorAreaMarker = null
 
-        if (showOutdoorAreasOverlay && !outdoorAreaName.isNullOrBlank() &&
-            (outdoorAreaBoundaryPoints != null || outdoorAreaCenter != null)
+        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
+            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
+            ?: emptyList()
+        val validExplicitCenter = outdoorAreaCenter?.takeIf {
+            kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
+        }
+
+        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && !outdoorAreaName.isNullOrBlank() &&
+            (effectivePolys.isNotEmpty() || validExplicitCenter != null)
         ) {
-            val center = outdoorAreaCenter ?: outdoorAreaBoundaryPoints?.let { pts ->
-                if (pts.isNotEmpty()) {
-                    val bb = BoundingBox.fromGeoPoints(pts)
-                    GeoPoint(bb.centerLatitude, bb.centerLongitude)
-                } else null
+            val center = validExplicitCenter ?: effectivePolys.firstOrNull()?.let { pts ->
+                val bb = BoundingBox.fromGeoPoints(pts)
+                GeoPoint(bb.centerLatitude, bb.centerLongitude)
             }
             if (center != null) {
                 val om = Marker(map).apply {
@@ -1953,22 +2029,22 @@ fun OsmMapView(
                     icon = makeOutdoorAreaBadgeIcon(context, outdoorAreaName, outdoorAreaKind)
                     infoWindow = null
                     setOnMarkerClickListener { _, _ ->
-                        outdoorAreaBoundaryPoints?.let { pts ->
-                            if (pts.isNotEmpty()) {
-                                isFollowing = false
-                                fitPointsToUnobstructedViewport(
-                                    map = map,
-                                    points = pts,
-                                    density = density,
-                                    isLandscape = isLandscape,
-                                    isCompact = isCompact,
-                                    measuredTopInsetPx = measuredTopInsetPx,
-                                    measuredBottomInsetPx = measuredBottomInsetPx,
-                                    isRecording = isRecording,
-                                    isAutoStandby = isAutoStandby,
-                                    onZoomCalculated = { currentZoom = it }
-                                )
-                            }
+                        val allPts = effectivePolys.flatten()
+                        if (allPts.isNotEmpty()) {
+                            isFollowing = false
+                            lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+                            fitPointsToUnobstructedViewport(
+                                map = map,
+                                points = allPts,
+                                density = density,
+                                isLandscape = isLandscape,
+                                isCompact = isCompact,
+                                measuredTopInsetPx = measuredTopInsetPx,
+                                measuredBottomInsetPx = measuredBottomInsetPx,
+                                isRecording = isRecording,
+                                isAutoStandby = isAutoStandby,
+                                onZoomCalculated = { currentZoom = it }
+                            )
                         }
                         true
                     }
@@ -1983,14 +2059,19 @@ fun OsmMapView(
     // Fit-to-outdoor-area trigger
     LaunchedEffect(fitOutdoorAreaTrigger) {
         if (fitOutdoorAreaTrigger > 0L) {
+            kotlinx.coroutines.delay(40L)
             val map = mapView ?: return@LaunchedEffect
-            val pts = outdoorAreaBoundaryPoints
-            if (!pts.isNullOrEmpty()) {
+            val allPts = (outdoorAreaBoundaryPolygons?.flatten() ?: outdoorAreaBoundaryPoints).orEmpty()
+            val validCenter = outdoorAreaCenter?.takeIf {
+                kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
+            }
+            if (allPts.isNotEmpty()) {
                 isFollowing = false
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
                 map.mapOrientation = 0f
                 fitPointsToUnobstructedViewport(
                     map = map,
-                    points = pts,
+                    points = allPts,
                     density = density,
                     isLandscape = isLandscape,
                     isCompact = isCompact,
@@ -2000,10 +2081,12 @@ fun OsmMapView(
                     isAutoStandby = isAutoStandby,
                     onZoomCalculated = { currentZoom = it }
                 )
-            } else if (outdoorAreaCenter != null) {
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+            } else if (validCenter != null) {
                 isFollowing = false
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
                 map.mapOrientation = 0f
-                val centerGp = getOpticalCenter(map, outdoorAreaCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                val centerGp = getOpticalCenter(map, validCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                 map.controller.setZoom(12.0)
                 map.controller.animateTo(centerGp)
             }
@@ -2011,20 +2094,22 @@ fun OsmMapView(
     }
 
     // Render Search Route Polylines (Full trail routes or rivers)
-    LaunchedEffect(searchRoutePolylines) {
+    LaunchedEffect(searchRoutePolylines, searchRouteColorHex, searchRouteFitTrigger) {
         val map = mapView ?: return@LaunchedEffect
         searchRouteOverlays.forEach { map.overlays.remove(it) }
         searchRouteOverlays = emptyList()
 
         if (!searchRoutePolylines.isNullOrEmpty()) {
+            kotlinx.coroutines.delay(40L)
             val newPolys = mutableListOf<Polyline>()
             val allRoutePts = mutableListOf<GeoPoint>()
             val density = context.resources.displayMetrics.density
+            val routeColor = try { Color.parseColor(searchRouteColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
             for (linePoints in searchRoutePolylines) {
                 if (linePoints.size < 2) continue
                 allRoutePts.addAll(linePoints)
                 val poly = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor("#EF4444")
+                    outlinePaint.color = routeColor
                     outlinePaint.strokeWidth = 6.0f * density
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
@@ -2036,6 +2121,7 @@ fun OsmMapView(
             searchRouteOverlays = newPolys
             if (allRoutePts.size >= 2) {
                 isFollowing = false
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
                 map.mapOrientation = 0f
                 fitPointsToUnobstructedViewport(
                     map = map,
@@ -2049,6 +2135,7 @@ fun OsmMapView(
                     isAutoStandby = isAutoStandby,
                     onZoomCalculated = { currentZoom = it }
                 )
+                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
             }
         }
         map.invalidate()
@@ -2291,15 +2378,36 @@ fun OsmMapView(
         onFollowingChanged?.invoke(isFollowing)
     }
 
+    LaunchedEffect(currentZoom) {
+        onZoomChanged?.invoke(currentZoom)
+    }
+
     LaunchedEffect(recenterTrigger) {
         if (recenterTrigger > 0L) {
             isFollowing = true
             effectiveLatLng?.let { pos ->
                 val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
+                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                 mapView?.controller?.setCenter(centerGp)
             }
             mapView?.invalidate()
+        }
+    }
+
+    LaunchedEffect(zoomResetTrigger) {
+        if (zoomResetTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            isFollowing = true
+            val targetZoom = MAP_CONVENIENT_ZOOM.coerceIn(map.minZoomLevel, map.maxZoomLevel)
+            map.controller.stopAnimation(false)
+            map.controller.setZoom(targetZoom)
+            currentZoom = targetZoom
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setCenter(centerGp)
+            }
+            map.invalidate()
         }
     }
 
@@ -2323,24 +2431,37 @@ fun OsmMapView(
                     overlays.add(rotationGestureOverlay)
                     minZoomLevel = minZoom
                     maxZoomLevel = maxZoom
-                    controller.setZoom(16.0)
-                    currentZoom = 16.0
+                    val locPrefs = ctx.getSharedPreferences("online.hatala.whereami.loc_prefs", Context.MODE_PRIVATE)
+                    val savedLat = try { locPrefs.getFloat("cached_lat", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
+                    val savedLon = try { locPrefs.getFloat("cached_lon", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
+                    val lastSysLoc = if (savedLat == null || savedLon == null) {
+                        try {
+                            val fineGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                                ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            val coarseGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                                ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (fineGranted || coarseGranted) {
+                                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                                lm?.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
+                                    ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                                    ?: lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                            } else null
+                        } catch (_: Exception) { null }
+                    } else null
 
-                    // Initialize camera center immediately so map never opens on blank ocean (0,0)
-                    val initialLat = locationFix?.lat ?: latLng?.first ?: run {
-                        val locPrefs = ctx.getSharedPreferences("online.hatala.whereami.loc_prefs", Context.MODE_PRIVATE)
-                        val savedLat = locPrefs.getFloat("cached_lat", Float.NaN)
-                        if (!savedLat.isNaN()) savedLat.toDouble() else 52.0693
-                    }
-                    val initialLon = locationFix?.lng ?: latLng?.second ?: run {
-                        val locPrefs = ctx.getSharedPreferences("online.hatala.whereami.loc_prefs", Context.MODE_PRIVATE)
-                        val savedLon = locPrefs.getFloat("cached_lon", Float.NaN)
-                        if (!savedLon.isNaN()) savedLon.toDouble() else 19.4803
-                    }
+                    val hasInitialFix = locationFix != null || latLng != null || (savedLat != null && savedLon != null) || lastSysLoc != null
+                    val initialZoom = if (hasInitialFix) 16.0 else 2.5
+                    controller.setZoom(initialZoom)
+                    currentZoom = initialZoom
+
+                    val initialLat = locationFix?.lat ?: latLng?.first ?: savedLat ?: lastSysLoc?.latitude ?: 0.0
+                    val initialLon = locationFix?.lng ?: latLng?.second ?: savedLon ?: lastSysLoc?.longitude ?: 0.0
                     val initialOpticalCenter = calculateOpticalCenter(
                         lat = initialLat,
                         lon = initialLon,
-                        zoom = 16.0,
+                        zoom = initialZoom,
                         mapOrientation = 0f,
                         offsetPixelsY = effectiveOpticalOffsetY,
                         offsetPixelsX = effectiveOpticalOffsetX
@@ -2564,6 +2685,36 @@ fun OsmMapView(
                 trailThickness = thickness
                 MapProfileConfigHelper.setTrailThickness(context, activityProfile, thickness)
             },
+            trailLineStyle = trailLineStyle,
+            onTrailLineStyleChange = { style ->
+                trailLineStyle = style
+                MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, style)
+            },
+            trailOpacity = trailOpacity,
+            onTrailOpacityChange = { op ->
+                trailOpacity = op
+                MapProfileConfigHelper.setTrailOpacity(context, activityProfile, op)
+            },
+            trailOverlayMode = trailOverlayMode,
+            onTrailOverlayModeChange = { mode ->
+                trailOverlayMode = mode
+                MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, mode)
+            },
+            enabledTrailKinds = enabledTrailKinds,
+            onEnabledTrailKindsChange = { kinds ->
+                enabledTrailKinds = kinds
+                MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, kinds)
+            },
+            enabledTrailColors = enabledTrailColors,
+            onEnabledTrailColorsChange = { colors ->
+                enabledTrailColors = colors
+                MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, colors)
+            },
+            supplementMissingOsmTrails = supplementMissingOsmTrails,
+            onSupplementMissingOsmTrailsChange = { enabled ->
+                supplementMissingOsmTrails = enabled
+                MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, enabled)
+            },
             showBorders = showBorders,
             onToggleBorders = onToggleBorders,
             showHeatMap = showHeatMap,
@@ -2722,16 +2873,43 @@ private fun BoxScope.MapFloatingControlsColumn(
         var showFitMenu by remember { mutableStateOf(false) }
 
         // Floating Zoom Controls & Map Tools:
-        // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
-        // Each control is an exact 42dp Box with 4dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
-        // Automatically centers vertically based on the number of currently active controls.
-        Column(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        // Bounded within the unobstructed vertical viewport [topClearanceDp, maxHeight - safeBottomClearance]
+        // so enlarged LocalityCard (portrait) or compact screen height (landscape) never overlaps buttons.
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val topClearanceDp = if (!isLandscape && measuredTopInsetPx != null && measuredTopInsetPx > 0) {
+                (measuredTopInsetPx / density).dp + 8.dp
+            } else if (isLandscape) {
+                12.dp
+            } else {
+                84.dp
+            }
+            val maxHeightPx = maxHeight.value * density
+            val measuredBottomDp = if (measuredBottomInsetPx != null && measuredBottomInsetPx in 1 until maxHeightPx.toInt()) {
+                ((maxHeightPx - measuredBottomInsetPx) / density).dp + 8.dp
+            } else {
+                if (isLandscape) 68.dp else 88.dp
+            }
+            val portraitDestFloorDp = if (!isLandscape && (destinationPoint != null || selectedSavedPlace != null)) 220.dp else 0.dp
+            val bottomClearanceDp = maxOf(
+                measuredBottomDp,
+                portraitDestFloorDp,
+                if (isLandscape) 64.dp else 80.dp
+            )
+            val safeBottomClearance = bottomClearanceDp.coerceAtMost(
+                (maxHeight - topClearanceDp - 48.dp).coerceAtLeast(0.dp)
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = topClearanceDp, bottom = safeBottomClearance, end = 12.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
             // Zoom In [+] Button
             Box(
                 modifier = Modifier
@@ -3482,6 +3660,8 @@ private fun BoxScope.MapFloatingControlsColumn(
                     )
                 }
             }
+                }
+            }
         }
 }
 
@@ -3771,6 +3951,18 @@ private fun MapSettingsDialogHost(
     onOutdoorAreasOverlayToggle: (Boolean) -> Unit = {},
     trailThickness: TrailThickness = TrailThickness.NORMAL,
     onTrailThicknessChange: (TrailThickness) -> Unit = {},
+    trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
+    onTrailLineStyleChange: (TrailLineStyle) -> Unit = {},
+    trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
+    onTrailOpacityChange: (TrailOpacity) -> Unit = {},
+    trailOverlayMode: TrailOverlayMode = TrailOverlayMode.VECTOR,
+    onTrailOverlayModeChange: (TrailOverlayMode) -> Unit = {},
+    enabledTrailKinds: Set<TrailRouteKind> = emptySet(),
+    onEnabledTrailKindsChange: (Set<TrailRouteKind>) -> Unit = {},
+    enabledTrailColors: Set<TrailColor> = emptySet(),
+    onEnabledTrailColorsChange: (Set<TrailColor>) -> Unit = {},
+    supplementMissingOsmTrails: Boolean = true,
+    onSupplementMissingOsmTrailsChange: (Boolean) -> Unit = {},
     showBorders: Boolean,
     onToggleBorders: (() -> Unit)?,
     showHeatMap: Boolean,
@@ -3818,6 +4010,18 @@ private fun MapSettingsDialogHost(
         onOutdoorAreasOverlayToggle = onOutdoorAreasOverlayToggle,
         trailThickness = trailThickness,
         onTrailThicknessChange = onTrailThicknessChange,
+        trailLineStyle = trailLineStyle,
+        onTrailLineStyleChange = onTrailLineStyleChange,
+        trailOpacity = trailOpacity,
+        onTrailOpacityChange = onTrailOpacityChange,
+        trailOverlayMode = trailOverlayMode,
+        onTrailOverlayModeChange = onTrailOverlayModeChange,
+        enabledTrailKinds = enabledTrailKinds,
+        onEnabledTrailKindsChange = onEnabledTrailKindsChange,
+        enabledTrailColors = enabledTrailColors,
+        onEnabledTrailColorsChange = onEnabledTrailColorsChange,
+        supplementMissingOsmTrails = supplementMissingOsmTrails,
+        onSupplementMissingOsmTrailsChange = onSupplementMissingOsmTrailsChange,
         showBorders = showBorders,
         onToggleBorders = { onToggleBorders?.invoke() },
         showHeatMap = showHeatMap,
@@ -3859,6 +4063,12 @@ private fun MapSettingsDialogHost(
             onHikingOverlayToggle(cfg.showHikingOverlay)
             onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
             onTrailThicknessChange(cfg.trailThickness)
+            onTrailLineStyleChange(cfg.trailLineStyle)
+            onTrailOpacityChange(cfg.trailOpacity)
+            onTrailOverlayModeChange(cfg.trailOverlayMode)
+            onEnabledTrailKindsChange(cfg.enabledTrailKinds)
+            onEnabledTrailColorsChange(cfg.enabledTrailColors)
+            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -3871,6 +4081,12 @@ private fun MapSettingsDialogHost(
             onHikingOverlayToggle(cfg.showHikingOverlay)
             onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
             onTrailThicknessChange(cfg.trailThickness)
+            onTrailLineStyleChange(cfg.trailLineStyle)
+            onTrailOpacityChange(cfg.trailOpacity)
+            onTrailOverlayModeChange(cfg.trailOverlayMode)
+            onEnabledTrailKindsChange(cfg.enabledTrailKinds)
+            onEnabledTrailColorsChange(cfg.enabledTrailColors)
+            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -3895,6 +4111,18 @@ private fun MapSettingsDialog(
     onOutdoorAreasOverlayToggle: (Boolean) -> Unit = {},
     trailThickness: TrailThickness = TrailThickness.NORMAL,
     onTrailThicknessChange: (TrailThickness) -> Unit = {},
+    trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
+    onTrailLineStyleChange: (TrailLineStyle) -> Unit = {},
+    trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
+    onTrailOpacityChange: (TrailOpacity) -> Unit = {},
+    trailOverlayMode: TrailOverlayMode = TrailOverlayMode.VECTOR,
+    onTrailOverlayModeChange: (TrailOverlayMode) -> Unit = {},
+    enabledTrailKinds: Set<TrailRouteKind> = emptySet(),
+    onEnabledTrailKindsChange: (Set<TrailRouteKind>) -> Unit = {},
+    enabledTrailColors: Set<TrailColor> = emptySet(),
+    onEnabledTrailColorsChange: (Set<TrailColor>) -> Unit = {},
+    supplementMissingOsmTrails: Boolean = true,
+    onSupplementMissingOsmTrailsChange: (Boolean) -> Unit = {},
     showBorders: Boolean = false,
     onToggleBorders: () -> Unit = {},
     showHeatMap: Boolean = false,
@@ -4124,19 +4352,17 @@ private fun MapSettingsDialog(
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
 
-            // Hiking / Tourist Trails Overlay
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onHikingOverlayToggle(!hikingOverlayEnabled) }
-                    .padding(vertical = 4.dp, horizontal = 6.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+            // Outdoor & Hiking Trails Overlay (base-map-aware: never double-draws over Freemap Outdoor)
+            if (currentBaseLayer == MapBaseLayer.FREEMAP_OUTDOOR) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(ComposeColor(0xFF1E293B))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
                     Text(
-                        text = "Hiking Trails & Peaks",
+                        text = "Outdoor & Hiking Trails",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = ComposeColor.White,
@@ -4146,81 +4372,511 @@ private fun MapSettingsDialog(
                         )
                     )
                     Text(
-                        text = "Marked color-coded trails & summits (Waymarked Trails)",
+                        text = "All trails, contours & symbols are built into Freemap Outdoor tiles. Switch to Topographic, Standard, or Satellite to toggle or filter trail types & colors.",
                         fontSize = 11.sp,
                         color = ComposeColor(0xFF94A3B8),
-                        modifier = Modifier.padding(top = 2.dp),
+                        modifier = Modifier.padding(top = 4.dp),
                         style = androidx.compose.ui.text.TextStyle(
                             platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                             lineHeight = 14.sp
                         )
                     )
                 }
-                Switch(
-                    checked = hikingOverlayEnabled,
-                    onCheckedChange = { onHikingOverlayToggle(it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = ComposeColor.White,
-                        checkedTrackColor = ComposeColor(0xFF10B981),
-                        uncheckedThumbColor = ComposeColor(0xFF94A3B8),
-                        uncheckedTrackColor = ComposeColor(0xFF334155)
-                    )
-                )
-            }
-
-            // Trail Line Thickness (Standard, Thick, Bold) directly under Hiking Trails & Peaks
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
+            } else {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onHikingOverlayToggle(!hikingOverlayEnabled) }
+                        .padding(vertical = 4.dp, horizontal = 6.dp)
                 ) {
-                    Text(
-                        text = "Trail Line Thickness",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (hikingOverlayEnabled) ComposeColor(0xFF94A3B8) else ComposeColor(0xFF64748B)
-                    )
-                    if (!hikingOverlayEnabled) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "(Hiking Trails OFF)",
-                            fontSize = 10.sp,
-                            color = ComposeColor(0xFFFBBF24)
+                            text = "Outdoor & Hiking Trails",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = ComposeColor.White,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 15.sp
+                            )
+                        )
+                        Text(
+                            text = "Filterable vector trails or Waymarked raster layer",
+                            fontSize = 11.sp,
+                            color = ComposeColor(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
                         )
                     }
+                    Switch(
+                        checked = hikingOverlayEnabled,
+                        onCheckedChange = { onHikingOverlayToggle(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ComposeColor.White,
+                            checkedTrackColor = ComposeColor(0xFF10B981),
+                            uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                            uncheckedTrackColor = ComposeColor(0xFF334155)
+                        )
+                    )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    TrailThickness.values().forEach { thickness ->
-                        val isSelected = trailThickness == thickness
-                        Button(
-                            onClick = { onTrailThicknessChange(thickness) },
-                            enabled = hikingOverlayEnabled,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B),
-                                disabledContainerColor = if (isSelected) ComposeColor(0xFF0284C7).copy(alpha = 0.4f) else ComposeColor(0xFF1E293B).copy(alpha = 0.4f)
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
+
+                if (hikingOverlayEnabled) {
+                    // Overlay Source Mode (Vector Filterable vs Waymarked Raster — mutually exclusive)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TrailOverlayMode.entries.forEach { mode ->
+                            val isSelected = trailOverlayMode == mode
+                            Button(
+                                onClick = { onTrailOverlayModeChange(mode) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = mode.label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ComposeColor.White,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    if (trailOverlayMode == TrailOverlayMode.WAYMARKED) {
+                        Text(
+                            text = "Waymarked raster tiles cannot hide individual trail types or colors. Switch to Vector mode to filter.",
+                            fontSize = 11.sp,
+                            color = ComposeColor(0xFF94A3B8),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
+                        )
+                    } else {
+                        // Trail Line Thickness
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = when (thickness) {
-                                    TrailThickness.NORMAL -> "Standard"
-                                    TrailThickness.THICK -> "Thick"
-                                    TrailThickness.EXTRA_THICK -> "Bold"
-                                },
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = ComposeColor.White,
-                                textAlign = TextAlign.Center
+                                text = "Trail Line Thickness",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ComposeColor(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TrailThickness.values().forEach { thickness ->
+                                    val isSelected = trailThickness == thickness
+                                    Button(
+                                        onClick = { onTrailThicknessChange(thickness) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = when (thickness) {
+                                                TrailThickness.NORMAL -> "Standard"
+                                                TrailThickness.THICK -> "Thick"
+                                                TrailThickness.EXTRA_THICK -> "Bold"
+                                            },
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = ComposeColor.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Trail Line Style",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ComposeColor(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TrailLineStyle.values().forEach { style ->
+                                    val isSelected = trailLineStyle == style
+                                    Button(
+                                        onClick = { onTrailLineStyleChange(style) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = style.label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = ComposeColor.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Trail Opacity",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ComposeColor(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TrailOpacity.values().forEach { op ->
+                                    val isSelected = trailOpacity == op
+                                    Button(
+                                        onClick = { onTrailOpacityChange(op) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = op.label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = ComposeColor.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Selective Trail Types Filter
+                        val filterColorOptions = listOf(
+                            TrailColor.RED, TrailColor.BLUE, TrailColor.YELLOW,
+                            TrailColor.GREEN, TrailColor.BLACK, TrailColor.PURPLE, TrailColor.ORANGE
+                        )
+                        val kindToggle: (TrailRouteKind) -> Unit = { kind ->
+                            val next = when {
+                                enabledTrailKinds.isEmpty() -> setOf(kind)
+                                kind in enabledTrailKinds -> {
+                                    val rem = enabledTrailKinds - kind
+                                    if (rem.isEmpty()) emptySet() else rem
+                                }
+                                else -> {
+                                    val added = enabledTrailKinds + kind
+                                    if (added.size >= TrailRouteKind.entries.size) emptySet() else added
+                                }
+                            }
+                            onEnabledTrailKindsChange(next)
+                        }
+                        val colorToggle: (TrailColor) -> Unit = { tColor ->
+                            val next = when {
+                                enabledTrailColors.isEmpty() -> setOf(tColor)
+                                tColor in enabledTrailColors -> {
+                                    val rem = enabledTrailColors - tColor
+                                    if (rem.isEmpty()) emptySet() else rem
+                                }
+                                else -> {
+                                    val added = enabledTrailColors + tColor
+                                    if (added.size >= filterColorOptions.size) emptySet() else added
+                                }
+                            }
+                            onEnabledTrailColorsChange(next)
+                        }
+
+                        @Composable
+                        fun TrailKindChip(
+                            label: String,
+                            emoji: String?,
+                            selected: Boolean,
+                            onClick: () -> Unit,
+                            modifier: Modifier = Modifier
+                        ) {
+                            Surface(
+                                onClick = onClick,
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (selected) ComposeColor(0xFF38BDF8) else ComposeColor(0xFF334155)
+                                ),
+                                modifier = modifier.height(30.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (emoji != null) {
+                                        EmojiText(emoji = emoji, fontSize = 11.sp, yOffsetDp = 0.dp)
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                    }
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = ComposeColor.White,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+
+                        @Composable
+                        fun TrailColorChip(
+                            label: String,
+                            dotColor: ComposeColor?,
+                            selected: Boolean,
+                            onClick: () -> Unit,
+                            modifier: Modifier = Modifier
+                        ) {
+                            Surface(
+                                onClick = onClick,
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (selected) ComposeColor(0xFF38BDF8) else ComposeColor(0xFF334155)
+                                ),
+                                modifier = modifier.height(30.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 5.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (dotColor != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(dotColor)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        text = label,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = ComposeColor.White,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Trail Types",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = ComposeColor(0xFFCBD5E1)
+                                )
+                                Text(
+                                    text = if (enabledTrailKinds.isEmpty()) "All" else "${enabledTrailKinds.size} selected",
+                                    fontSize = 11.sp,
+                                    color = ComposeColor(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                TrailKindChip(
+                                    label = "All",
+                                    emoji = null,
+                                    selected = enabledTrailKinds.isEmpty(),
+                                    onClick = { onEnabledTrailKindsChange(emptySet()) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TrailKindChip(
+                                    label = "Hiking",
+                                    emoji = TrailRouteKind.HIKING.iconEmoji,
+                                    selected = TrailRouteKind.HIKING in enabledTrailKinds,
+                                    onClick = { kindToggle(TrailRouteKind.HIKING) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TrailKindChip(
+                                    label = "Edu",
+                                    emoji = TrailRouteKind.EDUCATIONAL.iconEmoji,
+                                    selected = TrailRouteKind.EDUCATIONAL in enabledTrailKinds,
+                                    onClick = { kindToggle(TrailRouteKind.EDUCATIONAL) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                TrailKindChip(
+                                    label = "Cycling",
+                                    emoji = TrailRouteKind.CYCLING.iconEmoji,
+                                    selected = TrailRouteKind.CYCLING in enabledTrailKinds,
+                                    onClick = { kindToggle(TrailRouteKind.CYCLING) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TrailKindChip(
+                                    label = "MTB",
+                                    emoji = TrailRouteKind.MTB.iconEmoji,
+                                    selected = TrailRouteKind.MTB in enabledTrailKinds,
+                                    onClick = { kindToggle(TrailRouteKind.MTB) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TrailKindChip(
+                                    label = "Kayak",
+                                    emoji = TrailRouteKind.KAYAKING.iconEmoji,
+                                    selected = TrailRouteKind.KAYAKING in enabledTrailKinds,
+                                    onClick = { kindToggle(TrailRouteKind.KAYAKING) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Trail Blaze Colors",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = ComposeColor(0xFFCBD5E1)
+                                )
+                                Text(
+                                    text = if (enabledTrailColors.isEmpty()) "All" else "${enabledTrailColors.size} selected",
+                                    fontSize = 11.sp,
+                                    color = ComposeColor(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                TrailColorChip(
+                                    label = "All",
+                                    dotColor = null,
+                                    selected = enabledTrailColors.isEmpty(),
+                                    onClick = { onEnabledTrailColorsChange(emptySet()) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                listOf(TrailColor.RED, TrailColor.BLUE, TrailColor.YELLOW).forEach { tc ->
+                                    TrailColorChip(
+                                        label = tc.displayName,
+                                        dotColor = ComposeColor(Color.parseColor(tc.hexColor)),
+                                        selected = tc in enabledTrailColors,
+                                        onClick = { colorToggle(tc) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(TrailColor.GREEN, TrailColor.BLACK, TrailColor.PURPLE, TrailColor.ORANGE).forEach { tc ->
+                                    TrailColorChip(
+                                        label = tc.displayName,
+                                        dotColor = ComposeColor(Color.parseColor(tc.hexColor)),
+                                        selected = tc in enabledTrailColors,
+                                        onClick = { colorToggle(tc) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSupplementMissingOsmTrailsChange(!supplementMissingOsmTrails) }
+                                .padding(vertical = 4.dp, horizontal = 6.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Supplement Missing OSM Trails",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = ComposeColor.White,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
+                                Text(
+                                    text = "Fill gaps via Overpass alongside Waymarked tiles",
+                                    fontSize = 11.sp,
+                                    color = ComposeColor(0xFF94A3B8),
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                            }
+                            Switch(
+                                checked = supplementMissingOsmTrails,
+                                onCheckedChange = { onSupplementMissingOsmTrailsChange(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = ComposeColor.White,
+                                    checkedTrackColor = ComposeColor(0xFF10B981),
+                                    uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                                    uncheckedTrackColor = ComposeColor(0xFF334155)
+                                )
                             )
                         }
                     }
@@ -4251,7 +4907,7 @@ private fun MapSettingsDialog(
                         )
                     )
                     Text(
-                        text = "Mountain ranges (Beskidy, Tatry), national/landscape parks & nature reserves",
+                        text = "Mountain ranges, national/landscape parks & nature reserves",
                         fontSize = 11.sp,
                         color = ComposeColor(0xFF94A3B8),
                         modifier = Modifier.padding(top = 2.dp),
@@ -5321,21 +5977,29 @@ internal fun makeOutdoorAreaBadgeIcon(
     val accentColor = Color.parseColor(accentHex)
     val iconEmoji = if (isRange) "⛰️" else if (kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
 
-    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 12f * density
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.LEFT
     }
     val fullText = "$iconEmoji $name"
-    val textBounds = Rect()
-    textPaint.getTextBounds(fullText, 0, fullText.length, textBounds)
+    val maxContentWidth = (210f * density).toInt().coerceAtLeast(1)
+    val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint, maxContentWidth)
+        .setAlignment(Layout.Alignment.ALIGN_CENTER)
+        .setIncludePad(false)
+        .setLineSpacing(1.5f * density, 1f)
+        .setMaxLines(3)
+        .setEllipsize(TextUtils.TruncateAt.END)
+        .setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED)
+        .build()
 
+    val maxLineWidth = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
     val padH = (10f * density).toInt()
-    val width = textBounds.width() + padH * 2
-    val height = (26f * density).toInt()
+    val padV = (5f * density).toInt()
+    val width = maxOf(kotlin.math.ceil(maxLineWidth).toInt() + 2 + padH * 2, (48f * density).toInt())
+    val height = maxOf(layout.height + padV * 2, (26f * density).toInt())
 
-    val bmp = Bitmap.createBitmap(maxOf(width, (40f * density).toInt()), height, Bitmap.Config.ARGB_8888)
+    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -5348,13 +6012,15 @@ internal fun makeOutdoorAreaBadgeIcon(
         strokeWidth = 2f * density
     }
 
-    val rect = RectF(1.5f * density, 1.5f * density, bmp.width - 1.5f * density, height - 1.5f * density)
+    val rect = RectF(1.5f * density, 1.5f * density, bmp.width - 1.5f * density, bmp.height - 1.5f * density)
     val cornerRadius = 6f * density
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)
 
-    val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
-    canvas.drawText(fullText, padH.toFloat(), textY, textPaint)
+    canvas.save()
+    canvas.translate((bmp.width - layout.width) / 2f, (bmp.height - layout.height) / 2f)
+    layout.draw(canvas)
+    canvas.restore()
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
@@ -5613,8 +6279,8 @@ fun computeSpiderfyOffsets(
 ): Map<String, GeoPoint> {
     if (guests.isEmpty()) return emptyMap()
 
-    val refLat = viewportCenter?.latitude ?: hostPos?.latitude ?: guests.firstOrNull()?.lat ?: 49.85
-    val refLng = viewportCenter?.longitude ?: hostPos?.longitude ?: guests.firstOrNull()?.lng ?: 19.28
+    val refLat = viewportCenter?.latitude ?: hostPos?.latitude ?: guests.firstOrNull()?.lat ?: 0.0
+    val refLng = viewportCenter?.longitude ?: hostPos?.longitude ?: guests.firstOrNull()?.lng ?: 0.0
     val cosLat = kotlin.math.cos(Math.toRadians(refLat)).coerceAtLeast(0.01)
     val scale = fontScaleFactor.toDouble().coerceIn(0.85, 2.0)
     // osmdroid renders 256px tiles scaled by tilesScaleFactor (= fontScaleFactor).

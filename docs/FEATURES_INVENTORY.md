@@ -176,33 +176,34 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: Driving localization felt sluggish and map pan had visual stutter.
   - *Resolution*: Discovered and removed legacy `LAYER_TYPE_SOFTWARE` flag. Panning and tile blitting now run on GPU hardware acceleration. Explored vector rendering (MapLibre Native Android) in `docs/VECTOR_MAP_ENGINE_ANALYSIS.md`.
 
-### MAP-02: Freemap Outdoor Hi-DPI (@2x) PTTK Trail Layer
-- **Core Value**: Official Polish PTTK colored hiking trails (Red, Blue, Green, Yellow, Black) with native shaded terrain relief, elevation contours, and Polish peak labels.
+### MAP-02: Clean Map Base Layers & Pre-Rendered Trail Separation
+- **Core Value**: Clean, unambiguous base map selection without double-rendered or triple-stacked hiking overlays, preserving legibility across terrain and satellite styles.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: `FREEMAP_OUTDOOR` base layer using 512x512 `@2x` tiles from `outdoor.tiles.freemap.sk`.
-  - Tile caching in `MapCacheHelper.kt` under `tiles/FreemapOutdoor`.
+  - `OsmMapView.kt` & `MapProfileConfigHelper.kt`: Separates base map styles (`STANDARD`, `TOPO`, `SATELLITE`, `TERRAIN`, `FREEMAP_OUTDOOR`) from trail overlays (`TrailOverlayMode.VECTOR` vs `TrailOverlayMode.WAYMARKED`). When `FREEMAP_OUTDOOR` (which already bakes trails into tiles) is active, separate trail overlays are disabled to prevent clutter.
+  - `MapCacheHelper.kt`: Tile caching under `tiles/FreemapOutdoor`.
 - **Decision History & Evolution**:
-  - *User Request*: "I don't see the PTTK tourist trail marker line in their color, they're always yellow/orange... Do you have access to any PTTK map overlays or data or other resources that we could use especially in the Hiking mode?"
-  - *Resolution*: Integrated Freemap Slovakia/Poland Outdoor layer rendering official PTTK markers in crisp high-DPI resolution. Auto-activated when selecting Hiking profile.
+  - *Original*: Integrated Freemap Slovakia/Poland Outdoor `@2x` tiles for trails.
+  - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
-### MAP-03: Waymarked Trails Hiking Overlay
-- **Core Value**: Transparent route overlay rendering hiking routes, difficulty markers, and trail colors on top of standard OSM or satellite imagery.
+### MAP-03: Filterable Vector Trails & Waymarked Overlay
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, optional deduplicated OSM Overpass supplemental coverage (`supplementMissingOsmTrails`, default ON), OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, side-by-side non-overlapping multi-color lane rendering (`computeLaneOffsetPx` 1.38x + local tangent canonicalization), zoom-tapered thickness (`Standard`/`Thick`/`Bold` calibrated to 2.35/2.00/1.65 dp across 500m/1km/5km scales), ~3:1 `BUTT`-capped dashed/dotted line styles (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: Transparent `TilesOverlay` pointing to `tile.waymarkedtrails.org/hiking`.
+  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`, `computeDashIntervals`, `computeLaneOffsetPx`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`, `parseOsmFullXmlLines`, `deduplicateSupplementalTrails`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style/supplement chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`, `supplementMissingOsmTrails`).
 
-### MAP-04: Map Recenter & Floating Recenter Pill
-- **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.
+### MAP-04: Map Recenter, Floating Recenter Pill & Multi-Stage Back Navigation
+- **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control and progressive Android Back navigation.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: Distinguishes between programmatic map moves and user gestures via `isUserDragging`.
+  - `OsmMapView.kt`: Distinguishes between programmatic map moves and user gestures via `isUserDragging`, supporting optical X+Y centering in both `recenterTrigger` and `zoomResetTrigger`.
+  - `MapBackNavigationPolicy.kt` & `MainActivity.kt`: Multi-stage `BackHandler` (`Overlay -> Center -> Street-Detail Zoom 17.6 +/- 0.5 -> Exit Confirm Toast -> finish()`) with a `2.5 s` confirmation window (`BACK_EXIT_CONFIRM_WINDOW_MS`).
 - **Decision History & Evolution**:
   - *Original*: Map had an 8-second timer that automatically snapped back to GPS location.
   - *User Feedback*: Snapping back while inspecting nearby terrain was frustrating.
   - *Evolution*: Changed to Option B: manual pan/zoom indefinitely pauses auto-follow and reveals a floating "📍 Recenter" pill at bottom-center.
   - *Subsequent Issue*: Tapping the recenter button recentered the map, but the "Recenter" pill remained visible because scroll listeners fired during animation.
-  - *Final Fix*: Added `isUserDragging` touch listener. The pill is dismissed immediately upon tapping either the pill or the refresh/recenter FAB.
+  - *Final Fix*: Added `isUserDragging` touch listener. The pill is dismissed immediately upon tapping either the pill or the refresh/recenter FAB, and hierarchical Back navigation progressively closes overlays, recenters, zooms to street-detail (`17.6`), and confirms app exit with a Toast.
 
 ### MAP-05: Unified Map Refresh & Location FAB
 - **Core Value**: Combines GPS centering, tile memory cache flushing, and redrawing into a single clean button.
@@ -306,9 +307,11 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Issue*: Splitting trips caused duplicate title prefixes (`Trip - Part 1 - Part 1`).
   - *Fix*: Sanitized naming logic: strips existing `- Part X` before applying new suffixes.
 
-### TRP-07: Active Trip Visited Places Chronology
-- **Core Value**: Real-time chronology of towns and settlements visited during the current active trip, accessible by tapping the locality card header.
+### TRP-07: Active Trip Visited Places Chronology & Outdoor Discovery Log
+- **Core Value**: Real-time chronology of towns, settlements, mountain ranges, protected areas, valleys, sustained trails, peaks, passes, huts, and outdoor POIs visited during the active trip, accessible from the locality card and trip detail view.
 - **Status**: **Implemented & Verified**
+- **Architecture & Implementation**:
+  - `TripManager.kt` (`updateVisitedPlaces`): Logs enclosing areas (`MOUNTAIN_RANGE`, `PROTECTED_AREA`, `VALLEY`), sustained trails (`>= 150 m` or `>= 45 s` with blaze color), and nearby peaks/passes/huts/POIs alongside administrative localities.
 
 ### TRP-08: Trip Altitude Tracking, Elevation Profile Chart & DEM Correction
 - **Core Value**: End-to-end altitude recording, visualization, and correction for recorded trips and live tracking.
@@ -317,7 +320,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - `TripDatabaseHelper.kt` (DB v6): Persists altitude in `points_json` as optional `"alt"` attribute with backward compatibility. Since DB v10 (v1.11.0) altitude and its source (`GPS`/`DEM`) live in the `track_points` table; legacy `points_json` is kept read-only and backfilled idempotently.
   - `TripModels.kt`: `ElevationStats` computation with moving-average noise reduction for cumulative ascent/descent, elevation range, and peak vertical speed (`m/min`).
   - `MainActivity.kt`: Live altitude badge (`▲ XXX m`) in LocalityCard compact Row 3; collapsible Elevation Profile section in `TripDetailDialog` with `ElevationProfileChart` Canvas composable and `ElevationOverrideModeDialog` mode selector.
-  - `ElevationRepository.kt` & `ElevationCorrectionHelper.kt`: Open-Elevation DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing; single-trip correction and bulk "Correct All Trips" tool in Settings.
+  - `ElevationRepository.kt`, `ElevationCorrectionHelper.kt` & `ElevationCorrectionManager.kt`: Open-Elevation / OpenTopoData DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing, live-recording-safe in-place `track_points` updates (`updateTrackPointElevationsInPlace`), throttled notification progress, single-trip correction, "Correct All Trips" in Settings, and missing-DEM count/batch downloader (`MissingDemSummary` / `startMissingTrips`) in `CacheManagerDialog`.
   - Unit test suite: `ElevationStatsTest.kt`, `PointsAltitudeSerializationTest.kt`.
 
 ---
@@ -575,7 +578,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Full offline resilience with controlled disk usage.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - Map tile cache management (500MB limit) and boundary polygon caching in `cacheDir/boundaries`.
+  - `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `TripDatabaseHelper.kt`: Map tile cache management, boundary polygon caching in `cacheDir/boundaries` with municipality-scoped parity (`BoundaryHelper.buildLocalityCacheKey`, `CacheManager.filterMissingBoundaryTargetsInDir`), safe sibling retention in `loadFromDiskCacheInDir`, bounded 429 retries, missing-DEM backlog counter and occupied `elevation_cache` storage readout (`getElevationCacheBytes`), automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, and per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis.
 
 ### OPS-05: Architectural Standards Documentation (`AGENTS.md`)
 - **Core Value**: Mandatory architectural guidelines, Git branching rules, and pre-completion gates.

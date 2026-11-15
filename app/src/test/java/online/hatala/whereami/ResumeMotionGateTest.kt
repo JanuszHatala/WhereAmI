@@ -128,4 +128,27 @@ class ResumeMotionGateTest {
         }
         assertTrue("resumed at $resumedAt", resumedAt in 6_000L..8_000L)
     }
+
+    @Test
+    fun `foot profile auto-start requires 25m displacement and ignores 15m indoor stroll`() {
+        val shortWalk = ResumeMotionGate()
+        var startedShort = false
+        for (s in 0..16) {
+            // Walk only 0.9 m/s (~14.4 m total) with 3.5 km/h Doppler
+            if (shortWalk.offer(s * 1_000L, north(s * 0.9), east(0.0), 3.5f, 8f, 3.0f, 15_000L, 25.0)) {
+                startedShort = true
+            }
+        }
+        assertFalse("Short 14m walk must not auto-start with 25m gate", startedShort)
+
+        val realWalk = ResumeMotionGate()
+        var startedReal = false
+        for (s in 0..20) {
+            // Genuine 1.5 m/s outdoor walk -> passes 25m after 17s
+            if (realWalk.offer(s * 1_000L, north(s * 1.5), east(0.0), 5.4f, 6f, 3.0f, 15_000L, 25.0)) {
+                startedReal = true
+            }
+        }
+        assertTrue("Genuine >25m walk must auto-start WALKING", startedReal)
+    }
 }

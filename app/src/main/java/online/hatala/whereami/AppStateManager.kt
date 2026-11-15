@@ -252,8 +252,9 @@ class AppStateManager private constructor(private val context: Context) {
             var maxDelay = 0L
 
             if (isPhysicallyStationary && !isAppInForeground && !carActive) {
-                // Stationary dwell before auto-pause: relax from 1 Hz to 10s-15s to save battery while confirming rest
-                interval = profile.gpsIntervalMs.coerceAtLeast(10_000L)
+                // Stationary dwell before auto-pause: relax from 1 Hz to 7.5s (<= 8s MAX_PROPAGATION_GAP_MS) with batching
+                // so the AP stays asleep via hardware batching while preventing unnecessary EKF gap-resets.
+                interval = profile.gpsIntervalMs.coerceAtLeast(7_500L)
                 minInterval = profile.minGpsIntervalMs.coerceAtLeast(5_000L)
                 maxDelay = SCREEN_OFF_BATCH_DELAY_MS
             } else if (policy == BatteryPowerPolicy.BATTERY_SAVER && !isAppInForeground && !carActive) {
