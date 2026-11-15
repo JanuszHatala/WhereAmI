@@ -86,8 +86,11 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
 | **Round 60** | Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3) | 4 | 4 | 0 | 0 |
 | **Round 61** | Field Test Round 60 Diagnostics: Stacked Parallel Vector Trails & Overpass Supplement, Per-Source Signal Pill Hysteresis, Geocoder Contention/Gmina Stability, Safe Live-Trip DEM & Batch Missing-DEM UI, Wrapped Badges & Safe Controls Framing (2026-11-15 v2.4.4) | 6 | 6 | 0 | 0 |
+| **Round 62** | Reference Dashed Trail Styling (~3:1 Dash-Gap, BUTT Caps, Side-by-Side 1.38x Parallel Lanes & Multi-Zoom Calibration v2.4.5) | 3 | 3 | 0 | 0 |
+| **Round 63** | Missing Boundaries Fetch Parity, Sibling/Legacy Cache Retention & 429 Cooldown Retry (v2.4.6) | 3 | 3 | 0 | 0 |
+| **Round 64** | Multi-Stage Back Navigation (Overlay -> Center -> Zoom 17.6 -> Exit Toast -> Finish) & Offline Cache DEM Occupied Storage Metric (v2.4.8) | 3 | 3 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **397** | **389** | **0** | **8** |
+| **Total** | | **406** | **398** | **0** | **8** |
 
 
 ---
@@ -1900,6 +1903,50 @@ User feedback, telemetry diagnostics & root causes:
 | **DEM-61-04** | In-place `track_points` DEM updates safe for active recording, throttled notifications, `"DEM done/total"` text, and missing-DEM batch downloader in `CacheManagerDialog`. | `TripDatabaseHelper.kt`, `ElevationCorrectionHelper.kt`, `ElevationCorrectionManager.kt`, `MainActivity.kt`, `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | Non-destructive merge/sequence tests & APK compilation pass. |
 | **UI-61-05** | Balance `OutdoorContextRow` top spacing, `StaticLayout` multi-line map badge wrap, safe `MapFloatingControlsColumn` insets (portrait/landscape scroll), live outdoor distance updates, and `25.0` m walk start gate. | `MainActivity.kt`, `OsmMapView.kt`, `OutdoorModels.kt`, `LocationManager.kt`, `TripManager.kt`, `OutdoorResilienceTest.kt`, `ResumeMotionGateTest.kt` | Implemented | Distance recalculation, `25.0` m gate, and full suite pass. |
 | **VER-61** | Bump to `versionCode = 205`, `versionName = "2.4.4"`. | `app/build.gradle.kts` | Implemented | 706 passed / 1 skipped (`FieldReplayTest` fixture absent) + `assembleDebug` pass. |
+
+---
+
+## Round 62 - Reference Dashed Trail Proportions, Zoom-Calibrated Normal Widths & Side-by-Side Parallel Lanes (2026-11-15 v2.4.5)
+
+User feedback & visual measurement analysis (`500m` ~z14.3, `1km` ~z13.0, `5km` ~z11.0 reference screenshots):
+- Dash proportions & stroke caps: calibrated `VectorTrailOverlay.computeDashIntervals` to ~3:1 dash-to-gap (`5.5f * strokeWidthPx` on, `1.85f * strokeWidthPx` off) with `Paint.Cap.BUTT` (keeping `Cap.ROUND` for `SOLID`/`DOTTED` and `Join.ROUND` everywhere) so dashed ends stay crisp without round-cap gap encroachment.
+- Normal zoom-tapered thickness: piecewise-linear `computeStrokeWidthDp` calibrated to `2.35 dp` at `z=14.3` (`500m`), `2.00 dp` at `z=13.0` (`1km`), `1.65 dp` at `z=11.0` (`5km`), tapping from `2.80 dp` (`z>=16.5`) down to `1.00 dp` (`z<=7.0`), with a thin subtle contrast halo (`computeHaloWidthPx`, `+0.65 dp` scaled).
+- Side-by-side coincident lanes: widened `computeLaneOffsetPx` default `spacingRatio` to `1.38f` so parallel trails sit cleanly beside each other without color or halo overlap, replaced global endpoint `computeCanonicalSign` with local per-cell canonical tangent alignment (`canonicalTangentSign` + `alignBundleNormal`), tightened cell quantization (`cellPx = 2.4 * strokeWidth`), and mapped distinct fallback slots for `TrailColor.NONE` (`resolveVisualColorBit`).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VEC-62-01** | Calibrate ~3:1 dash-to-gap proportions (`BUTT` caps for `DASHED`), thin contrast halo (`computeHaloWidthPx`), and piecewise-linear multi-zoom `NORMAL` widths (`2.35` / `2.00` / `1.65 dp`). | `VectorTrailOverlay.kt`, `TrailVectorRepositoryTest.kt` | Implemented | Zoom anchor width, 3:1 dash ratio, and stroke cap unit tests pass. |
+| **VEC-62-02** | Render multi-trail bundles side-by-side cleanly (`spacingRatio = 1.38f`), replace endpoint sign flip with cell-local tangent alignment (`alignBundleNormal`), and distinguish `TrailColor.NONE` kind bits. | `VectorTrailOverlay.kt`, `TrailVectorRepositoryTest.kt` | Implemented | Halo-clearance separation, opposite-direction normal alignment, and NONE bit tests pass. |
+| **VER-62** | Bump to `versionCode = 206`, `versionName = "2.4.5"`. | `app/build.gradle.kts` | Implemented | Unit tests & `assembleDebug` pass. |
+
+---
+
+## Round 63 - Missing Boundaries Fetch Parity, Sibling/Legacy Cache Retention & 429 Cooldown Retry (2026-11-15 v2.4.6)
+
+Device diagnostics against live `where_am_i_trips.db` / `where_am_i_spatial_cache.db` / `cache/boundaries` (`8 missing` stuck across repeated **Fetch** clicks):
+- Municipality key parity: `CacheManager.calculateCacheDeficit()` checked `BoundaryHelper.hasBoundary(context, it.name, it.countryCode, it.municipality)`, whereas `CacheManager.fetchMissingBoundaries()` and `CacheManager.startPrefetch()` Pass 3 called `BoundaryHelper.hasBoundary(context, it.name, it.countryCode)` without `it.municipality`, skipping targets whose bare key existed while burning quota on targets whose municipality-qualified key existed. Unified key construction (`BoundaryHelper.buildLocalityCacheKey`) and filtering (`CacheManager.filterMissingBoundaryTargetsInDir`) across all three paths.
+- Sibling/legacy duplicate self-deletion: Removed the O(N) `duplicateNeighbor` deletion check in `BoundaryHelper.loadFromDiskCacheInDir()` that deleted valid `_v4.json` boundary files whenever identical polygon JSON appeared in legacy `_v3.json` or sibling municipality/bare keys of the same locality.
+- Nominatim HTTP `429` handling & retry: Guarded fallback lookups in `BoundaryHelper.getLocalityBoundary()` with `!isCoolingDown()` to prevent burst retries during an active 30s backoff, and extracted `CacheManager.fetchBoundaryTargetWithRetry()` to wait out cooldown and retry a rate-limited boundary target once instead of leaving it uncached, alongside `CancellationException` preservation in `fetchMissingBoundaries()`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **CACHE-63-01** | Unify municipality-scoped boundary target key construction (`buildLocalityCacheKey`) and filtering (`filterMissingBoundaryTargetsInDir`) across `calculateCacheDeficit`, Pass 3 prefetch, and `fetchMissingBoundaries`, plus remove `duplicateNeighbor` self-deletion in `loadFromDiskCacheInDir`. | `BoundaryHelper.kt`, `CacheManager.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | Unit tests verify municipality key parity and retention of identical sibling/legacy boundary files. |
+| **CACHE-63-02** | Abort inner fallbacks immediately on `429` cooldown (`!isCoolingDown()`), retry a rate-limited boundary target once after cooldown in `fetchBoundaryTargetWithRetry`, and preserve `CancellationException` in `fetchMissingBoundaries`. | `BoundaryHelper.kt`, `CacheManager.kt` | Implemented | Compiles & full suite passes cleanly. |
+| **VER-63** | Bump to `versionCode = 207`, `versionName = "2.4.6"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and device APK install verified. |
+
+---
+
+## Round 64 - Multi-Stage Back Navigation & Offline Cache DEM Occupied Storage Metric (2026-11-15 v2.4.8)
+
+Approved implementation plan ([back_gesture_center_zoom_exit_plan.md](file:///Users/jh/.gemini/antigravity/brain/a768123d-4dee-44cb-8ae8-e7978b975023/back_gesture_center_zoom_exit_plan.md)) plus DEM occupied storage in Offline Data & Cache:
+- Multi-stage Back workflow: Declarative `MapBackNavigationPolicy` resolves Back gestures in strict order: active overlay/sheet dismissal -> recenter on current position (`recenterTrigger`, keeping zoom) -> bidirectional street-detail convenient zoom reset (`MAP_CONVENIENT_ZOOM = 17.6`, `+/-0.5` tolerance matching street-name detail) via `OsmMapView` `zoomResetTrigger` + `onZoomChanged` -> `"Press back again to close"` Toast -> `activity.finish()` within `2.5 s` (`BACK_EXIT_CONFIRM_WINDOW_MS`).
+- Offline Data & Cache DEM storage: Added `TripDatabaseHelper.getElevationCacheBytes()` (`dbstat` primary query with calibrated `estimateElevationCacheBytes()` fallback), exposed `CacheManager.getElevationCacheBytes()`, displayed formatted size alongside cached grid points in `CacheManagerDialog`, and included DEM bytes in `Total Cached Data`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BACK-64-01** | Implement Overlay -> Center -> Convenient Zoom (`17.6 +/- 0.5`) -> Exit Toast -> `finish()` Back navigation policy and `OsmMapView` zoom/optical recenter triggers. | `MapBackNavigationPolicy.kt`, `OsmMapView.kt`, `MainActivity.kt`, `MapBackNavigationPolicyTest.kt` | Implemented | Unit tests verify all transitions, bidirectional zoom tolerance, expired window, and no-location fallback. |
+| **CACHE-64-02** | Measure occupied DEM storage (`getElevationCacheBytes` / `estimateElevationCacheBytes`) and display size in `CacheManagerDialog` Elevation Data (DEM) and Total Cached Data. | `TripDatabaseHelper.kt`, `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | Unit tests verify SQLite schema storage estimate and zero-row guard. |
+| **VER-64** | Bump to `versionCode = 209`, `versionName = "2.4.8"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and device APK install verified. |
 
 
 

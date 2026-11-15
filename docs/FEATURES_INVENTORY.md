@@ -187,22 +187,23 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
 ### MAP-03: Filterable Vector Trails & Waymarked Overlay
-- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, optional deduplicated OSM Overpass supplemental coverage (`supplementMissingOsmTrails`, default ON), OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, parallel overlap-stepped multi-color lane rendering (`computeLaneOffsetPx`), user-configurable zoom-tapered thickness (`Standard`/`Thick`/`Bold`), halo-compensated line style (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, optional deduplicated OSM Overpass supplemental coverage (`supplementMissingOsmTrails`, default ON), OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, side-by-side non-overlapping multi-color lane rendering (`computeLaneOffsetPx` 1.38x + local tangent canonicalization), zoom-tapered thickness (`Standard`/`Thick`/`Bold` calibrated to 2.35/2.00/1.65 dp across 500m/1km/5km scales), ~3:1 `BUTT`-capped dashed/dotted line styles (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
   - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`, `computeDashIntervals`, `computeLaneOffsetPx`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`, `parseOsmFullXmlLines`, `deduplicateSupplementalTrails`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style/supplement chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`, `supplementMissingOsmTrails`).
 
-### MAP-04: Map Recenter & Floating Recenter Pill
-- **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.
+### MAP-04: Map Recenter, Floating Recenter Pill & Multi-Stage Back Navigation
+- **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control and progressive Android Back navigation.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `OsmMapView.kt`: Distinguishes between programmatic map moves and user gestures via `isUserDragging`.
+  - `OsmMapView.kt`: Distinguishes between programmatic map moves and user gestures via `isUserDragging`, supporting optical X+Y centering in both `recenterTrigger` and `zoomResetTrigger`.
+  - `MapBackNavigationPolicy.kt` & `MainActivity.kt`: Multi-stage `BackHandler` (`Overlay -> Center -> Street-Detail Zoom 17.6 +/- 0.5 -> Exit Confirm Toast -> finish()`) with a `2.5 s` confirmation window (`BACK_EXIT_CONFIRM_WINDOW_MS`).
 - **Decision History & Evolution**:
   - *Original*: Map had an 8-second timer that automatically snapped back to GPS location.
   - *User Feedback*: Snapping back while inspecting nearby terrain was frustrating.
   - *Evolution*: Changed to Option B: manual pan/zoom indefinitely pauses auto-follow and reveals a floating "📍 Recenter" pill at bottom-center.
   - *Subsequent Issue*: Tapping the recenter button recentered the map, but the "Recenter" pill remained visible because scroll listeners fired during animation.
-  - *Final Fix*: Added `isUserDragging` touch listener. The pill is dismissed immediately upon tapping either the pill or the refresh/recenter FAB.
+  - *Final Fix*: Added `isUserDragging` touch listener. The pill is dismissed immediately upon tapping either the pill or the refresh/recenter FAB, and hierarchical Back navigation progressively closes overlays, recenters, zooms to street-detail (`17.6`), and confirms app exit with a Toast.
 
 ### MAP-05: Unified Map Refresh & Location FAB
 - **Core Value**: Combines GPS centering, tile memory cache flushing, and redrawing into a single clean button.
@@ -577,7 +578,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Full offline resilience with controlled disk usage.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionManager.kt`: Map tile cache management (500MB limit), boundary polygon caching in `cacheDir/boundaries`, missing-DEM backlog counter and batch fetcher, automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, and per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis.
+  - `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `TripDatabaseHelper.kt`: Map tile cache management, boundary polygon caching in `cacheDir/boundaries` with municipality-scoped parity (`BoundaryHelper.buildLocalityCacheKey`, `CacheManager.filterMissingBoundaryTargetsInDir`), safe sibling retention in `loadFromDiskCacheInDir`, bounded 429 retries, missing-DEM backlog counter and occupied `elevation_cache` storage readout (`getElevationCacheBytes`), automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, and per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis.
 
 ### OPS-05: Architectural Standards Documentation (`AGENTS.md`)
 - **Core Value**: Mandatory architectural guidelines, Git branching rules, and pre-completion gates.

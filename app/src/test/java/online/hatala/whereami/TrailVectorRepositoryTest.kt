@@ -142,6 +142,10 @@ class TrailVectorRepositoryTest {
         assertEquals(2.8f, z17Normal, 0.001f)
         assertEquals(z17Normal * 2.0f, z17Thick, 0.001f)
         assertEquals(7.0f, z17Bold, 0.001f)
+        assertEquals(2.35f, VectorTrailOverlay.computeStrokeWidthDp(14.3, TrailThickness.NORMAL), 0.01f)
+        assertEquals(2.00f, VectorTrailOverlay.computeStrokeWidthDp(13.0, TrailThickness.NORMAL), 0.01f)
+        assertEquals(1.65f, VectorTrailOverlay.computeStrokeWidthDp(11.0, TrailThickness.NORMAL), 0.01f)
+        assertEquals(1.00f, z7Normal, 0.001f)
         assertTrue(z17Normal > z15Normal && z15Normal > z13Normal && z13Normal > z11Normal)
         assertTrue(z11Normal > z9Normal && z9Normal > z7Normal && z7Normal > 0.5f)
     }
@@ -620,36 +624,107 @@ class TrailVectorRepositoryTest {
     }
 
     @Test
-    fun `VectorTrailOverlay computeDashIntervals keeps wide halo-compensated gap on DASHED`() {
+    fun `VectorTrailOverlay computeDashIntervals uses ~3 to 1 dash to gap proportion with BUTT cap`() {
         val density = 3.0f
-        val strokeWidthPx = VectorTrailOverlay.computeStrokeWidthDp(14.5, TrailThickness.NORMAL) * density
-        val haloWidthPx = strokeWidthPx + 2.4f * density * ((strokeWidthPx / density) / 2.8f).coerceIn(0.45f, 1.35f)
-        val intervals = VectorTrailOverlay.computeDashIntervals(TrailLineStyle.DASHED, strokeWidthPx, density)
-        assertNotNull(intervals)
-        val on = intervals!![0]
-        val off = intervals[1]
-        // Clear gap after accounting for round endcaps + dark halo casing must exceed the dash length
-        val clearHaloGap = off - haloWidthPx
-        assertTrue("Expected off($off) - halo($haloWidthPx) = $clearHaloGap > stroke($strokeWidthPx)", clearHaloGap > strokeWidthPx * 1.5f)
-        assertTrue("Expected off($off) > on($on)", off > on)
+        assertEquals(android.graphics.Paint.Cap.BUTT, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.DASHED))
+        assertEquals(android.graphics.Paint.Cap.ROUND, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.SOLID))
+        assertEquals(android.graphics.Paint.Cap.ROUND, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.DOTTED))
+
+        listOf(14.3, 13.0, 11.0).forEach { zoom ->
+            val strokeWidthPx = VectorTrailOverlay.computeStrokeWidthDp(zoom, TrailThickness.NORMAL) * density
+            val intervals = VectorTrailOverlay.computeDashIntervals(TrailLineStyle.DASHED, strokeWidthPx, density)
+            assertNotNull(intervals)
+            val on = intervals!![0]
+            val off = intervals[1]
+            val ratio = on / off
+            assertTrue("Expected ~3:1 dash-to-gap ratio at zoom=$zoom, got $ratio ($on/$off)", ratio in 2.6f..3.2f)
+            assertTrue("Expected clear BUTT gap >= 2.4dp at zoom=$zoom", off >= 2.4f * density)
+        }
     }
 
     @Test
-    fun `VectorTrailOverlay computeLaneOffsetPx uses compact symmetric half-width stacking`() {
+    fun `VectorTrailOverlay computeLaneOffsetPx places parallel trails side-by-side without overlapping halos`() {
+        val density = 3.0f
+        listOf(14.3, 13.0, 11.0).forEach { zoom ->
+            val widthDp = VectorTrailOverlay.computeStrokeWidthDp(zoom, TrailThickness.NORMAL)
+            val strokeWidthPx = widthDp * density
+            val haloWidthPx = VectorTrailOverlay.computeHaloWidthPx(widthDp, density)
+            assertEquals(0f, VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 1, strokeWidthPx = strokeWidthPx), 0.001f)
+
+            val l2a = VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 2, strokeWidthPx = strokeWidthPx)
+            val l2b = VectorTrailOverlay.computeLaneOffsetPx(rank = 1, count = 2, strokeWidthPx = strokeWidthPx)
+            assertEquals(-l2a, l2b, 0.001f)
+            assertTrue(
+                "Expected side-by-side separation (${l2b - l2a}) > halo ($haloWidthPx) at zoom=$zoom",
+                (l2b - l2a) > haloWidthPx
+            )
+        }
+
         val w = 10f
-        assertEquals(0f, VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 1, strokeWidthPx = w), 0.001f)
-
-        val l2a = VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 2, strokeWidthPx = w)
-        val l2b = VectorTrailOverlay.computeLaneOffsetPx(rank = 1, count = 2, strokeWidthPx = w)
-        assertEquals(-l2a, l2b, 0.001f)
-        assertEquals(5.5f, l2b - l2a, 0.001f)
-
         val l3a = VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 3, strokeWidthPx = w)
         val l3b = VectorTrailOverlay.computeLaneOffsetPx(rank = 1, count = 3, strokeWidthPx = w)
         val l3c = VectorTrailOverlay.computeLaneOffsetPx(rank = 2, count = 3, strokeWidthPx = w)
-        assertEquals(-5.5f, l3a, 0.001f)
+        assertEquals(-13.8f, l3a, 0.01f)
         assertEquals(0f, l3b, 0.001f)
-        assertEquals(5.5f, l3c, 0.001f)
+        assertEquals(13.8f, l3c, 0.01f)
+    }
+
+    @Test
+    fun `VectorTrailOverlay aligns opposite-direction bundle normals consistently without X-weave`() {
+        val bucket = VectorTrailOverlay.undirectedAngleBucket(1f, 1f)
+        val refSign = VectorTrailOverlay.canonicalTangentSign(0.7071f, 0.7071f, bucket)
+        val refUx = 0.7071f * refSign
+        val refUy = 0.7071f * refSign
+
+        val (nxForward, nyForward) = VectorTrailOverlay.alignBundleNormal(
+            ux = 0.7071f,
+            uy = 0.7071f,
+            refUx = refUx,
+            refUy = refUy,
+            prevNx = 0f,
+            prevNy = 0f,
+            insideBundle = false
+        )
+        val (nxReverse, nyReverse) = VectorTrailOverlay.alignBundleNormal(
+            ux = -0.7071f,
+            uy = -0.7071f,
+            refUx = refUx,
+            refUy = refUy,
+            prevNx = 0f,
+            prevNy = 0f,
+            insideBundle = false
+        )
+        assertEquals(nxForward, nxReverse, 0.001f)
+        assertEquals(nyForward, nyReverse, 0.001f)
+
+        val (nxCont, nyCont) = VectorTrailOverlay.alignBundleNormal(
+            ux = 0.999f,
+            uy = -0.04f,
+            refUx = -0.999f,
+            refUy = 0.04f,
+            prevNx = -0.04f,
+            prevNy = 0.999f,
+            insideBundle = true
+        )
+        assertTrue("Expected bundle continuity dot > 0.9", nxCont * -0.04f + nyCont * 0.999f > 0.9f)
+
+        val unmarkedMtb = TrailVectorSegment(
+            id = 1L,
+            name = "MTB",
+            kind = TrailRouteKind.MTB,
+            color = TrailColor.NONE,
+            points = emptyList()
+        )
+        val unmarkedCyc = TrailVectorSegment(
+            id = 2L,
+            name = "Cyc",
+            kind = TrailRouteKind.CYCLING,
+            color = TrailColor.NONE,
+            points = emptyList()
+        )
+        assertTrue(
+            VectorTrailOverlay.resolveVisualColorBit(unmarkedMtb) != VectorTrailOverlay.resolveVisualColorBit(unmarkedCyc)
+        )
     }
 
     @Test

@@ -41,6 +41,7 @@ fun CacheManagerDialog(
     var boundaryCount by remember { mutableStateOf(0) }
     var spatialBytes by remember { mutableStateOf(0L) }
     var spatialCount by remember { mutableStateOf(0L) }
+    var demBytes by remember { mutableStateOf(0L) }
     var demGridCount by remember { mutableStateOf(0) }
     val elevationProgress by ElevationCorrectionManager.progress.collectAsState()
 
@@ -62,6 +63,7 @@ fun CacheManagerDialog(
             boundaryCount = cacheManager.getBoundaryCacheCount()
             spatialBytes = cacheManager.getSpatialCacheBytes()
             spatialCount = cacheManager.getSpatialCacheCount()
+            demBytes = cacheManager.getElevationCacheBytes()
             demGridCount = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 TripDatabaseHelper.getInstance(context).getElevationCacheCount()
             }
@@ -507,7 +509,7 @@ fun CacheManagerDialog(
                                     )
                                 }
                                 Text(
-                                    text = "$demGridCount cached elevation grid points",
+                                    text = "${formatBytes(demBytes)} • $demGridCount grid points",
                                     color = Color(0xFFCBD5E1),
                                     fontSize = 12.sp,
                                     modifier = Modifier.padding(top = 1.dp),
@@ -581,7 +583,7 @@ fun CacheManagerDialog(
                                 )
                             )
                             Text(
-                                text = formatBytes(tileBytes + boundaryBytes + spatialBytes),
+                                text = formatBytes(tileBytes + boundaryBytes + spatialBytes + demBytes),
                                 color = Color(0xFF38BDF8),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,

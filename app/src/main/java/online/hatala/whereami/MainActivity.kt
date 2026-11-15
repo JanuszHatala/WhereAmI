@@ -457,6 +457,10 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showDestinationDetailsCard by remember { mutableStateOf(false) }
     var isMapFollowing by remember { mutableStateOf(true) }
     var recenterTrigger by remember { mutableStateOf(0L) }
+    var zoomResetTrigger by remember { mutableStateOf(0L) }
+    var currentMapZoom by remember { mutableStateOf(16.0) }
+    var lastBackExitToastElapsedMs by remember { mutableStateOf(0L) }
+    var activeBackExitToast by remember { mutableStateOf<android.widget.Toast?>(null) }
     val liveSharingManager = remember { LiveSharingManager.getInstance(context) }
     val scope = rememberCoroutineScope()
     val liveSession by liveSharingManager.currentSession.collectAsState()
@@ -736,38 +740,87 @@ fun LocationScreen(viewModel: MainViewModel) {
     }
 
     // ── Hierarchical System Back Gesture / Key Handler ───────────────────────
-    // Intercepts back swipes to dismiss active overlays, clear destinations,
-    // or recenter the map before allowing the system to minimize the app.
+    // Dismisses overlays -> centers on user -> snaps to convenient zoom (17.6)
+    // -> shows exit confirmation toast -> closes MainActivity via finish().
     val hasOverlaySelection = selectedSavedPlace != null ||
             destinationPoint != null ||
             selectedOutdoorAreaIsExplicit ||
             searchRoutePolylines != null ||
             selectedGuestDetails != null ||
             selectedTripsList.isNotEmpty()
-    BackHandler(enabled = (hasOverlaySelection || !isMapFollowing) && !showTripsSheet) {
-        when {
-            selectedGuestDetails != null -> {
-                selectedGuestDetails = null
-                if (returnToLiveViewsOnGuestDismiss) {
-                    returnToLiveViewsOnGuestDismiss = false
-                    showLiveViewsDetailsModal = true
+    val hasKnownMapLocation = currentLatLng != null || currentLocationFix != null
+
+    LaunchedEffect(showTripsSheet, hasOverlaySelection, isMapFollowing, currentMapZoom) {
+        if (showTripsSheet ||
+            hasOverlaySelection ||
+            !isMapFollowing ||
+            !MapBackNavigationPolicy.isNearConvenientZoom(currentMapZoom)
+        ) {
+            lastBackExitToastElapsedMs = 0L
+        }
+    }
+
+    BackHandler(enabled = !showTripsSheet) {
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        when (
+            MapBackNavigationPolicy.resolveAction(
+                hasOverlaySelection = hasOverlaySelection,
+                hasKnownLocation = hasKnownMapLocation,
+                isMapFollowing = isMapFollowing,
+                currentZoom = currentMapZoom,
+                lastExitToastElapsedMs = lastBackExitToastElapsedMs,
+                nowElapsedMs = nowElapsed
+            )
+        ) {
+            MapBackAction.DISMISS_OVERLAY -> {
+                lastBackExitToastElapsedMs = 0L
+                when {
+                    selectedGuestDetails != null -> {
+                        selectedGuestDetails = null
+                        if (returnToLiveViewsOnGuestDismiss) {
+                            returnToLiveViewsOnGuestDismiss = false
+                            showLiveViewsDetailsModal = true
+                        }
+                    }
+                    selectedSavedPlace != null -> {
+                        selectedSavedPlace = null
+                        viewModel.resolveSavedPlaceOutdoor(null)
+                    }
+                    destinationPoint != null -> {
+                        viewModel.setDestination(null)
+                        viewModel.clearPinnedBorders()
+                    }
+                    selectedOutdoorAreaIsExplicit || searchRoutePolylines != null -> {
+                        viewModel.clearOutdoorAreaBoundary()
+                    }
+                    selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
                 }
             }
-            selectedSavedPlace != null -> {
-                selectedSavedPlace = null
-                viewModel.resolveSavedPlaceOutdoor(null)
-            }
-            destinationPoint != null -> {
-                viewModel.setDestination(null)
-                viewModel.clearPinnedBorders()
-            }
-            selectedOutdoorAreaIsExplicit || searchRoutePolylines != null -> {
-                viewModel.clearOutdoorAreaBoundary()
-            }
-            selectedTripsList.isNotEmpty() -> viewModel.clearTripSelection()
-            !isMapFollowing -> {
+            MapBackAction.CENTER_MAP -> {
+                lastBackExitToastElapsedMs = 0L
                 recenterTrigger = System.currentTimeMillis()
                 isMapFollowing = true
+            }
+            MapBackAction.RESET_CONVENIENT_ZOOM -> {
+                lastBackExitToastElapsedMs = 0L
+                currentMapZoom = MAP_CONVENIENT_ZOOM
+                zoomResetTrigger = System.currentTimeMillis()
+                isMapFollowing = true
+            }
+            MapBackAction.SHOW_EXIT_TOAST -> {
+                lastBackExitToastElapsedMs = nowElapsed
+                activeBackExitToast?.cancel()
+                val toast = android.widget.Toast.makeText(
+                    context,
+                    "Press back again to close",
+                    android.widget.Toast.LENGTH_SHORT
+                )
+                activeBackExitToast = toast
+                toast.show()
+            }
+            MapBackAction.FINISH_APP -> {
+                activeBackExitToast?.cancel()
+                activity?.finish()
             }
         }
     }
@@ -851,7 +904,9 @@ fun LocationScreen(viewModel: MainViewModel) {
             isRecording = activeTrip != null,
             isAutoStandby = (tripMode == TripMode.AUTO && activeTrip == null),
             recenterTrigger = recenterTrigger,
+            zoomResetTrigger = zoomResetTrigger,
             onFollowingChanged = { isMapFollowing = it },
+            onZoomChanged = { currentMapZoom = it },
             pauses = allDisplayPauses,
             orientationMode = orientationMode,
             onOrientationModeChange = { viewModel.setOrientationMode(it) },

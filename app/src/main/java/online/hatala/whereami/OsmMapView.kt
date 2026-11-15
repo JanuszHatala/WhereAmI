@@ -655,7 +655,9 @@ fun OsmMapView(
     isRecording: Boolean = false,
     isAutoStandby: Boolean = false,
     recenterTrigger: Long = 0L,
+    zoomResetTrigger: Long = 0L,
     onFollowingChanged: ((Boolean) -> Unit)? = null,
+    onZoomChanged: ((Double) -> Unit)? = null,
     pauses: List<TripPause> = emptyList(),
     orientationMode: MapOrientationMode = MapOrientationMode.NORTH,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)? = null,
@@ -2376,15 +2378,36 @@ fun OsmMapView(
         onFollowingChanged?.invoke(isFollowing)
     }
 
+    LaunchedEffect(currentZoom) {
+        onZoomChanged?.invoke(currentZoom)
+    }
+
     LaunchedEffect(recenterTrigger) {
         if (recenterTrigger > 0L) {
             isFollowing = true
             effectiveLatLng?.let { pos ->
                 val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY)
+                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                 mapView?.controller?.setCenter(centerGp)
             }
             mapView?.invalidate()
+        }
+    }
+
+    LaunchedEffect(zoomResetTrigger) {
+        if (zoomResetTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            isFollowing = true
+            val targetZoom = MAP_CONVENIENT_ZOOM.coerceIn(map.minZoomLevel, map.maxZoomLevel)
+            map.controller.stopAnimation(false)
+            map.controller.setZoom(targetZoom)
+            currentZoom = targetZoom
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setCenter(centerGp)
+            }
+            map.invalidate()
         }
     }
 

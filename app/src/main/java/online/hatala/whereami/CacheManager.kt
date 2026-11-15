@@ -44,6 +44,12 @@ class CacheManager private constructor(private val context: Context) {
         internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
             isRecording || isGeocoderRateLimited
 
+        internal fun filterMissingBoundaryTargetsInDir(
+            dir: File,
+            targets: List<BoundaryTarget>
+        ): List<BoundaryTarget> =
+            targets.filter { !BoundaryHelper.hasBoundaryInDir(dir, it.name, it.countryCode, it.municipality) }
+
         fun getInstance(context: Context): CacheManager {
             return instance ?: synchronized(this) {
                 instance ?: CacheManager(context.applicationContext).also { instance = it }
@@ -100,6 +106,10 @@ class CacheManager private constructor(private val context: Context) {
 
     suspend fun getSpatialCacheCount(): Long = withContext(Dispatchers.IO) {
         SpatialCacheHelper.getInstance(context).getRecordCount()
+    }
+
+    suspend fun getElevationCacheBytes(): Long = withContext(Dispatchers.IO) {
+        TripDatabaseHelper.getInstance(context).getElevationCacheBytes()
     }
 
     private fun computeDirSize(dir: File?): Long {
@@ -574,10 +584,10 @@ class CacheManager private constructor(private val context: Context) {
                     updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
                 }
 
-                // PASS 3: Administrative Boundaries 
+                // PASS 3: Administrative Boundaries
                 BoundaryHelper.clearMemoryCache()
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingTargets = boundaryTargets.filter { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
+                val missingTargets = filterMissingBoundaryTargets(boundaryTargets)
                 val pass3Total = missingTargets.size
                 var pass3Current = 0
                 _prefetchState.value = PrefetchState.Running(3, "Pass 3: Boundaries", pass3Current, pass3Total, addedRoutes + addedBoundaries)
@@ -591,14 +601,7 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    BoundaryHelper.getLocalityBoundary(
-                        context = context,
-                        cityName = target.name,
-                        countryCode = target.countryCode,
-                        fallbackMunicipality = target.municipality,
-                        geoPoint = if (target.lat != null && target.lng != null) org.osmdroid.util.GeoPoint(target.lat, target.lng) else null
-                    )
-                    if (BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality)) {
+                    if (fetchBoundaryTargetWithRetry(target)) {
                         addedBoundaries++
                     }
                     pass3Current++
@@ -705,7 +708,7 @@ class CacheManager private constructor(private val context: Context) {
             try {
                 BoundaryHelper.clearMemoryCache()
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingTargets = boundaryTargets.filter { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode) }
+                val missingTargets = filterMissingBoundaryTargets(boundaryTargets)
                 val total = missingTargets.size
                 var current = 0
                 var added = 0
@@ -724,14 +727,7 @@ class CacheManager private constructor(private val context: Context) {
                         return@launch
                     }
 
-                    val boundary = BoundaryHelper.getLocalityBoundary(
-                        context = context,
-                        cityName = target.name,
-                        countryCode = target.countryCode,
-                        fallbackMunicipality = target.municipality,
-                        geoPoint = if (target.lat != null && target.lng != null) org.osmdroid.util.GeoPoint(target.lat, target.lng) else null
-                    )
-                    if (boundary != null && boundary.isNotEmpty()) {
+                    if (fetchBoundaryTargetWithRetry(target)) {
                         added++
                     }
 
@@ -744,11 +740,45 @@ class CacheManager private constructor(private val context: Context) {
                 _prefetchState.value = PrefetchState.Completed(0, added)
                 dismissNotification()
                 calculateCacheDeficit()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                dismissNotification()
             } catch (e: Exception) {
                 _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown pre-fetch error")
                 dismissNotification()
             }
         }
+    }
+
+    private fun filterMissingBoundaryTargets(targets: List<BoundaryTarget>): List<BoundaryTarget> =
+        filterMissingBoundaryTargetsInDir(BoundaryHelper.getCacheDir(context), targets)
+
+    private suspend fun fetchBoundaryTargetWithRetry(target: BoundaryTarget): Boolean {
+        val targetPoint = if (target.lat != null && target.lng != null) {
+            org.osmdroid.util.GeoPoint(target.lat, target.lng)
+        } else null
+        BoundaryHelper.getLocalityBoundary(
+            context = context,
+            cityName = target.name,
+            countryCode = target.countryCode,
+            fallbackMunicipality = target.municipality,
+            geoPoint = targetPoint
+        )
+        if (!BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality) &&
+            BoundaryHelper.isCoolingDown()
+        ) {
+            val waitMs = BoundaryHelper.remainingCooldownMs()
+            if (waitMs > 0L) {
+                kotlinx.coroutines.delay(waitMs + 250L)
+            }
+            BoundaryHelper.getLocalityBoundary(
+                context = context,
+                cityName = target.name,
+                countryCode = target.countryCode,
+                fallbackMunicipality = target.municipality,
+                geoPoint = targetPoint
+            )
+        }
+        return BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality)
     }
 
     // Queue of points that were encountered during driving and determined to be stale (> 60 days) or obsolete (> 1 year without internet)
@@ -865,7 +895,7 @@ class CacheManager private constructor(private val context: Context) {
                 }
                 
                 val boundaryTargets = getDistinctBoundaryTargets()
-                val missingBoundaries = boundaryTargets.count { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode, it.municipality) }
+                val missingBoundaries = filterMissingBoundaryTargets(boundaryTargets).size
                 val missingDem = TripDatabaseHelper.getInstance(context).getMissingDemSummary()
                 val deficit = CacheDeficit(
                     missingRoutes = missingRoutes,

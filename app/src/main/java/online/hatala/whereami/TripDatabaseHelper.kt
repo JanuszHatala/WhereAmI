@@ -95,6 +95,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         private const val COL_EC_ELEVATION = "elevation"
         private const val COL_EC_UPDATED_AT = "updated_at"
 
+        internal fun estimateElevationCacheBytes(rowCount: Int, keyBytes: Long): Long {
+            if (rowCount <= 0) return 0L
+            // Table B-tree + PRIMARY KEY autoindex store grid_key twice, plus REAL/INTEGER columns & B-tree slack (~44 B/row).
+            return (keyBytes.coerceAtLeast(0L) * 2L) + (rowCount * 44L)
+        }
+
         fun cleanPartSuffix(title: String): String {
             return title.replace(Regex("""\s*[-–(]\s*Part\s*\d+\)?.*""", RegexOption.IGNORE_CASE), "").trim()
         }
@@ -1121,6 +1127,33 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             }
         } catch (_: Exception) {
             0
+        }
+    }
+
+    fun getElevationCacheBytes(): Long {
+        val db = readableDatabase
+        try {
+            db.rawQuery(
+                "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name IN (?, ?)",
+                arrayOf(TABLE_ELEVATION_CACHE, "sqlite_autoindex_${TABLE_ELEVATION_CACHE}_1")
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    val exact = c.getLong(0)
+                    if (exact > 0L) return exact
+                }
+            }
+        } catch (_: Exception) {
+            // dbstat virtual table is unavailable on some Android SQLite builds; use schema estimate below.
+        }
+        return try {
+            db.rawQuery(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH($COL_EC_GRID_KEY)), 0) FROM $TABLE_ELEVATION_CACHE",
+                null
+            ).use { c ->
+                if (c.moveToFirst()) estimateElevationCacheBytes(c.getInt(0), c.getLong(1)) else 0L
+            }
+        } catch (_: Exception) {
+            0L
         }
     }
 

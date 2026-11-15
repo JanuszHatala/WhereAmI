@@ -46,6 +46,33 @@ object BoundaryHelper {
     private const val MIN_REQUEST_INTERVAL_MS = 1500L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
 
+    fun isCoolingDown(nowMs: Long = System.currentTimeMillis()): Boolean = nowMs < coolDownUntil
+
+    fun remainingCooldownMs(nowMs: Long = System.currentTimeMillis()): Long =
+        (coolDownUntil - nowMs).coerceAtLeast(0L)
+
+    internal fun buildLocalityCacheKey(
+        cityName: String?,
+        countryCode: String = "",
+        fallbackMunicipality: String? = null,
+        geoPoint: GeoPoint? = null
+    ): String? {
+        val cleanCity = cityName?.trim()?.takeIf {
+            it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
+        }
+        val ccNorm = countryCode.trim().lowercase(Locale.ROOT).ifBlank { "global" }
+        val munNorm = fallbackMunicipality?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        return when {
+            cleanCity != null -> {
+                val munPart = munNorm?.let { "_$it" } ?: ""
+                sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}${munPart}_${ccNorm}_$CACHE_GEN")
+            }
+            munNorm != null -> sanitizeKey("${munNorm}_${ccNorm}_$CACHE_GEN")
+            geoPoint != null -> String.format(Locale.US, "coord_%.3f_%.3f_$CACHE_GEN", geoPoint.latitude, geoPoint.longitude)
+            else -> null
+        }
+    }
+
     /**
      * Pin borders: reverse-first + must enclose [geoPoint].
      * Live GPS / prefetch borders: name-first for [cityName]; never overwrite a named
@@ -127,18 +154,8 @@ object BoundaryHelper {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         }
-        val ccNorm = countryCode.trim().lowercase(Locale.ROOT).ifBlank { "global" }
-        val munNorm = fallbackMunicipality?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
-        val cleanKey = if (cleanCity != null) {
-            val munPart = munNorm?.let { "_$it" } ?: ""
-            sanitizeKey("${cleanCity.lowercase(Locale.ROOT)}${munPart}_${ccNorm}_$CACHE_GEN")
-        } else if (munNorm != null) {
-            sanitizeKey("${munNorm}_${ccNorm}_$CACHE_GEN")
-        } else if (geoPoint != null) {
-            String.format(Locale.US, "coord_%.3f_%.3f_$CACHE_GEN", geoPoint.latitude, geoPoint.longitude)
-        } else {
-            return@withContext null
-        }
+        val cleanKey = buildLocalityCacheKey(cleanCity, countryCode, fallbackMunicipality, geoPoint)
+            ?: return@withContext null
 
         val pinMode = forPin && geoPoint != null
 
@@ -219,7 +236,7 @@ object BoundaryHelper {
             // Pin-only: reverse-first so the polygon truly encloses the dropped point.
             if (shouldResolveReverseFirst(forPin = forPin, geoPoint = geoPoint)) {
                 for (zoom in listOf(14, 12, 10)) {
-                    if (fetched != null) break
+                    if (fetched != null || isCoolingDown()) break
                     throttle()
                     fetched = fetchReverseBoundary(
                         geoPoint!!.latitude,
@@ -232,10 +249,10 @@ object BoundaryHelper {
 
             // Name search - live GPS primary path; pin fallback when reverse has no polygon.
             var fetchedFromNamedCity = false
-            if (fetched == null && cleanCity != null) {
+            if (fetched == null && !isCoolingDown() && cleanCity != null) {
                 throttle()
                 fetched = fetchFromNetwork(cleanCity, countryCode, mustContain = containGate)
-                if (fetched == null && countryCode.isNotBlank()) {
+                if (fetched == null && !isCoolingDown() && countryCode.isNotBlank()) {
                     val countryDisplay = Locale("", countryCode.uppercase(Locale.ROOT))
                         .getDisplayCountry(Locale.ENGLISH)
                         .takeIf { it.isNotBlank() && !it.equals(countryCode, ignoreCase = true) }
@@ -244,7 +261,7 @@ object BoundaryHelper {
                         fetched = fetchFromNetwork(cleanCity, countryDisplay, mustContain = containGate)
                     }
                 }
-                if (fetched == null && !fallbackMunicipality.isNullOrBlank()) {
+                if (fetched == null && !isCoolingDown() && !fallbackMunicipality.isNullOrBlank()) {
                     val cleanMun = fallbackMunicipality.trim()
                     if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                         throttle()
@@ -274,12 +291,12 @@ object BoundaryHelper {
             }
 
             // Municipality fallback
-            if (fetched == null && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cleanCity, ignoreCase = true)) {
+            if (fetched == null && !isCoolingDown() && !fallbackMunicipality.isNullOrBlank() && !fallbackMunicipality.equals(cleanCity, ignoreCase = true)) {
                 val cleanMun = fallbackMunicipality.trim()
                 if (cleanMun.isNotBlank() && !cleanMun.equals(cleanCity, ignoreCase = true)) {
                     throttle()
                     fetched = fetchFromNetwork(cleanMun, countryCode, mustContain = containGate)
-                    if (fetched == null && countryCode.isNotBlank()) {
+                    if (fetched == null && !isCoolingDown() && countryCode.isNotBlank()) {
                         val countryDisplay = Locale("", countryCode.uppercase(Locale.ROOT))
                             .getDisplayCountry(Locale.ENGLISH)
                             .takeIf { it.isNotBlank() && !it.equals(countryCode, ignoreCase = true) }
@@ -292,7 +309,7 @@ object BoundaryHelper {
             }
 
             // Coordinate reverse fallback (live: when name has no polygon; pin: if earlier reverse missed)
-            if (fetched == null && geoPoint != null) {
+            if (fetched == null && !isCoolingDown() && geoPoint != null) {
                 throttle()
                 fetched = fetchReverseBoundary(
                     geoPoint.latitude,
@@ -300,7 +317,7 @@ object BoundaryHelper {
                     zoom = 12,
                     mustContain = containGate
                 )
-                if (fetched == null) {
+                if (fetched == null && !isCoolingDown()) {
                     throttle()
                     fetched = fetchReverseBoundary(
                         geoPoint.latitude,
@@ -371,17 +388,20 @@ object BoundaryHelper {
     }
 
     fun hasBoundary(context: Context, cityName: String?, countryCode: String = "", fallbackMunicipality: String? = null): Boolean {
+        return hasBoundaryInDir(getCacheDir(context), cityName, countryCode, fallbackMunicipality)
+    }
+
+    internal fun hasBoundaryInDir(
+        dir: File,
+        cityName: String?,
+        countryCode: String = "",
+        fallbackMunicipality: String? = null
+    ): Boolean {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         } ?: return true
-        val ccNorm = countryCode.trim().lowercase(Locale.ROOT).ifBlank { "global" }
-        val munNorm = fallbackMunicipality?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
-        val munPart = munNorm?.let { "_$it" } ?: ""
-        val cleanKey = sanitizeKey(
-            "${cleanCity.lowercase(Locale.ROOT)}${munPart}_${ccNorm}_$CACHE_GEN"
-        )
-        val file = File(getCacheDir(context), "$cleanKey.json")
-        return file.exists()
+        val cleanKey = buildLocalityCacheKey(cleanCity, countryCode, fallbackMunicipality) ?: return true
+        return File(dir, "$cleanKey.json").exists()
     }
 
     private fun fetchFromNetwork(
@@ -580,32 +600,21 @@ object BoundaryHelper {
         return key.replace(Regex("[^a-zA-Z0-9_-]"), "_")
     }
 
-    private fun getCacheDir(context: Context): File {
+    internal fun getCacheDir(context: Context): File {
         val dir = File(context.cacheDir, "boundaries")
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
 
     private fun loadFromDiskCache(context: Context, key: String): List<GeoPoint>? {
+        return loadFromDiskCacheInDir(getCacheDir(context), key)
+    }
+
+    internal fun loadFromDiskCacheInDir(dir: File, key: String): List<GeoPoint>? {
         return try {
-            val dir = getCacheDir(context)
             val file = File(dir, "$key.json")
             if (!file.exists()) return null
-            val jsonStr = file.readText()
-            if (!key.startsWith("pin_") && jsonStr.length > 10) {
-                val duplicateNeighbor = dir.listFiles()?.any { other ->
-                    other.name != file.name &&
-                        !other.name.startsWith("pin_") &&
-                        other.length() == file.length() &&
-                        other.readText() == jsonStr
-                } == true
-                if (duplicateNeighbor) {
-                    TelemetryLogger.log("BOUNDARY", "Purging poisoned duplicate boundary cache file ${file.name}")
-                    file.delete()
-                    return null
-                }
-            }
-            val arr = JSONArray(jsonStr)
+            val arr = JSONArray(file.readText())
             val pts = ArrayList<GeoPoint>(arr.length())
             for (i in 0 until arr.length()) {
                 val ptArr = arr.getJSONArray(i)
@@ -618,8 +627,13 @@ object BoundaryHelper {
     }
 
     private fun saveToDiskCache(context: Context, key: String, points: List<GeoPoint>) {
+        saveToDiskCacheInDir(getCacheDir(context), key, points)
+    }
+
+    internal fun saveToDiskCacheInDir(dir: File, key: String, points: List<GeoPoint>) {
         try {
-            val file = File(getCacheDir(context), "$key.json")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "$key.json")
             val arr = JSONArray()
             for (pt in points) {
                 val ptArr = JSONArray()

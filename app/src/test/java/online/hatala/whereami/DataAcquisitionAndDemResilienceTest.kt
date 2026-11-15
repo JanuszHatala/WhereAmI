@@ -7,7 +7,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.osmdroid.util.GeoPoint
+import java.io.File
 import java.net.UnknownHostException
+import java.nio.file.Files
 
 class DataAcquisitionAndDemResilienceTest {
 
@@ -143,5 +146,83 @@ class DataAcquisitionAndDemResilienceTest {
         )
         assertEquals(2, deficit.missingDemTrips)
         assertEquals(320, deficit.missingDemPoints)
+    }
+
+    @Test
+    fun `CacheManager filterMissingBoundaryTargetsInDir respects municipality key parity with deficit count`() {
+        val dir = Files.createTempDirectory("boundary_target_parity").toFile()
+        try {
+            val poly = listOf(
+                GeoPoint(47.0, 10.0),
+                GeoPoint(47.0, 10.1),
+                GeoPoint(47.1, 10.1),
+                GeoPoint(47.0, 10.0)
+            )
+            // Bare city key exists, but municipality-scoped key does NOT yet exist
+            val bareOakKey = BoundaryHelper.buildLocalityCacheKey("Oakville", "us", null)!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, bareOakKey, poly)
+
+            // Municipality-scoped key exists (must not be treated as missing or re-fetched)
+            val riverKey = BoundaryHelper.buildLocalityCacheKey("Riverbend", "at", "North District")!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, riverKey, poly)
+
+            // Authoritative empty sentinel satisfies missing-boundary check
+            val sentinelKey = BoundaryHelper.buildLocalityCacheKey("BorderTown", "de", "South Shire")!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, sentinelKey, emptyList())
+
+            val targets = listOf(
+                CacheManager.BoundaryTarget("Oakville", "us", "Valley Township", 47.05, 10.05),
+                CacheManager.BoundaryTarget("Riverbend", "at", "North District", 47.05, 10.05),
+                CacheManager.BoundaryTarget("BorderTown", "de", "South Shire", 47.05, 10.05)
+            )
+            val missing = CacheManager.filterMissingBoundaryTargetsInDir(dir, targets)
+            assertEquals(listOf(targets[0]), missing)
+            assertFalse(BoundaryHelper.hasBoundaryInDir(dir, "Oakville", "us", "Valley Township"))
+            assertTrue(BoundaryHelper.hasBoundaryInDir(dir, "Riverbend", "at", "North District"))
+            assertTrue(BoundaryHelper.hasBoundaryInDir(dir, "BorderTown", "de", "South Shire"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `BoundaryHelper loadFromDiskCacheInDir preserves identical sibling and legacy polygon files`() {
+        val dir = Files.createTempDirectory("boundary_sibling_preserve").toFile()
+        try {
+            val poly = listOf(
+                GeoPoint(48.0, 11.0),
+                GeoPoint(48.0, 11.1),
+                GeoPoint(48.1, 11.1),
+                GeoPoint(48.1, 11.0),
+                GeoPoint(48.0, 11.0)
+            )
+            val bareKey = BoundaryHelper.buildLocalityCacheKey("Hilltop", "at", null)!!
+            val munKey = BoundaryHelper.buildLocalityCacheKey("Hilltop", "at", "Hilltop Municipality")!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, bareKey, poly)
+            BoundaryHelper.saveToDiskCacheInDir(dir, munKey, poly)
+            val legacyV3 = File(dir, "hilltop_at_v3.json")
+            legacyV3.writeText(File(dir, "$bareKey.json").readText())
+
+            val loadedBare = BoundaryHelper.loadFromDiskCacheInDir(dir, bareKey)
+            val loadedMun = BoundaryHelper.loadFromDiskCacheInDir(dir, munKey)
+
+            assertEquals(5, loadedBare?.size)
+            assertEquals(5, loadedMun?.size)
+            assertTrue(File(dir, "$bareKey.json").exists())
+            assertTrue(File(dir, "$munKey.json").exists())
+            assertTrue(legacyV3.exists())
+            assertTrue(BoundaryHelper.hasBoundaryInDir(dir, "Hilltop", "at", "Hilltop Municipality"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `TripDatabaseHelper estimateElevationCacheBytes reflects row count and key storage accurately`() {
+        assertEquals(0L, TripDatabaseHelper.estimateElevationCacheBytes(rowCount = 0, keyBytes = 0L))
+        assertEquals(0L, TripDatabaseHelper.estimateElevationCacheBytes(rowCount = -1, keyBytes = 100L))
+        // 10,000 coordinate grid keys (~15 bytes each) stored in table + primary key B-tree (~740 KB total)
+        val estimated = TripDatabaseHelper.estimateElevationCacheBytes(rowCount = 10_000, keyBytes = 150_000L)
+        assertEquals(740_000L, estimated)
     }
 }
