@@ -1305,6 +1305,8 @@ fun OsmMapView(
         selectedSavedPlace = selectedSavedPlace,
         savedPlaces = savedPlaces,
         pauses = pauses,
+        baseLayer = layerState.baseLayer,
+        altitudeOverlay = altitudeOverlay,
         effectiveOpticalOffsetY = effectiveOpticalOffsetY,
         effectiveOpticalOffsetX = effectiveOpticalOffsetX,
         onFollowingChange = { isFollowing = it },
@@ -1430,6 +1432,10 @@ fun OsmMapView(
         showFilteredPolyline = showFilteredPolyline,
         showRawPolyline = showRawPolyline,
         trackThickness = layerState.trackThickness,
+        trackColorHex = layerState.trackColorHex,
+        baseLayer = layerState.baseLayer,
+        showHikingOverlay = layerState.showHikingOverlay,
+        trailOverlayMode = layerState.trailOverlayMode,
         activityProfile = activityProfile,
         heatMapTracks = heatMapTracks,
         showHeatMap = showHeatMap,
@@ -2169,6 +2175,8 @@ private fun MapDestinationAndPlaceEffects(
     selectedSavedPlace: SavedPlace?,
     savedPlaces: List<SavedPlace>,
     pauses: List<TripPause>,
+    baseLayer: MapBaseLayer,
+    altitudeOverlay: AltitudeCursorBadgeOverlay,
     effectiveOpticalOffsetY: Int,
     effectiveOpticalOffsetX: Int,
     onFollowingChange: (Boolean) -> Unit,
@@ -2216,7 +2224,7 @@ private fun MapDestinationAndPlaceEffects(
     }
 
     var savedPlaceMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
-    LaunchedEffect(savedPlaces) {
+    LaunchedEffect(savedPlaces, mapView, baseLayer) {
         val map = mapView ?: return@LaunchedEffect
         savedPlaceMarkers.forEach { map.overlays.remove(it) }
 
@@ -2247,7 +2255,7 @@ private fun MapDestinationAndPlaceEffects(
     }
 
     var pauseMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
-    LaunchedEffect(pauses) {
+    LaunchedEffect(pauses, mapView, baseLayer) {
         val map = mapView ?: return@LaunchedEffect
         pauseMarkers.forEach { map.overlays.remove(it) }
         pauseMarkers = emptyList()
@@ -2275,6 +2283,7 @@ private fun MapDestinationAndPlaceEffects(
             newPauseMarkers.add(pm)
         }
         pauseMarkers = newPauseMarkers
+        bringAltitudeOverlayToFront(map, altitudeOverlay)
         map.invalidate()
     }
 }
@@ -2734,6 +2743,20 @@ private fun MapBoundaryAndOutdoorEffects(
     }
 }
 
+private fun addTripOverlayAboveMapLayers(map: MapView, overlay: org.osmdroid.views.overlay.Overlay) {
+    map.overlays.remove(overlay)
+    val minTileOrVectorIdx = map.overlays.indexOfLast {
+        it is TilesOverlay || it is VectorTrailOverlay || it is org.osmdroid.views.overlay.Polygon || it is FolderOverlay
+    }
+    val markerIdx = map.overlays.indexOfFirst { it is Marker }
+    val insertIdx = when {
+        markerIdx > minTileOrVectorIdx -> markerIdx
+        minTileOrVectorIdx >= 0 -> minTileOrVectorIdx + 1
+        else -> map.overlays.size
+    }
+    map.overlays.add(insertIdx.coerceIn(0, map.overlays.size), overlay)
+}
+
 @Composable
 private fun MapSelectedAndHeatEffects(
     mapView: MapView?,
@@ -2744,6 +2767,10 @@ private fun MapSelectedAndHeatEffects(
     showFilteredPolyline: Boolean,
     showRawPolyline: Boolean,
     trackThickness: TrailThickness,
+    trackColorHex: String,
+    baseLayer: MapBaseLayer,
+    showHikingOverlay: Boolean,
+    trailOverlayMode: TrailOverlayMode,
     activityProfile: ActivityProfile,
     heatMapTracks: List<List<GeoPoint>>,
     showHeatMap: Boolean,
@@ -2780,7 +2807,19 @@ private fun MapSelectedAndHeatEffects(
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapFolderOverlay by remember { mutableStateOf<FolderOverlay?>(null) }
 
-    LaunchedEffect(selectedTrips, isRecording, trackPoints.size, showFilteredPolyline, showRawPolyline, trackThickness) {
+    LaunchedEffect(
+        selectedTrips,
+        isRecording,
+        trackPoints.size,
+        showFilteredPolyline,
+        showRawPolyline,
+        trackThickness,
+        trackColorHex,
+        baseLayer,
+        showHikingOverlay,
+        trailOverlayMode,
+        mapView
+    ) {
         val map = mapView ?: return@LaunchedEffect
         selectedTripPolylines.forEach { map.overlays.remove(it) }
         selectedTripPolylines = emptyList()
@@ -2792,33 +2831,45 @@ private fun MapSelectedAndHeatEffects(
             return@LaunchedEffect
         }
 
-        val colors = listOf(
-            "#EF4444", "#3B82F6", "#10B981", "#F59E0B",
-            "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"
-        )
-
         val newLines = mutableListOf<Polyline>()
         val newRawLines = mutableListOf<Polyline>()
         selectedTrips.forEachIndexed { index, trip ->
             if (showFilteredPolyline && trip.points.size >= 2) {
                 val tripCfg = MapProfileConfigHelper.getConfig(context, trip.activityProfile)
                 val effectiveTripThickness = if (trip.activityProfile == activityProfile) trackThickness else tripCfg.trackThickness
-                val colorHex = if (selectedTrips.size == 1) {
-                    tripCfg.trackColorHex
-                } else {
-                    colors[index % colors.size]
-                }
+                val singleTripColor = if (trip.activityProfile == activityProfile) trackColorHex else tripCfg.trackColorHex
+                val colorHex = MapProfileConfigHelper.selectedTripStrokeColorHex(
+                    index = index,
+                    totalSelected = selectedTrips.size,
+                    singleTripColorHex = singleTripColor
+                )
+                val coreWidth = MapProfileConfigHelper.selectedTripTrackWidthPx(effectiveTripThickness)
                 val curvedPoints = LiveTrackLine.curved(trip.points)
-                val line = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor(colorHex)
-                    outlinePaint.strokeWidth = MapProfileConfigHelper.selectedTripTrackWidthPx(effectiveTripThickness)
+
+                val casingLine = Polyline(map).apply {
+                    outlinePaint.color = MapProfileConfigHelper.SELECTED_TRIP_CASING_COLOR_ARGB
+                    outlinePaint.strokeWidth = MapProfileConfigHelper.selectedTripCasingWidthPx(coreWidth)
                     outlinePaint.strokeCap = Paint.Cap.ROUND
                     outlinePaint.strokeJoin = Paint.Join.ROUND
+                    outlinePaint.isAntiAlias = true
                     infoWindow = null
                     setOnClickListener { _, _, _ -> true }
                     setPoints(curvedPoints)
                 }
-                addOverlayAboveTiles(map, line)
+                addTripOverlayAboveMapLayers(map, casingLine)
+                newLines.add(casingLine)
+
+                val line = Polyline(map).apply {
+                    outlinePaint.color = try { Color.parseColor(colorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                    outlinePaint.strokeWidth = coreWidth
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    outlinePaint.isAntiAlias = true
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                    setPoints(curvedPoints)
+                }
+                addTripOverlayAboveMapLayers(map, line)
                 newLines.add(line)
             }
 
@@ -2832,7 +2883,7 @@ private fun MapSelectedAndHeatEffects(
                     setOnClickListener { _, _, _ -> true }
                     setPoints(trip.rawPoints)
                 }
-                addOverlayAboveTiles(map, rawLine)
+                addTripOverlayAboveMapLayers(map, rawLine)
                 newRawLines.add(rawLine)
             }
         }

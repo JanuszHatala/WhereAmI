@@ -342,6 +342,21 @@ fun LocationScreen(viewModel: MainViewModel) {
     val rawTrackPoints by viewModel.rawTrackPoints.collectAsState()
     val tripMode by viewModel.tripMode.collectAsState()
     val activityProfile by viewModel.activityProfile.collectAsState()
+    var showOutdoorAreasInCard by remember(activityProfile) {
+        mutableStateOf(MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay)
+    }
+    DisposableEffect(context, activityProfile) {
+        val mapPrefs = context.getSharedPreferences(MapProfileConfigHelper.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        val prefKey = "profile_${activityProfile.name}_outdoor_areas"
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+            if (changedKey == null || changedKey == prefKey) {
+                showOutdoorAreasInCard = MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay
+            }
+        }
+        mapPrefs.registerOnSharedPreferenceChangeListener(listener)
+        showOutdoorAreasInCard = MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay
+        onDispose { mapPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     val autoStopMinutes by viewModel.autoStopMinutes.collectAsState()
     val savedTrips by viewModel.savedTrips.collectAsState()
     val selectedTripIds by viewModel.selectedTripIds.collectAsState()
@@ -965,6 +980,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     if (!showTripsSheet) {
                         LocalityCard(
                             locationData = locationData,
+                            showOutdoorAreas = showOutdoorAreasInCard,
                             activeTrip = activeTrip,
                             liveSession = liveSession,
                             savedPlaces = savedPlaces,
@@ -1094,6 +1110,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             if (!showTripsSheet) {
                 LocalityCard(
                     locationData = locationData,
+                    showOutdoorAreas = showOutdoorAreasInCard,
                     activeTrip = activeTrip,
                     liveSession = liveSession,
                     savedPlaces = savedPlaces,
@@ -1668,17 +1685,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                         else -> true
                     }
 
-                    // 3. Activity Profile (approximate based on max speed)
-                    val matchesProfile = when (selectedActivityFilter) {
-                        ActivityProfile.CAR -> trip.maxSpeedKmh > 35f
-                        ActivityProfile.CYCLING -> trip.maxSpeedKmh in 12f..35f
-                        ActivityProfile.MTB -> trip.maxSpeedKmh in 8f..40f
-                        ActivityProfile.RUNNING -> trip.maxSpeedKmh in 6f..16f
-                        ActivityProfile.HIKING -> trip.maxSpeedKmh <= 9f
-                        ActivityProfile.WALKING -> trip.maxSpeedKmh <= 7f
-                        ActivityProfile.KAYAKING -> trip.maxSpeedKmh in 2f..20f
-                        null -> true
-                    }
+                    // 3. Activity Profile (match the trip's recorded activity profile directly)
+                    val matchesProfile = matchesTripActivityFilter(trip, selectedActivityFilter)
 
                     matchesQuery && matchesDate && matchesProfile
                 }
@@ -3209,17 +3217,27 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(12.dp),
+                                            .padding(horizontal = 8.dp, vertical = 12.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        Text("Total Distance", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Text(
+                                            text = "Total Distance",
+                                            fontSize = 10.5.sp,
+                                            color = Color(0xFF94A3B8),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = String.format(Locale.getDefault(), "%.1f km", totalDistanceKm),
-                                            fontSize = 16.sp,
+                                            fontSize = 14.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF38BDF8)
+                                            color = Color(0xFF38BDF8),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -3234,17 +3252,26 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(12.dp),
+                                            .padding(horizontal = 8.dp, vertical = 12.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        Text("Total Trips", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Text(
+                                            text = "Total Trips",
+                                            fontSize = 10.5.sp,
+                                            color = Color(0xFF94A3B8),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = "${savedTrips.size}",
-                                            fontSize = 16.sp,
+                                            fontSize = 14.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF10B981)
+                                            color = Color(0xFF10B981),
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -3259,17 +3286,27 @@ fun LocationScreen(viewModel: MainViewModel) {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(12.dp),
+                                            .padding(horizontal = 8.dp, vertical = 12.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        Text("Top Speed", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                        Text(
+                                            text = "Top Speed",
+                                            fontSize = 10.5.sp,
+                                            color = Color(0xFF94A3B8),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = String.format(Locale.getDefault(), "%.0f km/h", maxSpeedOverall),
-                                            fontSize = 16.sp,
+                                            fontSize = 14.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFFBBF24)
+                                            color = Color(0xFFFBBF24),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -3325,7 +3362,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .padding(end = 8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
                                                         Icon(
                                                             Icons.Default.Place,
                                                             contentDescription = null,
@@ -3337,7 +3379,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             text = place,
                                                             fontSize = 14.sp,
                                                             fontWeight = FontWeight.Medium,
-                                                            color = Color.White
+                                                            color = Color.White,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            style = TextStyle(lineHeight = 18.sp)
                                                         )
                                                     }
                                                     Surface(
@@ -3349,6 +3394,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                             color = Color(0xFFFBBF24),
                                                             fontSize = 12.sp,
                                                             fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            softWrap = false,
                                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                                         )
                                                     }
@@ -10261,6 +10308,9 @@ private fun HeatMapSettingsDialog(
  * 4. Tracks cross-trip locality continuity: starting/stopping multiple trips in the same locality without traveling to another
  *    does NOT count as a new visit.
  */
+fun matchesTripActivityFilter(trip: TripRecord, filter: ActivityProfile?): Boolean =
+    filter == null || trip.activityProfile == filter
+
 fun computeRealisticVisitCounts(trips: List<TripRecord>): List<Pair<String, Int>> {
     val sortedTrips = trips.sortedBy { it.startTime }
     var lastKnownLocality: String? = null
@@ -10663,6 +10713,7 @@ private fun DataAcquisitionStatusPill(
 @Composable
 private fun LocalityCard(
     locationData: LocationData,
+    showOutdoorAreas: Boolean = true,
     activeTrip: TripRecord?,
     liveSession: LiveSession?,
     savedPlaces: List<SavedPlace>,
@@ -11031,7 +11082,10 @@ private fun LocalityCard(
                 }
 
                 // ── Compact Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
-                locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                locationData.outdoorContext
+                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas)
+                    ?.takeIf { it.hasAnyOutdoor }
+                    ?.let { outdoor ->
                     OutdoorContextRow(
                         outdoor = outdoor,
                         isCompact = true,
@@ -11620,7 +11674,10 @@ private fun LocalityCard(
                 }
 
                 // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
-                locationData.outdoorContext?.takeIf { it.hasAnyOutdoor }?.let { outdoor ->
+                locationData.outdoorContext
+                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas)
+                    ?.takeIf { it.hasAnyOutdoor }
+                    ?.let { outdoor ->
                     OutdoorContextRow(
                         outdoor = outdoor,
                         isCompact = false,

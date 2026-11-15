@@ -83,6 +83,7 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
 | **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
 | **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
+| **Round 66** | Field Testing UI & Map Polish (2026-11-15 v2.4.10): Stats Frequent Localities Layout, Outdoor Areas LocalityCard Toggle Gating, Multi-Trip High-Contrast Map Overlays Above All Layers & Exact Profile Activity Filter | 5 | 5 | 0 | 0 |
 | **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
 | **Round 60** | Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3) | 4 | 4 | 0 | 0 |
 | **Round 61** | Field Test Round 60 Diagnostics: Stacked Parallel Vector Trails & Overpass Supplement, Per-Source Signal Pill Hysteresis, Geocoder Contention/Gmina Stability, Safe Live-Trip DEM & Batch Missing-DEM UI, Wrapped Badges & Safe Controls Framing (2026-11-15 v2.4.4) | 6 | 6 | 0 | 0 |
@@ -1971,6 +1972,24 @@ User field test feedback (`trip334`, `trip335`), device telemetry, and requested
 | **REC-65-06** | Add manual Stop confirmation dialog, `"Resume Trip"` on saved `TripDetailDialog`, and `TripManager.resumeSavedTrip` with `[oldEndTime .. resumeNow]` pause gap. | `TripDatabaseHelper.kt`, `TripManager.kt`, `MainViewModel.kt`, `MainActivity.kt`, `TripManagerTest.kt` | Implemented | DB reopen, pause gap duration/avg-speed unit tests pass. |
 | **CACHE-65-07** | Add saved-trip corridor map tile deficit check (`MapTileCorridorPlanner`, `cache.db`) & `[Fetch]` button in `CacheManagerDialog`, plus per-profile `trackThickness` setting (`Normal`/`Thick`/`Bold`). | `MapTileCorridorPlanner.kt`, `MapTileSourceRegistry.kt`, `CacheManager.kt`, `CacheManagerDialog.kt`, `MapProfileConfigHelper.kt`, `OsmMapView.kt` | Implemented | Corridor planner, missing-DB check & config persistence unit tests pass. |
 | **VER-65** | Bump to `versionCode = 210`, `versionName = "2.4.9"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and device verification pass. |
+
+---
+
+## Round 66 - Stats Card Overflow, Outdoor Areas Card Sync, Multi-Trip Overlay Contrast & Activity Filter (2026-11-15 v2.4.10)
+
+User field testing screenshot feedback (`v2.4.9`):
+- **Stats Frequent Localities & Summary Cards**: Constrained the left icon+place row with `Modifier.weight(1f).padding(end = 8.dp)`, `maxLines = 2`, and `TextOverflow.Ellipsis`, and guarded the `"$count visit(s)"` pill and top Stats summary cards with `maxLines = 1` / `softWrap = false` so long names never push visit counts off-screen.
+- **Outdoor Protected Areas Locality Card Gating**: Added `OutdoorContext.forDisplay(showOutdoorAreas)` to strip mountain ranges, protected areas/parks, and valleys while keeping trails and peak/water badges intact; reactively observed `profile_<PROFILE>_outdoor_areas` via `SharedPreferences.OnSharedPreferenceChangeListener` in `LocationScreen` and passed `showOutdoorAreas` into both `LocalityCard` layouts.
+- **Multi-Trip Contrast & Overlay Layer Ordering**: Replaced camouflage emerald/teal strokes with `SELECTED_TRIP_MULTI_COLORS` + dark charcoal contrast casing (`SELECTED_TRIP_CASING_COLOR_ARGB`, `+6f` px) and bumped `selectedTripTrackWidthPx` (`10f / 14f / 18f`); added `addTripOverlayAboveMapLayers` and wired `mapView`, `baseLayer`, `showHikingOverlay`, `trailOverlayMode`, and `trackColorHex` keys to `MapSelectedAndHeatEffects` and `MapDestinationAndPlaceEffects` (`pauseMarkers` / `savedPlaceMarkers`) so selected trips and pause badges re-attach cleanly over Freemap and all tile/vector layers.
+- **Trips Profile Activity Filter**: Replaced legacy max-speed range heuristics with `matchesTripActivityFilter(trip, filter)` matching `trip.activityProfile` directly so speed spikes on hiking/other activities never leak into `"Driving"`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **UI-66-01** | Fix Stats `Frequent Localities` overflow pushing visit badge off-screen and prevent top Stats card line wrapping. | `MainActivity.kt` | Implemented | Verified Compose layout constraints and `assembleDebug`. |
+| **OUT-66-02** | Hide mountain range & protected area badges on `LocalityCard` when `"Outdoor & Protected Areas"` is OFF. | `OutdoorModels.kt`, `MainActivity.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | `OutdoorContext.forDisplay` unit tests pass. |
+| **MAP-66-03** | Improve multi-selected trip polyline contrast (`SELECTED_TRIP_MULTI_COLORS` + `#0F172A` casing) and re-stack above tile/vector layers (including Freemap). | `MapProfileConfigHelper.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | Palette, casing width & `MapProfileConfigTest` pass. |
+| **TRP-66-04** | Filter Trips tab strictly by `trip.activityProfile` via `matchesTripActivityFilter` instead of max-speed heuristics. | `MainActivity.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | High-speed `HIKING` trip excluded under `CAR` filter in unit test. |
+| **VER-66** | Bump to `versionCode = 211`, `versionName = "2.4.10"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest` (`729` tests, `0` failed) & `assembleDebug` pass. |
 
 
 

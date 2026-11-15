@@ -284,9 +284,39 @@ object MapProfileConfigHelper {
     }
 
     fun selectedTripTrackWidthPx(thickness: TrailThickness): Float = when (thickness) {
-        TrailThickness.NORMAL -> 8f
-        TrailThickness.THICK -> 12f
-        TrailThickness.EXTRA_THICK -> 16f
+        TrailThickness.NORMAL -> 10f
+        TrailThickness.THICK -> 14f
+        TrailThickness.EXTRA_THICK -> 18f
+    }
+
+    /**
+     * High-contrast multi-trip palette designed to stay legible against OSM green/blue terrain,
+     * Freemap contour shading, OpenTopo, and dark satellite imagery (avoids emerald/teal camouflage).
+     */
+    val SELECTED_TRIP_MULTI_COLORS: List<String> = listOf(
+        "#EF4444", // Vivid Crimson Red
+        "#2563EB", // Cobalt Royal Blue
+        "#D946EF", // Electric Magenta
+        "#F97316", // Tangerine Orange
+        "#8B5CF6", // Vivid Violet
+        "#06B6D4", // Electric Cyan
+        "#FACC15", // Sunburst Yellow
+        "#EC4899"  // Hot Rose Pink
+    )
+
+    /** Dark charcoal halo drawn underneath selected trips so lines never blend into the map. */
+    const val SELECTED_TRIP_CASING_COLOR_ARGB: Int = 0xE60F172A.toInt()
+
+    fun selectedTripCasingWidthPx(coreWidthPx: Float): Float = coreWidthPx + 6f
+
+    fun selectedTripStrokeColorHex(
+        index: Int,
+        totalSelected: Int,
+        singleTripColorHex: String
+    ): String {
+        if (totalSelected <= 1) return singleTripColorHex
+        val safeIdx = ((index % SELECTED_TRIP_MULTI_COLORS.size) + SELECTED_TRIP_MULTI_COLORS.size) % SELECTED_TRIP_MULTI_COLORS.size
+        return SELECTED_TRIP_MULTI_COLORS[safeIdx]
     }
 
     fun resetProfileDefaults(context: Context, profile: ActivityProfile) {

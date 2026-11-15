@@ -239,9 +239,9 @@ class MapProfileConfigTest {
         assertEquals(12f, MapProfileConfigHelper.liveTrackWidthPx(TrailThickness.NORMAL), 0.01f)
         assertEquals(18f, MapProfileConfigHelper.liveTrackWidthPx(TrailThickness.THICK), 0.01f)
         assertEquals(24f, MapProfileConfigHelper.liveTrackWidthPx(TrailThickness.EXTRA_THICK), 0.01f)
-        assertEquals(8f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.NORMAL), 0.01f)
-        assertEquals(12f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.THICK), 0.01f)
-        assertEquals(16f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.EXTRA_THICK), 0.01f)
+        assertEquals(10f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.NORMAL), 0.01f)
+        assertEquals(14f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.THICK), 0.01f)
+        assertEquals(18f, MapProfileConfigHelper.selectedTripTrackWidthPx(TrailThickness.EXTRA_THICK), 0.01f)
 
         MapProfileConfigHelper.setTrackThickness(ctx, ActivityProfile.HIKING, TrailThickness.EXTRA_THICK)
         assertEquals(TrailThickness.EXTRA_THICK, MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING).trackThickness)
