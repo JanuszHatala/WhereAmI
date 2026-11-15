@@ -1119,6 +1119,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadSavedTrips()
     }
 
+    fun resumeSavedTrip(tripId: Long, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val resumed = tripManager.resumeSavedTrip(tripId)
+            if (resumed != null) {
+                _selectedTripIds.value = emptySet()
+            }
+            _savedTrips.value = tripManager.getAllTrips()
+            withContext(Dispatchers.Main) {
+                onResult(resumed != null)
+            }
+        }
+    }
+
     fun triggerFitTrack() {
         _fitTrackTrigger.value = System.currentTimeMillis()
     }

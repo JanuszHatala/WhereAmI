@@ -213,6 +213,9 @@ Battery optimization is the highest engineering priority:
   - *Pencil*: minimum step floor 1.0 m; Catmull-Rom densify applies to committed vertices only (pencil stays piecewise-linear) so multipath scribbles are not amplified into coils that the smoother later erases.
 
 ---
+- **Amendment (v2.4.9, corroborated envelope escalation & compose decomposition, 2026-11-15)**:
+  - *Envelope escalation corroboration*: `TrackingEngine.updateEnvelope` now requires horizontal accuracy `<= 20.0 m` (`ENVELOPE_MAX_ACC_M`) and corroborating inter-fix spatial speed (`spatialSpeedMps`) before escalating `activeProfile`, and gates uncorroborated Doppler anomalies out of `ekf.updateScalar(SPEED)` and `applyCourse`. Prevents isolated high-Doppler multipath outliers from warping walking tracks while preserving rapid escalation on legitimate vehicle acceleration.
+  - *Motion burst tracking reset guard*: `AppStateManager.MOTION_BURST_START` skips `LocationManager.resetTracking()` when an active trip exists so paused active trips retain their anchored kinematic state.
 - **Amendment (v1.18.12, restore follow-alarm wake, 2026-10-22)**:
   - *Auto-sleep*: Sync with Morning Alarm wakes Sleep when the alarm fires during the sleep window (reverted the v1.18.11 5-minute-before-end gate). Overnight battery remains GPS-off screen-off + pause-live-on-sleep default.
 - **Amendment (v1.18.11, overnight Live GPS + late auto-start, 2026-10-22)**:

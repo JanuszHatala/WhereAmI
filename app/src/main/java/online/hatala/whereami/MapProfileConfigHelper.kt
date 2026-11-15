@@ -13,6 +13,7 @@ data class ProfileMapConfig(
     val showHikingOverlay: Boolean,
     val fontScale: MapFontScale,
     val trackColorHex: String = "#EF4444",
+    val trackThickness: TrailThickness = TrailThickness.NORMAL,
     val showOutdoorAreasOverlay: Boolean = false,
     val trailThickness: TrailThickness = TrailThickness.NORMAL,
     val trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
@@ -120,6 +121,7 @@ object MapProfileConfigHelper {
         } else default.showHikingOverlay
         val fontScaleName = prefs.getString("profile_${profile.name}_font_scale", null)
         val trackColorHex = prefs.getString("profile_${profile.name}_track_color", null) ?: default.trackColorHex
+        val trackThicknessName = prefs.getString("profile_${profile.name}_track_thickness", null)
         val outdoorAreasOverlay = if (prefs.contains("profile_${profile.name}_outdoor_areas")) {
             prefs.getBoolean("profile_${profile.name}_outdoor_areas", default.showOutdoorAreasOverlay)
         } else default.showOutdoorAreasOverlay
@@ -144,6 +146,10 @@ object MapProfileConfigHelper {
         val fontScale = fontScaleName?.let {
             try { MapFontScale.valueOf(it) } catch (_: Exception) { null }
         } ?: default.fontScale
+
+        val trackThickness = trackThicknessName?.let {
+            try { TrailThickness.valueOf(it) } catch (_: Exception) { null }
+        } ?: default.trackThickness
 
         val trailThickness = trailThicknessName?.let {
             try { TrailThickness.valueOf(it) } catch (_: Exception) { null }
@@ -187,6 +193,7 @@ object MapProfileConfigHelper {
             showHikingOverlay = hikingOverlay,
             fontScale = fontScale,
             trackColorHex = trackColorHex,
+            trackThickness = trackThickness,
             showOutdoorAreasOverlay = outdoorAreasOverlay,
             trailThickness = trailThickness,
             trailLineStyle = trailLineStyle,
@@ -265,6 +272,23 @@ object MapProfileConfigHelper {
         prefs.edit().putString("profile_${profile.name}_track_color", colorHex).apply()
     }
 
+    fun setTrackThickness(context: Context, profile: ActivityProfile, thickness: TrailThickness) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_${profile.name}_track_thickness", thickness.name).apply()
+    }
+
+    fun liveTrackWidthPx(thickness: TrailThickness): Float = when (thickness) {
+        TrailThickness.NORMAL -> 12f
+        TrailThickness.THICK -> 18f
+        TrailThickness.EXTRA_THICK -> 24f
+    }
+
+    fun selectedTripTrackWidthPx(thickness: TrailThickness): Float = when (thickness) {
+        TrailThickness.NORMAL -> 8f
+        TrailThickness.THICK -> 12f
+        TrailThickness.EXTRA_THICK -> 16f
+    }
+
     fun resetProfileDefaults(context: Context, profile: ActivityProfile) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
@@ -281,6 +305,7 @@ object MapProfileConfigHelper {
             .remove("profile_${profile.name}_supplement_osm_trails")
             .remove("profile_${profile.name}_font_scale")
             .remove("profile_${profile.name}_track_color")
+            .remove("profile_${profile.name}_track_thickness")
             .apply()
     }
 
@@ -301,6 +326,7 @@ object MapProfileConfigHelper {
             editor.remove("profile_${profile.name}_supplement_osm_trails")
             editor.remove("profile_${profile.name}_font_scale")
             editor.remove("profile_${profile.name}_track_color")
+            editor.remove("profile_${profile.name}_track_thickness")
         }
         editor.remove("base_layer")
             .remove("hiking_overlay")

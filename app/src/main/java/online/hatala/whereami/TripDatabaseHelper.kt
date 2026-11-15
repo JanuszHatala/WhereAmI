@@ -946,6 +946,17 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         db.update(TABLE_TRIPS, tripValues(trip), "$COL_ID = ?", arrayOf(trip.id.toString()))
     }
 
+    /** Reopens a saved trip in-place by clearing end_time and storing updated pauses. */
+    fun reopenSavedTrip(tripId: Long, pauses: List<TripPause>): TripRecord? {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            putNull(COL_END_TIME)
+            put(COL_PAUSES_JSON, pausesToJson(pauses))
+        }
+        val rows = db.update(TABLE_TRIPS, values, "$COL_ID = ?", arrayOf(tripId.toString()))
+        return if (rows > 0) getTrip(tripId) else null
+    }
+
     /** Metadata plus a full geometry rewrite (split, elevation correction). Preserves per-point metadata where aligned. */
     fun updateTrip(trip: TripRecord, pointSources: List<String>? = null) {
         updateTripMeta(trip)

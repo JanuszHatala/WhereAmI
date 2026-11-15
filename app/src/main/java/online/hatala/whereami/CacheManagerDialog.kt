@@ -173,10 +173,11 @@ fun CacheManagerDialog(
                         )
 
                         // 1. Map Tiles
+                        val isRunning = prefetchState is CacheManager.PrefetchState.Running
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(
@@ -189,6 +190,38 @@ fun CacheManagerDialog(
                                         lineHeight = 15.sp
                                     )
                                 )
+                                val missingTiles = cacheDeficit?.missingMapTiles
+                                when {
+                                    missingTiles == null -> Text(
+                                        text = "…",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingTiles == 0 -> Text(
+                                        text = "✓ complete",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    else -> Text(
+                                        text = "⚠ $missingTiles missing",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
                                 Text(
                                     text = formatBytes(tileBytes),
                                     color = Color(0xFFCBD5E1),
@@ -200,29 +233,59 @@ fun CacheManagerDialog(
                                     )
                                 )
                             }
-                            OutlinedButton(
-                                onClick = { cacheClearConfirmTarget = "TILES" },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
-                            ) {
-                                Text(
-                                    text = "Clear",
-                                    fontSize = 12.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold,
-                                    style = TextStyle(
-                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                        lineHeight = 13.sp
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                val missingTiles = cacheDeficit?.missingMapTiles
+                                if (missingTiles != null && missingTiles > 0) {
+                                    Button(
+                                        onClick = { if (!isRunning) cacheManager.fetchMissingMapTiles() },
+                                        enabled = !isRunning,
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                    ) {
+                                        if (isRunning) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(12.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "Fetch",
+                                                fontSize = 11.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { cacheClearConfirmTarget = "TILES" },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
+                                ) {
+                                    Text(
+                                        text = "Clear",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
 
                         Divider(color = Color(0xFF1E293B))
 
                         // 2. Locality Boundaries
-                        val isRunning = prefetchState is CacheManager.PrefetchState.Running
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -918,7 +981,7 @@ fun CacheManagerDialog(
                         when (val state = prefetchState) {
                             is CacheManager.PrefetchState.Idle -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries }
+                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries + it.missingMapTiles }
                                     val buttonText = when {
                                         totalMissing == null -> "Pre-fetch Missing Data"
                                         totalMissing > 0 -> "Pre-fetch All Missing Data ($totalMissing)"
@@ -931,7 +994,7 @@ fun CacheManagerDialog(
                                                 cacheManager.calculateCacheDeficit()
                                                 scope.launch {
                                                     snackbarHostState.showSnackbar(
-                                                        "✓ Cache is up to date. All routes and boundaries are cached.",
+                                                        "✓ Cache is up to date. All routes, boundaries and map tiles are cached.",
                                                         duration = SnackbarDuration.Short
                                                     )
                                                 }
@@ -1237,10 +1300,15 @@ fun CacheManagerDialog(
                             }
                             is CacheManager.PrefetchState.Completed -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    val statusText = if (state.addedRoutes == 0 && state.addedBoundaries == 0) {
-                                        "✓ All recorded routes & boundaries are fully cached!"
+                                    val statusText = if (state.addedRoutes == 0 && state.addedBoundaries == 0 && state.addedMapTiles == 0) {
+                                        "✓ All recorded routes, boundaries & map tiles are fully cached!"
                                     } else {
-                                        "✓ Pre-fetch Complete! Downloaded: ${state.addedRoutes} route points, ${state.addedBoundaries} boundaries."
+                                        val parts = buildList {
+                                            if (state.addedRoutes > 0) add("${state.addedRoutes} route points")
+                                            if (state.addedBoundaries > 0) add("${state.addedBoundaries} boundaries")
+                                            if (state.addedMapTiles > 0) add("${state.addedMapTiles} map tiles")
+                                        }.joinToString(", ")
+                                        "✓ Pre-fetch Complete! Downloaded: $parts."
                                     }
                                     Text(
                                         text = statusText,
@@ -1253,7 +1321,7 @@ fun CacheManagerDialog(
                                         )
                                     )
 
-                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries } ?: 0
+                                    val totalMissing = cacheDeficit?.let { it.missingRoutes + it.missingBoundaries + it.missingMapTiles } ?: 0
                                     if (totalMissing > 0) {
                                         Button(
                                             onClick = { cacheManager.startPrefetch() },

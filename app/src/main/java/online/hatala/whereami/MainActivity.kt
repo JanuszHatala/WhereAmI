@@ -431,6 +431,8 @@ fun LocationScreen(viewModel: MainViewModel) {
     var tripToRename by remember { mutableStateOf<TripRecord?>(null) }
     var renameInputText by remember { mutableStateOf("") }
     var tripToDelete by remember { mutableStateOf<TripRecord?>(null) }
+    var showStopTripConfirmDialog by remember { mutableStateOf(false) }
+    var tripPendingResume by remember { mutableStateOf<TripRecord?>(null) }
     var showMergeConfirmationDialog by remember { mutableStateOf(false) }
     var showResetDefaultsConfirm by remember { mutableStateOf(false) }
 
@@ -497,6 +499,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         showSearchDialog = false
         tripToRename = null
         tripToDelete = null
+        showStopTripConfirmDialog = false
+        tripPendingResume = null
         showMergeConfirmationDialog = false
         showResetDefaultsConfirm = false
         showSavePlaceDialog = false
@@ -1358,21 +1362,6 @@ fun LocationScreen(viewModel: MainViewModel) {
         @Composable fun LocationScreenMapHost2() {
         if (!showTripsSheet && !isLandscape && activeTrip == null && tripMode == TripMode.AUTO) {
             val autoSpeed = viewModel.getAutoStartSpeedForProfile(activityProfile)
-            val pulseAlpha = if (!isStandbySleeping && isAppInForeground) {
-                val infiniteTransition = rememberInfiniteTransition(label = "autoStandbyPulse")
-                val animatedAlpha by infiniteTransition.animateFloat(
-                    initialValue = 0.35f,
-                    targetValue = 1.0f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(1000, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "standbyAlpha"
-                )
-                animatedAlpha
-            } else {
-                1.0f
-            }
 
             Surface(
                 modifier = Modifier
@@ -1407,7 +1396,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 .clip(CircleShape)
                                 .background(
                                     if (isStandbySleeping) Color(0xFF94A3B8)
-                                    else Color(0xFF38BDF8).copy(alpha = pulseAlpha)
+                                    else Color(0xFF38BDF8)
                                 )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1513,7 +1502,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 isRecording = activeTrip != null,
                 onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
                 onToggleTripRecording = {
-                    if (activeTrip != null) viewModel.stopManualTrip() else viewModel.startManualTrip()
+                    if (activeTrip != null) {
+                        showStopTripConfirmDialog = true
+                    } else {
+                        viewModel.startManualTrip()
+                    }
                 },
                 onShowTripsSheet = {
                     dismissAllDialogs()
@@ -3425,13 +3418,116 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onCorrectElevation = { tripId, mode ->
                         viewModel.correctTripElevation(tripId, mode)
                     },
+                    onResumeTrip = { trip ->
+                        val curActive = activeTrip
+                        if (curActive != null && curActive.id != trip.id) {
+                            tripPendingResume = trip
+                        } else {
+                            viewModel.resumeSavedTrip(trip.id) { ok ->
+                                if (ok) {
+                                    selectedTripForDetail = null
+                                    showTripsSheet = false
+                                    recenterTrigger = System.currentTimeMillis()
+                                    android.widget.Toast.makeText(context, "Resumed trip recording", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    },
                     elevationCorrectionProgress = elevationCorrectionProgress,
                     countNonDemAltitudePoints = viewModel::countNonDemAltitudePoints
+                )
+            }
+
+            if (tripPendingResume != null) {
+                val targetTrip = tripPendingResume!!
+                AlertDialog(
+                    onDismissRequest = { tripPendingResume = null },
+                    title = { Text("Stop Active Trip & Resume?", color = Color.White, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Text(
+                            "Another trip is currently recording. Save it now and resume the selected trip?",
+                            color = Color(0xFFCBD5E1)
+                        )
+                    },
+                    confirmButton = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { tripPendingResume = null }) {
+                                Text("Cancel", color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    tripPendingResume = null
+                                    viewModel.resumeSavedTrip(targetTrip.id) { ok ->
+                                        if (ok) {
+                                            selectedTripForDetail = null
+                                            showTripsSheet = false
+                                            recenterTrigger = System.currentTimeMillis()
+                                            android.widget.Toast.makeText(context, "Saved active trip and resumed", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF10B981),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Resume", color = Color.White)
+                            }
+                        }
+                    },
+                    dismissButton = null,
+                    containerColor = Color(0xFF1E293B)
                 )
             }
         }
         }
         LocationScreenMapHost4()
+
+    if (showStopTripConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showStopTripConfirmDialog = false },
+            title = { Text("Stop Recording Trip?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Finish and save the active trip? You can resume it anytime from Trip History.",
+                    color = Color(0xFFCBD5E1)
+                )
+            },
+            confirmButton = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showStopTripConfirmDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            showStopTripConfirmDialog = false
+                            viewModel.stopManualTrip()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFEF4444),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Stop", color = Color.White)
+                    }
+                }
+            },
+            dismissButton = null,
+            containerColor = Color(0xFF1E293B)
+        )
+    }
 
     // Rename Trip Dialog
     @Composable fun LocationScreenHost0() {
@@ -10666,7 +10762,11 @@ private fun LocalityCard(
                     "$primaryCity ($secondaryCity)"
                 } else primaryCity
 
-                val rawStreet = primaryPlace?.street
+                val rawStreet = RoadNameNormalizer.displayStreetForProfile(
+                    primaryPlace?.street,
+                    primaryPlace?.highwayType,
+                    activityProfile
+                )
                 val effectiveStreet = if (compactStreetNames) {
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
@@ -11411,7 +11511,11 @@ private fun LocalityCard(
                 }
 
                 // Street Name & Road Number
-                val rawStreet = primaryPlace?.street
+                val rawStreet = RoadNameNormalizer.displayStreetForProfile(
+                    primaryPlace?.street,
+                    primaryPlace?.highwayType,
+                    activityProfile
+                )
                 val effectiveStreet = if (compactStreetNames) {
                     StreetAbbreviator.abbreviate(rawStreet, primaryPlace?.countryCode)
                 } else rawStreet
@@ -12704,6 +12808,7 @@ fun TripDetailDialog(
     onDeletePause: (Long, Int) -> Unit = { _, _ -> },
     onMergePause: (Long, Int) -> Unit = { _, _ -> },
     onCorrectElevation: (Long, OverrideMode) -> Unit = { _, _ -> },
+    onResumeTrip: (TripRecord) -> Unit = {},
     elevationCorrectionProgress: ElevationCorrectionProgress = ElevationCorrectionProgress(),
     countNonDemAltitudePoints: suspend (Long) -> Int = { 0 }
 ) {
@@ -13847,18 +13952,53 @@ fun TripDetailDialog(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = { onShowOnMap(trip) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0284C7),
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().height(44.dp)
-                        ) {
-                            Icon(Icons.Default.Explore, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Show Route on Map", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        if (trip.endTime != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { onShowOnMap(trip) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp)
+                                ) {
+                                    Icon(Icons.Default.Explore, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Show on Map", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                                }
+
+                                Button(
+                                    onClick = { onResumeTrip(trip) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF059669),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Resume Trip", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                                }
+                            }
+                        } else {
+                            Button(
+                                onClick = { onShowOnMap(trip) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0284C7),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth().height(44.dp)
+                            ) {
+                                Icon(Icons.Default.Explore, contentDescription = null, tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Show Route on Map", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
                         }
 
                         Row(

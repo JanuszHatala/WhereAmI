@@ -779,8 +779,10 @@ class AppStateManager private constructor(private val context: Context) {
                 mapOf("profile" to profile.name, "durationMs" to burstDurationMs)
             )
 
-            // Reset GPS filter anchor so overnight static anchor doesn't reject new fixes
-            LocationManager.getInstance(context).resetTracking()
+            // Reset GPS filter anchor only when no active paused trip is holding a summit/rest anchor
+            if (!hasActiveTrip) {
+                LocationManager.getInstance(context).resetTracking()
+            }
 
             // Request GPS updates during confirmation window
             locManager.updateSamplingInterval(2500L, 1000L)

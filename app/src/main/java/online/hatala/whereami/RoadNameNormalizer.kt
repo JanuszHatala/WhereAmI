@@ -115,11 +115,46 @@ object RoadNameNormalizer {
     ): String? {
         val (name, ref) = nameDetails ?: return null
         if (ref.isNullOrBlank()) return null
+        val trimmedRef = ref.trim()
         if (!road.isNullOrBlank() && name != null) {
-            return ref.trim().takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
+            return trimmedRef.takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
         }
-        return if (isHighwayObject && road.isNullOrBlank()) ref.trim() else null
+        if (!road.isNullOrBlank() && isHighwayObject) {
+            val trimmedRoad = road.trim()
+            if (trimmedRoad.equals(trimmedRef, ignoreCase = true) || isHighwayCodeOnly(trimmedRoad)) {
+                return trimmedRef
+            }
+        }
+        return if (isHighwayObject && road.isNullOrBlank()) trimmedRef else null
     }
+
+    /**
+     * Merges a national road ref (`ref`, e.g. `"8"`) with an international ref (`int_ref`, e.g. `"E 67"`)
+     * into a semicolon-delimited raw ref string, deduplicating case-insensitively.
+     */
+    fun combineHighwayRefs(primaryRef: String?, intRef: String?): String? {
+        val parts = listOfNotNull(primaryRef, intRef)
+            .flatMap { it.split(";", " / ") }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.replace(" ", "").uppercase(Locale.ROOT) }
+        return if (parts.isEmpty()) null else parts.joinToString(";")
+    }
+
+    /**
+     * Returns true when `highway=cycleway` street names should be suppressed because the active
+     * activity profile is neither CYCLING nor MTB.
+     */
+    fun isCyclewayStreetHiddenForProfile(highwayType: String?, profile: ActivityProfile): Boolean =
+        highwayType.equals("cycleway", ignoreCase = true) &&
+            profile != ActivityProfile.CYCLING &&
+            profile != ActivityProfile.MTB
+
+    fun displayStreetForProfile(
+        street: String?,
+        highwayType: String?,
+        profile: ActivityProfile
+    ): String? = if (isCyclewayStreetHiddenForProfile(highwayType, profile)) null else street
 
     fun shouldShieldMajorCorridor(
         speedKmh: Float?,
@@ -269,9 +304,14 @@ object RoadNameNormalizer {
             named != null && osmRef == null ->
                 named to null
 
-            // 7. Fallback
+            // 7. Fallback: preserve bare highway-code street from OSM / Geocoder when no non-code name exists
             osrm != null -> osrm to (if (!isResidential) osmRef else null)
-            else -> named to (if (!isResidential) osmRef else null)
+            else -> {
+                val fallbackHighway = sequenceOf(osmStreet, geocoderStreet)
+                    .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() } }
+                    .firstOrNull()
+                fallbackHighway to (if (!isResidential) osmRef else null)
+            }
         }
     }
 
@@ -597,7 +637,11 @@ object RoadNameNormalizer {
 
         val roadAsHighway = normalizeHighwayRef(road, countryCode)
         if (roadAsHighway != null && (isHighwayCodeOnly(road) || road.contains(";") || normalizeSingleHighwayCode(road, countryCode) != null)) {
-            normalizedHighway = roadAsHighway
+            normalizedHighway = if (ref.isNotEmpty()) {
+                normalizeHighwayRef("$road;$ref", countryCode) ?: roadAsHighway
+            } else {
+                roadAsHighway
+            }
             isRoadSelfHighway = true
         } else if (ref.isNotEmpty()) {
             normalizedHighway = normalizeHighwayRef(ref, countryCode)

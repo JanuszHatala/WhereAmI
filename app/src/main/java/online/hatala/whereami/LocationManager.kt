@@ -2337,21 +2337,30 @@ class LocationManager private constructor(private val context: Context) {
                     }
                 }
 
-                val isHighwayFeature = root.optString("class") == "highway"
-                val rawRef = str("ref")
-                    ?: RoadNameNormalizer.wayRef(rawRoad, root.optJSONObject("namedetails")?.let { nd ->
-                        nd.optString("name").takeIf { it.isNotEmpty() } to nd.optString("ref").takeIf { it.isNotEmpty() }
-                    }, isHighwayObject = isHighwayFeature)
+                val osmClass = root.optString("class")
+                val isHighwayFeature = osmClass == "highway"
+                val extratags = root.optJSONObject("extratags")
+                val namedetails = root.optJSONObject("namedetails")
+                val ndName = namedetails?.optString("name")?.takeIf { it.isNotEmpty() }
+                val ndRef = namedetails?.optString("ref")?.takeIf { it.isNotEmpty() }
+                    ?: extratags?.optString("ref")?.takeIf { it.isNotEmpty() }
+                val ndIntRef = namedetails?.optString("int_ref")?.takeIf { it.isNotEmpty() }
+                    ?: extratags?.optString("int_ref")?.takeIf { it.isNotEmpty() }
+                val wayPrimaryRef = str("ref")
+                    ?: RoadNameNormalizer.wayRef(rawRoad, ndName to ndRef, isHighwayObject = isHighwayFeature)
+                val rawRef = RoadNameNormalizer.combineHighwayRefs(wayPrimaryRef, ndIntRef)
                 val osmCountryCode = str("country_code")?.uppercase()
+                val extratagHighway = extratags?.optString("highway")?.takeIf { it.isNotEmpty() }
                 val rawHighwayType = if (isHighwayFeature) {
                     root.optString("type").takeIf { it.isNotEmpty() }
                 } else {
-                    root.optJSONObject("extratags")?.optString("highway")?.takeIf { it.isNotEmpty() }
-                        ?: root.optString("type").takeIf { it.isNotEmpty() }
+                    extratagHighway
                 }
+                val isAddressOrPoiHouse = houseNum != null || osmClass in setOf("building", "place", "shop", "amenity", "office")
+                val effectiveRawRoad = if (isHighwayFeature || extratagHighway != null || isAddressOrPoiHouse) rawRoad else null
 
                 // GEO-03: Normalize road name (DK52, DW946, A4, S7) and strip house numbers from major highways
-                val normalizedStreet = RoadNameNormalizer.normalize(rawRoad, rawRef, houseNum, includeHouseNumber = true, countryCode = osmCountryCode)
+                val normalizedStreet = RoadNameNormalizer.normalize(effectiveRawRoad, rawRef, houseNum, includeHouseNumber = true, countryCode = osmCountryCode)
 
                 val isPoland = osmCountryCode == "PL"
                 val rawMunicipality = if (isPoland) {

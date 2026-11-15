@@ -114,61 +114,6 @@ enum class MapFontScale(val label: String, val scaleFactor: Float) {
     MAXIMUM("Extra Large (175%)", 1.75f)
 }
 
-enum class MapBaseLayer(val label: String) {
-    STANDARD("Standard OSM"),
-    FREEMAP_OUTDOOR("Freemap Outdoor (Central Europe)"),
-    TOPO("Topographic (OpenTopo)"),
-    SATELLITE("Satellite (Esri)")
-}
-
-private val FreemapOutdoorSource = object : OnlineTileSourceBase(
-    "FreemapOutdoor2x",
-    0, 19, 512, ".jpeg",
-    arrayOf("https://outdoor.tiles.freemap.sk/"),
-    "© Freemap Slovakia, OpenStreetMap contributors"
-) {
-    override fun getTileURLString(pMapTileIndex: Long): String {
-        val zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
-        val x = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
-        val y = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
-        return "${getBaseUrl()}$zoom/$x/$y@2x"
-    }
-}
-
-private val OpenTopoMapSource = XYTileSource(
-    "OpenTopoMap",
-    1, 17, 256, ".png",
-    arrayOf(
-        "https://a.tile.opentopomap.org/",
-        "https://b.tile.opentopomap.org/",
-        "https://c.tile.opentopomap.org/"
-    ),
-    "© OpenTopoMap (CC-BY-SA)"
-)
-
-private val EsriSatelliteSource = object : OnlineTileSourceBase(
-    "EsriSatellite",
-    0, 19, 256, ".jpg",
-    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"),
-    "© Esri, Maxar, Earthstar Geographics"
-) {
-    override fun getTileURLString(pMapTileIndex: Long): String {
-        val zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
-        val x = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
-        val y = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
-        return getBaseUrl() + "$zoom/$y/$x"
-    }
-}
-
-private val WaymarkedTrailsHikingSource = XYTileSource(
-    "WaymarkedTrailsHiking",
-    1, 18, 256, ".png",
-    arrayOf(
-        "https://tile.waymarkedtrails.org/hiking/"
-    ),
-    "© Waymarked Trails (CC-BY-SA)"
-)
-
 /**
  * Calculates the map center GeoPoint required so that the given target marker
  * appears at the optical center of the visible map aperture (offset from screen center
@@ -754,7 +699,6 @@ fun OsmMapView(
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var marker by remember { mutableStateOf<Marker?>(null) }
-    var destMarker by remember { mutableStateOf<Marker?>(null) }
     var showFilteredPolyline by remember {
         mutableStateOf(MapProfileConfigHelper.getShowFilteredPolyline(context))
     }
@@ -764,13 +708,6 @@ fun OsmMapView(
     var polyline by remember { mutableStateOf<Polyline?>(null) }
     var rawPolyline by remember { mutableStateOf<Polyline?>(null) }
     val liveLine = remember { LiveTrackLine() }
-    var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
-    var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
-    var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
-    var selectedTripRawPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
-    var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
-    val guestMarkersMap = remember { mutableMapOf<String, Marker>() }
-    val guestMarkerBadgeKeys = remember { mutableMapOf<String, String>() }
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
@@ -782,64 +719,12 @@ fun OsmMapView(
     val initialProfileConfig = remember(activityProfile) {
         MapProfileConfigHelper.getConfig(context, activityProfile)
     }
-
-    var baseLayer by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.baseLayer)
-    }
-
-    var showHikingOverlay by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.showHikingOverlay)
-    }
-
-    var showOutdoorAreasOverlay by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.showOutdoorAreasOverlay)
-    }
-
-    var trailThickness by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.trailThickness)
-    }
-
-    var trailLineStyle by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.trailLineStyle)
-    }
-
-    var trailOpacity by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.trailOpacity)
-    }
-
-    var trailOverlayMode by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.trailOverlayMode)
-    }
-
-    var enabledTrailKinds by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.enabledTrailKinds)
-    }
-
-    var enabledTrailColors by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.enabledTrailColors)
-    }
-
-    var supplementMissingOsmTrails by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.supplementMissingOsmTrails)
-    }
-
-    var fontScale by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.fontScale)
-    }
-
-    var trackColorHex by remember(activityProfile) {
-        mutableStateOf(initialProfileConfig.trackColorHex)
-    }
-
-    var vectorTrailOverlayRef by remember { mutableStateOf<VectorTrailOverlay?>(null) }
-    var outdoorBoundaryPolygons by remember { mutableStateOf<List<org.osmdroid.views.overlay.Polygon>>(emptyList()) }
-    var searchRouteOverlays by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    val layerState = remember(activityProfile) { OsmMapLayerState(initialProfileConfig) }
 
     var prePinZoom by remember { mutableStateOf<Double?>(null) }
     var prePinCenter by remember { mutableStateOf<GeoPoint?>(null) }
 
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
-    val guestLeaderLinesOverlay = remember(context) { GuestLeaderLinesOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
     val visibleGuests = remember(activeGuests, showInactiveGuests) {
@@ -862,7 +747,7 @@ fun OsmMapView(
         altitudeM,
         isAltitudeFallback,
         altitudeSourceMode,
-        fontScale,
+        layerState.fontScale,
         locationFix?.speedMs
     ) {
         val map = mapView ?: return@LaunchedEffect
@@ -876,7 +761,7 @@ fun OsmMapView(
                 ?: locationFix?.let { GeoPoint(it.lat, it.lng) } ?: latLng?.let { GeoPoint(it.first, it.second) },
             altitude = altitudeM,
             isGpsFallback = isAltitudeFallback,
-            fontScaleFactor = fontScale.scaleFactor,
+            fontScaleFactor = layerState.fontScale.scaleFactor,
             currentSpeedKmh = currentSpeed,
             isGpsMode = (altitudeSourceMode == AltitudeSourceMode.GPS),
             savedPlaces = savedPlaces,
@@ -892,8 +777,6 @@ fun OsmMapView(
             showSettingsDialog = true
         }
     }
-    var hikingOverlayRef by remember { mutableStateOf<TilesOverlay?>(null) }
-    var hikingProviderRef by remember { mutableStateOf<MapTileProviderBasic?>(null) }
     val currentFix = remember(locationFix, latLng) {
         locationFix ?: latLng?.let {
             LocationFix(it.first, it.second, it.third, 0f, System.currentTimeMillis())
@@ -918,7 +801,7 @@ fun OsmMapView(
     val latestAltitudeSourceMode by rememberUpdatedState(altitudeSourceMode)
     val latestSavedPlaces by rememberUpdatedState(savedPlaces)
     val latestShowAltitudeOnMap by rememberUpdatedState(showAltitudeOnMap)
-    val latestFontScale by rememberUpdatedState(fontScale)
+    val latestFontScale by rememberUpdatedState(layerState.fontScale)
     val latestVisibleGuests by rememberUpdatedState(visibleGuests)
     val latestSpiderfyPositions by rememberUpdatedState(currentSpiderfyPositions)
     val tripManagerRef = remember(context) { TripManager.getInstance(context) }
@@ -932,142 +815,20 @@ fun OsmMapView(
     var lastFrozenBearing by remember { mutableStateOf(currentFix?.bearing) }
 
 
-    // Dynamic Base Layer Switch
-    LaunchedEffect(baseLayer, mapView) {
-        val map = mapView ?: return@LaunchedEffect
-        val tileSource = when (baseLayer) {
-            MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
-            MapBaseLayer.FREEMAP_OUTDOOR -> FreemapOutdoorSource
-            MapBaseLayer.TOPO -> OpenTopoMapSource
-            MapBaseLayer.SATELLITE -> EsriSatelliteSource
-        }
-        val layerMaxZoom = if (baseLayer == MapBaseLayer.TOPO) 17.85 else maxZoom
-        map.maxZoomLevel = layerMaxZoom
-        if (map.zoomLevelDouble > layerMaxZoom) {
-            map.controller.setZoom(layerMaxZoom)
-            currentZoom = layerMaxZoom
-        }
-        map.setTileSource(tileSource)
-        MapProfileConfigHelper.setBaseLayer(context, activityProfile, baseLayer)
-        map.invalidate()
-    }
-
-    // Sync Profile-Specific Map Settings when ActivityProfile switches
-    LaunchedEffect(activityProfile) {
-        val config = MapProfileConfigHelper.getConfig(context, activityProfile)
-        baseLayer = config.baseLayer
-        showHikingOverlay = config.showHikingOverlay
-        showOutdoorAreasOverlay = config.showOutdoorAreasOverlay
-        trailThickness = config.trailThickness
-        trailLineStyle = config.trailLineStyle
-        trailOpacity = config.trailOpacity
-        trailOverlayMode = config.trailOverlayMode
-        enabledTrailKinds = config.enabledTrailKinds
-        enabledTrailColors = config.enabledTrailColors
-        supplementMissingOsmTrails = config.supplementMissingOsmTrails
-        fontScale = config.fontScale
-        trackColorHex = config.trackColorHex
-        if (orientationMode != config.orientationMode) {
-            onOrientationModeChange?.invoke(config.orientationMode)
-        }
-    }
-
-    LaunchedEffect(trackColorHex, mapView) {
-        val map = mapView ?: return@LaunchedEffect
-        val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-        polyline?.outlinePaint?.color = trackColor
-        map.invalidate()
-    }
-
-    // Dynamic Label / Font Scale
-    LaunchedEffect(fontScale, mapView) {
-        val map = mapView ?: return@LaunchedEffect
-        map.tilesScaleFactor = fontScale.scaleFactor
-        MapProfileConfigHelper.setFontScale(context, activityProfile, fontScale)
-        map.invalidate()
-    }
-
-    // Dynamic Hiking / Tourist Trail Overlay (base-map-aware; never stacks duplicate overlays or over Freemap Outdoor)
-    LaunchedEffect(baseLayer, showHikingOverlay, trailThickness, trailLineStyle, trailOpacity, trailOverlayMode, enabledTrailKinds, enabledTrailColors, supplementMissingOsmTrails, mapView) {
-        val map = mapView ?: return@LaunchedEffect
-        MapProfileConfigHelper.setHikingOverlay(context, activityProfile, showHikingOverlay)
-        MapProfileConfigHelper.setTrailThickness(context, activityProfile, trailThickness)
-        MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, trailLineStyle)
-        MapProfileConfigHelper.setTrailOpacity(context, activityProfile, trailOpacity)
-        MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, trailOverlayMode)
-        MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, enabledTrailKinds)
-        MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, enabledTrailColors)
-        MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, supplementMissingOsmTrails)
-
-        val trailsAllowedOnBase = baseLayer != MapBaseLayer.FREEMAP_OUTDOOR
-        if (trailsAllowedOnBase && showHikingOverlay) {
-            if (trailOverlayMode == TrailOverlayMode.WAYMARKED) {
-                vectorTrailOverlayRef?.let { map.overlays.remove(it) }
-                if (hikingOverlayRef == null) {
-                    val provider = MapTileProviderBasic(context, WaymarkedTrailsHikingSource)
-                    val overlay = TilesOverlay(provider, context).apply {
-                        loadingBackgroundColor = Color.TRANSPARENT
-                        loadingLineColor = Color.TRANSPARENT
-                    }
-                    hikingProviderRef = provider
-                    hikingOverlayRef = overlay
-                }
-                hikingOverlayRef?.let {
-                    if (!map.overlays.contains(it)) {
-                        val insertIdx = if (map.overlays.size > 1) 1 else 0
-                        map.overlays.add(insertIdx, it)
-                    }
-                }
-            } else {
-                hikingOverlayRef?.let { map.overlays.remove(it) }
-                if (vectorTrailOverlayRef == null) {
-                    val vOverlay = VectorTrailOverlay(
-                        context = context,
-                        scope = scope,
-                        trailThickness = trailThickness,
-                        trailLineStyle = trailLineStyle,
-                        trailOpacity = trailOpacity,
-                        enabledKinds = enabledTrailKinds,
-                        enabledColors = enabledTrailColors,
-                        onTrailSelected = onTrailSelected
-                    )
-                    vectorTrailOverlayRef = vOverlay
-                }
-                vectorTrailOverlayRef?.let {
-                    it.trailThickness = trailThickness
-                    it.trailLineStyle = trailLineStyle
-                    it.trailOpacity = trailOpacity
-                    it.enabledKinds = enabledTrailKinds
-                    it.enabledColors = enabledTrailColors
-                    it.supplementOsmTrails = supplementMissingOsmTrails
-                    it.onTrailSelected = onTrailSelected
-                    if (!map.overlays.contains(it)) {
-                        val insertIdx = if (map.overlays.size > 1) 1 else 0
-                        map.overlays.add(insertIdx, it)
-                    }
-                    it.onFiltersUpdated(map)
-                }
-            }
-        } else {
-            hikingOverlayRef?.let { map.overlays.remove(it) }
-            vectorTrailOverlayRef?.let { map.overlays.remove(it) }
-        }
-        map.invalidate()
-    }
-
-    // Direct orientation for fixed modes; COURSE_UP is smoothly slewed at 35 FPS in the continuous frame loop
-    LaunchedEffect(orientationMode) {
-        val map = mapView ?: return@LaunchedEffect
-        when (orientationMode) {
-            MapOrientationMode.NORTH -> map.mapOrientation = 0f
-            MapOrientationMode.EAST -> map.mapOrientation = 270f
-            MapOrientationMode.SOUTH -> map.mapOrientation = 180f
-            MapOrientationMode.WEST -> map.mapOrientation = 90f
-            MapOrientationMode.COURSE_UP -> { /* smoothly handled at 35 FPS in frame loop */ }
-        }
-        currentMapOrientation = map.mapOrientation
-        map.invalidate()
-    }
+    MapTileAndTrailLayerEffects(
+        mapView = mapView,
+        context = context,
+        scope = scope,
+        activityProfile = activityProfile,
+        layerState = layerState,
+        maxZoom = maxZoom,
+        orientationMode = orientationMode,
+        polyline = polyline,
+        onCurrentZoomChange = { currentZoom = it },
+        onCurrentMapOrientationChange = { currentMapOrientation = it },
+        onTrailSelected = onTrailSelected,
+        onOrientationModeChange = { next -> onOrientationModeChange?.invoke(next) }
+    )
 
     // Filtered states reach the render pipeline from TrackingRuntime.states in the frame loop (every state,
     // in order); a fix without one (cached startup position) is fed here so the cursor can snap to it.
@@ -1100,6 +861,7 @@ fun OsmMapView(
     val compassArrow = remember { CompassArrow() }
     val onFootProfile = TrackingBridge.profileFor(activityProfile).maxSpeedMps <= RenderPipeline.ON_FOOT_MAX_SPEED_MPS
     val onFootNow = rememberUpdatedState(onFootProfile)
+    val latestTrackThickness by rememberUpdatedState(layerState.trackThickness)
     var movingForCompass by remember { mutableStateOf(false) }
     LaunchedEffect(currentFix?.speedMs) {
         movingForCompass = CompassPolicy.isMovingForCompass(currentFix?.speedMs ?: 0f, movingForCompass)
@@ -1224,7 +986,7 @@ fun OsmMapView(
         isAppInForeground,
         showAltitudeOnMap,
         isAltitudeFallback,
-        fontScale
+        layerState.fontScale
     ) {
         if (!isAppInForeground) return@LaunchedEffect
         var lastRenderedLat = 0.0
@@ -1234,7 +996,7 @@ fun OsmMapView(
         var lastRenderedAltitude = -999.0
         var lastRenderedAltitudeEnabled: Boolean? = null
         var lastRenderedIsFallback: Boolean? = null
-        var lastRenderedFontScaleFactor: Float = fontScale.scaleFactor
+        var lastRenderedFontScaleFactor: Float = layerState.fontScale.scaleFactor
         var lastFrameMs = 0L
         var lastActiveMs = 0L
 
@@ -1392,10 +1154,10 @@ fun OsmMapView(
 
                         // 1. Filtered trip polyline
                         if (latestShowFilteredPolyline) {
-                            val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                            val trackColor = try { Color.parseColor(layerState.trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
                             val line = polyline ?: Polyline(map).also {
                                 it.outlinePaint.color = trackColor
-                                it.outlinePaint.strokeWidth = 12f
+                                it.outlinePaint.strokeWidth = MapProfileConfigHelper.liveTrackWidthPx(latestTrackThickness)
                                 it.outlinePaint.strokeCap = Paint.Cap.ROUND
                                 it.outlinePaint.strokeJoin = Paint.Join.ROUND
                                 it.infoWindow = null
@@ -1536,741 +1298,97 @@ fun OsmMapView(
         }
     }
 
-    // Destination Pin (from Search)
-    LaunchedEffect(destinationPoint) {
-        val map = mapView ?: return@LaunchedEffect
-        if (destinationPoint == null) {
-            destMarker?.let { map.overlays.remove(it) }
-            destMarker = null
-            map.invalidate()
-            return@LaunchedEffect
+    MapDestinationAndPlaceEffects(
+        mapView = mapView,
+        context = context,
+        destinationPoint = destinationPoint,
+        selectedSavedPlace = selectedSavedPlace,
+        savedPlaces = savedPlaces,
+        pauses = pauses,
+        effectiveOpticalOffsetY = effectiveOpticalOffsetY,
+        effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+        onFollowingChange = { isFollowing = it },
+        onDestinationMarkerClick = onDestinationMarkerClick,
+        onSavedPlaceClick = onSavedPlaceClick
+    )
+
+    MapLiveTrackPrefixEffect(
+        mapView = mapView,
+        trackPoints = trackPoints,
+        rawTrackPoints = rawTrackPoints,
+        isRecording = isRecording,
+        showFilteredPolyline = showFilteredPolyline,
+        showRawPolyline = showRawPolyline,
+        trackColorHex = layerState.trackColorHex,
+        trackThickness = layerState.trackThickness,
+        liveLine = liveLine,
+        pencilTrail = pencilTrail,
+        tripManagerRef = tripManagerRef,
+        polyline = polyline,
+        rawPolyline = rawPolyline,
+        marker = marker,
+        locationFix = locationFix,
+        latLng = latLng,
+        latestFixSpeedMs = latestFix?.speedMs ?: 0f,
+        onCommittedThroughMsChange = { committedThroughMs = it },
+        onPolylineChange = { polyline = it },
+        onRawPolylineChange = { rawPolyline = it }
+    )
+
+    MapGuestMarkersEffect(
+        mapView = mapView,
+        context = context,
+        visibleGuests = visibleGuests,
+        showGuestDistanceBadge = showGuestDistanceBadge,
+        latLng = latLng,
+        currentZoom = currentZoom,
+        currentMapOrientation = currentMapOrientation,
+        viewportScrollBucket = viewportScrollBucket,
+        fontScale = layerState.fontScale,
+        savedPlaces = savedPlaces,
+        hostMarker = marker,
+        altitudeOverlay = altitudeOverlay,
+        density = density,
+        onGuestClick = currentOnGuestClick,
+        onSpiderfyPositionsChanged = { currentSpiderfyPositions = it }
+    )
+
+    MapBoundaryAndOutdoorEffects(
+        mapView = mapView,
+        context = context,
+        boundaryPoints = boundaryPoints,
+        pinnedBoundaryPoints = pinnedBoundaryPoints,
+        prePinZoom = prePinZoom,
+        onPrePinCaptured = { z, c ->
+            prePinZoom = z
+            prePinCenter = c
+        },
+        outdoorAreaBoundaryPoints = outdoorAreaBoundaryPoints,
+        outdoorAreaBoundaryPolygons = outdoorAreaBoundaryPolygons,
+        outdoorAreaKind = outdoorAreaKind,
+        outdoorAreaName = outdoorAreaName,
+        outdoorAreaCenter = outdoorAreaCenter,
+        outdoorAreaIsExplicit = outdoorAreaIsExplicit,
+        showOutdoorAreasOverlay = layerState.showOutdoorAreasOverlay,
+        fitOutdoorAreaTrigger = fitOutdoorAreaTrigger,
+        searchRoutePolylines = searchRoutePolylines,
+        searchRouteColorHex = searchRouteColorHex,
+        searchRouteFitTrigger = searchRouteFitTrigger,
+        density = density,
+        isLandscape = isLandscape,
+        isCompact = isCompact,
+        measuredTopInsetPx = measuredTopInsetPx,
+        measuredBottomInsetPx = measuredBottomInsetPx,
+        effectiveOpticalOffsetY = effectiveOpticalOffsetY,
+        effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+        isRecording = isRecording,
+        isAutoStandby = isAutoStandby,
+        onFollowingChange = { isFollowing = it },
+        onZoomCalculated = { currentZoom = it },
+        onUserInteracted = {
+            lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
         }
-
-        isFollowing = false
-        map.mapOrientation = 0f
-
-        val dm = destMarker ?: Marker(map).also {
-            it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            it.infoWindow = null
-            map.overlays.add(it)
-            destMarker = it
-        }
-        dm.position = destinationPoint
-        dm.icon = makeDestIcon(context)
-        dm.infoWindow = null
-        dm.setOnMarkerClickListener { _, _ ->
-            onDestinationMarkerClick?.invoke()
-            true // Consumed! No blank popup bubble
-        }
-
-        val centerGp = getOpticalCenter(map, destinationPoint, effectiveOpticalOffsetY)
-        map.controller.animateTo(centerGp)
-        map.invalidate()
-    }
-
-    // Center camera on Selected Saved Place
-    LaunchedEffect(selectedSavedPlace) {
-        val map = mapView ?: return@LaunchedEffect
-        val sp = selectedSavedPlace ?: return@LaunchedEffect
-        isFollowing = false
-        val centerGp = getOpticalCenter(map, sp.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-        map.controller.animateTo(centerGp)
-    }
-
-    // Saved Places Custom Pins
-    var savedPlaceMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
-    LaunchedEffect(savedPlaces) {
-        val map = mapView ?: return@LaunchedEffect
-        // Remove existing custom place markers
-        savedPlaceMarkers.forEach { map.overlays.remove(it) }
-
-        val newMarkers = mutableListOf<Marker>()
-        savedPlaces.forEach { place ->
-            val spm = Marker(map).apply {
-                position = place.geoPoint
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                icon = makeSavedPlaceIcon(context, place)
-                title = "${place.category.iconEmoji} ${place.name}"
-                snippet = listOfNotNull(
-                    place.street.takeIf { it.isNotBlank() },
-                    place.locality.takeIf { it.isNotBlank() }
-                ).joinToString(", ")
-                infoWindow = null
-                setOnMarkerClickListener { _, _ ->
-                    val centerGp = getOpticalCenter(map, place.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                    map.controller.animateTo(centerGp)
-                    onSavedPlaceClick?.invoke(place)
-                    true // Consumed! No blank OSM popup
-                }
-            }
-            map.overlays.add(spm)
-            newMarkers.add(spm)
-        }
-        savedPlaceMarkers = newMarkers
-        map.invalidate()
-    }
-
-    // Update live trip polyline (Filtered & Raw)
-    LaunchedEffect(trackPoints, rawTrackPoints, isRecording, showFilteredPolyline, showRawPolyline) {
-        val map = mapView ?: return@LaunchedEffect
-        if (!isRecording) {
-            liveLine.clear()
-            pencilTrail.clear()
-            committedThroughMs = -1L
-            if (trackPoints.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
-                polyline?.let { map.overlays.remove(it) }
-                polyline = null
-                rawPolyline?.let { map.overlays.remove(it) }
-                rawPolyline = null
-                map.invalidate()
-                return@LaunchedEffect
-            }
-
-            if (showFilteredPolyline && trackPoints.isNotEmpty()) {
-                val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-                val line = polyline ?: Polyline(map).also {
-                    it.outlinePaint.color = trackColor
-                    it.outlinePaint.strokeWidth = 12f
-                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
-                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
-                    it.infoWindow = null
-                    it.setOnClickListener { _, _, _ -> true }
-                    addOverlayAboveTiles(map, it)
-                    polyline = it
-                }
-
-                addOverlayAboveTiles(map, line)
-                line.setPoints(LiveTrackLine.curved(trackPoints))
-            } else {
-                polyline?.let { map.overlays.remove(it) }
-                polyline = null
-            }
-
-            if (showRawPolyline && rawTrackPoints.isNotEmpty()) {
-                val rawLine = rawPolyline ?: Polyline(map).also {
-                    it.outlinePaint.color = Color.parseColor("#06B6D4")
-                    it.outlinePaint.strokeWidth = 4f
-                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
-                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
-                    it.infoWindow = null
-                    it.setOnClickListener { _, _, _ -> true }
-                    addOverlayAboveTiles(map, it)
-                    rawPolyline = it
-                }
-
-                addOverlayAboveTiles(map, rawLine)
-                rawLine.setPoints(rawTrackPoints)
-            } else {
-                rawPolyline?.let { map.overlays.remove(it) }
-                rawPolyline = null
-            }
-            map.invalidate()
-        } else {
-            // When actively recording: committed points come from TripManager (smoothed track). Rebuild the
-            // committed prefix whenever that list changes (resume, background gap, restore); the per-frame
-            // loop appends the dynamic tail. This is the single source of the live polyline.
-            if (!showFilteredPolyline) {
-                polyline?.let { map.overlays.remove(it) }
-                polyline = null
-            } else {
-                val committedGeoPoints = trackPoints.map { p -> GeoPoint(p.latitude, p.longitude) }
-                liveLine.setCommitted(committedGeoPoints)
-                committedThroughMs = tripManagerRef.lastCommittedElapsedMs
-                if (trackPoints.isEmpty()) pencilTrail.clear()
-                pencilTrail.pruneThrough(committedThroughMs)
-                val currentPt = marker?.position
-                    ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
-                    ?: latLng?.let { GeoPoint(it.first, it.second) }
-                val tip = currentPt ?: trackPoints.lastOrNull()
-                if (tip != null) {
-                    val curSpeedMps = (latestFix?.speedMs ?: 0f).toDouble()
-                    liveLine.rebuildTail(pencilTrail, tip, committedThroughMs, speedMps = curSpeedMps)
-                    polyline?.setPoints(liveLine.points)
-                }
-            }
-
-            if (!showRawPolyline) {
-                rawPolyline?.let { map.overlays.remove(it) }
-                rawPolyline = null
-            } else if (rawTrackPoints.isNotEmpty()) {
-                val rawLine = rawPolyline ?: Polyline(map).also {
-                    it.outlinePaint.color = Color.parseColor("#06B6D4")
-                    it.outlinePaint.strokeWidth = 4f
-                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
-                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
-                    it.infoWindow = null
-                    it.setOnClickListener { _, _, _ -> true }
-                    addOverlayAboveTiles(map, it)
-                    rawPolyline = it
-                }
-                rawLine.setPoints(rawTrackPoints)
-            }
-            map.invalidate()
-        }
-    }
-
-    // Render Rest Stops / Pauses along polyline
-    var pauseMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
-    LaunchedEffect(pauses) {
-        val map = mapView ?: return@LaunchedEffect
-        pauseMarkers.forEach { map.overlays.remove(it) }
-        pauseMarkers = emptyList()
-
-        if (pauses.isEmpty()) {
-            map.invalidate()
-            return@LaunchedEffect
-        }
-
-        val newPauseMarkers = mutableListOf<Marker>()
-        pauses.filter { it.durationMs >= 30_000L }.forEach { p ->
-            val pm = Marker(map).apply {
-                position = GeoPoint(p.latitude, p.longitude)
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                val durText = when {
-                    p.durationMs < 60_000L -> "${p.durationMs / 1000}s"
-                    p.durationMs < 3600_000L -> "${p.durationMs / 60000}m"
-                    else -> "${p.durationMs / 3600000}h ${(p.durationMs % 3600000) / 60000}m"
-                }
-                icon = makePauseIcon(context, durText)
-                infoWindow = null
-                setOnMarkerClickListener { _, _ -> true }
-            }
-            map.overlays.add(pm)
-            newPauseMarkers.add(pm)
-        }
-        pauseMarkers = newPauseMarkers
-        map.invalidate()
-    }
-
-    // Render Guest Markers (Follow back guest positions)
-    val zoomSpiderfyBucket = kotlin.math.round(currentZoom * 8.0).toInt()
-    val orientationSpiderfyBucket = kotlin.math.round(currentMapOrientation / 5.0).toInt()
-    LaunchedEffect(
-        visibleGuests,
-        showGuestDistanceBadge,
-        latLng,
-        zoomSpiderfyBucket,
-        orientationSpiderfyBucket,
-        viewportScrollBucket,
-        fontScale,
-        savedPlaces.size
-    ) {
-        val map = mapView ?: return@LaunchedEffect
-
-        if (visibleGuests.isEmpty()) {
-            if (guestMarkersMap.isNotEmpty()) {
-                guestMarkersMap.values.forEach { map.overlays.remove(it) }
-                guestMarkersMap.clear()
-                guestMarkerBadgeKeys.clear()
-                guestLeaderLinesOverlay.updateLines(emptyList())
-                map.overlays.remove(guestLeaderLinesOverlay)
-                map.invalidate()
-            }
-            return@LaunchedEffect
-        }
-
-        val visibleIds = visibleGuests.map { it.id }.toSet()
-        val removedIds = guestMarkersMap.keys.filter { it !in visibleIds }
-        var mapChanged = false
-
-        if (removedIds.isNotEmpty()) {
-            removedIds.forEach { id ->
-                guestMarkersMap.remove(id)?.let { map.overlays.remove(it) }
-                guestMarkerBadgeKeys.remove(id)
-            }
-            mapChanged = true
-        }
-
-        val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
-        val hostGp = marker?.position ?: latLng?.let { GeoPoint(it.first, it.second) }
-        val obstacleGps = savedPlaces.map { it.geoPoint }
-        val effectiveZoom = if (currentZoom > 0.0) currentZoom else map.zoomLevelDouble
-        val vpCenter = GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
-        val vpWidthDp = (map.width / density).toDouble().takeIf { it > 100.0 } ?: 360.0
-        val vpHeightDp = (map.height / density).toDouble().takeIf { it > 100.0 } ?: 760.0
-
-        val spiderfyPositions = computeSpiderfyOffsets(
-            guests = visibleGuests,
-            hostPos = hostGp,
-            obstaclePoints = obstacleGps,
-            zoomLevel = effectiveZoom,
-            density = density,
-            mapOrientationDeg = map.mapOrientation,
-            fontScaleFactor = fontScale.scaleFactor,
-            showGuestDistanceBadge = showGuestDistanceBadge,
-            viewportCenter = vpCenter,
-            viewportWidthDp = vpWidthDp,
-            viewportHeightDp = vpHeightDp
-        )
-        currentSpiderfyPositions = spiderfyPositions
-
-        val spiderfyLines = visibleGuests.mapNotNull { guest ->
-            val disp = spiderfyPositions[guest.id]
-            if (disp != null && (disp.latitude != guest.lat || disp.longitude != guest.lng)) {
-                GuestSpiderfyLine(
-                    realPos = guest.geoPoint,
-                    displayPos = disp,
-                    colorArgb = LiveGuest.getColor(guest.colorIndex),
-                    isInactive = guest.isInactive
-                )
-            } else null
-        }
-        guestLeaderLinesOverlay.updateLines(spiderfyLines)
-        if (spiderfyLines.isNotEmpty()) {
-            if (!map.overlays.contains(guestLeaderLinesOverlay)) {
-                val firstGuestIdx = guestMarkersMap.values.firstOrNull()?.let { map.overlays.indexOf(it) } ?: -1
-                if (firstGuestIdx >= 0) {
-                    map.overlays.add(firstGuestIdx, guestLeaderLinesOverlay)
-                } else {
-                    val altIdx = map.overlays.indexOf(altitudeOverlay)
-                    val insertIdx = if (altIdx >= 0) altIdx else map.overlays.size
-                    map.overlays.add(insertIdx, guestLeaderLinesOverlay)
-                }
-                mapChanged = true
-            }
-        } else {
-            if (map.overlays.contains(guestLeaderLinesOverlay)) {
-                map.overlays.remove(guestLeaderLinesOverlay)
-                mapChanged = true
-            }
-        }
-
-        visibleGuests.forEach { guest ->
-            val distMeters = if (hostLoc != null) {
-                val results = FloatArray(1)
-                android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, guest.lat, guest.lng, results)
-                results[0]
-            } else null
-
-            val badgeText = GuestMarkerHelper.formatBadgeText(guest, distMeters, showGuestDistanceBadge)
-            val fontScaleFactor = latestFontScale.scaleFactor
-            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText|$fontScaleFactor"
-            val displayPos = spiderfyPositions[guest.id] ?: guest.geoPoint
-
-            val existingMarker = guestMarkersMap[guest.id]
-            val gm = if (existingMarker != null) {
-                if (existingMarker.position.latitude != displayPos.latitude || existingMarker.position.longitude != displayPos.longitude) {
-                    existingMarker.position = displayPos
-                    mapChanged = true
-                }
-                if (guestMarkerBadgeKeys[guest.id] != badgeKey) {
-                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
-                    existingMarker.icon = iconResult.drawable
-                    existingMarker.setAnchor(iconResult.anchorX, iconResult.anchorY)
-                    guestMarkerBadgeKeys[guest.id] = badgeKey
-                    mapChanged = true
-                }
-                if (!map.overlays.contains(existingMarker)) {
-                    insertGuestMarkerBelowHostOverlays(map, existingMarker, marker, altitudeOverlay)
-                    mapChanged = true
-                }
-                existingMarker
-            } else {
-                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
-                val newMarker = Marker(map).apply {
-                    position = displayPos
-                    setAnchor(iconResult.anchorX, iconResult.anchorY)
-                    icon = iconResult.drawable
-                }
-                guestMarkersMap[guest.id] = newMarker
-                guestMarkerBadgeKeys[guest.id] = badgeKey
-                insertGuestMarkerBelowHostOverlays(map, newMarker, marker, altitudeOverlay)
-                mapChanged = true
-                newMarker
-            }
-
-            gm.title = guest.name
-            val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
-            val statusStr = if (guest.isInactive) " (inactive)" else ""
-            gm.snippet = "Guest$statusStr$distStr"
-            gm.infoWindow = null
-            gm.setOnMarkerClickListener { _, _ ->
-                if (currentOnGuestClick != null) {
-                    currentOnGuestClick?.invoke(guest)
-                } else {
-                    val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
-                    val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
-                    android.widget.Toast.makeText(
-                        context,
-                        "👤 ${guest.name}$statusInfo$distInfo",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                }
-                true
-            }
-        }
-
-        if (mapChanged) {
-            map.invalidate()
-        }
-    }
-
-    // Render Boundary Polygon (Phase 2)
-    LaunchedEffect(boundaryPoints) {
-        val map = mapView ?: return@LaunchedEffect
-        boundaryPolygon?.let { map.overlays.remove(it) }
-        boundaryPolygon = null
-
-        if (boundaryPoints != null && boundaryPoints.size >= 3) {
-            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
-                outlinePaint.color = Color.parseColor("#38BDF8") // Sky blue border
-                outlinePaint.strokeWidth = 5f
-                fillPaint.color = Color.parseColor("#2238BDF8")  // Semi-transparent blue fill
-                points = boundaryPoints
-                infoWindow = null
-                setOnClickListener { _, _, _ -> true }
-            }
-            map.overlays.add(0, poly)
-            boundaryPolygon = poly
-        }
-        map.invalidate()
-    }
-
-    // Render Pinned Locality Boundary Polygon (Red-ish dashed styling, distinct from sky-blue GPS boundary)
-    LaunchedEffect(pinnedBoundaryPoints) {
-        val map = mapView ?: return@LaunchedEffect
-        pinnedBoundaryPolygon?.let { map.overlays.remove(it) }
-        pinnedBoundaryPolygon = null
-
-        if (pinnedBoundaryPoints != null && pinnedBoundaryPoints.size >= 3) {
-            if (prePinZoom == null) {
-                prePinZoom = map.zoomLevelDouble
-                prePinCenter = GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
-            }
-            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
-                outlinePaint.color = Color.parseColor("#EF4444") // Coral/Crimson Red border
-                outlinePaint.strokeWidth = 6f
-                outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
-                fillPaint.color = Color.parseColor("#20EF4444")  // Subtle red tint
-                points = pinnedBoundaryPoints
-                infoWindow = null
-                setOnClickListener { _, _, _ -> true }
-            }
-            map.overlays.add(0, poly)
-            pinnedBoundaryPolygon = poly
-            isFollowing = false
-            map.mapOrientation = 0f
-            fitPointsToUnobstructedViewport(
-                map = map,
-                points = pinnedBoundaryPoints,
-                density = density,
-                isLandscape = isLandscape,
-                isCompact = isCompact,
-                measuredTopInsetPx = measuredTopInsetPx,
-                measuredBottomInsetPx = measuredBottomInsetPx,
-                isRecording = isRecording,
-                isAutoStandby = isAutoStandby,
-                onZoomCalculated = { currentZoom = it }
-            )
-        }
-        map.invalidate()
-    }
-
-    // Render Outdoor Area Boundary Polygons (Mountain Ranges in Amber #F59E0B, Parks/Reserves in Emerald #10B981)
-    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaKind, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
-        val map = mapView ?: return@LaunchedEffect
-        outdoorBoundaryPolygons.forEach { map.overlays.remove(it) }
-        outdoorBoundaryPolygons = emptyList()
-
-        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
-            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
-            ?: emptyList()
-
-        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && effectivePolys.isNotEmpty()) {
-            val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
-            val strokeCol = if (isRange) Color.parseColor("#F59E0B") else Color.parseColor("#10B981")
-            val fillCol = if (isRange) Color.parseColor("#14F59E0B") else Color.parseColor("#1810B981")
-            val dashArray = if (isRange) floatArrayOf(24f, 12f) else floatArrayOf(18f, 10f)
-
-            val created = mutableListOf<org.osmdroid.views.overlay.Polygon>()
-            for (ringPts in effectivePolys) {
-                val poly = org.osmdroid.views.overlay.Polygon(map).apply {
-                    outlinePaint.color = strokeCol
-                    outlinePaint.strokeWidth = if (isRange) 6f else 5.5f
-                    outlinePaint.pathEffect = android.graphics.DashPathEffect(dashArray, 0f)
-                    fillPaint.color = fillCol
-                    points = ringPts
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                }
-                map.overlays.add(0, poly)
-                created.add(poly)
-            }
-            outdoorBoundaryPolygons = created
-        }
-        map.invalidate()
-    }
-
-    // Render Outdoor Area On-Map Badge Marker (sticking to the map at area center, styled with border color)
-    var outdoorAreaMarker by remember { mutableStateOf<Marker?>(null) }
-    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaName, outdoorAreaKind, outdoorAreaCenter, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
-        val map = mapView ?: return@LaunchedEffect
-        outdoorAreaMarker?.let { map.overlays.remove(it) }
-        outdoorAreaMarker = null
-
-        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
-            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
-            ?: emptyList()
-        val validExplicitCenter = outdoorAreaCenter?.takeIf {
-            kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
-        }
-
-        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && !outdoorAreaName.isNullOrBlank() &&
-            (effectivePolys.isNotEmpty() || validExplicitCenter != null)
-        ) {
-            val center = validExplicitCenter ?: effectivePolys.firstOrNull()?.let { pts ->
-                val bb = BoundingBox.fromGeoPoints(pts)
-                GeoPoint(bb.centerLatitude, bb.centerLongitude)
-            }
-            if (center != null) {
-                val om = Marker(map).apply {
-                    position = center
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = makeOutdoorAreaBadgeIcon(context, outdoorAreaName, outdoorAreaKind)
-                    infoWindow = null
-                    setOnMarkerClickListener { _, _ ->
-                        val allPts = effectivePolys.flatten()
-                        if (allPts.isNotEmpty()) {
-                            isFollowing = false
-                            lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                            fitPointsToUnobstructedViewport(
-                                map = map,
-                                points = allPts,
-                                density = density,
-                                isLandscape = isLandscape,
-                                isCompact = isCompact,
-                                measuredTopInsetPx = measuredTopInsetPx,
-                                measuredBottomInsetPx = measuredBottomInsetPx,
-                                isRecording = isRecording,
-                                isAutoStandby = isAutoStandby,
-                                onZoomCalculated = { currentZoom = it }
-                            )
-                        }
-                        true
-                    }
-                }
-                map.overlays.add(om)
-                outdoorAreaMarker = om
-            }
-        }
-        map.invalidate()
-    }
-
-    // Fit-to-outdoor-area trigger
-    LaunchedEffect(fitOutdoorAreaTrigger) {
-        if (fitOutdoorAreaTrigger > 0L) {
-            kotlinx.coroutines.delay(40L)
-            val map = mapView ?: return@LaunchedEffect
-            val allPts = (outdoorAreaBoundaryPolygons?.flatten() ?: outdoorAreaBoundaryPoints).orEmpty()
-            val validCenter = outdoorAreaCenter?.takeIf {
-                kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
-            }
-            if (allPts.isNotEmpty()) {
-                isFollowing = false
-                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                map.mapOrientation = 0f
-                fitPointsToUnobstructedViewport(
-                    map = map,
-                    points = allPts,
-                    density = density,
-                    isLandscape = isLandscape,
-                    isCompact = isCompact,
-                    measuredTopInsetPx = measuredTopInsetPx,
-                    measuredBottomInsetPx = measuredBottomInsetPx,
-                    isRecording = isRecording,
-                    isAutoStandby = isAutoStandby,
-                    onZoomCalculated = { currentZoom = it }
-                )
-                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-            } else if (validCenter != null) {
-                isFollowing = false
-                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                map.mapOrientation = 0f
-                val centerGp = getOpticalCenter(map, validCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.setZoom(12.0)
-                map.controller.animateTo(centerGp)
-            }
-        }
-    }
-
-    // Render Search Route Polylines (Full trail routes or rivers)
-    LaunchedEffect(searchRoutePolylines, searchRouteColorHex, searchRouteFitTrigger) {
-        val map = mapView ?: return@LaunchedEffect
-        searchRouteOverlays.forEach { map.overlays.remove(it) }
-        searchRouteOverlays = emptyList()
-
-        if (!searchRoutePolylines.isNullOrEmpty()) {
-            kotlinx.coroutines.delay(40L)
-            val newPolys = mutableListOf<Polyline>()
-            val allRoutePts = mutableListOf<GeoPoint>()
-            val density = context.resources.displayMetrics.density
-            val routeColor = try { Color.parseColor(searchRouteColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-            for (linePoints in searchRoutePolylines) {
-                if (linePoints.size < 2) continue
-                allRoutePts.addAll(linePoints)
-                val poly = Polyline(map).apply {
-                    outlinePaint.color = routeColor
-                    outlinePaint.strokeWidth = 6.0f * density
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    setPoints(linePoints)
-                }
-                map.overlays.add(poly)
-                newPolys.add(poly)
-            }
-            searchRouteOverlays = newPolys
-            if (allRoutePts.size >= 2) {
-                isFollowing = false
-                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                map.mapOrientation = 0f
-                fitPointsToUnobstructedViewport(
-                    map = map,
-                    points = allRoutePts,
-                    density = density,
-                    isLandscape = isLandscape,
-                    isCompact = isCompact,
-                    measuredTopInsetPx = measuredTopInsetPx,
-                    measuredBottomInsetPx = measuredBottomInsetPx,
-                    isRecording = isRecording,
-                    isAutoStandby = isAutoStandby,
-                    onZoomCalculated = { currentZoom = it }
-                )
-                lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-            }
-        }
-        map.invalidate()
-    }
-
-    // Render Selected Past Trips with Distinct Colors (Filtered & Raw)
-    // Invariant: When an active trip is actively recording or trackPoints is present,
-    // NEVER render past trips on the map.
-    LaunchedEffect(selectedTrips, isRecording, trackPoints.size, showFilteredPolyline, showRawPolyline) {
-        val map = mapView ?: return@LaunchedEffect
-        // Remove existing past trip polylines
-        selectedTripPolylines.forEach { map.overlays.remove(it) }
-        selectedTripPolylines = emptyList()
-        selectedTripRawPolylines.forEach { map.overlays.remove(it) }
-        selectedTripRawPolylines = emptyList()
-
-        if (isRecording || trackPoints.isNotEmpty() || selectedTrips.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
-            map.invalidate()
-            return@LaunchedEffect
-        }
-
-        val colors = listOf(
-            "#EF4444", // Vivid Red
-            "#3B82F6", // Blue
-            "#10B981", // Emerald Green
-            "#F59E0B", // Amber
-            "#8B5CF6", // Purple
-            "#EC4899", // Pink
-            "#14B8A6", // Teal
-            "#F97316"  // Orange
-        )
-
-        val newLines = mutableListOf<Polyline>()
-        val newRawLines = mutableListOf<Polyline>()
-        selectedTrips.forEachIndexed { index, trip ->
-            if (showFilteredPolyline && trip.points.size >= 2) {
-                val colorHex = if (selectedTrips.size == 1) {
-                    MapProfileConfigHelper.getConfig(context, trip.activityProfile).trackColorHex
-                } else {
-                    colors[index % colors.size]
-                }
-                val curvedPoints = LiveTrackLine.curved(trip.points)
-                val line = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor(colorHex)
-                    outlinePaint.strokeWidth = 8f
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(curvedPoints)
-                }
-                addOverlayAboveTiles(map, line)
-                newLines.add(line)
-            }
-
-            if (showRawPolyline && trip.rawPoints.size >= 2) {
-                val rawLine = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor("#06B6D4")
-                    outlinePaint.strokeWidth = 4f
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(trip.rawPoints)
-                }
-                addOverlayAboveTiles(map, rawLine)
-                newRawLines.add(rawLine)
-            }
-        }
-        selectedTripPolylines = newLines
-        selectedTripRawPolylines = newRawLines
-        map.invalidate()
-    }
-
-    // Render Road / Path Heat Map Layer (Density of all recorded paths, frequency-based coloring)
-    var allHeatMapPoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
-    var heatMapFolderOverlay by remember { mutableStateOf<FolderOverlay?>(null) }
-
-    LaunchedEffect(heatMapTracks, showHeatMap, heatMapConsolidate, heatMapMinVisits) {
-        val map = mapView ?: return@LaunchedEffect
-        heatMapFolderOverlay?.let { map.overlays.remove(it) }
-        heatMapFolderOverlay = null
-        heatMapPolylines.forEach { map.overlays.remove(it) }
-        heatMapPolylines = emptyList()
-
-        if (!showHeatMap || heatMapTracks.isEmpty()) {
-            allHeatMapPoints = emptyList()
-            map.invalidate()
-            return@LaunchedEffect
-        }
-
-        val processed = withContext(Dispatchers.Default) {
-            HeatMapEngine.processTracks(
-                heatMapTracks,
-                HeatMapOptions(
-                    consolidateCorridors = heatMapConsolidate,
-                    minVisits = heatMapMinVisits,
-                    epsilonMeters = 10.0
-                )
-            )
-        }
-
-        allHeatMapPoints = processed.allSimplifiedPoints
-
-        val folder = FolderOverlay().apply { name = "HeatMapLayer" }
-        // Draw from lowest to highest thermal tier so peak thermal lines render on top
-        listOf(
-            HeatMapTier.TIER_1_BLUE,
-            HeatMapTier.TIER_2_CYAN,
-            HeatMapTier.TIER_3_GREEN,
-            HeatMapTier.TIER_4_YELLOW,
-            HeatMapTier.TIER_5_ORANGE,
-            HeatMapTier.TIER_6_RED,
-            HeatMapTier.TIER_7_MAGENTA
-        ).forEach { tier ->
-            val paths = processed.tierPolylines[tier] ?: emptyList()
-            paths.forEach { path ->
-                if (path.size >= 2) {
-                    val poly = Polyline(map).apply {
-                        outlinePaint.color = tier.colorArgb
-                        outlinePaint.strokeWidth = tier.strokeWidth
-                        outlinePaint.strokeCap = Paint.Cap.ROUND
-                        outlinePaint.strokeJoin = Paint.Join.ROUND
-                        infoWindow = null
-                        setOnClickListener { _, _, _ -> true }
-                        setPoints(path)
-                    }
-                    folder.add(poly)
-                }
-            }
-        }
-        map.overlays.add(0, folder)
-        heatMapFolderOverlay = folder
-        map.invalidate()
-    }
+    )
 
     // Collect all visible points (selected past trips OR active recording track OR live sharing group)
     // Invariant 1: When past trips are selected, ONLY fit the selected trip points. Never inflate the bounding box with live guests or host location in other cities.
@@ -2301,260 +1419,81 @@ fun OsmMapView(
         pts
     }
 
-    // Fit-to-track trigger (fits all shown trips: active and/or selected)
-    LaunchedEffect(fitTrackTrigger) {
-        if (fitTrackTrigger > 0L) {
-            val map = mapView ?: return@LaunchedEffect
-            val pointsToFit = if (allShownPoints.isNotEmpty()) {
-                allShownPoints
-            } else if (latLng != null) {
-                listOf(GeoPoint(latLng.first, latLng.second))
-            } else emptyList()
-            if (pointsToFit.isNotEmpty()) {
-                isFollowing = false
-                fitPointsToUnobstructedViewport(
-                    map = map,
-                    points = pointsToFit,
-                    density = density,
-                    isLandscape = isLandscape,
-                    isCompact = isCompact,
-                    measuredTopInsetPx = measuredTopInsetPx,
-                    measuredBottomInsetPx = measuredBottomInsetPx,
-                    isRecording = isRecording,
-                    isAutoStandby = isAutoStandby,
-                    onZoomCalculated = { currentZoom = it }
-                )
-            }
-        }
-    }
+    var allHeatMapPoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
 
-    // Fit-to-saved-places trigger
-    LaunchedEffect(fitPlacesTrigger) {
-        if (fitPlacesTrigger > 0L && savedPlaces.isNotEmpty()) {
-            val map = mapView ?: return@LaunchedEffect
-            isFollowing = false
-            fitPointsToUnobstructedViewport(
-                map = map,
-                points = savedPlaces.map { it.geoPoint },
-                density = density,
-                isLandscape = isLandscape,
-                isCompact = isCompact,
-                measuredTopInsetPx = measuredTopInsetPx,
-                measuredBottomInsetPx = measuredBottomInsetPx,
-                isRecording = isRecording,
-                isAutoStandby = isAutoStandby,
-                onZoomCalculated = { currentZoom = it }
-            )
-        }
-    }
-
-    // Fit-to-heat-map trigger
-    LaunchedEffect(fitHeatMapTrigger) {
-        if (fitHeatMapTrigger > 0L) {
-            val map = mapView ?: return@LaunchedEffect
-            isFollowing = false
-            val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
-            if (pts.isNotEmpty()) {
-                try {
-                    val rawBox = BoundingBox.fromGeoPoints(pts)
-                    val minSpan = 0.008
-                    val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
-                    val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
-                    val centerLat = rawBox.centerLatitude
-                    val centerLon = rawBox.centerLongitude
-                    val paddedBox = BoundingBox(
-                        centerLat + latSpan * 0.55,
-                        centerLon + lonSpan * 0.55,
-                        centerLat - latSpan * 0.55,
-                        centerLon - lonSpan * 0.55
-                    )
-                    map.zoomToBoundingBox(paddedBox, true, 120)
-                } catch (e: Exception) {}
-            }
-        }
-    }
-
-    LaunchedEffect(isFollowing) {
-        onFollowingChanged?.invoke(isFollowing)
-    }
-
-    LaunchedEffect(currentZoom) {
-        onZoomChanged?.invoke(currentZoom)
-    }
-
-    LaunchedEffect(recenterTrigger) {
-        if (recenterTrigger > 0L) {
-            isFollowing = true
-            effectiveLatLng?.let { pos ->
-                val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                mapView?.controller?.setCenter(centerGp)
-            }
-            mapView?.invalidate()
-        }
-    }
-
-    LaunchedEffect(zoomResetTrigger) {
-        if (zoomResetTrigger > 0L) {
-            val map = mapView ?: return@LaunchedEffect
-            isFollowing = true
-            val targetZoom = MAP_CONVENIENT_ZOOM.coerceIn(map.minZoomLevel, map.maxZoomLevel)
-            map.controller.stopAnimation(false)
-            map.controller.setZoom(targetZoom)
-            currentZoom = targetZoom
-            effectiveLatLng?.let { pos ->
-                val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.setCenter(centerGp)
-            }
-            map.invalidate()
-        }
-    }
+    MapSelectedAndHeatEffects(
+        mapView = mapView,
+        context = context,
+        selectedTrips = selectedTrips,
+        isRecording = isRecording,
+        trackPoints = trackPoints,
+        showFilteredPolyline = showFilteredPolyline,
+        showRawPolyline = showRawPolyline,
+        trackThickness = layerState.trackThickness,
+        activityProfile = activityProfile,
+        heatMapTracks = heatMapTracks,
+        showHeatMap = showHeatMap,
+        heatMapConsolidate = heatMapConsolidate,
+        heatMapMinVisits = heatMapMinVisits,
+        allHeatMapPoints = allHeatMapPoints,
+        onAllHeatMapPointsChanged = { allHeatMapPoints = it },
+        allShownPoints = allShownPoints,
+        latLng = latLng,
+        effectiveLatLng = effectiveLatLng,
+        savedPlaces = savedPlaces,
+        isFollowing = isFollowing,
+        currentZoom = currentZoom,
+        fitTrackTrigger = fitTrackTrigger,
+        fitPlacesTrigger = fitPlacesTrigger,
+        fitHeatMapTrigger = fitHeatMapTrigger,
+        recenterTrigger = recenterTrigger,
+        zoomResetTrigger = zoomResetTrigger,
+        density = density,
+        isLandscape = isLandscape,
+        isCompact = isCompact,
+        measuredTopInsetPx = measuredTopInsetPx,
+        measuredBottomInsetPx = measuredBottomInsetPx,
+        isAutoStandby = isAutoStandby,
+        effectiveOpticalOffsetY = effectiveOpticalOffsetY,
+        effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+        onFollowingChange = { isFollowing = it },
+        onZoomChange = { currentZoom = it },
+        onFollowingChanged = onFollowingChanged,
+        onZoomChanged = onZoomChanged
+    )
 
     Box(modifier = modifier) {
+        val hasOverlaySelectionNow by rememberUpdatedState(
+            destinationPoint != null || selectedSavedPlace != null || outdoorAreaBoundaryPoints != null
+        )
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                MapView(ctx).apply {
-                    val initialTileSource = when (baseLayer) {
-                        MapBaseLayer.STANDARD -> TileSourceFactory.MAPNIK
-                        MapBaseLayer.FREEMAP_OUTDOOR -> FreemapOutdoorSource
-                        MapBaseLayer.TOPO -> OpenTopoMapSource
-                        MapBaseLayer.SATELLITE -> EsriSatelliteSource
-                    }
-                    setTileSource(initialTileSource)
-                    tilesScaleFactor = fontScale.scaleFactor
-                    setMultiTouchControls(true)
-                    val rotationGestureOverlay = RotationGestureOverlay(this).apply {
-                        isEnabled = true
-                    }
-                    overlays.add(rotationGestureOverlay)
-                    minZoomLevel = minZoom
-                    maxZoomLevel = maxZoom
-                    val locPrefs = ctx.getSharedPreferences("online.hatala.whereami.loc_prefs", Context.MODE_PRIVATE)
-                    val savedLat = try { locPrefs.getFloat("cached_lat", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
-                    val savedLon = try { locPrefs.getFloat("cached_lon", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
-                    val lastSysLoc = if (savedLat == null || savedLon == null) {
-                        try {
-                            val fineGranted = androidx.core.content.ContextCompat.checkSelfPermission(
-                                ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
-                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                            val coarseGranted = androidx.core.content.ContextCompat.checkSelfPermission(
-                                ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION
-                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                            if (fineGranted || coarseGranted) {
-                                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
-                                lm?.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
-                                    ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
-                                    ?: lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
-                            } else null
-                        } catch (_: Exception) { null }
-                    } else null
-
-                    val hasInitialFix = locationFix != null || latLng != null || (savedLat != null && savedLon != null) || lastSysLoc != null
-                    val initialZoom = if (hasInitialFix) 16.0 else 2.5
-                    controller.setZoom(initialZoom)
-                    currentZoom = initialZoom
-
-                    val initialLat = locationFix?.lat ?: latLng?.first ?: savedLat ?: lastSysLoc?.latitude ?: 0.0
-                    val initialLon = locationFix?.lng ?: latLng?.second ?: savedLon ?: lastSysLoc?.longitude ?: 0.0
-                    val initialOpticalCenter = calculateOpticalCenter(
-                        lat = initialLat,
-                        lon = initialLon,
-                        zoom = initialZoom,
-                        mapOrientation = 0f,
-                        offsetPixelsY = effectiveOpticalOffsetY,
-                        offsetPixelsX = effectiveOpticalOffsetX
-                    )
-                    controller.setCenter(initialOpticalCenter)
-                    // Disable blur-inducing tile upscaling; render crisp 1:1 pixel native tiles
-                    isTilesScaledToDpi = false
-                    zoomController.setVisibility(
-                        org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
-                    )
-
-                    // Map gesture listener:
-                    // Long-press drops a pin at that point & reverse geocodes.
-                    // Single-tap clears active pin/saved place card if visible, without dropping a new pin or showing any empty hint/bubble!
-                    val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
-                        override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                            if (destinationPoint != null || selectedSavedPlace != null || outdoorAreaBoundaryPoints != null) {
-                                onClearDestination?.invoke()
-                            }
-                            // Always consume single tap and close any lingering info windows to guarantee no empty hint appears
-                            org.osmdroid.views.overlay.infowindow.InfoWindow.closeAllInfoWindowsOn(this@apply)
-                            return true
-                        }
-                        override fun longPressHelper(p: GeoPoint): Boolean {
-                            currentOnMapClick?.invoke(p)
-                            return true
-                        }
-                    })
-                    overlays.add(0, eventsOverlay)
-
-                    var isUserDragging = false
-                    setOnTouchListener { _, event ->
-                        lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                        when (event.actionMasked) {
-                            android.view.MotionEvent.ACTION_DOWN -> {
-                                isUserDragging = true
-                                isUserTouchingMap = true
-                            }
-                            android.view.MotionEvent.ACTION_MOVE -> {
-                                isUserDragging = true
-                                isUserTouchingMap = true
-                                isFollowing = false
-                            }
-                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                                isUserDragging = false
-                                isUserTouchingMap = false
-                            }
-                        }
-                        false
-                    }
-
-                    var lastScrollSpiderfyLat = 0.0
-                    var lastScrollSpiderfyLng = 0.0
-                    addMapListener(object : org.osmdroid.events.MapListener {
-                        override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
-                            if (isUserDragging) {
-                                isFollowing = false
-                            }
-                            if (kotlin.math.abs(mapOrientation - currentMapOrientation) >= 2f) {
-                                currentMapOrientation = mapOrientation
-                            }
-                            if (kotlin.math.abs(zoomLevelDouble - currentZoom) >= 0.05) {
-                                currentZoom = zoomLevelDouble
-                            }
-                            if (latestVisibleGuests.isNotEmpty()) {
-                                val c = mapCenter
-                                val dLat = kotlin.math.abs(c.latitude - lastScrollSpiderfyLat)
-                                val dLng = kotlin.math.abs(c.longitude - lastScrollSpiderfyLng)
-                                val spanLat = boundingBox.latitudeSpan.coerceAtLeast(1e-5)
-                                val spanLng = boundingBox.longitudeSpanWithDateLine.coerceAtLeast(1e-5)
-                                if (dLat > spanLat * 0.06 || dLng > spanLng * 0.06) {
-                                    lastScrollSpiderfyLat = c.latitude
-                                    lastScrollSpiderfyLng = c.longitude
-                                    viewportScrollBucket++
-                                }
-                            }
-                            return false
-                        }
-                        override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
-                            currentZoom = event?.zoomLevel ?: zoomLevelDouble
-                            currentMapOrientation = mapOrientation
-                            viewportScrollBucket++
-                            postDelayed({
-                                if (kotlin.math.abs(zoomLevelDouble - currentZoom) >= 0.02) {
-                                    currentZoom = zoomLevelDouble
-                                }
-                                viewportScrollBucket++
-                            }, 350L)
-                            return false
-                        }
-                    })
-                    mapView = this
-                }
+                createConfiguredOsmMapView(
+                    ctx = ctx,
+                    baseLayer = layerState.baseLayer,
+                    fontScale = layerState.fontScale,
+                    minZoom = minZoom,
+                    maxZoom = maxZoom,
+                    locationFix = locationFix,
+                    latLng = latLng,
+                    effectiveOpticalOffsetY = effectiveOpticalOffsetY,
+                    effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+                    hasOverlaySelectionProvider = { hasOverlaySelectionNow },
+                    onClearDestination = { onClearDestination?.invoke() },
+                    onMapLongPress = { p -> currentOnMapClick?.invoke(p) },
+                    isFollowingProvider = { isFollowing },
+                    onFollowingChange = { isFollowing = it },
+                    onTouchingMapChange = { isUserTouchingMap = it },
+                    onInteractionElapsed = { lastMapInteractionElapsedMs = it },
+                    currentMapOrientationProvider = { currentMapOrientation },
+                    onCurrentMapOrientationChange = { currentMapOrientation = it },
+                    currentZoomProvider = { currentZoom },
+                    onCurrentZoomChange = { currentZoom = it },
+                    hasVisibleGuestsProvider = { latestVisibleGuests.isNotEmpty() },
+                    onViewportScrollIncrement = { viewportScrollBucket++ },
+                    onCreated = { mapView = it }
+                )
             },
             update = { }
         )
@@ -2570,7 +1509,7 @@ fun OsmMapView(
             destinationPoint = destinationPoint,
             selectedSavedPlace = selectedSavedPlace,
             onClearDestination = onClearDestination,
-            hikingProviderRef = hikingProviderRef,
+            hikingProviderRef = layerState.hikingProviderRef,
             orientationMode = orientationMode,
             effectiveLatLng = effectiveLatLng,
             lastFrozenBearing = lastFrozenBearing,
@@ -2671,50 +1610,7 @@ fun OsmMapView(
     if (showSettingsDialog) {
         MapSettingsDialogHost(
             activityProfile = activityProfile,
-            baseLayer = baseLayer,
-            onBaseLayerChange = { baseLayer = it },
-            showHikingOverlay = showHikingOverlay,
-            onHikingOverlayToggle = { showHikingOverlay = it },
-            showOutdoorAreasOverlay = showOutdoorAreasOverlay,
-            onOutdoorAreasOverlayToggle = { enabled ->
-                showOutdoorAreasOverlay = enabled
-                MapProfileConfigHelper.setOutdoorAreasOverlay(context, activityProfile, enabled)
-            },
-            trailThickness = trailThickness,
-            onTrailThicknessChange = { thickness ->
-                trailThickness = thickness
-                MapProfileConfigHelper.setTrailThickness(context, activityProfile, thickness)
-            },
-            trailLineStyle = trailLineStyle,
-            onTrailLineStyleChange = { style ->
-                trailLineStyle = style
-                MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, style)
-            },
-            trailOpacity = trailOpacity,
-            onTrailOpacityChange = { op ->
-                trailOpacity = op
-                MapProfileConfigHelper.setTrailOpacity(context, activityProfile, op)
-            },
-            trailOverlayMode = trailOverlayMode,
-            onTrailOverlayModeChange = { mode ->
-                trailOverlayMode = mode
-                MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, mode)
-            },
-            enabledTrailKinds = enabledTrailKinds,
-            onEnabledTrailKindsChange = { kinds ->
-                enabledTrailKinds = kinds
-                MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, kinds)
-            },
-            enabledTrailColors = enabledTrailColors,
-            onEnabledTrailColorsChange = { colors ->
-                enabledTrailColors = colors
-                MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, colors)
-            },
-            supplementMissingOsmTrails = supplementMissingOsmTrails,
-            onSupplementMissingOsmTrailsChange = { enabled ->
-                supplementMissingOsmTrails = enabled
-                MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, enabled)
-            },
+            layerState = layerState,
             showBorders = showBorders,
             onToggleBorders = onToggleBorders,
             showHeatMap = showHeatMap,
@@ -2746,8 +1642,6 @@ fun OsmMapView(
             },
             altitudeSourceMode = altitudeSourceMode,
             onAltitudeSourceModeChange = onAltitudeSourceModeChange,
-            fontScale = fontScale,
-            onFontScaleChange = { fontScale = it },
             orientationMode = orientationMode,
             onOrientationModeChange = { nextMode ->
                 currentOnOrientationChange?.invoke(nextMode)
@@ -2766,12 +1660,6 @@ fun OsmMapView(
             effectiveLatLng = effectiveLatLng,
             lastFrozenBearing = lastFrozenBearing,
             mapView = mapView,
-            hikingProviderRef = hikingProviderRef,
-            trackColorHex = trackColorHex,
-            onTrackColorChange = { newColor ->
-                MapProfileConfigHelper.setTrackColor(context, activityProfile, newColor)
-                trackColorHex = newColor
-            },
             onOpenCacheManager = {
                 showSettingsDialog = false
                 onOpenCacheManager?.invoke()
@@ -2807,8 +1695,1313 @@ fun OsmMapView(
 
     DisposableEffect(Unit) {
         onDispose {
-            hikingProviderRef?.clearTileCache()
+            layerState.hikingProviderRef?.clearTileCache()
             mapView?.onDetach()
+        }
+    }
+}
+
+@androidx.compose.runtime.Stable
+private class OsmMapLayerState(initial: ProfileMapConfig) {
+    var baseLayer by mutableStateOf(initial.baseLayer)
+    var showHikingOverlay by mutableStateOf(initial.showHikingOverlay)
+    var showOutdoorAreasOverlay by mutableStateOf(initial.showOutdoorAreasOverlay)
+    var trailThickness by mutableStateOf(initial.trailThickness)
+    var trailLineStyle by mutableStateOf(initial.trailLineStyle)
+    var trailOpacity by mutableStateOf(initial.trailOpacity)
+    var trailOverlayMode by mutableStateOf(initial.trailOverlayMode)
+    var enabledTrailKinds by mutableStateOf(initial.enabledTrailKinds)
+    var enabledTrailColors by mutableStateOf(initial.enabledTrailColors)
+    var supplementMissingOsmTrails by mutableStateOf(initial.supplementMissingOsmTrails)
+    var fontScale by mutableStateOf(initial.fontScale)
+    var trackColorHex by mutableStateOf(initial.trackColorHex)
+    var trackThickness by mutableStateOf(initial.trackThickness)
+    var hikingOverlayRef by mutableStateOf<TilesOverlay?>(null)
+    var hikingProviderRef by mutableStateOf<MapTileProviderBasic?>(null)
+    var vectorTrailOverlayRef by mutableStateOf<VectorTrailOverlay?>(null)
+
+    fun applyConfig(cfg: ProfileMapConfig) {
+        baseLayer = cfg.baseLayer
+        showHikingOverlay = cfg.showHikingOverlay
+        showOutdoorAreasOverlay = cfg.showOutdoorAreasOverlay
+        trailThickness = cfg.trailThickness
+        trailLineStyle = cfg.trailLineStyle
+        trailOpacity = cfg.trailOpacity
+        trailOverlayMode = cfg.trailOverlayMode
+        enabledTrailKinds = cfg.enabledTrailKinds
+        enabledTrailColors = cfg.enabledTrailColors
+        supplementMissingOsmTrails = cfg.supplementMissingOsmTrails
+        fontScale = cfg.fontScale
+        trackColorHex = cfg.trackColorHex
+        trackThickness = cfg.trackThickness
+    }
+}
+
+@Composable
+private fun MapTileAndTrailLayerEffects(
+    mapView: MapView?,
+    context: Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    activityProfile: ActivityProfile,
+    layerState: OsmMapLayerState,
+    maxZoom: Double,
+    orientationMode: MapOrientationMode,
+    polyline: Polyline?,
+    onCurrentZoomChange: (Double) -> Unit,
+    onCurrentMapOrientationChange: (Float) -> Unit,
+    onTrailSelected: ((TrailVectorSegment) -> Unit)?,
+    onOrientationModeChange: (MapOrientationMode) -> Unit
+) {
+    LaunchedEffect(layerState.baseLayer, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        val tileSource = MapTileSourceRegistry.tileSourceFor(layerState.baseLayer)
+        val layerMaxZoom = MapTileSourceRegistry.maxZoomFor(layerState.baseLayer, maxZoom)
+        map.maxZoomLevel = layerMaxZoom
+        if (map.zoomLevelDouble > layerMaxZoom) {
+            map.controller.setZoom(layerMaxZoom)
+            onCurrentZoomChange(layerMaxZoom)
+        }
+        map.setTileSource(tileSource)
+        MapProfileConfigHelper.setBaseLayer(context, activityProfile, layerState.baseLayer)
+        map.invalidate()
+    }
+
+    LaunchedEffect(activityProfile) {
+        val config = MapProfileConfigHelper.getConfig(context, activityProfile)
+        layerState.applyConfig(config)
+        if (orientationMode != config.orientationMode) {
+            onOrientationModeChange(config.orientationMode)
+        }
+    }
+
+    LaunchedEffect(layerState.trackColorHex, layerState.trackThickness, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        val trackColor = try { Color.parseColor(layerState.trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+        polyline?.outlinePaint?.color = trackColor
+        polyline?.outlinePaint?.strokeWidth = MapProfileConfigHelper.liveTrackWidthPx(layerState.trackThickness)
+        map.invalidate()
+    }
+
+    LaunchedEffect(layerState.fontScale, mapView) {
+        val map = mapView ?: return@LaunchedEffect
+        map.tilesScaleFactor = layerState.fontScale.scaleFactor
+        MapProfileConfigHelper.setFontScale(context, activityProfile, layerState.fontScale)
+        map.invalidate()
+    }
+
+    LaunchedEffect(
+        layerState.baseLayer,
+        layerState.showHikingOverlay,
+        layerState.trailThickness,
+        layerState.trailLineStyle,
+        layerState.trailOpacity,
+        layerState.trailOverlayMode,
+        layerState.enabledTrailKinds,
+        layerState.enabledTrailColors,
+        layerState.supplementMissingOsmTrails,
+        mapView
+    ) {
+        val map = mapView ?: return@LaunchedEffect
+        MapProfileConfigHelper.setHikingOverlay(context, activityProfile, layerState.showHikingOverlay)
+        MapProfileConfigHelper.setTrailThickness(context, activityProfile, layerState.trailThickness)
+        MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, layerState.trailLineStyle)
+        MapProfileConfigHelper.setTrailOpacity(context, activityProfile, layerState.trailOpacity)
+        MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, layerState.trailOverlayMode)
+        MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, layerState.enabledTrailKinds)
+        MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, layerState.enabledTrailColors)
+        MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, layerState.supplementMissingOsmTrails)
+
+        val trailsAllowedOnBase = layerState.baseLayer != MapBaseLayer.FREEMAP_OUTDOOR
+        if (trailsAllowedOnBase && layerState.showHikingOverlay) {
+            if (layerState.trailOverlayMode == TrailOverlayMode.WAYMARKED) {
+                layerState.vectorTrailOverlayRef?.let { map.overlays.remove(it) }
+                var activeOverlay = layerState.hikingOverlayRef
+                var activeProvider = layerState.hikingProviderRef
+                if (activeOverlay == null) {
+                    activeProvider = MapTileProviderBasic(context, MapTileSourceRegistry.WaymarkedTrailsHikingSource)
+                    activeOverlay = TilesOverlay(activeProvider, context).apply {
+                        loadingBackgroundColor = Color.TRANSPARENT
+                        loadingLineColor = Color.TRANSPARENT
+                    }
+                    layerState.hikingOverlayRef = activeOverlay
+                    layerState.hikingProviderRef = activeProvider
+                }
+                if (!map.overlays.contains(activeOverlay)) {
+                    val insertIdx = if (map.overlays.size > 1) 1 else 0
+                    map.overlays.add(insertIdx, activeOverlay)
+                }
+            } else {
+                layerState.hikingOverlayRef?.let { map.overlays.remove(it) }
+                var vOverlay = layerState.vectorTrailOverlayRef
+                if (vOverlay == null) {
+                    vOverlay = VectorTrailOverlay(
+                        context = context,
+                        scope = scope,
+                        trailThickness = layerState.trailThickness,
+                        trailLineStyle = layerState.trailLineStyle,
+                        trailOpacity = layerState.trailOpacity,
+                        enabledKinds = layerState.enabledTrailKinds,
+                        enabledColors = layerState.enabledTrailColors,
+                        onTrailSelected = onTrailSelected
+                    )
+                    layerState.vectorTrailOverlayRef = vOverlay
+                }
+                vOverlay.trailThickness = layerState.trailThickness
+                vOverlay.trailLineStyle = layerState.trailLineStyle
+                vOverlay.trailOpacity = layerState.trailOpacity
+                vOverlay.enabledKinds = layerState.enabledTrailKinds
+                vOverlay.enabledColors = layerState.enabledTrailColors
+                vOverlay.supplementOsmTrails = layerState.supplementMissingOsmTrails
+                vOverlay.onTrailSelected = onTrailSelected
+                if (!map.overlays.contains(vOverlay)) {
+                    val insertIdx = if (map.overlays.size > 1) 1 else 0
+                    map.overlays.add(insertIdx, vOverlay)
+                }
+                vOverlay.onFiltersUpdated(map)
+            }
+        } else {
+            layerState.hikingOverlayRef?.let { map.overlays.remove(it) }
+            layerState.vectorTrailOverlayRef?.let { map.overlays.remove(it) }
+        }
+        map.invalidate()
+    }
+
+    LaunchedEffect(orientationMode) {
+        val map = mapView ?: return@LaunchedEffect
+        when (orientationMode) {
+            MapOrientationMode.NORTH -> map.mapOrientation = 0f
+            MapOrientationMode.EAST -> map.mapOrientation = 270f
+            MapOrientationMode.SOUTH -> map.mapOrientation = 180f
+            MapOrientationMode.WEST -> map.mapOrientation = 90f
+            MapOrientationMode.COURSE_UP -> {}
+        }
+        onCurrentMapOrientationChange(map.mapOrientation)
+        map.invalidate()
+    }
+}
+
+@Composable
+private fun MapLiveTrackPrefixEffect(
+    mapView: MapView?,
+    trackPoints: List<GeoPoint>,
+    rawTrackPoints: List<GeoPoint>,
+    isRecording: Boolean,
+    showFilteredPolyline: Boolean,
+    showRawPolyline: Boolean,
+    trackColorHex: String,
+    trackThickness: TrailThickness,
+    liveLine: LiveTrackLine,
+    pencilTrail: PencilTrail,
+    tripManagerRef: TripManager,
+    polyline: Polyline?,
+    rawPolyline: Polyline?,
+    marker: Marker?,
+    locationFix: LocationFix?,
+    latLng: Triple<Double, Double, Float?>?,
+    latestFixSpeedMs: Float,
+    onCommittedThroughMsChange: (Long) -> Unit,
+    onPolylineChange: (Polyline?) -> Unit,
+    onRawPolylineChange: (Polyline?) -> Unit
+) {
+    LaunchedEffect(trackPoints, rawTrackPoints, isRecording, showFilteredPolyline, showRawPolyline) {
+        val map = mapView ?: return@LaunchedEffect
+        if (!isRecording) {
+            liveLine.clear()
+            pencilTrail.clear()
+            onCommittedThroughMsChange(-1L)
+            if (trackPoints.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
+                polyline?.let { map.overlays.remove(it) }
+                onPolylineChange(null)
+                rawPolyline?.let { map.overlays.remove(it) }
+                onRawPolylineChange(null)
+                map.invalidate()
+                return@LaunchedEffect
+            }
+
+            if (showFilteredPolyline && trackPoints.isNotEmpty()) {
+                val trackColor = try { Color.parseColor(trackColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                val line = polyline ?: Polyline(map).also {
+                    it.outlinePaint.color = trackColor
+                    it.outlinePaint.strokeWidth = MapProfileConfigHelper.liveTrackWidthPx(trackThickness)
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    onPolylineChange(it)
+                }
+                addOverlayAboveTiles(map, line)
+                line.setPoints(LiveTrackLine.curved(trackPoints))
+            } else {
+                polyline?.let { map.overlays.remove(it) }
+                onPolylineChange(null)
+            }
+
+            if (showRawPolyline && rawTrackPoints.isNotEmpty()) {
+                val rawLine = rawPolyline ?: Polyline(map).also {
+                    it.outlinePaint.color = Color.parseColor("#06B6D4")
+                    it.outlinePaint.strokeWidth = 4f
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    onRawPolylineChange(it)
+                }
+                addOverlayAboveTiles(map, rawLine)
+                rawLine.setPoints(rawTrackPoints)
+            } else {
+                rawPolyline?.let { map.overlays.remove(it) }
+                onRawPolylineChange(null)
+            }
+            map.invalidate()
+        } else {
+            if (!showFilteredPolyline) {
+                polyline?.let { map.overlays.remove(it) }
+                onPolylineChange(null)
+            } else {
+                val committedGeoPoints = trackPoints.map { p -> GeoPoint(p.latitude, p.longitude) }
+                liveLine.setCommitted(committedGeoPoints)
+                val committedMs = tripManagerRef.lastCommittedElapsedMs
+                onCommittedThroughMsChange(committedMs)
+                if (trackPoints.isEmpty()) pencilTrail.clear()
+                pencilTrail.pruneThrough(committedMs)
+                val currentPt = marker?.position
+                    ?: locationFix?.let { GeoPoint(it.lat, it.lng) }
+                    ?: latLng?.let { GeoPoint(it.first, it.second) }
+                val tip = currentPt ?: trackPoints.lastOrNull()
+                if (tip != null) {
+                    liveLine.rebuildTail(pencilTrail, tip, committedMs, speedMps = latestFixSpeedMs.toDouble())
+                    polyline?.setPoints(liveLine.points)
+                }
+            }
+
+            if (!showRawPolyline) {
+                rawPolyline?.let { map.overlays.remove(it) }
+                onRawPolylineChange(null)
+            } else if (rawTrackPoints.isNotEmpty()) {
+                val rawLine = rawPolyline ?: Polyline(map).also {
+                    it.outlinePaint.color = Color.parseColor("#06B6D4")
+                    it.outlinePaint.strokeWidth = 4f
+                    it.outlinePaint.strokeCap = Paint.Cap.ROUND
+                    it.outlinePaint.strokeJoin = Paint.Join.ROUND
+                    it.infoWindow = null
+                    it.setOnClickListener { _, _, _ -> true }
+                    addOverlayAboveTiles(map, it)
+                    onRawPolylineChange(it)
+                }
+                rawLine.setPoints(rawTrackPoints)
+            }
+            map.invalidate()
+        }
+    }
+}
+
+private fun createConfiguredOsmMapView(
+    ctx: Context,
+    baseLayer: MapBaseLayer,
+    fontScale: MapFontScale,
+    minZoom: Double,
+    maxZoom: Double,
+    locationFix: LocationFix?,
+    latLng: Triple<Double, Double, Float?>?,
+    effectiveOpticalOffsetY: Int,
+    effectiveOpticalOffsetX: Int,
+    hasOverlaySelectionProvider: () -> Boolean,
+    onClearDestination: () -> Unit,
+    onMapLongPress: (GeoPoint) -> Unit,
+    isFollowingProvider: () -> Boolean,
+    onFollowingChange: (Boolean) -> Unit,
+    onTouchingMapChange: (Boolean) -> Unit,
+    onInteractionElapsed: (Long) -> Unit,
+    currentMapOrientationProvider: () -> Float,
+    onCurrentMapOrientationChange: (Float) -> Unit,
+    currentZoomProvider: () -> Double,
+    onCurrentZoomChange: (Double) -> Unit,
+    hasVisibleGuestsProvider: () -> Boolean,
+    onViewportScrollIncrement: () -> Unit,
+    onCreated: (MapView) -> Unit
+): MapView = MapView(ctx).apply {
+    val initialTileSource = MapTileSourceRegistry.tileSourceFor(baseLayer)
+    setTileSource(initialTileSource)
+    tilesScaleFactor = fontScale.scaleFactor
+    setMultiTouchControls(true)
+    val rotationGestureOverlay = RotationGestureOverlay(this).apply {
+        isEnabled = true
+    }
+    overlays.add(rotationGestureOverlay)
+    minZoomLevel = minZoom
+    maxZoomLevel = maxZoom
+    val locPrefs = ctx.getSharedPreferences("online.hatala.whereami.loc_prefs", Context.MODE_PRIVATE)
+    val savedLat = try { locPrefs.getFloat("cached_lat", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
+    val savedLon = try { locPrefs.getFloat("cached_lon", Float.NaN).takeIf { !it.isNaN() }?.toDouble() } catch (_: Exception) { null }
+    val lastSysLoc = if (savedLat == null || savedLon == null) {
+        try {
+            val fineGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val coarseGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (fineGranted || coarseGranted) {
+                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                lm?.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
+                    ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                    ?: lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+            } else null
+        } catch (_: Exception) { null }
+    } else null
+
+    val hasInitialFix = locationFix != null || latLng != null || (savedLat != null && savedLon != null) || lastSysLoc != null
+    val initialZoom = if (hasInitialFix) 16.0 else 2.5
+    controller.setZoom(initialZoom)
+    onCurrentZoomChange(initialZoom)
+
+    val initialLat = locationFix?.lat ?: latLng?.first ?: savedLat ?: lastSysLoc?.latitude ?: 0.0
+    val initialLon = locationFix?.lng ?: latLng?.second ?: savedLon ?: lastSysLoc?.longitude ?: 0.0
+    val initialOpticalCenter = calculateOpticalCenter(
+        lat = initialLat,
+        lon = initialLon,
+        zoom = initialZoom,
+        mapOrientation = 0f,
+        offsetPixelsY = effectiveOpticalOffsetY,
+        offsetPixelsX = effectiveOpticalOffsetX
+    )
+    controller.setCenter(initialOpticalCenter)
+    isTilesScaledToDpi = false
+    zoomController.setVisibility(
+        org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
+    )
+
+    val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
+        override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+            if (hasOverlaySelectionProvider()) {
+                onClearDestination()
+            }
+            org.osmdroid.views.overlay.infowindow.InfoWindow.closeAllInfoWindowsOn(this@apply)
+            return true
+        }
+        override fun longPressHelper(p: GeoPoint): Boolean {
+            onMapLongPress(p)
+            return true
+        }
+    })
+    overlays.add(0, eventsOverlay)
+
+    val touchFollowTracker = MapTouchFollowTracker(
+        touchSlopPx = android.view.ViewConfiguration.get(ctx).scaledTouchSlop.toFloat(),
+        edgeSlopPx = 32f * ctx.resources.displayMetrics.density
+    )
+    setOnTouchListener { view, event ->
+        onInteractionElapsed(android.os.SystemClock.elapsedRealtime())
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touchFollowTracker.onDown(event.x, event.y, view.width, isFollowingProvider())
+                onTouchingMapChange(true)
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                onTouchingMapChange(true)
+                if (touchFollowTracker.onMove(event.x, event.y)) {
+                    onFollowingChange(false)
+                }
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                onTouchingMapChange(false)
+                touchFollowTracker.onCancel()?.let { restored -> onFollowingChange(restored) }
+            }
+            android.view.MotionEvent.ACTION_UP -> {
+                onTouchingMapChange(false)
+                touchFollowTracker.onUp()
+            }
+        }
+        false
+    }
+
+    var lastScrollSpiderfyLat = 0.0
+    var lastScrollSpiderfyLng = 0.0
+    addMapListener(object : org.osmdroid.events.MapListener {
+        override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+            if (touchFollowTracker.isUserDragging) {
+                onFollowingChange(false)
+            }
+            if (kotlin.math.abs(mapOrientation - currentMapOrientationProvider()) >= 2f) {
+                onCurrentMapOrientationChange(mapOrientation)
+            }
+            if (kotlin.math.abs(zoomLevelDouble - currentZoomProvider()) >= 0.05) {
+                onCurrentZoomChange(zoomLevelDouble)
+            }
+            if (hasVisibleGuestsProvider()) {
+                val c = mapCenter
+                val dLat = kotlin.math.abs(c.latitude - lastScrollSpiderfyLat)
+                val dLng = kotlin.math.abs(c.longitude - lastScrollSpiderfyLng)
+                val spanLat = boundingBox.latitudeSpan.coerceAtLeast(1e-5)
+                val spanLng = boundingBox.longitudeSpanWithDateLine.coerceAtLeast(1e-5)
+                if (dLat > spanLat * 0.06 || dLng > spanLng * 0.06) {
+                    lastScrollSpiderfyLat = c.latitude
+                    lastScrollSpiderfyLng = c.longitude
+                    onViewportScrollIncrement()
+                }
+            }
+            return false
+        }
+        override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+            val z = event?.zoomLevel ?: zoomLevelDouble
+            onCurrentZoomChange(z)
+            onCurrentMapOrientationChange(mapOrientation)
+            onViewportScrollIncrement()
+            postDelayed({
+                if (kotlin.math.abs(zoomLevelDouble - currentZoomProvider()) >= 0.02) {
+                    onCurrentZoomChange(zoomLevelDouble)
+                }
+                onViewportScrollIncrement()
+            }, 350L)
+            return false
+        }
+    })
+    onCreated(this)
+}
+
+@Composable
+private fun MapDestinationAndPlaceEffects(
+    mapView: MapView?,
+    context: Context,
+    destinationPoint: GeoPoint?,
+    selectedSavedPlace: SavedPlace?,
+    savedPlaces: List<SavedPlace>,
+    pauses: List<TripPause>,
+    effectiveOpticalOffsetY: Int,
+    effectiveOpticalOffsetX: Int,
+    onFollowingChange: (Boolean) -> Unit,
+    onDestinationMarkerClick: (() -> Unit)?,
+    onSavedPlaceClick: ((SavedPlace) -> Unit)?
+) {
+    var destMarker by remember { mutableStateOf<Marker?>(null) }
+    LaunchedEffect(destinationPoint) {
+        val map = mapView ?: return@LaunchedEffect
+        if (destinationPoint == null) {
+            destMarker?.let { map.overlays.remove(it) }
+            destMarker = null
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        onFollowingChange(false)
+        map.mapOrientation = 0f
+
+        val dm = destMarker ?: Marker(map).also {
+            it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            it.infoWindow = null
+            map.overlays.add(it)
+            destMarker = it
+        }
+        dm.position = destinationPoint
+        dm.icon = makeDestIcon(context)
+        dm.infoWindow = null
+        dm.setOnMarkerClickListener { _, _ ->
+            onDestinationMarkerClick?.invoke()
+            true
+        }
+
+        val centerGp = getOpticalCenter(map, destinationPoint, effectiveOpticalOffsetY)
+        map.controller.animateTo(centerGp)
+        map.invalidate()
+    }
+
+    LaunchedEffect(selectedSavedPlace) {
+        val map = mapView ?: return@LaunchedEffect
+        val sp = selectedSavedPlace ?: return@LaunchedEffect
+        onFollowingChange(false)
+        val centerGp = getOpticalCenter(map, sp.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+        map.controller.animateTo(centerGp)
+    }
+
+    var savedPlaceMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    LaunchedEffect(savedPlaces) {
+        val map = mapView ?: return@LaunchedEffect
+        savedPlaceMarkers.forEach { map.overlays.remove(it) }
+
+        val newMarkers = mutableListOf<Marker>()
+        savedPlaces.forEach { place ->
+            val spm = Marker(map).apply {
+                position = place.geoPoint
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                icon = makeSavedPlaceIcon(context, place)
+                title = "${place.category.iconEmoji} ${place.name}"
+                snippet = listOfNotNull(
+                    place.street.takeIf { it.isNotBlank() },
+                    place.locality.takeIf { it.isNotBlank() }
+                ).joinToString(", ")
+                infoWindow = null
+                setOnMarkerClickListener { _, _ ->
+                    val centerGp = getOpticalCenter(map, place.geoPoint, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                    map.controller.animateTo(centerGp)
+                    onSavedPlaceClick?.invoke(place)
+                    true
+                }
+            }
+            map.overlays.add(spm)
+            newMarkers.add(spm)
+        }
+        savedPlaceMarkers = newMarkers
+        map.invalidate()
+    }
+
+    var pauseMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    LaunchedEffect(pauses) {
+        val map = mapView ?: return@LaunchedEffect
+        pauseMarkers.forEach { map.overlays.remove(it) }
+        pauseMarkers = emptyList()
+
+        if (pauses.isEmpty()) {
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        val newPauseMarkers = mutableListOf<Marker>()
+        pauses.filter { it.durationMs >= 30_000L }.forEach { p ->
+            val pm = Marker(map).apply {
+                position = GeoPoint(p.latitude, p.longitude)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                val durText = when {
+                    p.durationMs < 60_000L -> "${p.durationMs / 1000}s"
+                    p.durationMs < 3600_000L -> "${p.durationMs / 60000}m"
+                    else -> "${p.durationMs / 3600000}h ${(p.durationMs % 3600000) / 60000}m"
+                }
+                icon = makePauseIcon(context, durText)
+                infoWindow = null
+                setOnMarkerClickListener { _, _ -> true }
+            }
+            map.overlays.add(pm)
+            newPauseMarkers.add(pm)
+        }
+        pauseMarkers = newPauseMarkers
+        map.invalidate()
+    }
+}
+
+@Composable
+private fun MapGuestMarkersEffect(
+    mapView: MapView?,
+    context: Context,
+    visibleGuests: List<LiveGuest>,
+    showGuestDistanceBadge: Boolean,
+    latLng: Triple<Double, Double, Float?>?,
+    currentZoom: Double,
+    currentMapOrientation: Float,
+    viewportScrollBucket: Int,
+    fontScale: MapFontScale,
+    savedPlaces: List<SavedPlace>,
+    hostMarker: Marker?,
+    altitudeOverlay: AltitudeCursorBadgeOverlay,
+    density: Float,
+    onGuestClick: ((LiveGuest) -> Unit)?,
+    onSpiderfyPositionsChanged: (Map<String, GeoPoint>) -> Unit
+) {
+    val guestMarkersMap = remember { mutableMapOf<String, Marker>() }
+    val guestMarkerBadgeKeys = remember { mutableMapOf<String, String>() }
+    val guestLeaderLinesOverlay = remember(context) { GuestLeaderLinesOverlay(context) }
+
+    val zoomSpiderfyBucket = kotlin.math.round(currentZoom * 8.0).toInt()
+    val orientationSpiderfyBucket = kotlin.math.round(currentMapOrientation / 5.0).toInt()
+    LaunchedEffect(
+        visibleGuests,
+        showGuestDistanceBadge,
+        latLng,
+        zoomSpiderfyBucket,
+        orientationSpiderfyBucket,
+        viewportScrollBucket,
+        fontScale,
+        savedPlaces.size
+    ) {
+        val map = mapView ?: return@LaunchedEffect
+
+        if (visibleGuests.isEmpty()) {
+            if (guestMarkersMap.isNotEmpty()) {
+                guestMarkersMap.values.forEach { map.overlays.remove(it) }
+                guestMarkersMap.clear()
+                guestMarkerBadgeKeys.clear()
+                guestLeaderLinesOverlay.updateLines(emptyList())
+                map.overlays.remove(guestLeaderLinesOverlay)
+                map.invalidate()
+            }
+            return@LaunchedEffect
+        }
+
+        val visibleIds = visibleGuests.map { it.id }.toSet()
+        val removedIds = guestMarkersMap.keys.filter { it !in visibleIds }
+        var mapChanged = false
+
+        if (removedIds.isNotEmpty()) {
+            removedIds.forEach { id ->
+                guestMarkersMap.remove(id)?.let { map.overlays.remove(it) }
+                guestMarkerBadgeKeys.remove(id)
+            }
+            mapChanged = true
+        }
+
+        val hostLoc = latLng?.let { Triple(it.first, it.second, it.third) }
+        val hostGp = hostMarker?.position ?: latLng?.let { GeoPoint(it.first, it.second) }
+        val obstacleGps = savedPlaces.map { it.geoPoint }
+        val effectiveZoom = if (currentZoom > 0.0) currentZoom else map.zoomLevelDouble
+        val vpCenter = GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
+        val vpWidthDp = (map.width / density).toDouble().takeIf { it > 100.0 } ?: 360.0
+        val vpHeightDp = (map.height / density).toDouble().takeIf { it > 100.0 } ?: 760.0
+
+        val spiderfyPositions = computeSpiderfyOffsets(
+            guests = visibleGuests,
+            hostPos = hostGp,
+            obstaclePoints = obstacleGps,
+            zoomLevel = effectiveZoom,
+            density = density,
+            mapOrientationDeg = map.mapOrientation,
+            fontScaleFactor = fontScale.scaleFactor,
+            showGuestDistanceBadge = showGuestDistanceBadge,
+            viewportCenter = vpCenter,
+            viewportWidthDp = vpWidthDp,
+            viewportHeightDp = vpHeightDp
+        )
+        onSpiderfyPositionsChanged(spiderfyPositions)
+
+        val spiderfyLines = visibleGuests.mapNotNull { guest ->
+            val disp = spiderfyPositions[guest.id]
+            if (disp != null && (disp.latitude != guest.lat || disp.longitude != guest.lng)) {
+                GuestSpiderfyLine(
+                    realPos = guest.geoPoint,
+                    displayPos = disp,
+                    colorArgb = LiveGuest.getColor(guest.colorIndex),
+                    isInactive = guest.isInactive
+                )
+            } else null
+        }
+        guestLeaderLinesOverlay.updateLines(spiderfyLines)
+        if (spiderfyLines.isNotEmpty()) {
+            if (!map.overlays.contains(guestLeaderLinesOverlay)) {
+                val firstGuestIdx = guestMarkersMap.values.firstOrNull()?.let { map.overlays.indexOf(it) } ?: -1
+                if (firstGuestIdx >= 0) {
+                    map.overlays.add(firstGuestIdx, guestLeaderLinesOverlay)
+                } else {
+                    val altIdx = map.overlays.indexOf(altitudeOverlay)
+                    val insertIdx = if (altIdx >= 0) altIdx else map.overlays.size
+                    map.overlays.add(insertIdx, guestLeaderLinesOverlay)
+                }
+                mapChanged = true
+            }
+        } else {
+            if (map.overlays.contains(guestLeaderLinesOverlay)) {
+                map.overlays.remove(guestLeaderLinesOverlay)
+                mapChanged = true
+            }
+        }
+
+        val fontScaleFactor = fontScale.scaleFactor
+        visibleGuests.forEach { guest ->
+            val distMeters = if (hostLoc != null) {
+                val results = FloatArray(1)
+                android.location.Location.distanceBetween(hostLoc.first, hostLoc.second, guest.lat, guest.lng, results)
+                results[0]
+            } else null
+
+            val badgeText = GuestMarkerHelper.formatBadgeText(guest, distMeters, showGuestDistanceBadge)
+            val badgeKey = "${guest.name}|${guest.colorIndex}|${guest.isInactive}|$badgeText|$fontScaleFactor"
+            val displayPos = spiderfyPositions[guest.id] ?: guest.geoPoint
+
+            val existingMarker = guestMarkersMap[guest.id]
+            val gm = if (existingMarker != null) {
+                if (existingMarker.position.latitude != displayPos.latitude || existingMarker.position.longitude != displayPos.longitude) {
+                    existingMarker.position = displayPos
+                    mapChanged = true
+                }
+                if (guestMarkerBadgeKeys[guest.id] != badgeKey) {
+                    val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
+                    existingMarker.icon = iconResult.drawable
+                    existingMarker.setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    guestMarkerBadgeKeys[guest.id] = badgeKey
+                    mapChanged = true
+                }
+                if (!map.overlays.contains(existingMarker)) {
+                    insertGuestMarkerBelowHostOverlays(map, existingMarker, hostMarker, altitudeOverlay)
+                    mapChanged = true
+                }
+                existingMarker
+            } else {
+                val iconResult = makeGuestMarkerIcon(context, guest, distMeters, showGuestDistanceBadge, fontScaleFactor)
+                val newMarker = Marker(map).apply {
+                    position = displayPos
+                    setAnchor(iconResult.anchorX, iconResult.anchorY)
+                    icon = iconResult.drawable
+                }
+                guestMarkersMap[guest.id] = newMarker
+                guestMarkerBadgeKeys[guest.id] = badgeKey
+                insertGuestMarkerBelowHostOverlays(map, newMarker, hostMarker, altitudeOverlay)
+                mapChanged = true
+                newMarker
+            }
+
+            gm.title = guest.name
+            val distStr = distMeters?.let { " • ${LiveGuest.formatDistance(it)}" } ?: ""
+            val statusStr = if (guest.isInactive) " (inactive)" else ""
+            gm.snippet = "Guest$statusStr$distStr"
+            gm.infoWindow = null
+            gm.setOnMarkerClickListener { _, _ ->
+                if (onGuestClick != null) {
+                    onGuestClick(guest)
+                } else {
+                    val distInfo = distMeters?.let { "\nDistance to host: ${LiveGuest.formatDistance(it)}" } ?: ""
+                    val statusInfo = if (guest.isInactive) " (inactive > 5 min)" else " (active)"
+                    android.widget.Toast.makeText(
+                        context,
+                        "👤 ${guest.name}$statusInfo$distInfo",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                true
+            }
+        }
+
+        if (mapChanged) {
+            map.invalidate()
+        }
+    }
+}
+
+@Composable
+private fun MapBoundaryAndOutdoorEffects(
+    mapView: MapView?,
+    context: Context,
+    boundaryPoints: List<GeoPoint>?,
+    pinnedBoundaryPoints: List<GeoPoint>?,
+    prePinZoom: Double?,
+    onPrePinCaptured: (Double, GeoPoint) -> Unit,
+    outdoorAreaBoundaryPoints: List<GeoPoint>?,
+    outdoorAreaBoundaryPolygons: List<List<GeoPoint>>?,
+    outdoorAreaKind: OutdoorAreaKind?,
+    outdoorAreaName: String?,
+    outdoorAreaCenter: GeoPoint?,
+    outdoorAreaIsExplicit: Boolean,
+    showOutdoorAreasOverlay: Boolean,
+    fitOutdoorAreaTrigger: Long,
+    searchRoutePolylines: List<List<GeoPoint>>?,
+    searchRouteColorHex: String,
+    searchRouteFitTrigger: Long,
+    density: Float,
+    isLandscape: Boolean,
+    isCompact: Boolean,
+    measuredTopInsetPx: Int?,
+    measuredBottomInsetPx: Int?,
+    effectiveOpticalOffsetY: Int,
+    effectiveOpticalOffsetX: Int,
+    isRecording: Boolean,
+    isAutoStandby: Boolean,
+    onFollowingChange: (Boolean) -> Unit,
+    onZoomCalculated: (Double) -> Unit,
+    onUserInteracted: () -> Unit
+) {
+    var boundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
+    var pinnedBoundaryPolygon by remember { mutableStateOf<org.osmdroid.views.overlay.Polygon?>(null) }
+    var outdoorBoundaryPolygons by remember { mutableStateOf<List<org.osmdroid.views.overlay.Polygon>>(emptyList()) }
+    var outdoorAreaMarker by remember { mutableStateOf<Marker?>(null) }
+    var searchRouteOverlays by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+
+    LaunchedEffect(boundaryPoints) {
+        val map = mapView ?: return@LaunchedEffect
+        boundaryPolygon?.let { map.overlays.remove(it) }
+        boundaryPolygon = null
+
+        if (boundaryPoints != null && boundaryPoints.size >= 3) {
+            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                outlinePaint.color = Color.parseColor("#38BDF8")
+                outlinePaint.strokeWidth = 5f
+                fillPaint.color = Color.parseColor("#2238BDF8")
+                points = boundaryPoints
+                infoWindow = null
+                setOnClickListener { _, _, _ -> true }
+            }
+            map.overlays.add(0, poly)
+            boundaryPolygon = poly
+        }
+        map.invalidate()
+    }
+
+    LaunchedEffect(pinnedBoundaryPoints) {
+        val map = mapView ?: return@LaunchedEffect
+        pinnedBoundaryPolygon?.let { map.overlays.remove(it) }
+        pinnedBoundaryPolygon = null
+
+        if (pinnedBoundaryPoints != null && pinnedBoundaryPoints.size >= 3) {
+            if (prePinZoom == null) {
+                onPrePinCaptured(
+                    map.zoomLevelDouble,
+                    GeoPoint(map.mapCenter.latitude, map.mapCenter.longitude)
+                )
+            }
+            val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                outlinePaint.color = Color.parseColor("#EF4444")
+                outlinePaint.strokeWidth = 6f
+                outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
+                fillPaint.color = Color.parseColor("#20EF4444")
+                points = pinnedBoundaryPoints
+                infoWindow = null
+                setOnClickListener { _, _, _ -> true }
+            }
+            map.overlays.add(0, poly)
+            pinnedBoundaryPolygon = poly
+            onFollowingChange(false)
+            map.mapOrientation = 0f
+            fitPointsToUnobstructedViewport(
+                map = map,
+                points = pinnedBoundaryPoints,
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
+                onZoomCalculated = onZoomCalculated
+            )
+        }
+        map.invalidate()
+    }
+
+    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaKind, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
+        val map = mapView ?: return@LaunchedEffect
+        outdoorBoundaryPolygons.forEach { map.overlays.remove(it) }
+        outdoorBoundaryPolygons = emptyList()
+
+        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
+            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
+            ?: emptyList()
+
+        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && effectivePolys.isNotEmpty()) {
+            val isRange = outdoorAreaKind == OutdoorAreaKind.MOUNTAIN_RANGE
+            val strokeCol = if (isRange) Color.parseColor("#F59E0B") else Color.parseColor("#10B981")
+            val fillCol = if (isRange) Color.parseColor("#14F59E0B") else Color.parseColor("#1810B981")
+            val dashArray = if (isRange) floatArrayOf(24f, 12f) else floatArrayOf(18f, 10f)
+
+            val created = mutableListOf<org.osmdroid.views.overlay.Polygon>()
+            for (ringPts in effectivePolys) {
+                val poly = org.osmdroid.views.overlay.Polygon(map).apply {
+                    outlinePaint.color = strokeCol
+                    outlinePaint.strokeWidth = if (isRange) 6f else 5.5f
+                    outlinePaint.pathEffect = android.graphics.DashPathEffect(dashArray, 0f)
+                    fillPaint.color = fillCol
+                    points = ringPts
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                }
+                map.overlays.add(0, poly)
+                created.add(poly)
+            }
+            outdoorBoundaryPolygons = created
+        }
+        map.invalidate()
+    }
+
+    LaunchedEffect(outdoorAreaBoundaryPolygons, outdoorAreaBoundaryPoints, outdoorAreaName, outdoorAreaKind, outdoorAreaCenter, outdoorAreaIsExplicit, showOutdoorAreasOverlay) {
+        val map = mapView ?: return@LaunchedEffect
+        outdoorAreaMarker?.let { map.overlays.remove(it) }
+        outdoorAreaMarker = null
+
+        val effectivePolys = outdoorAreaBoundaryPolygons?.filter { it.size >= 3 }?.takeIf { it.isNotEmpty() }
+            ?: outdoorAreaBoundaryPoints?.takeIf { it.size >= 3 }?.let { listOf(it) }
+            ?: emptyList()
+        val validExplicitCenter = outdoorAreaCenter?.takeIf {
+            kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
+        }
+
+        if ((showOutdoorAreasOverlay || outdoorAreaIsExplicit) && !outdoorAreaName.isNullOrBlank() &&
+            (effectivePolys.isNotEmpty() || validExplicitCenter != null)
+        ) {
+            val center = validExplicitCenter ?: effectivePolys.firstOrNull()?.let { pts ->
+                val bb = BoundingBox.fromGeoPoints(pts)
+                GeoPoint(bb.centerLatitude, bb.centerLongitude)
+            }
+            if (center != null) {
+                val om = Marker(map).apply {
+                    position = center
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    icon = makeOutdoorAreaBadgeIcon(context, outdoorAreaName, outdoorAreaKind)
+                    infoWindow = null
+                    setOnMarkerClickListener { _, _ ->
+                        val allPts = effectivePolys.flatten()
+                        if (allPts.isNotEmpty()) {
+                            onFollowingChange(false)
+                            onUserInteracted()
+                            fitPointsToUnobstructedViewport(
+                                map = map,
+                                points = allPts,
+                                density = density,
+                                isLandscape = isLandscape,
+                                isCompact = isCompact,
+                                measuredTopInsetPx = measuredTopInsetPx,
+                                measuredBottomInsetPx = measuredBottomInsetPx,
+                                isRecording = isRecording,
+                                isAutoStandby = isAutoStandby,
+                                onZoomCalculated = onZoomCalculated
+                            )
+                        }
+                        true
+                    }
+                }
+                map.overlays.add(om)
+                outdoorAreaMarker = om
+            }
+        }
+        map.invalidate()
+    }
+
+    LaunchedEffect(fitOutdoorAreaTrigger) {
+        if (fitOutdoorAreaTrigger > 0L) {
+            kotlinx.coroutines.delay(40L)
+            val map = mapView ?: return@LaunchedEffect
+            val allPts = (outdoorAreaBoundaryPolygons?.flatten() ?: outdoorAreaBoundaryPoints).orEmpty()
+            val validCenter = outdoorAreaCenter?.takeIf {
+                kotlin.math.abs(it.latitude) > 1e-4 || kotlin.math.abs(it.longitude) > 1e-4
+            }
+            if (allPts.isNotEmpty()) {
+                onFollowingChange(false)
+                onUserInteracted()
+                map.mapOrientation = 0f
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = allPts,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = onZoomCalculated
+                )
+                onUserInteracted()
+            } else if (validCenter != null) {
+                onFollowingChange(false)
+                onUserInteracted()
+                map.mapOrientation = 0f
+                val centerGp = getOpticalCenter(map, validCenter, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setZoom(12.0)
+                map.controller.animateTo(centerGp)
+            }
+        }
+    }
+
+    LaunchedEffect(searchRoutePolylines, searchRouteColorHex, searchRouteFitTrigger) {
+        val map = mapView ?: return@LaunchedEffect
+        searchRouteOverlays.forEach { map.overlays.remove(it) }
+        searchRouteOverlays = emptyList()
+
+        if (!searchRoutePolylines.isNullOrEmpty()) {
+            kotlinx.coroutines.delay(40L)
+            val newPolys = mutableListOf<Polyline>()
+            val allRoutePts = mutableListOf<GeoPoint>()
+            val resDensity = context.resources.displayMetrics.density
+            val routeColor = try { Color.parseColor(searchRouteColorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+            for (linePoints in searchRoutePolylines) {
+                if (linePoints.size < 2) continue
+                allRoutePts.addAll(linePoints)
+                val poly = Polyline(map).apply {
+                    outlinePaint.color = routeColor
+                    outlinePaint.strokeWidth = 6.0f * resDensity
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    setPoints(linePoints)
+                }
+                map.overlays.add(poly)
+                newPolys.add(poly)
+            }
+            searchRouteOverlays = newPolys
+            if (allRoutePts.size >= 2) {
+                onFollowingChange(false)
+                onUserInteracted()
+                map.mapOrientation = 0f
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = allRoutePts,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = onZoomCalculated
+                )
+                onUserInteracted()
+            }
+        }
+        map.invalidate()
+    }
+}
+
+@Composable
+private fun MapSelectedAndHeatEffects(
+    mapView: MapView?,
+    context: Context,
+    selectedTrips: List<TripRecord>,
+    isRecording: Boolean,
+    trackPoints: List<GeoPoint>,
+    showFilteredPolyline: Boolean,
+    showRawPolyline: Boolean,
+    trackThickness: TrailThickness,
+    activityProfile: ActivityProfile,
+    heatMapTracks: List<List<GeoPoint>>,
+    showHeatMap: Boolean,
+    heatMapConsolidate: Boolean,
+    heatMapMinVisits: Int,
+    allHeatMapPoints: List<GeoPoint>,
+    onAllHeatMapPointsChanged: (List<GeoPoint>) -> Unit,
+    allShownPoints: List<GeoPoint>,
+    latLng: Triple<Double, Double, Float?>?,
+    effectiveLatLng: Triple<Double, Double, Float?>?,
+    savedPlaces: List<SavedPlace>,
+    isFollowing: Boolean,
+    currentZoom: Double,
+    fitTrackTrigger: Long,
+    fitPlacesTrigger: Long,
+    fitHeatMapTrigger: Long,
+    recenterTrigger: Long,
+    zoomResetTrigger: Long,
+    density: Float,
+    isLandscape: Boolean,
+    isCompact: Boolean,
+    measuredTopInsetPx: Int?,
+    measuredBottomInsetPx: Int?,
+    isAutoStandby: Boolean,
+    effectiveOpticalOffsetY: Int,
+    effectiveOpticalOffsetX: Int,
+    onFollowingChange: (Boolean) -> Unit,
+    onZoomChange: (Double) -> Unit,
+    onFollowingChanged: ((Boolean) -> Unit)?,
+    onZoomChanged: ((Double) -> Unit)?
+) {
+    var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var selectedTripRawPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var heatMapFolderOverlay by remember { mutableStateOf<FolderOverlay?>(null) }
+
+    LaunchedEffect(selectedTrips, isRecording, trackPoints.size, showFilteredPolyline, showRawPolyline, trackThickness) {
+        val map = mapView ?: return@LaunchedEffect
+        selectedTripPolylines.forEach { map.overlays.remove(it) }
+        selectedTripPolylines = emptyList()
+        selectedTripRawPolylines.forEach { map.overlays.remove(it) }
+        selectedTripRawPolylines = emptyList()
+
+        if (isRecording || trackPoints.isNotEmpty() || selectedTrips.isEmpty() || (!showFilteredPolyline && !showRawPolyline)) {
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        val colors = listOf(
+            "#EF4444", "#3B82F6", "#10B981", "#F59E0B",
+            "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"
+        )
+
+        val newLines = mutableListOf<Polyline>()
+        val newRawLines = mutableListOf<Polyline>()
+        selectedTrips.forEachIndexed { index, trip ->
+            if (showFilteredPolyline && trip.points.size >= 2) {
+                val tripCfg = MapProfileConfigHelper.getConfig(context, trip.activityProfile)
+                val effectiveTripThickness = if (trip.activityProfile == activityProfile) trackThickness else tripCfg.trackThickness
+                val colorHex = if (selectedTrips.size == 1) {
+                    tripCfg.trackColorHex
+                } else {
+                    colors[index % colors.size]
+                }
+                val curvedPoints = LiveTrackLine.curved(trip.points)
+                val line = Polyline(map).apply {
+                    outlinePaint.color = Color.parseColor(colorHex)
+                    outlinePaint.strokeWidth = MapProfileConfigHelper.selectedTripTrackWidthPx(effectiveTripThickness)
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                    setPoints(curvedPoints)
+                }
+                addOverlayAboveTiles(map, line)
+                newLines.add(line)
+            }
+
+            if (showRawPolyline && trip.rawPoints.size >= 2) {
+                val rawLine = Polyline(map).apply {
+                    outlinePaint.color = Color.parseColor("#06B6D4")
+                    outlinePaint.strokeWidth = 4f
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    infoWindow = null
+                    setOnClickListener { _, _, _ -> true }
+                    setPoints(trip.rawPoints)
+                }
+                addOverlayAboveTiles(map, rawLine)
+                newRawLines.add(rawLine)
+            }
+        }
+        selectedTripPolylines = newLines
+        selectedTripRawPolylines = newRawLines
+        map.invalidate()
+    }
+
+    LaunchedEffect(heatMapTracks, showHeatMap, heatMapConsolidate, heatMapMinVisits) {
+        val map = mapView ?: return@LaunchedEffect
+        heatMapFolderOverlay?.let { map.overlays.remove(it) }
+        heatMapFolderOverlay = null
+        heatMapPolylines.forEach { map.overlays.remove(it) }
+        heatMapPolylines = emptyList()
+
+        if (!showHeatMap || heatMapTracks.isEmpty()) {
+            onAllHeatMapPointsChanged(emptyList())
+            map.invalidate()
+            return@LaunchedEffect
+        }
+
+        val processed = withContext(Dispatchers.Default) {
+            HeatMapEngine.processTracks(
+                heatMapTracks,
+                HeatMapOptions(
+                    consolidateCorridors = heatMapConsolidate,
+                    minVisits = heatMapMinVisits,
+                    epsilonMeters = 10.0
+                )
+            )
+        }
+
+        onAllHeatMapPointsChanged(processed.allSimplifiedPoints)
+
+        val folder = FolderOverlay().apply { name = "HeatMapLayer" }
+        listOf(
+            HeatMapTier.TIER_1_BLUE,
+            HeatMapTier.TIER_2_CYAN,
+            HeatMapTier.TIER_3_GREEN,
+            HeatMapTier.TIER_4_YELLOW,
+            HeatMapTier.TIER_5_ORANGE,
+            HeatMapTier.TIER_6_RED,
+            HeatMapTier.TIER_7_MAGENTA
+        ).forEach { tier ->
+            val paths = processed.tierPolylines[tier] ?: emptyList()
+            paths.forEach { path ->
+                if (path.size >= 2) {
+                    val poly = Polyline(map).apply {
+                        outlinePaint.color = tier.colorArgb
+                        outlinePaint.strokeWidth = tier.strokeWidth
+                        outlinePaint.strokeCap = Paint.Cap.ROUND
+                        outlinePaint.strokeJoin = Paint.Join.ROUND
+                        infoWindow = null
+                        setOnClickListener { _, _, _ -> true }
+                        setPoints(path)
+                    }
+                    folder.add(poly)
+                }
+            }
+        }
+        map.overlays.add(0, folder)
+        heatMapFolderOverlay = folder
+        map.invalidate()
+    }
+
+    LaunchedEffect(fitTrackTrigger) {
+        if (fitTrackTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            val pointsToFit = if (allShownPoints.isNotEmpty()) {
+                allShownPoints
+            } else if (latLng != null) {
+                listOf(GeoPoint(latLng.first, latLng.second))
+            } else emptyList()
+            if (pointsToFit.isNotEmpty()) {
+                onFollowingChange(false)
+                fitPointsToUnobstructedViewport(
+                    map = map,
+                    points = pointsToFit,
+                    density = density,
+                    isLandscape = isLandscape,
+                    isCompact = isCompact,
+                    measuredTopInsetPx = measuredTopInsetPx,
+                    measuredBottomInsetPx = measuredBottomInsetPx,
+                    isRecording = isRecording,
+                    isAutoStandby = isAutoStandby,
+                    onZoomCalculated = onZoomChange
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(fitPlacesTrigger) {
+        if (fitPlacesTrigger > 0L && savedPlaces.isNotEmpty()) {
+            val map = mapView ?: return@LaunchedEffect
+            onFollowingChange(false)
+            fitPointsToUnobstructedViewport(
+                map = map,
+                points = savedPlaces.map { it.geoPoint },
+                density = density,
+                isLandscape = isLandscape,
+                isCompact = isCompact,
+                measuredTopInsetPx = measuredTopInsetPx,
+                measuredBottomInsetPx = measuredBottomInsetPx,
+                isRecording = isRecording,
+                isAutoStandby = isAutoStandby,
+                onZoomCalculated = onZoomChange
+            )
+        }
+    }
+
+    LaunchedEffect(fitHeatMapTrigger) {
+        if (fitHeatMapTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            onFollowingChange(false)
+            val pts = if (allHeatMapPoints.isNotEmpty()) allHeatMapPoints else heatMapTracks.flatten()
+            if (pts.isNotEmpty()) {
+                try {
+                    val rawBox = BoundingBox.fromGeoPoints(pts)
+                    val minSpan = 0.008
+                    val latSpan = rawBox.latitudeSpan.coerceAtLeast(minSpan)
+                    val lonSpan = rawBox.longitudeSpan.coerceAtLeast(minSpan)
+                    val centerLat = rawBox.centerLatitude
+                    val centerLon = rawBox.centerLongitude
+                    val paddedBox = BoundingBox(
+                        centerLat + latSpan * 0.55,
+                        centerLon + lonSpan * 0.55,
+                        centerLat - latSpan * 0.55,
+                        centerLon - lonSpan * 0.55
+                    )
+                    map.zoomToBoundingBox(paddedBox, true, 120)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    LaunchedEffect(isFollowing) {
+        onFollowingChanged?.invoke(isFollowing)
+    }
+
+    LaunchedEffect(currentZoom) {
+        onZoomChanged?.invoke(currentZoom)
+    }
+
+    LaunchedEffect(recenterTrigger) {
+        if (recenterTrigger > 0L) {
+            onFollowingChange(true)
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                mapView?.controller?.setCenter(centerGp)
+            }
+            mapView?.invalidate()
+        }
+    }
+
+    LaunchedEffect(zoomResetTrigger) {
+        if (zoomResetTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
+            onFollowingChange(true)
+            val targetZoom = MAP_CONVENIENT_ZOOM.coerceIn(map.minZoomLevel, map.maxZoomLevel)
+            map.controller.stopAnimation(false)
+            map.controller.setZoom(targetZoom)
+            onZoomChange(targetZoom)
+            effectiveLatLng?.let { pos ->
+                val gp = GeoPoint(pos.first, pos.second)
+                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.setCenter(centerGp)
+            }
+            map.invalidate()
         }
     }
 }
@@ -3262,7 +3455,9 @@ private fun BoxScope.MapFloatingControlsColumn(
                     cacheManager.calculateCacheDeficit()
                 }
             }
-            val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
+            val totalMissingCache = (cacheDeficit?.missingRoutes ?: 0) +
+                (cacheDeficit?.missingBoundaries ?: 0) +
+                (cacheDeficit?.missingMapTiles ?: 0)
 
             val isPrefetchRunning = prefetchState is CacheManager.PrefetchState.Running
             val isPrefetchPaused = prefetchState is CacheManager.PrefetchState.Paused
@@ -3292,7 +3487,9 @@ private fun BoxScope.MapFloatingControlsColumn(
                             .clickable {
                                 if (isPrefetchCompleted) {
                                     cacheManager.calculateCacheDeficit()
-                                    val remaining = (cacheDeficit?.missingRoutes ?: 0) + (cacheDeficit?.missingBoundaries ?: 0)
+                                    val remaining = (cacheDeficit?.missingRoutes ?: 0) +
+                                        (cacheDeficit?.missingBoundaries ?: 0) +
+                                        (cacheDeficit?.missingMapTiles ?: 0)
                                     if (remaining > 0) {
                                         cacheManager.resetPrefetchState()
                                         onOpenCacheManager.invoke()
@@ -3943,26 +4140,7 @@ private fun BoxScope.MapHeatMapFloatingToolbar(
 @Composable
 private fun MapSettingsDialogHost(
     activityProfile: ActivityProfile,
-    baseLayer: MapBaseLayer,
-    onBaseLayerChange: (MapBaseLayer) -> Unit,
-    showHikingOverlay: Boolean,
-    onHikingOverlayToggle: (Boolean) -> Unit,
-    showOutdoorAreasOverlay: Boolean = false,
-    onOutdoorAreasOverlayToggle: (Boolean) -> Unit = {},
-    trailThickness: TrailThickness = TrailThickness.NORMAL,
-    onTrailThicknessChange: (TrailThickness) -> Unit = {},
-    trailLineStyle: TrailLineStyle = TrailLineStyle.SOLID,
-    onTrailLineStyleChange: (TrailLineStyle) -> Unit = {},
-    trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
-    onTrailOpacityChange: (TrailOpacity) -> Unit = {},
-    trailOverlayMode: TrailOverlayMode = TrailOverlayMode.VECTOR,
-    onTrailOverlayModeChange: (TrailOverlayMode) -> Unit = {},
-    enabledTrailKinds: Set<TrailRouteKind> = emptySet(),
-    onEnabledTrailKindsChange: (Set<TrailRouteKind>) -> Unit = {},
-    enabledTrailColors: Set<TrailColor> = emptySet(),
-    onEnabledTrailColorsChange: (Set<TrailColor>) -> Unit = {},
-    supplementMissingOsmTrails: Boolean = true,
-    onSupplementMissingOsmTrailsChange: (Boolean) -> Unit = {},
+    layerState: OsmMapLayerState,
     showBorders: Boolean,
     onToggleBorders: (() -> Unit)?,
     showHeatMap: Boolean,
@@ -3985,16 +4163,11 @@ private fun MapSettingsDialogHost(
     onShowRawPolylineToggle: (Boolean) -> Unit,
     altitudeSourceMode: AltitudeSourceMode,
     onAltitudeSourceModeChange: ((AltitudeSourceMode) -> Unit)?,
-    fontScale: MapFontScale,
-    onFontScaleChange: (MapFontScale) -> Unit,
     orientationMode: MapOrientationMode,
     onOrientationModeChange: ((MapOrientationMode) -> Unit)?,
     effectiveLatLng: Triple<Double, Double, Float?>?,
     lastFrozenBearing: Float?,
     mapView: MapView?,
-    hikingProviderRef: org.osmdroid.tileprovider.MapTileProviderBasic?,
-    trackColorHex: String,
-    onTrackColorChange: (String) -> Unit,
     onOpenCacheManager: (() -> Unit)?,
     onDismiss: () -> Unit,
     altitudeOverlay: AltitudeCursorBadgeOverlay,
@@ -4002,26 +4175,50 @@ private fun MapSettingsDialogHost(
 ) {
     MapSettingsDialog(
         activityProfile = activityProfile,
-        currentBaseLayer = baseLayer,
-        onBaseLayerChange = onBaseLayerChange,
-        hikingOverlayEnabled = showHikingOverlay,
-        onHikingOverlayToggle = onHikingOverlayToggle,
-        showOutdoorAreasOverlay = showOutdoorAreasOverlay,
-        onOutdoorAreasOverlayToggle = onOutdoorAreasOverlayToggle,
-        trailThickness = trailThickness,
-        onTrailThicknessChange = onTrailThicknessChange,
-        trailLineStyle = trailLineStyle,
-        onTrailLineStyleChange = onTrailLineStyleChange,
-        trailOpacity = trailOpacity,
-        onTrailOpacityChange = onTrailOpacityChange,
-        trailOverlayMode = trailOverlayMode,
-        onTrailOverlayModeChange = onTrailOverlayModeChange,
-        enabledTrailKinds = enabledTrailKinds,
-        onEnabledTrailKindsChange = onEnabledTrailKindsChange,
-        enabledTrailColors = enabledTrailColors,
-        onEnabledTrailColorsChange = onEnabledTrailColorsChange,
-        supplementMissingOsmTrails = supplementMissingOsmTrails,
-        onSupplementMissingOsmTrailsChange = onSupplementMissingOsmTrailsChange,
+        currentBaseLayer = layerState.baseLayer,
+        onBaseLayerChange = { layerState.baseLayer = it },
+        hikingOverlayEnabled = layerState.showHikingOverlay,
+        onHikingOverlayToggle = { layerState.showHikingOverlay = it },
+        showOutdoorAreasOverlay = layerState.showOutdoorAreasOverlay,
+        onOutdoorAreasOverlayToggle = { enabled ->
+            layerState.showOutdoorAreasOverlay = enabled
+            MapProfileConfigHelper.setOutdoorAreasOverlay(context, activityProfile, enabled)
+        },
+        trailThickness = layerState.trailThickness,
+        onTrailThicknessChange = { thickness ->
+            layerState.trailThickness = thickness
+            MapProfileConfigHelper.setTrailThickness(context, activityProfile, thickness)
+        },
+        trailLineStyle = layerState.trailLineStyle,
+        onTrailLineStyleChange = { style ->
+            layerState.trailLineStyle = style
+            MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, style)
+        },
+        trailOpacity = layerState.trailOpacity,
+        onTrailOpacityChange = { op ->
+            layerState.trailOpacity = op
+            MapProfileConfigHelper.setTrailOpacity(context, activityProfile, op)
+        },
+        trailOverlayMode = layerState.trailOverlayMode,
+        onTrailOverlayModeChange = { mode ->
+            layerState.trailOverlayMode = mode
+            MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, mode)
+        },
+        enabledTrailKinds = layerState.enabledTrailKinds,
+        onEnabledTrailKindsChange = { kinds ->
+            layerState.enabledTrailKinds = kinds
+            MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, kinds)
+        },
+        enabledTrailColors = layerState.enabledTrailColors,
+        onEnabledTrailColorsChange = { colors ->
+            layerState.enabledTrailColors = colors
+            MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, colors)
+        },
+        supplementMissingOsmTrails = layerState.supplementMissingOsmTrails,
+        onSupplementMissingOsmTrailsChange = { enabled ->
+            layerState.supplementMissingOsmTrails = enabled
+            MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, enabled)
+        },
         showBorders = showBorders,
         onToggleBorders = { onToggleBorders?.invoke() },
         showHeatMap = showHeatMap,
@@ -4044,14 +4241,14 @@ private fun MapSettingsDialogHost(
         onShowRawPolylineToggle = onShowRawPolylineToggle,
         currentAltitudeSourceMode = altitudeSourceMode,
         onAltitudeSourceModeChange = { onAltitudeSourceModeChange?.invoke(it) },
-        currentFontScale = fontScale,
-        onFontScaleChange = onFontScaleChange,
+        currentFontScale = layerState.fontScale,
+        onFontScaleChange = { layerState.fontScale = it },
         currentOrientationMode = orientationMode,
         onOrientationModeChange = { onOrientationModeChange?.invoke(it) },
         currentLatLng = effectiveLatLng,
         onClearCache = {
             mapView?.tileProvider?.clearTileCache()
-            hikingProviderRef?.clearTileCache()
+            layerState.hikingProviderRef?.clearTileCache()
             mapView?.invalidate()
             android.widget.Toast.makeText(context, "Map tile cache cleared", android.widget.Toast.LENGTH_SHORT).show()
         },
@@ -4059,41 +4256,27 @@ private fun MapSettingsDialogHost(
         onResetProfileDefaults = {
             MapProfileConfigHelper.resetProfileDefaults(context, activityProfile)
             val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
-            onBaseLayerChange(cfg.baseLayer)
-            onHikingOverlayToggle(cfg.showHikingOverlay)
-            onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
-            onTrailThicknessChange(cfg.trailThickness)
-            onTrailLineStyleChange(cfg.trailLineStyle)
-            onTrailOpacityChange(cfg.trailOpacity)
-            onTrailOverlayModeChange(cfg.trailOverlayMode)
-            onEnabledTrailKindsChange(cfg.enabledTrailKinds)
-            onEnabledTrailColorsChange(cfg.enabledTrailColors)
-            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
-            onFontScaleChange(cfg.fontScale)
-            onTrackColorChange(cfg.trackColorHex)
+            layerState.applyConfig(cfg)
             onOrientationModeChange?.invoke(cfg.orientationMode)
             android.widget.Toast.makeText(context, "Reset defaults for ${activityProfile.displayName}", android.widget.Toast.LENGTH_SHORT).show()
         },
         onResetAllProfileDefaults = {
             MapProfileConfigHelper.resetAllProfileDefaults(context)
             val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
-            onBaseLayerChange(cfg.baseLayer)
-            onHikingOverlayToggle(cfg.showHikingOverlay)
-            onOutdoorAreasOverlayToggle(cfg.showOutdoorAreasOverlay)
-            onTrailThicknessChange(cfg.trailThickness)
-            onTrailLineStyleChange(cfg.trailLineStyle)
-            onTrailOpacityChange(cfg.trailOpacity)
-            onTrailOverlayModeChange(cfg.trailOverlayMode)
-            onEnabledTrailKindsChange(cfg.enabledTrailKinds)
-            onEnabledTrailColorsChange(cfg.enabledTrailColors)
-            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
-            onFontScaleChange(cfg.fontScale)
-            onTrackColorChange(cfg.trackColorHex)
+            layerState.applyConfig(cfg)
             onOrientationModeChange?.invoke(cfg.orientationMode)
             android.widget.Toast.makeText(context, "Reset all profile defaults", android.widget.Toast.LENGTH_SHORT).show()
         },
-        currentTrackColorHex = trackColorHex,
-        onTrackColorChange = onTrackColorChange,
+        currentTrackColorHex = layerState.trackColorHex,
+        currentTrackThickness = layerState.trackThickness,
+        onTrackThicknessChange = { thickness ->
+            MapProfileConfigHelper.setTrackThickness(context, activityProfile, thickness)
+            layerState.trackThickness = thickness
+        },
+        onTrackColorChange = { newColor ->
+            MapProfileConfigHelper.setTrackColor(context, activityProfile, newColor)
+            layerState.trackColorHex = newColor
+        },
         onDismiss = onDismiss
     )
 }
@@ -4147,6 +4330,8 @@ private fun MapSettingsDialog(
     onAltitudeSourceModeChange: (AltitudeSourceMode) -> Unit = {},
     currentTrackColorHex: String = "#EF4444",
     onTrackColorChange: (String) -> Unit = {},
+    currentTrackThickness: TrailThickness = TrailThickness.NORMAL,
+    onTrackThicknessChange: (TrailThickness) -> Unit = {},
     currentFontScale: MapFontScale,
     onFontScaleChange: (MapFontScale) -> Unit,
     currentOrientationMode: MapOrientationMode,
@@ -5582,6 +5767,46 @@ private fun MapSettingsDialog(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Track Polyline Thickness (${activityProfile.displayName})",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ComposeColor(0xFF94A3B8)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TrailThickness.values().forEach { thickness ->
+                    val isSelected = currentTrackThickness == thickness
+                    Button(
+                        onClick = { onTrackThicknessChange(thickness) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = when (thickness) {
+                                TrailThickness.NORMAL -> "Normal"
+                                TrailThickness.THICK -> "Thick"
+                                TrailThickness.EXTRA_THICK -> "Bold"
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = ComposeColor.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }

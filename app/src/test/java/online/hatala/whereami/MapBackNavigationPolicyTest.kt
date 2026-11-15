@@ -146,4 +146,41 @@ class MapBackNavigationPolicyTest {
             )
         )
     }
+
+    @Test
+    fun `edge-back gesture does not trigger user drag and cancel restores follow mode`() {
+        val tracker = MapTouchFollowTracker(touchSlopPx = 24f, edgeSlopPx = 96f)
+        val widthPx = 1080
+
+        // System edge-back swipe starts at x = 15 (within 96px left edge) while following
+        tracker.onDown(x = 15f, y = 900f, viewWidth = widthPx, currentlyFollowing = true)
+        assertTrue(tracker.startedInGestureEdge)
+        // Moving across edge slop must NOT flag user drag / break follow mode
+        assertFalse(tracker.onMove(x = 180f, y = 905f))
+        assertFalse(tracker.isUserDragging)
+        // System edge gesture delivers ACTION_CANCEL -> restores follow = true
+        assertEquals(true, tracker.onCancel())
+
+        // Right-edge predictive back swipe behaves identically
+        tracker.onDown(x = 1068f, y = 900f, viewWidth = widthPx, currentlyFollowing = true)
+        assertTrue(tracker.startedInGestureEdge)
+        assertFalse(tracker.onMove(x = 920f, y = 900f))
+        assertFalse(tracker.isUserDragging)
+        tracker.onUp()
+    }
+
+    @Test
+    fun `center map pan past touch slop marks user drag and detaches follow`() {
+        val tracker = MapTouchFollowTracker(touchSlopPx = 24f, edgeSlopPx = 96f)
+        tracker.onDown(x = 540f, y = 900f, viewWidth = 1080, currentlyFollowing = true)
+        assertFalse(tracker.startedInGestureEdge)
+        // Sub-slop tap jitter stays ignored
+        assertFalse(tracker.onMove(x = 550f, y = 908f))
+        assertFalse(tracker.isUserDragging)
+        // Deliberate pan > touchSlop triggers drag
+        assertTrue(tracker.onMove(x = 590f, y = 910f))
+        assertTrue(tracker.isUserDragging)
+        tracker.onUp()
+        assertFalse(tracker.isUserDragging)
+    }
 }

@@ -511,7 +511,7 @@ object TrailVectorRepository {
         val minLon = bbox.lonWest
         val maxLon = bbox.lonEast
 
-        val results = mutableListOf<TrailVectorSegment>()
+        val results = java.util.Collections.synchronizedList(mutableListOf<TrailVectorSegment>())
         val startLatIdx = floor(minLat / TILE_SIZE_DEG).toInt()
         val endLatIdx = floor(maxLat / TILE_SIZE_DEG).toInt()
         val startLonIdx = floor(minLon / TILE_SIZE_DEG).toInt()
@@ -529,139 +529,158 @@ object TrailVectorRepository {
             .sortedBy { (la, lo) -> kotlin.math.abs(la - focusLatIdx) + kotlin.math.abs(lo - focusLonIdx) }
             .take(MAX_FALLBACK_TILES)
 
+        data class MissingTileTask(
+            val latIdx: Int,
+            val lonIdx: Int,
+            val key: String,
+            val diskFile: File
+        )
+
+        val missingTasks = mutableListOf<MissingTileTask>()
         for ((latIdx, lonIdx) in cappedFbTiles) {
-                val baseKey = "tile_${latIdx}_${lonIdx}"
-                val key = if (kayakOnly) "${baseKey}_kayak" else "${baseKey}_fb"
-                val tileSouth = latIdx * TILE_SIZE_DEG
-                val tileNorth = (latIdx + 1) * TILE_SIZE_DEG
-                val tileWest = lonIdx * TILE_SIZE_DEG
-                val tileEast = (lonIdx + 1) * TILE_SIZE_DEG
+            val baseKey = "tile_${latIdx}_${lonIdx}"
+            val key = if (kayakOnly) "${baseKey}_kayak" else "${baseKey}_fb"
 
-                val cached = memoryCache[key]
-                if (cached != null) {
-                    results.addAll(cached)
-                    continue
-                }
+            val cached = memoryCache[key]
+            if (cached != null) {
+                results.addAll(cached)
+                continue
+            }
 
-                val diskFile = File(getCacheDir(context), "$key.json")
-                if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
-                    try {
-                        val rawText = diskFile.readText()
-                        if (rawText.trimStart().startsWith("[")) {
-                            val parsed = parseTileJson(rawText)
-                            memoryCache[key] = parsed
-                            results.addAll(parsed)
-                            continue
-                        }
-                    } catch (_: Exception) {
-                    }
-                }
-
-                if (!allowNetwork || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) continue
-
+            val diskFile = File(getCacheDir(context), "$key.json")
+            if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
                 try {
-                    val s = String.format(Locale.US, "%.4f", tileSouth)
-                    val w = String.format(Locale.US, "%.4f", tileWest)
-                    val n = String.format(Locale.US, "%.4f", tileNorth)
-                    val e = String.format(Locale.US, "%.4f", tileEast)
-
-                    val ql = if (kayakOnly) {
-                        """
-                            [out:json][timeout:12];
-                            relation["type"="route"]["route"~"^(canoe|kayak)$"]($s,$w,$n,$e)->.rels;
-                            way(r.rels)($s,$w,$n,$e)->.rw;
-                            .rels out;
-                            .rw out tags geom;
-                        """.trimIndent().replace("\n", "")
-                    } else {
-                        """
-                            [out:json][timeout:12];
-                            (
-                              way["highway"~"^(path|footway|track|cycleway)$"]["osmc:symbol"]($s,$w,$n,$e);
-                              way["highway"~"^(path|footway|track|cycleway)$"]["sac_scale"]($s,$w,$n,$e);
-                              way["highway"~"^(path|footway|track|cycleway)$"]["educational"="yes"]($s,$w,$n,$e);
-                            )->.dw;
-                            relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e)->.rels;
-                            way(r.rels)($s,$w,$n,$e)->.rw;
-                            .rels out;
-                            (.dw; .rw;) out tags geom;
-                        """.trimIndent().replace("\n", "")
-                    }
-
-                    val body = if (overpassEndpoints != null) {
-                        OutdoorContextResolver.executeOverpassQuery(
-                            ql = ql,
-                            connectTimeoutMs = 6000,
-                            readTimeoutMs = 12000,
-                            tag = "TRAILS",
-                            endpoints = overpassEndpoints
-                        )
-                    } else {
-                        OutdoorContextResolver.executeOverpassQuery(
-                            ql = ql,
-                            connectTimeoutMs = 6000,
-                            readTimeoutMs = 12000,
-                            tag = "TRAILS"
-                        )
-                    }
-
-                    if (body != null) {
-                        val parsed = parseOverpassTrails(body)
+                    val rawText = diskFile.readText()
+                    if (rawText.trimStart().startsWith("[")) {
+                        val parsed = parseTileJson(rawText)
                         memoryCache[key] = parsed
-                        saveTileJson(diskFile, parsed)
                         results.addAll(parsed)
                         continue
                     }
-
-                    if (!allowOsmXmlFallback) {
-                        markTileFailed(key)
-                        continue
-                    }
-
-                    // Fallback: center OSM /api/0.6/map XML on the actual visible viewport center (never off-screen tile center),
-                    // bisecting once if node count exceeds OSM API limits.
-                    val focusLat = ((bbox.latSouth + bbox.latNorth) / 2.0).coerceIn(tileSouth, tileNorth)
-                    val focusLon = ((bbox.lonWest + bbox.lonEast) / 2.0).coerceIn(tileWest, tileEast)
-                    val halfLat = minOf((bbox.latNorth - bbox.latSouth).coerceAtLeast(0.01) / 2.0, 0.015)
-                    val halfLon = minOf((bbox.lonEast - bbox.lonWest).coerceAtLeast(0.01) / 2.0, 0.02)
-
-                    val xml = OutdoorContextResolver.fetchOsmMapXml(
-                        minLat = focusLat - halfLat,
-                        minLon = focusLon - halfLon,
-                        maxLat = focusLat + halfLat,
-                        maxLon = focusLon + halfLon,
-                        connectTimeoutMs = 6000,
-                        readTimeoutMs = 12000,
-                        baseUrl = osmMapBaseUrl
-                    ) ?: OutdoorContextResolver.fetchOsmMapXml(
-                        minLat = focusLat - halfLat * 0.5,
-                        minLon = focusLon - halfLon * 0.5,
-                        maxLat = focusLat + halfLat * 0.5,
-                        maxLon = focusLon + halfLon * 0.5,
-                        connectTimeoutMs = 6000,
-                        readTimeoutMs = 12000,
-                        baseUrl = osmMapBaseUrl
-                    )
-
-                    if (xml != null) {
-                        val parsedXml = parseOsmMapXmlTrails(xml)
-                            .let { list -> if (kayakOnly) list.filter { it.kind == TrailRouteKind.KAYAKING } else list }
-                        if (parsedXml.isNotEmpty()) {
-                            memoryCache[key] = parsedXml
-                            saveTileJson(diskFile, parsedXml)
-                        }
-                        results.addAll(parsedXml)
-                    } else {
-                        markTileFailed(key)
-                    }
-                } catch (e: Exception) {
-                    markTileFailed(key)
-                    logDebug("Fallback fetch tile $key error: ${e.message}")
-                } finally {
-                    pendingTiles.remove(key)
+                } catch (_: Exception) {
                 }
+            }
+
+            if (allowNetwork && !isTileOnFailureCooldown(key) && pendingTiles.add(key)) {
+                missingTasks.add(MissingTileTask(latIdx, lonIdx, key, diskFile))
+            }
         }
-        return@coroutineScope results
+
+        if (missingTasks.isNotEmpty()) {
+            val overpassSem = Semaphore(3)
+            missingTasks.map { task ->
+                async {
+                    overpassSem.withPermit {
+                        val tileSouth = task.latIdx * TILE_SIZE_DEG
+                        val tileNorth = (task.latIdx + 1) * TILE_SIZE_DEG
+                        val tileWest = task.lonIdx * TILE_SIZE_DEG
+                        val tileEast = (task.lonIdx + 1) * TILE_SIZE_DEG
+                        try {
+                            val s = String.format(Locale.US, "%.4f", tileSouth)
+                            val w = String.format(Locale.US, "%.4f", tileWest)
+                            val n = String.format(Locale.US, "%.4f", tileNorth)
+                            val e = String.format(Locale.US, "%.4f", tileEast)
+
+                            val ql = if (kayakOnly) {
+                                """
+                                    [out:json][timeout:12];
+                                    relation["type"="route"]["route"~"^(canoe|kayak)$"]($s,$w,$n,$e)->.rels;
+                                    way(r.rels)($s,$w,$n,$e)->.rw;
+                                    .rels out;
+                                    .rw out tags geom;
+                                """.trimIndent().replace("\n", "")
+                            } else {
+                                """
+                                    [out:json][timeout:12];
+                                    (
+                                      way["highway"~"^(path|footway|track|cycleway)$"]["osmc:symbol"]($s,$w,$n,$e);
+                                      way["highway"~"^(path|footway|track|cycleway)$"]["sac_scale"]($s,$w,$n,$e);
+                                      way["highway"~"^(path|footway|track|cycleway)$"]["educational"="yes"]($s,$w,$n,$e);
+                                    )->.dw;
+                                    relation["type"="route"]["route"~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"]($s,$w,$n,$e)->.rels;
+                                    way(r.rels)($s,$w,$n,$e)->.rw;
+                                    .rels out;
+                                    (.dw; .rw;) out tags geom;
+                                """.trimIndent().replace("\n", "")
+                            }
+
+                            val body = if (overpassEndpoints != null) {
+                                OutdoorContextResolver.executeOverpassQuery(
+                                    ql = ql,
+                                    connectTimeoutMs = 6000,
+                                    readTimeoutMs = 12000,
+                                    tag = "TRAILS",
+                                    endpoints = overpassEndpoints
+                                )
+                            } else {
+                                OutdoorContextResolver.executeOverpassQuery(
+                                    ql = ql,
+                                    connectTimeoutMs = 6000,
+                                    readTimeoutMs = 12000,
+                                    tag = "TRAILS"
+                                )
+                            }
+
+                            if (body != null) {
+                                val parsed = parseOverpassTrails(body)
+                                memoryCache[task.key] = parsed
+                                saveTileJson(task.diskFile, parsed)
+                                results.addAll(parsed)
+                                return@withPermit
+                            }
+
+                            if (!allowOsmXmlFallback) {
+                                markTileFailed(task.key)
+                                return@withPermit
+                            }
+
+                            // Fallback: center OSM /api/0.6/map XML on the actual visible viewport center (never off-screen tile center),
+                            // bisecting once if node count exceeds OSM API limits.
+                            val focusLat = ((bbox.latSouth + bbox.latNorth) / 2.0).coerceIn(tileSouth, tileNorth)
+                            val focusLon = ((bbox.lonWest + bbox.lonEast) / 2.0).coerceIn(tileWest, tileEast)
+                            val halfLat = minOf((bbox.latNorth - bbox.latSouth).coerceAtLeast(0.01) / 2.0, 0.015)
+                            val halfLon = minOf((bbox.lonEast - bbox.lonWest).coerceAtLeast(0.01) / 2.0, 0.02)
+
+                            val xml = OutdoorContextResolver.fetchOsmMapXml(
+                                minLat = focusLat - halfLat,
+                                minLon = focusLon - halfLon,
+                                maxLat = focusLat + halfLat,
+                                maxLon = focusLon + halfLon,
+                                connectTimeoutMs = 6000,
+                                readTimeoutMs = 12000,
+                                baseUrl = osmMapBaseUrl
+                            ) ?: OutdoorContextResolver.fetchOsmMapXml(
+                                minLat = focusLat - halfLat * 0.5,
+                                minLon = focusLon - halfLon * 0.5,
+                                maxLat = focusLat + halfLat * 0.5,
+                                maxLon = focusLon + halfLon * 0.5,
+                                connectTimeoutMs = 6000,
+                                readTimeoutMs = 12000,
+                                baseUrl = osmMapBaseUrl
+                            )
+
+                            if (xml != null) {
+                                val parsedXml = parseOsmMapXmlTrails(xml)
+                                    .let { list -> if (kayakOnly) list.filter { it.kind == TrailRouteKind.KAYAKING } else list }
+                                if (parsedXml.isNotEmpty()) {
+                                    memoryCache[task.key] = parsedXml
+                                    saveTileJson(task.diskFile, parsedXml)
+                                }
+                                results.addAll(parsedXml)
+                            } else {
+                                markTileFailed(task.key)
+                            }
+                        } catch (e: Exception) {
+                            markTileFailed(task.key)
+                            logDebug("Fallback fetch tile ${task.key} error: ${e.message}")
+                        } finally {
+                            pendingTiles.remove(task.key)
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        return@coroutineScope results.toList()
     }
 
     /**

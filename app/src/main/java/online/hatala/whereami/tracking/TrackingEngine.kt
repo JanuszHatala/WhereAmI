@@ -54,6 +54,7 @@ class TrackingEngine(
         const val ENVELOPE_ESCALATE_FIXES = 3
         const val ENVELOPE_RELAX_MS = 60_000L
         const val ENVELOPE_MAX_SPEED_ACC_MPS = 2.0
+        const val ENVELOPE_MAX_ACC_M = 20.0f
 
         /**
          * Extra course uncertainty near the heading-observability speed. The provider's bearing accuracy
@@ -167,7 +168,16 @@ class TrackingEngine(
             if (!relaxed) return reject(fix, FixDecision.REJECTED_ACCURACY, emptyList())
         }
 
-        updateEnvelope(fix)
+        val spatialSpeedMps = if (ekf.initialized) {
+            val frPre = frame
+            val prevPre = lastAcceptedFix
+            if (frPre != null && prevPre != null) {
+                val dtPre = max((fix.tElapsedMs - prevPre.tElapsedMs) / 1000.0, 0.001)
+                val dPre = hypot(frPre.east(fix.lng) - frPre.east(prevPre.lng), frPre.north(fix.lat) - frPre.north(prevPre.lat))
+                dPre / dtPre
+            } else null
+        } else null
+        updateEnvelope(fix, spatialSpeedMps)
 
         // ── First fix or propagation gap: (re)seed ───────────────────────────────
         if (!ekf.initialized) {
@@ -277,12 +287,17 @@ class TrackingEngine(
             courseConsistency.clear()
         } else {
             courseConsistency.add(fix.tElapsedMs, fix.lat, fix.lng, fix.bearingDeg?.toDouble(), fix.speedMps?.toDouble(), sigma)
-            if (dopplerSpeed != null) {
+            val dopplerAnomaly = dopplerSpeed != null &&
+                dopplerSpeed > activeProfile.maxSpeedMps * 1.15 &&
+                dopplerSpeed > 4.5 &&
+                ((acc ?: 8f) > ENVELOPE_MAX_ACC_M || impliedSpeed < dopplerSpeed * 0.45)
+            val trustedDoppler = if (dopplerAnomaly) null else dopplerSpeed
+            if (trustedDoppler != null) {
                 val sAcc = fix.speedAccMps?.toDouble()?.takeIf { it > 0.0 }
                 val sigV = if (sAcc != null) max(sAcc, 0.2) else 0.6
-                ekf.updateScalar(KinematicEkf.SPEED, dopplerSpeed, sigV * sigV, angular = false)
+                ekf.updateScalar(KinematicEkf.SPEED, trustedDoppler, sigV * sigV, angular = false)
             }
-            applyCourse(fix, dopplerSpeed)
+            applyCourse(fix, trustedDoppler)
             if (gyroYawRateRadS != null && ekf.x[KinematicEkf.SPEED] >= activeProfile.minHeadingSpeedMps &&
                 abs(gyroYawRateRadS) <= maxTrustedGyroRate()
             ) {
@@ -331,11 +346,13 @@ class TrackingEngine(
         return d <= max(2.5 * sigma, 15.0)
     }
 
-    private fun updateEnvelope(fix: RawFix) {
+    private fun updateEnvelope(fix: RawFix, spatialSpeedMps: Double? = null) {
         val v = fix.speedMps?.toDouble() ?: return
         val sAcc = fix.speedAccMps?.toDouble()
         if (sAcc != null && sAcc > ENVELOPE_MAX_SPEED_ACC_MPS) return
-        if (v > activeProfile.maxSpeedMps * ENVELOPE_FRACTION) {
+        val accOk = (fix.accuracyM ?: 8f) <= ENVELOPE_MAX_ACC_M
+        val spatialOk = spatialSpeedMps == null || spatialSpeedMps >= activeProfile.maxSpeedMps * ENVELOPE_FRACTION * 0.65
+        if (v > activeProfile.maxSpeedMps * ENVELOPE_FRACTION && accOk && spatialOk) {
             if (++fastFixCount >= ENVELOPE_ESCALATE_FIXES) {
                 escalateEnvelope(v)
                 fastFixCount = 0

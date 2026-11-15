@@ -55,6 +55,23 @@ class TripManager private constructor(private val context: Context) {
         private const val TRACK_LEAD_IN_MS = 5_000L
         private const val MIN_STEP_DISTANCE_M = 0.5f
         const val KEY_MANUAL_PAUSE_STICKY = "pref_trip_manual_pause_sticky"
+
+        internal fun computeResumedTripPauses(saved: TripRecord, resumeNowMs: Long): List<TripPause> {
+            val oldEnd = saved.endTime ?: return saved.pauses
+            val gapMs = resumeNowMs - oldEnd
+            if (gapMs < 15_000L) return saved.pauses
+            val lastPt = saved.points.lastOrNull()
+            val gapPause = TripPause(
+                startTime = oldEnd,
+                endTime = resumeNowMs,
+                latitude = lastPt?.latitude ?: 0.0,
+                longitude = lastPt?.longitude ?: 0.0,
+                durationMs = gapMs,
+                pointIndex = (saved.points.size - 1).coerceAtLeast(0),
+                distanceMeters = saved.distanceMeters
+            )
+            return (saved.pauses + gapPause).sortedBy { it.startTime }
+        }
     }
 
     var lastManualStopTimestamp: Long = 0L
@@ -659,6 +676,93 @@ class TripManager private constructor(private val context: Context) {
 
     fun stopManualTrip() {
         stopTrip(isManualStop = true)
+    }
+
+    /**
+     * Reopens a previously saved trip as the active live recording, appending a [TripPause] gap
+     * spanning [saved.endTime .. now] when a saved end time exists so moving duration and
+     * average speed exclude the elapsed offline interval between save and resume.
+     */
+    fun resumeSavedTrip(tripId: Long, nowMs: Long = System.currentTimeMillis()): TripRecord? {
+        val existingActive = _activeTrip.value
+        if (existingActive != null && existingActive.id == tripId) {
+            return existingActive
+        }
+        if (existingActive != null) {
+            stopTrip(isManualStop = true)
+        }
+
+        val saved = dbHelper.getTrip(tripId) ?: return null
+        val updatedPauses = computeResumedTripPauses(saved, nowMs)
+        val reopened = dbHelper.reopenSavedTrip(tripId, updatedPauses)
+            ?: saved.copy(endTime = null, pauses = updatedPauses)
+
+        setActivityProfile(reopened.activityProfile)
+
+        liveRawPoints.clear()
+        liveRawPoints.addAll(reopened.rawPoints)
+        _rawTrackPoints.value = liveRawPoints.toList()
+        synchronized(rowLock) {
+            pendingRows.clear()
+            persistedPointCount = reopened.points.size
+        }
+        lastSmoothedForDistance = null
+        trackSampler.reset()
+        lastCommittedElapsedMs = -1L
+        lastCommittedUtcMs = -1L
+        lastRejectedSmoothedPoint = null
+        totalSpeedSamples = if (reopened.avgSpeedKmh > 0f) 1 else 0
+        sumSpeedKmh = if (reopened.avgSpeedKmh > 0f) reopened.avgSpeedKmh.toDouble() else 0.0
+        lastMovingTimestamp = nowMs
+        movingSinceTimestamp = null
+        pendingCandidate = null
+        pendingTrailKey = null
+        resetAutoStartGates()
+        pauseAnchorLocation = null
+        pauseAnchorFirstStationaryTime = null
+        pauseAnchorPointIndex = null
+        pauseAnchorDistanceMeters = null
+        movingSinceInPauseTimestamp = null
+        pauseWarningNotified = false
+        isManualPauseSticky = false
+        _isPaused.value = false
+        cancelAutoStopAlarm()
+        prefs.edit()
+            .remove(KEY_IS_PAUSED)
+            .remove(KEY_PAUSE_START_TIME)
+            .remove(KEY_PAUSE_LAT)
+            .remove(KEY_PAUSE_LNG)
+            .remove(KEY_PAUSE_POINT_INDEX)
+            .remove(KEY_PAUSE_DIST)
+            .remove(KEY_MANUAL_PAUSE_STICKY)
+            .apply()
+
+        lastLocation = reopened.points.lastOrNull()?.let {
+            Location("").apply {
+                latitude = it.latitude
+                longitude = it.longitude
+            }
+        }
+        LocationManager.getInstance(context).resetTracking()
+        LiveSharingManager.getInstance(context).resetSessionTrail()
+
+        _activeTrip.value = reopened
+        TelemetryLogger.logTrip(
+            "RESUMED_SAVED",
+            tripId,
+            "Resumed saved trip with ${reopened.points.size} points and ${updatedPauses.size} pauses (profile=${reopened.activityProfile.name})"
+        )
+        online.hatala.whereami.tracking.LifecycleDiagnosticsRecorder.log(
+            "TRIP_RESUME_SAVED",
+            mapOf("tripId" to tripId, "points" to reopened.points.size, "pauses" to updatedPauses.size)
+        )
+
+        startWatchdog()
+        startLiveTrackingService()
+        try {
+            AppStateManager.getInstance(context).recalculateState()
+        } catch (_: Exception) {}
+        return reopened
     }
 
     private fun startTrip(isAuto: Boolean) {

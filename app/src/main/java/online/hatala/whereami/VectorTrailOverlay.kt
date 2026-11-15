@@ -210,6 +210,7 @@ class VectorTrailOverlay(
     }
 
     private val currentTrails = CopyOnWriteArrayList<TrailVectorSegment>()
+    @Volatile private var trailsVersion: Long = 0L
     private var lastQueriedBbox: BoundingBox? = null
     private var lastFetchedKinds: Set<TrailRouteKind>? = null
     private var lastFetchedSupplementOsm: Boolean? = null
@@ -220,6 +221,128 @@ class VectorTrailOverlay(
     private var cachedEffectWidthBucket: Int = -1
     private var cachedPathEffect: PathEffect? = null
     var selectedTrailId: Long? = null
+
+    // Reusable per-frame scratch buffers to avoid allocations during draw()
+    private val scratchP1 = Point()
+    private val scratchP2 = Point()
+    private val filteredTrailsScratch = ArrayList<TrailVectorSegment>(256)
+    private var coordScratchPool = ArrayList<FloatArray>(256)
+    private var coordScratchLens = IntArray(256)
+    private var colorBitsScratch = IntArray(256)
+    private var pathPool = ArrayList<Path>(256)
+    private var drawColorInts = IntArray(256)
+    private var drawColorEnums = arrayOfNulls<TrailColor>(256)
+    private var drawTrailIds = LongArray(256)
+    private var drawnCount: Int = 0
+    private val cellGrid = PrimitiveCellGrid()
+
+    private var lastDrawZoom: Double = Double.NaN
+    private var lastDrawCenterLat: Double = Double.NaN
+    private var lastDrawCenterLon: Double = Double.NaN
+    private var lastDrawOrientation: Float = Float.NaN
+    private var lastDrawWidth: Int = -1
+    private var lastDrawHeight: Int = -1
+    private var lastDrawTrailsVersion: Long = -1L
+    private var lastDrawFilterHash: Int = 0
+    private var lastDrawStyleHash: Int = 0
+
+    private class PrimitiveCellGrid {
+        companion object {
+            const val EMPTY_KEY = Long.MIN_VALUE
+        }
+        private var keys = LongArray(1024) { EMPTY_KEY }
+        private var masks = IntArray(1024)
+        private var refUxs = FloatArray(1024)
+        private var refUys = FloatArray(1024)
+        private var maskPow2 = 1023
+        private var size = 0
+
+        fun reset(expectedEntries: Int) {
+            val needed = (expectedEntries * 2).coerceAtLeast(512)
+            if (keys.size < needed) {
+                var cap = 1024
+                while (cap < needed) cap = cap shl 1
+                keys = LongArray(cap) { EMPTY_KEY }
+                masks = IntArray(cap)
+                refUxs = FloatArray(cap)
+                refUys = FloatArray(cap)
+                maskPow2 = cap - 1
+            } else {
+                java.util.Arrays.fill(keys, EMPTY_KEY)
+            }
+            size = 0
+        }
+
+        private fun hashIndex(key: Long): Int {
+            var h = key xor (key ushr 33)
+            h *= -0xae502812aa7333L
+            h = h xor (h ushr 33)
+            return h.toInt() and maskPow2
+        }
+
+        private fun ensureCapacityForInsert() {
+            if (size * 4 >= keys.size * 3) {
+                val oldKeys = keys
+                val oldMasks = masks
+                val oldUx = refUxs
+                val oldUy = refUys
+                val newCap = oldKeys.size shl 1
+                keys = LongArray(newCap) { EMPTY_KEY }
+                masks = IntArray(newCap)
+                refUxs = FloatArray(newCap)
+                refUys = FloatArray(newCap)
+                maskPow2 = newCap - 1
+                size = 0
+                for (i in oldKeys.indices) {
+                    val k = oldKeys[i]
+                    if (k != EMPTY_KEY) {
+                        var idx = hashIndex(k)
+                        while (keys[idx] != EMPTY_KEY) idx = (idx + 1) and maskPow2
+                        keys[idx] = k
+                        masks[idx] = oldMasks[i]
+                        refUxs[idx] = oldUx[i]
+                        refUys[idx] = oldUy[i]
+                        size++
+                    }
+                }
+            }
+        }
+
+        fun mark(key: Long, bit: Int, refUx: Float, refUy: Float) {
+            ensureCapacityForInsert()
+            var idx = hashIndex(key)
+            while (true) {
+                val existing = keys[idx]
+                if (existing == EMPTY_KEY) {
+                    keys[idx] = key
+                    masks[idx] = bit
+                    refUxs[idx] = refUx
+                    refUys[idx] = refUy
+                    size++
+                    return
+                }
+                if (existing == key) {
+                    masks[idx] = masks[idx] or bit
+                    return
+                }
+                idx = (idx + 1) and maskPow2
+            }
+        }
+
+        fun findSlot(key: Long): Int {
+            var idx = hashIndex(key)
+            while (true) {
+                val existing = keys[idx]
+                if (existing == key) return idx
+                if (existing == EMPTY_KEY) return -1
+                idx = (idx + 1) and maskPow2
+            }
+        }
+
+        fun maskAt(slot: Int): Int = masks[slot]
+        fun uxAt(slot: Int): Float = refUxs[slot]
+        fun uyAt(slot: Int): Float = refUys[slot]
+    }
 
     private fun resolvePathEffect(style: TrailLineStyle, strokeWidthPx: Float, density: Float): PathEffect? {
         val bucket = (strokeWidthPx * 4f).toInt().coerceAtLeast(1)
@@ -282,15 +405,33 @@ class VectorTrailOverlay(
         )
 
         fetchJob = scope.launch(Dispatchers.IO) {
+            // Phase 1: Immediately serve cached offline vector tiles so trails appear instantaneously
+            val cachedTrails = TrailVectorRepository.getTrailsForBoundingBox(
+                context = context,
+                bbox = expanded,
+                allowNetwork = false,
+                requestedKinds = kindsScope,
+                supplementOsmTrails = supplementScope
+            )
+            if (cachedTrails.isNotEmpty()) {
+                currentTrails.clear()
+                currentTrails.addAll(cachedTrails)
+                trailsVersion++
+                mapView.postInvalidate()
+            }
+
+            // Phase 2: Concurrently enrich missing relation details and Overpass supplement tiles
             val trails = TrailVectorRepository.getTrailsForBoundingBox(
                 context = context,
                 bbox = expanded,
+                allowNetwork = true,
                 requestedKinds = kindsScope,
                 supplementOsmTrails = supplementScope
             )
             if (trails.isNotEmpty()) {
                 currentTrails.clear()
                 currentTrails.addAll(trails)
+                trailsVersion++
                 lastQueriedBbox = expanded
                 lastFetchedKinds = kindsScope
                 lastFetchedSupplementOsm = supplementScope
@@ -299,8 +440,9 @@ class VectorTrailOverlay(
                 val centerInPrev = prev != null &&
                     bbox.centerLatitude >= prev.latSouth && bbox.centerLatitude <= prev.latNorth &&
                     bbox.centerLongitude >= prev.lonWest && bbox.centerLongitude <= prev.lonEast
-                if (!centerInPrev) {
+                if (!centerInPrev && cachedTrails.isEmpty()) {
                     currentTrails.clear()
+                    trailsVersion++
                 }
                 lastQueriedBbox = null
                 lastFetchedKinds = kindsScope
@@ -308,8 +450,19 @@ class VectorTrailOverlay(
                 lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
                 lastFailedBbox = bbox
             }
-            launch(Dispatchers.Main) {
-                mapView.invalidate()
+            mapView.postInvalidate()
+        }
+    }
+
+    private val colorIntCache = HashMap<String, Int>(16)
+
+    private fun resolveStrokeColorInt(trail: TrailVectorSegment): Int {
+        val hex = resolveStrokeColorHex(trail)
+        return colorIntCache.getOrPut(hex) {
+            try {
+                Color.parseColor(hex)
+            } catch (_: Exception) {
+                Color.parseColor("#EF4444")
             }
         }
     }
@@ -319,16 +472,21 @@ class VectorTrailOverlay(
         val zoom = mapView.zoomLevelDouble
 
         updateTrailsForViewport(mapView)
-        val trailsToDraw = currentTrails.filter { matchesFilters(it, enabledKinds, enabledColors) }
-        if (trailsToDraw.isEmpty()) return
 
-        val proj = mapView.projection ?: return
+        val filterHash = enabledKinds.hashCode() * 31 + enabledColors.hashCode()
+        val styleHash = ((trailThickness.ordinal * 31 + trailLineStyle.ordinal) * 31 + trailOpacity.ordinal)
+        val center = mapView.mapCenter
+        val centerLat = center.latitude
+        val centerLon = center.longitude
+        val orientation = mapView.mapOrientation
+        val mapWidth = mapView.width
+        val mapHeight = mapView.height
+        val rev = trailsVersion
+
         val density = context.resources.displayMetrics.density
-
         val widthDp = computeStrokeWidthDp(zoom, trailThickness)
         val strokeWidthPx = widthDp * density
         val haloWidthPx = computeHaloWidthPx(widthDp, density)
-
         val pathEffect = resolvePathEffect(trailLineStyle, strokeWidthPx, density)
         val strokeCap = computeStrokeCap(trailLineStyle)
         val trailAlpha = (255f * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
@@ -346,198 +504,251 @@ class VectorTrailOverlay(
         highlightPaint.strokeWidth = strokeWidthPx + 3.5f * density
         highlightPaint.strokeCap = strokeCap
 
-        val minStepPxSq = (1.5f * density) * (1.5f * density)
-        val p1 = Point()
-        val p2 = Point()
+        val canReplayCachedPaths =
+            rev == lastDrawTrailsVersion &&
+            filterHash == lastDrawFilterHash &&
+            styleHash == lastDrawStyleHash &&
+            zoom == lastDrawZoom &&
+            centerLat == lastDrawCenterLat &&
+            centerLon == lastDrawCenterLon &&
+            orientation == lastDrawOrientation &&
+            mapWidth == lastDrawWidth &&
+            mapHeight == lastDrawHeight
 
-        // Tightly quantize undirected screen cells so coincident trails separate cleanly without pulling distant neighbors.
-        val cellPx = (strokeWidthPx * 2.4f).coerceIn(4.5f * density, 8.0f * density)
-        val tolPx = (strokeWidthPx * 0.9f).coerceIn(1.5f * density, 2.8f * density)
-        val screenCoords = ArrayList<FloatArray?>(trailsToDraw.size)
-        val colorBits = IntArray(trailsToDraw.size)
-        val cellColorMask = HashMap<Long, Int>(trailsToDraw.size * 6)
-        val cellRefUx = HashMap<Long, Float>(trailsToDraw.size * 6)
-        val cellRefUy = HashMap<Long, Float>(trailsToDraw.size * 6)
+        if (!canReplayCachedPaths) {
+            filteredTrailsScratch.clear()
+            for (seg in currentTrails) {
+                if (matchesFilters(seg, enabledKinds, enabledColors)) {
+                    filteredTrailsScratch.add(seg)
+                }
+            }
+            if (filteredTrailsScratch.isEmpty()) {
+                drawnCount = 0
+                lastDrawTrailsVersion = rev
+                lastDrawFilterHash = filterHash
+                lastDrawStyleHash = styleHash
+                lastDrawZoom = zoom
+                lastDrawCenterLat = centerLat
+                lastDrawCenterLon = centerLon
+                lastDrawOrientation = orientation
+                lastDrawWidth = mapWidth
+                lastDrawHeight = mapHeight
+                return
+            }
 
-        fun cellKey(cx: Int, cy: Int, ang: Int): Long =
-            ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
+            val proj = mapView.projection ?: return
+            val count = filteredTrailsScratch.size
+            if (coordScratchLens.size < count) {
+                coordScratchLens = IntArray(count)
+                colorBitsScratch = IntArray(count)
+                drawColorInts = IntArray(count)
+                drawColorEnums = arrayOfNulls(count)
+                drawTrailIds = LongArray(count)
+            }
+            while (coordScratchPool.size < count) {
+                coordScratchPool.add(FloatArray(64))
+            }
+            while (pathPool.size < count) {
+                pathPool.add(Path())
+            }
 
-        fun markCell(sx: Float, sy: Float, ang: Int, bit: Int, refUx: Float, refUy: Float) {
-            val cx0 = kotlin.math.floor((sx - tolPx) / cellPx).toInt()
-            val cx1 = kotlin.math.floor((sx + tolPx) / cellPx).toInt()
-            val cy0 = kotlin.math.floor((sy - tolPx) / cellPx).toInt()
-            val cy1 = kotlin.math.floor((sy + tolPx) / cellPx).toInt()
-            for (cx in cx0..cx1) {
-                for (cy in cy0..cy1) {
-                    val k = cellKey(cx, cy, ang)
-                    cellColorMask[k] = (cellColorMask[k] ?: 0) or bit
-                    if (!cellRefUx.containsKey(k)) {
-                        cellRefUx[k] = refUx
-                        cellRefUy[k] = refUy
+            val minStepPxSq = (1.5f * density) * (1.5f * density)
+            val cellPx = (strokeWidthPx * 2.4f).coerceIn(4.5f * density, 8.0f * density)
+            val tolPx = (strokeWidthPx * 0.9f).coerceIn(1.5f * density, 2.8f * density)
+            cellGrid.reset(count * 8)
+
+            fun cellKey(cx: Int, cy: Int, ang: Int): Long =
+                ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
+
+            fun markCell(sx: Float, sy: Float, ang: Int, bit: Int, refUx: Float, refUy: Float) {
+                val cx0 = kotlin.math.floor((sx - tolPx) / cellPx).toInt()
+                val cx1 = kotlin.math.floor((sx + tolPx) / cellPx).toInt()
+                val cy0 = kotlin.math.floor((sy - tolPx) / cellPx).toInt()
+                val cy1 = kotlin.math.floor((sy + tolPx) / cellPx).toInt()
+                for (cx in cx0..cx1) {
+                    for (cy in cy0..cy1) {
+                        cellGrid.mark(cellKey(cx, cy, ang), bit, refUx, refUy)
                     }
                 }
             }
-        }
 
-        for (tIdx in trailsToDraw.indices) {
-            val trail = trailsToDraw[tIdx]
-            val pts = trail.points
-            if (pts.size < 2) {
-                screenCoords.add(null)
-                continue
-            }
-            val coords = projectDecimatedScreenCoords(proj, pts, p1, p2, minStepPxSq)
-            if (coords.size < 4) {
-                screenCoords.add(null)
-                continue
-            }
-            screenCoords.add(coords)
-            val bit = resolveVisualColorBit(trail)
-            colorBits[tIdx] = bit
+            for (tIdx in 0 until count) {
+                val trail = filteredTrailsScratch[tIdx]
+                val pts = trail.points
+                if (pts.size < 2) {
+                    coordScratchLens[tIdx] = 0
+                    continue
+                }
+                val needed = pts.size * 2
+                var buf = coordScratchPool[tIdx]
+                if (buf.size < needed) {
+                    buf = FloatArray(needed)
+                    coordScratchPool[tIdx] = buf
+                }
+                val floatLen = projectDecimatedScreenCoordsInto(proj, pts, scratchP1, scratchP2, minStepPxSq, buf)
+                if (floatLen < 4) {
+                    coordScratchLens[tIdx] = 0
+                    continue
+                }
+                coordScratchLens[tIdx] = floatLen
+                val bit = resolveVisualColorBit(trail)
+                colorBitsScratch[tIdx] = bit
 
-            val vCount = coords.size / 2
-            for (i in 0 until vCount - 1) {
-                val ax = coords[i * 2]
-                val ay = coords[i * 2 + 1]
-                val bx = coords[(i + 1) * 2]
-                val by = coords[(i + 1) * 2 + 1]
-                val dx = bx - ax
-                val dy = by - ay
-                val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                if (segLen < 0.5f) continue
-                val ang = undirectedAngleBucket(dx, dy)
-                val ux = dx / segLen
-                val uy = dy / segLen
-                val sign = canonicalTangentSign(ux, uy, ang)
-                val refUx = ux * sign
-                val refUy = uy * sign
-                val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
-                for (s in 0..steps) {
-                    val t = s.toFloat() / steps.toFloat()
-                    markCell(ax + dx * t, ay + dy * t, ang, bit, refUx, refUy)
+                val vCount = floatLen / 2
+                for (i in 0 until vCount - 1) {
+                    val ax = buf[i * 2]
+                    val ay = buf[i * 2 + 1]
+                    val bx = buf[(i + 1) * 2]
+                    val by = buf[(i + 1) * 2 + 1]
+                    val dx = bx - ax
+                    val dy = by - ay
+                    val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                    if (segLen < 0.5f) continue
+                    val ang = undirectedAngleBucket(dx, dy)
+                    val ux = dx / segLen
+                    val uy = dy / segLen
+                    val sign = canonicalTangentSign(ux, uy, ang)
+                    val refUx = ux * sign
+                    val refUy = uy * sign
+                    val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
+                    for (s in 0..steps) {
+                        val t = s.toFloat() / steps.toFloat()
+                        markCell(ax + dx * t, ay + dy * t, ang, bit, refUx, refUy)
+                    }
                 }
             }
-        }
 
-        fun lookupMaskAndRef(vx: Float, vy: Float, ang: Int, selfBit: Int, fallbackUx: Float, fallbackUy: Float): Triple<Int, Float, Float> {
-            val cx = kotlin.math.floor(vx / cellPx).toInt()
-            val cy = kotlin.math.floor(vy / cellPx).toInt()
-            val prevAng = (ang + 5) % 6
-            val nextAng = (ang + 1) % 6
-            val kExact = cellKey(cx, cy, ang)
-            val kPrev = cellKey(cx, cy, prevAng)
-            val kNext = cellKey(cx, cy, nextAng)
-            var mask = selfBit
-            mask = mask or (cellColorMask[kExact] ?: 0)
-            mask = mask or (cellColorMask[kPrev] ?: 0)
-            mask = mask or (cellColorMask[kNext] ?: 0)
-            val refKey = when {
-                cellRefUx.containsKey(kExact) -> kExact
-                cellRefUx.containsKey(kPrev) -> kPrev
-                cellRefUx.containsKey(kNext) -> kNext
-                else -> -1L
-            }
-            val refUx = if (refKey != -1L) cellRefUx[refKey] ?: fallbackUx else fallbackUx
-            val refUy = if (refKey != -1L) cellRefUy[refKey] ?: fallbackUy else fallbackUy
-            return Triple(mask, refUx, refUy)
-        }
+            var outIdx = 0
+            for (tIdx in 0 until count) {
+                val floatLen = coordScratchLens[tIdx]
+                if (floatLen < 4) continue
+                val coords = coordScratchPool[tIdx]
+                val path = pathPool[outIdx]
+                path.rewind()
+                val vCount = floatLen / 2
+                val selfBit = colorBitsScratch[tIdx]
+                var prevNx = 0f
+                var prevNy = 0f
+                var prevCount = 0
 
-        val paths = ArrayList<Path?>(trailsToDraw.size)
-        for (tIdx in trailsToDraw.indices) {
-            val coords = screenCoords[tIdx]
-            if (coords == null) {
-                paths.add(null)
-                continue
-            }
-            val path = Path()
-            val vCount = coords.size / 2
-            val selfBit = colorBits[tIdx]
-            var prevNx = 0f
-            var prevNy = 0f
-            var prevCount = 0
-            for (i in 0 until vCount) {
-                val vx = coords[i * 2]
-                val vy = coords[i * 2 + 1]
-                val prevIdx = if (i > 0) i - 1 else 0
-                val nextIdx = if (i < vCount - 1) i + 1 else vCount - 1
-                val tx = coords[nextIdx * 2] - coords[prevIdx * 2]
-                val ty = coords[nextIdx * 2 + 1] - coords[prevIdx * 2 + 1]
-                val tLen = kotlin.math.hypot(tx.toDouble(), ty.toDouble()).toFloat()
-                val offsetX: Float
-                val offsetY: Float
-                if (tLen > 0.001f) {
-                    val ux = tx / tLen
-                    val uy = ty / tLen
-                    val ang = undirectedAngleBucket(ux, uy)
-                    val (mask, refUx, refUy) = lookupMaskAndRef(vx, vy, ang, selfBit, ux, uy)
-                    val count = Integer.bitCount(mask)
-                    val (nx, ny) = alignBundleNormal(
-                        ux = ux,
-                        uy = uy,
-                        refUx = refUx,
-                        refUy = refUy,
-                        prevNx = prevNx,
-                        prevNy = prevNy,
-                        insideBundle = prevCount > 1 && count > 1
-                    )
-                    prevNx = nx
-                    prevNy = ny
-                    prevCount = count
-                    val offsetPx = if (count > 1) {
-                        val rank = bitRankInMask(mask, selfBit)
-                        computeLaneOffsetPx(rank, count, strokeWidthPx)
-                    } else 0f
-                    offsetX = vx + nx * offsetPx
-                    offsetY = vy + ny * offsetPx
-                } else {
-                    offsetX = vx
-                    offsetY = vy
+                for (i in 0 until vCount) {
+                    val vx = coords[i * 2]
+                    val vy = coords[i * 2 + 1]
+                    val prevIdx = if (i > 0) i - 1 else 0
+                    val nextIdx = if (i < vCount - 1) i + 1 else vCount - 1
+                    val tx = coords[nextIdx * 2] - coords[prevIdx * 2]
+                    val ty = coords[nextIdx * 2 + 1] - coords[prevIdx * 2 + 1]
+                    val tLen = kotlin.math.hypot(tx.toDouble(), ty.toDouble()).toFloat()
+                    val offsetX: Float
+                    val offsetY: Float
+                    if (tLen > 0.001f) {
+                        val ux = tx / tLen
+                        val uy = ty / tLen
+                        val ang = undirectedAngleBucket(ux, uy)
+                        val cx = kotlin.math.floor(vx / cellPx).toInt()
+                        val cy = kotlin.math.floor(vy / cellPx).toInt()
+                        val prevAng = (ang + 5) % 6
+                        val nextAng = (ang + 1) % 6
+                        val sExact = cellGrid.findSlot(cellKey(cx, cy, ang))
+                        val sPrev = cellGrid.findSlot(cellKey(cx, cy, prevAng))
+                        val sNext = cellGrid.findSlot(cellKey(cx, cy, nextAng))
+
+                        var mask = selfBit
+                        if (sExact >= 0) mask = mask or cellGrid.maskAt(sExact)
+                        if (sPrev >= 0) mask = mask or cellGrid.maskAt(sPrev)
+                        if (sNext >= 0) mask = mask or cellGrid.maskAt(sNext)
+
+                        val refSlot = when {
+                            sExact >= 0 -> sExact
+                            sPrev >= 0 -> sPrev
+                            sNext >= 0 -> sNext
+                            else -> -1
+                        }
+                        val refUx = if (refSlot >= 0) cellGrid.uxAt(refSlot) else ux
+                        val refUy = if (refSlot >= 0) cellGrid.uyAt(refSlot) else uy
+
+                        val bundleCount = Integer.bitCount(mask)
+                        var nx = -uy
+                        var ny = ux
+                        if (prevCount > 1 && bundleCount > 1 && (prevNx != 0f || prevNy != 0f)) {
+                            if (nx * prevNx + ny * prevNy < 0f) {
+                                nx = -nx
+                                ny = -ny
+                            }
+                        } else if (ux * refUx + uy * refUy < 0f) {
+                            nx = -nx
+                            ny = -ny
+                        }
+                        prevNx = nx
+                        prevNy = ny
+                        prevCount = bundleCount
+                        val offsetPx = if (bundleCount > 1) {
+                            val rank = bitRankInMask(mask, selfBit)
+                            computeLaneOffsetPx(rank, bundleCount, strokeWidthPx)
+                        } else 0f
+                        offsetX = vx + nx * offsetPx
+                        offsetY = vy + ny * offsetPx
+                    } else {
+                        offsetX = vx
+                        offsetY = vy
+                    }
+                    if (i == 0) path.moveTo(offsetX, offsetY) else path.lineTo(offsetX, offsetY)
                 }
-                if (i == 0) path.moveTo(offsetX, offsetY) else path.lineTo(offsetX, offsetY)
+
+                val trail = filteredTrailsScratch[tIdx]
+                drawColorInts[outIdx] = resolveStrokeColorInt(trail)
+                drawColorEnums[outIdx] = trail.color
+                drawTrailIds[outIdx] = trail.id
+                outIdx++
             }
-            paths.add(path)
+            drawnCount = outIdx
+            lastDrawTrailsVersion = rev
+            lastDrawFilterHash = filterHash
+            lastDrawStyleHash = styleHash
+            lastDrawZoom = zoom
+            lastDrawCenterLat = centerLat
+            lastDrawCenterLon = centerLon
+            lastDrawOrientation = orientation
+            lastDrawWidth = mapWidth
+            lastDrawHeight = mapHeight
         }
+
+        if (drawnCount == 0) return
 
         // 1. Draw Thin Contrast Halo (stronger for Yellow/White so light blazes stay crisp on pale roads)
-        for (tIdx in trailsToDraw.indices) {
-            val path = paths[tIdx] ?: continue
-            val color = trailsToDraw[tIdx].color
+        for (i in 0 until drawnCount) {
+            val color = drawColorEnums[i]
             haloPaint.alpha = if (color == TrailColor.YELLOW || color == TrailColor.WHITE) lightColorHaloAlpha else darkHaloAlpha
-            canvas.drawPath(path, haloPaint)
+            canvas.drawPath(pathPool[i], haloPaint)
         }
 
         // 2. Draw Colored Strokes
-        for (tIdx in trailsToDraw.indices) {
-            val path = paths[tIdx] ?: continue
-            val trail = trailsToDraw[tIdx]
-            val colorArgb = try {
-                Color.parseColor(resolveStrokeColorHex(trail))
-            } catch (_: Exception) {
-                Color.parseColor("#EF4444")
-            }
-            trailPaint.color = colorArgb
+        val selId = selectedTrailId
+        for (i in 0 until drawnCount) {
+            trailPaint.color = drawColorInts[i]
             trailPaint.alpha = trailAlpha
-            canvas.drawPath(path, trailPaint)
+            val p = pathPool[i]
+            canvas.drawPath(p, trailPaint)
 
-            if (selectedTrailId != null && trail.id == selectedTrailId) {
-                canvas.drawPath(path, highlightPaint)
+            if (selId != null && drawTrailIds[i] == selId) {
+                canvas.drawPath(p, highlightPaint)
             }
         }
     }
 
-    private fun projectDecimatedScreenCoords(
+    private fun projectDecimatedScreenCoordsInto(
         proj: Projection,
         pts: List<GeoPoint>,
         p1: Point,
         p2: Point,
-        minStepPxSq: Float
-    ): FloatArray {
-        val buf = FloatArray(pts.size * 2)
+        minStepPxSq: Float,
+        outBuf: FloatArray
+    ): Int {
         proj.toPixels(pts[0], p1)
         var lastX = p1.x.toFloat()
         var lastY = p1.y.toFloat()
-        buf[0] = lastX
-        buf[1] = lastY
+        outBuf[0] = lastX
+        outBuf[1] = lastY
         var count = 1
         val lastIdx = pts.size - 1
         for (i in 1 until lastIdx) {
@@ -547,8 +758,8 @@ class VectorTrailOverlay(
             val dx = x - lastX
             val dy = y - lastY
             if (dx * dx + dy * dy >= minStepPxSq) {
-                buf[count * 2] = x
-                buf[count * 2 + 1] = y
+                outBuf[count * 2] = x
+                outBuf[count * 2 + 1] = y
                 count++
                 lastX = x
                 lastY = y
@@ -557,10 +768,10 @@ class VectorTrailOverlay(
         proj.toPixels(pts[lastIdx], p2)
         val endX = p2.x.toFloat()
         val endY = p2.y.toFloat()
-        buf[count * 2] = endX
-        buf[count * 2 + 1] = endY
+        outBuf[count * 2] = endX
+        outBuf[count * 2 + 1] = endY
         count++
-        return buf.copyOf(count * 2)
+        return count * 2
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
@@ -570,8 +781,8 @@ class VectorTrailOverlay(
         val density = context.resources.displayMetrics.density
         val hitRadiusPx = 22.0f * density
 
-        val p1 = Point()
-        val p2 = Point()
+        val p1 = scratchP1
+        val p2 = scratchP2
 
         var nearestTrail: TrailVectorSegment? = null
         var minDistancePx = Float.MAX_VALUE
