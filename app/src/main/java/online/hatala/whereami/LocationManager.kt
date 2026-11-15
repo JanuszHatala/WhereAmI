@@ -163,7 +163,8 @@ private data class OsmPlaceResult(
     val country: String?,
     val countryCode: String?,
     val houseNumber: String? = null, // Specific house number if returned by Nominatim
-    val highwayType: String? = null  // OSM highway classification (motorway, trunk, primary, etc.)
+    val highwayType: String? = null, // OSM highway classification (motorway, trunk, primary, etc.)
+    val isHighwayFeature: Boolean = false
 )
 
 class LocationManager private constructor(private val context: Context) {
@@ -1309,6 +1310,9 @@ class LocationManager private constructor(private val context: Context) {
                 )
 
                 // 3. Immediate UI emission with latest kinematics & cached locality (anti-lag)
+                val liveOutdoor = lastOutdoorContext?.withUpdatedDistances(lat, lng)?.also {
+                    lastOutdoorContext = it
+                }
                 val seqId = ++fixSeqCounter
                 val fastSnapshot = MultiLocationSnapshot(
                     multiPlace = committedPlace,
@@ -1322,7 +1326,7 @@ class LocationManager private constructor(private val context: Context) {
                     timestamp = fixTimestamp,
                     fixSeqId = seqId,
                     track = state,
-                    outdoorContext = lastOutdoorContext
+                    outdoorContext = liveOutdoor
                 )
                 lastLocationSnapshot = fastSnapshot
                 trySend(fastSnapshot)
@@ -1437,19 +1441,24 @@ class LocationManager private constructor(private val context: Context) {
                     TripManager.getInstance(context).onLocalityEnriched(stabilizedMultiData.pl, lastOutdoorContext)
 
                     val currentSnap = lastLocationSnapshot
+                    val snapLat = currentSnap?.lat ?: params.lat
+                    val snapLng = currentSnap?.lng ?: params.lng
+                    val liveOutdoor = lastOutdoorContext?.withUpdatedDistances(snapLat, snapLng)?.also {
+                        lastOutdoorContext = it
+                    }
                     val snap = MultiLocationSnapshot(
                         multiPlace = stabilizedMultiData,
                         speedMs = currentSnap?.speedMs ?: params.speedMs,
                         speedKmh = currentSnap?.speedKmh ?: params.speedKmh,
-                        lat = currentSnap?.lat ?: params.lat,
-                        lng = currentSnap?.lng ?: params.lng,
+                        lat = snapLat,
+                        lng = snapLng,
                         altitude = currentSnap?.altitude,
                         bearing = currentSnap?.bearing ?: params.bearing,
                         accuracy = currentSnap?.accuracy ?: params.accuracy,
                         timestamp = currentSnap?.timestamp ?: params.timestamp,
                         fixSeqId = currentSnap?.fixSeqId ?: 0L,
                         track = currentSnap?.track,
-                        outdoorContext = lastOutdoorContext
+                        outdoorContext = liveOutdoor
                     )
                     lastLocationSnapshot = snap
                     snap
@@ -1507,9 +1516,13 @@ class LocationManager private constructor(private val context: Context) {
                         lastOutdoorResolvedTimeMs = SystemClock.elapsedRealtime()
 
                         if (!keepExisting) {
-                            lastOutdoorContext = outdoorCtx
-                            lastLocationSnapshot?.let { snap ->
-                                val updatedSnap = snap.copy(outdoorContext = outdoorCtx)
+                            val latestSnap = lastLocationSnapshot
+                            val syncedOutdoor = if (latestSnap != null) {
+                                outdoorCtx.withUpdatedDistances(latestSnap.lat, latestSnap.lng)
+                            } else outdoorCtx
+                            lastOutdoorContext = syncedOutdoor
+                            latestSnap?.let { snap ->
+                                val updatedSnap = snap.copy(outdoorContext = syncedOutdoor)
                                 lastLocationSnapshot = updatedSnap
                                 snapshotChannelSend?.invoke(updatedSnap)
                             }
@@ -2048,18 +2061,24 @@ class LocationManager private constructor(private val context: Context) {
         // Tier 1 - Geocoder returned locality. Enrich with OSM canonical road ref (DK52) & administrative gmina/powiat
         if (address?.locality != null) {
             val basePlace = address.toPlaceInfo(countryCode)
+            // When Nominatim explicitly resolved an unnamed `class=highway` way, do not let
+            // Android Geocoder's nearby residential parcel street/house override it.
+            val allowGeocoderStreetFallback = osm == null || !osm.isHighwayFeature || !osm.street.isNullOrBlank()
+            val fallbackGeocoderStreet = if (allowGeocoderStreetFallback) address.thoroughfare else null
             // OSRM may return only DW948 while OSM/Geocoder have Krakowska on the same corridor.
             val (coalescedStreet, coalescedRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
                 osrmStreet = osrmStreet,
                 osmStreet = osm?.street,
                 osmRoadRef = osm?.roadRef,
-                geocoderStreet = address.thoroughfare,
+                geocoderStreet = fallbackGeocoderStreet,
                 candidateHighwayType = osm?.highwayType ?: candidateHighwayType
             )
             val canonicalStreet = when {
                 // 1. OSRM + OSM/Geocoder coalesced street/ref (prefers local name over bare highway code)
                 !coalescedStreet.isNullOrBlank() || !coalescedRef.isNullOrBlank() -> {
-                    val validHouse = if (osmMatchesTrajectory) (osm?.houseNumber ?: address.subThoroughfare) else null
+                    val validHouse = if (osmMatchesTrajectory) {
+                        osm?.houseNumber ?: if (allowGeocoderStreetFallback) address.subThoroughfare else null
+                    } else null
                     val cacheHouse = validHouse != null && osmMatchesTrajectory &&
                         !RoadNameNormalizer.isMajorRoad(coalescedStreet, coalescedRef) &&
                         !RoadNameNormalizer.isHighwayCodeOnly(coalescedStreet)
@@ -2073,16 +2092,16 @@ class LocationManager private constructor(private val context: Context) {
                 }
                 // 2. Road ref enrichment if thoroughfare provided (no OSRM/OSM street)
                 osm != null && !osm.roadRef.isNullOrBlank() -> {
-                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else (address.thoroughfare ?: osm.street)
-                    val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
-                    val cacheHouse = validHouse != null && thoroughfareMatchesTrajectory && !RoadNameNormalizer.isMajorRoad(targetStreet, osm.roadRef)
+                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else (fallbackGeocoderStreet ?: osm.street)
+                    val validHouse = if (thoroughfareMatchesTrajectory && allowGeocoderStreetFallback) address.subThoroughfare else null
+                    val cacheHouse = validHouse != null && thoroughfareMatchesTrajectory && allowGeocoderStreetFallback && !RoadNameNormalizer.isMajorRoad(targetStreet, osm.roadRef)
                     RoadNameNormalizer.normalize(targetStreet, osm.roadRef, validHouse, includeHouseNumber = cacheHouse, countryCode = countryCode)
                 }
                 // 3. Fallback to Android native Geocoder thoroughfare
                 else -> {
-                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else address.thoroughfare
-                    val validHouse = if (thoroughfareMatchesTrajectory) address.subThoroughfare else null
-                    val cacheHouse = validHouse != null && thoroughfareMatchesTrajectory && !RoadNameNormalizer.isMajorRoad(targetStreet, null)
+                    val targetStreet = if (trajectoryStreet != null && !thoroughfareMatchesTrajectory) trajectoryStreet else fallbackGeocoderStreet
+                    val validHouse = if (thoroughfareMatchesTrajectory && allowGeocoderStreetFallback) address.subThoroughfare else null
+                    val cacheHouse = validHouse != null && thoroughfareMatchesTrajectory && allowGeocoderStreetFallback && !RoadNameNormalizer.isMajorRoad(targetStreet, null)
                     RoadNameNormalizer.normalize(targetStreet, null, validHouse, includeHouseNumber = cacheHouse, countryCode = countryCode)
                 }
             }
@@ -2109,22 +2128,32 @@ class LocationManager private constructor(private val context: Context) {
             }
 
             // Administrative hierarchy resolution with decay protection (never lose gmina due to transient geocoder glitch)
+            val baseCc = (osm?.countryCode ?: basePlace.countryCode).trim().uppercase(Locale.ROOT)
             val effectivePowiat = osm?.county ?: basePlace.powiat ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
             val localityKey = effectiveCity.lowercase(Locale.ROOT)
+            val countyScope = effectivePowiat?.trim()?.lowercase(Locale.ROOT).orEmpty()
+            val gminaScopedKey = if (baseCc.isNotBlank() && countyScope.isNotBlank()) {
+                "loc_gmina_${baseCc}_${countyScope}_$localityKey"
+            } else null
             val candidateGminaRaw = osm?.municipality ?: basePlace.gmina
             val isCountyCity = isAutonomousCountyCity(effectiveCity, candidateGminaRaw, effectivePowiat)
             val candidateGmina = if (isCountyCity) null else candidateGminaRaw
             val effectiveGmina = if (isCountyCity) {
                 null
             } else if (!candidateGmina.isNullOrBlank()) {
-                prefs.edit().putString("loc_gmina_$localityKey", candidateGmina).apply()
+                val verifiedPowiat = osm?.county?.trim()?.lowercase(Locale.ROOT).orEmpty()
+                if (!osm?.municipality.isNullOrBlank() && baseCc.isNotBlank() && verifiedPowiat.isNotBlank()) {
+                    prefs.edit().putString("loc_gmina_${baseCc}_${verifiedPowiat}_$localityKey", osm!!.municipality).apply()
+                }
                 candidateGmina
             } else {
-                prefs.getString("loc_gmina_$localityKey", null)
-                    ?: if (lastGood?.city.equals(effectiveCity, ignoreCase = true)) lastGood?.gmina else null
+                (gminaScopedKey?.let { prefs.getString(it, null) })
+                    ?: if (distToLastGood <= 2500f &&
+                        lastGood?.city.equals(effectiveCity, ignoreCase = true) &&
+                        (effectivePowiat == null || lastGood?.powiat.isNullOrBlank() || lastGood?.powiat.equals(effectivePowiat, ignoreCase = true))
+                    ) lastGood?.gmina else null
             }
             val rawVoivodeship = osm?.state ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: basePlace.voivodeship
-            val baseCc = basePlace.countryCode.trim().uppercase(Locale.ROOT)
             val effectiveVoivodeship = if (baseCc == "PL") {
                 canonicalizePolishVoivodeship(rawVoivodeship)
             } else rawVoivodeship
@@ -2157,29 +2186,41 @@ class LocationManager private constructor(private val context: Context) {
             val city = osm.city ?: osm.municipality ?: osm.county
             if (city != null) {
                 val localityKey = city.lowercase(Locale.ROOT)
-                val isCountyCity = isAutonomousCountyCity(city, osm.municipality, osm.county)
+                val cc = (osm.countryCode ?: countryCode).trim().uppercase(Locale.ROOT)
+                val effectivePowiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null)
+                val countyScope = effectivePowiat?.trim()?.lowercase(Locale.ROOT).orEmpty()
+                val isCountyCity = isAutonomousCountyCity(city, osm.municipality, effectivePowiat)
                 val effectiveGmina = if (isCountyCity) {
                     null
                 } else if (!osm.municipality.isNullOrBlank()) {
-                    prefs.edit().putString("loc_gmina_$localityKey", osm.municipality).apply()
+                    val verifiedPowiat = osm.county?.trim()?.lowercase(Locale.ROOT).orEmpty()
+                    if (cc.isNotBlank() && verifiedPowiat.isNotBlank()) {
+                        prefs.edit().putString("loc_gmina_${cc}_${verifiedPowiat}_$localityKey", osm.municipality).apply()
+                    }
                     osm.municipality
                 } else {
-                    prefs.getString("loc_gmina_$localityKey", null)
-                        ?: if (lastGood?.city.equals(city, ignoreCase = true)) lastGood?.gmina else null
+                    (if (cc.isNotBlank() && countyScope.isNotBlank()) {
+                        prefs.getString("loc_gmina_${cc}_${countyScope}_$localityKey", null)
+                    } else null) ?: if (distToLastGood <= 2500f &&
+                        lastGood?.city.equals(city, ignoreCase = true) &&
+                        (effectivePowiat == null || lastGood?.powiat.isNullOrBlank() || lastGood?.powiat.equals(effectivePowiat, ignoreCase = true))
+                    ) lastGood?.gmina else null
                 }
 
                 val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
-                val cc = (osm.countryCode ?: countryCode).trim().uppercase(Locale.ROOT)
                 val osmNorm = osm.street?.let {
                     val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
                     val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !osm.houseNumber.isNullOrBlank()
                     RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = cacheH, countryCode = cc)
                 }
-                val addrNorm = address?.thoroughfare?.let {
-                    val isMaj = RoadNameNormalizer.isMajorRoad(it)
-                    val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !address.subThoroughfare.isNullOrBlank()
-                    RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = cacheH, countryCode = cc)
-                }
+                val allowAddrNorm = !(osm.isHighwayFeature && osm.street.isNullOrBlank())
+                val addrNorm = if (allowAddrNorm) {
+                    address?.thoroughfare?.let {
+                        val isMaj = RoadNameNormalizer.isMajorRoad(it)
+                        val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !address.subThoroughfare.isNullOrBlank()
+                        RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = cacheH, countryCode = cc)
+                    }
+                } else null
                 val resolvedCountry = when {
                     cacheKey == "pl" && cc.isNotBlank() ->
                         Locale("", cc).getDisplayCountry(Locale("pl")).takeIf { it.isNotBlank() } ?: rawCountry
@@ -2187,7 +2228,7 @@ class LocationManager private constructor(private val context: Context) {
                         Locale("", cc).getDisplayCountry(Locale.ENGLISH).takeIf { it.isNotBlank() } ?: rawCountry
                     else -> rawCountry
                 }
-                val rawV = osm.state ?: address?.adminArea ?: lastGood?.voivodeship ?: "Unknown Region"
+                val rawV = osm.state ?: address?.adminArea ?: (if (distToLastGood < 5000f) lastGood?.voivodeship else null) ?: "Unknown Region"
                 val effectiveVoivodeship = if (cc == "PL") {
                     canonicalizePolishVoivodeship(rawV)
                 } else rawV
@@ -2197,7 +2238,7 @@ class LocationManager private constructor(private val context: Context) {
                     street = osmNorm ?: addrNorm,
                     roadRef = osm.roadRef,
                     gmina = effectiveGmina,
-                    powiat = osm.county ?: (if (distToLastGood < 3000f) lastGood?.powiat else null),
+                    powiat = effectivePowiat,
                     voivodeship = effectiveVoivodeship,
                     country = resolvedCountry,
                     countryCode = cc,
@@ -2206,13 +2247,10 @@ class LocationManager private constructor(private val context: Context) {
             }
         }
 
-        // Tier 2b – Close to last known good (memory fallback when both Geocoder and OSM lack locality)
-        if (lastGood != null && distToLastGood < 45f) {
+        // Tier 2b – Within 2.5 km of last known good (memory fallback when both Geocoder and OSM lack locality)
+        if (lastGood != null && distToLastGood <= 2500f) {
             return lastGood
         }
-
-        // Tier 3 – Last known good
-        if (lastGood != null) return lastGood
 
         return address?.toPlaceInfo(countryCode) ?: PlaceInfo("Unknown City", null, null, null, null, "Unknown Region", "Unknown Country", countryCode)
     }
@@ -2257,12 +2295,12 @@ class LocationManager private constructor(private val context: Context) {
             if (conn.responseCode == 429) {
                 osmRateLimitCooldownUntil = System.currentTimeMillis() + 30_000L
                 TelemetryLogger.log("OSM", "Nominatim reverse geocode HTTP 429; 30s cooldown active")
-                DataAcquisitionManager.reportRateLimited(30)
+                DataAcquisitionManager.reportRateLimited(30, DataSourceKind.GEOCODER)
                 return null
             }
 
             if (conn.responseCode == 200) {
-                DataAcquisitionManager.reportSuccess()
+                DataAcquisitionManager.reportSuccess(DataSourceKind.GEOCODER)
                 val body = conn.inputStream.bufferedReader().readText()
                 val root = JSONObject(body)
                 val addrObj = root.optJSONObject("address") ?: return null
@@ -2299,12 +2337,13 @@ class LocationManager private constructor(private val context: Context) {
                     }
                 }
 
+                val isHighwayFeature = root.optString("class") == "highway"
                 val rawRef = str("ref")
                     ?: RoadNameNormalizer.wayRef(rawRoad, root.optJSONObject("namedetails")?.let { nd ->
                         nd.optString("name").takeIf { it.isNotEmpty() } to nd.optString("ref").takeIf { it.isNotEmpty() }
-                    })
+                    }, isHighwayObject = isHighwayFeature)
                 val osmCountryCode = str("country_code")?.uppercase()
-                val rawHighwayType = if (root.optString("class") == "highway") {
+                val rawHighwayType = if (isHighwayFeature) {
                     root.optString("type").takeIf { it.isNotEmpty() }
                 } else {
                     root.optJSONObject("extratags")?.optString("highway")?.takeIf { it.isNotEmpty() }
@@ -2351,13 +2390,14 @@ class LocationManager private constructor(private val context: Context) {
                     country = str("country"),
                     countryCode = str("country_code"),
                     houseNumber = houseNum,
-                    highwayType = rawHighwayType
+                    highwayType = rawHighwayType,
+                    isHighwayFeature = isHighwayFeature
                 )
                 osmResponseCache[osmKey] = CachedOsmResult(System.currentTimeMillis(), osmResult)
                 osmResult
             } else null
         } catch (e: Exception) {
-            DataAcquisitionManager.reportError(e)
+            DataAcquisitionManager.reportError(e, DataSourceKind.GEOCODER)
             null
         }
     }

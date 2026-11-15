@@ -36,6 +36,9 @@ object ElevationCorrectionManager {
     @Volatile
     private var isRunningInternal = false
 
+    @Volatile
+    private var lastNotificationUpdateMs = 0L
+
     private val _progress = MutableStateFlow(ElevationCorrectionProgress())
     val progress: StateFlow<ElevationCorrectionProgress> = _progress.asStateFlow()
 
@@ -45,14 +48,14 @@ object ElevationCorrectionManager {
         if (!isRunningInternal || isPausedInternal) return
         isPausedInternal = true
         _progress.value = _progress.value.copy(isPaused = true)
-        appContext?.let { updateNotification(it, _progress.value) }
+        appContext?.let { updateNotification(it, _progress.value, force = true) }
     }
 
     fun resume() {
         if (!isRunningInternal || !isPausedInternal) return
         isPausedInternal = false
         _progress.value = _progress.value.copy(isPaused = false)
-        appContext?.let { updateNotification(it, _progress.value) }
+        appContext?.let { updateNotification(it, _progress.value, force = true) }
     }
 
     fun stop() {
@@ -101,7 +104,7 @@ object ElevationCorrectionManager {
                 singleTripId = tripId,
                 statusMessage = "Processing trip: ${trip.title.ifBlank { "Trip #$tripId" }}"
             )
-            updateNotification(appCtx, _progress.value)
+            updateNotification(appCtx, _progress.value, force = true)
 
             val success = ElevationCorrectionHelper.correctTrip(
                 trip = trip,
@@ -133,10 +136,109 @@ object ElevationCorrectionManager {
                 _progress.value = ElevationCorrectionProgress(singleTripId = tripId)
                 dismissNotification(appCtx)
             }
+            try { CacheManager.getInstance(appCtx).calculateCacheDeficit() } catch (_: Throwable) {}
             isRunningInternal = false
             isPausedInternal = false
         }
         return true
+    }
+
+    fun startMissingTrips(
+        context: Context,
+        onAllCompleted: (() -> Unit)? = null
+    ) {
+        if (isRunningInternal) return
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        isRunningInternal = true
+        isPausedInternal = false
+
+        createNotificationChannel(appCtx)
+
+        job = scope.launch {
+            val dbHelper = TripDatabaseHelper.getInstance(appCtx)
+            val missingIds = dbHelper.getMissingDemSummary().incompleteTripIds
+            val totalTripsCount = missingIds.size
+            if (totalTripsCount == 0) {
+                _progress.value = ElevationCorrectionProgress(
+                    isRunning = false,
+                    isDone = true,
+                    phase = ElevationCorrectionPhase.COMPLETED,
+                    statusMessage = "All trips already have DEM elevation."
+                )
+                isRunningInternal = false
+                isPausedInternal = false
+                try { CacheManager.getInstance(appCtx).calculateCacheDeficit() } catch (_: Throwable) {}
+                onAllCompleted?.invoke()
+                return@launch
+            }
+
+            _progress.value = ElevationCorrectionProgress(
+                isRunning = true,
+                phase = ElevationCorrectionPhase.TRIPS,
+                totalTrips = totalTripsCount,
+                statusMessage = "Fetching missing DEM data ($totalTripsCount trips)..."
+            )
+            updateNotification(appCtx, _progress.value, force = true)
+
+            for ((idx, tripId) in missingIds.withIndex()) {
+                while (isPausedInternal && isRunningInternal) {
+                    delay(250L)
+                }
+                if (!isRunningInternal) {
+                    dismissNotification(appCtx)
+                    return@launch
+                }
+                val trip = dbHelper.getTrip(tripId) ?: continue
+                if (trip.points.isEmpty()) continue
+
+                _progress.value = _progress.value.copy(
+                    phase = ElevationCorrectionPhase.TRIPS,
+                    processedTrips = idx,
+                    totalPoints = trip.points.size,
+                    processedPoints = 0,
+                    statusMessage = "Fetching DEM: trip ${idx + 1}/$totalTripsCount"
+                )
+                updateNotification(appCtx, _progress.value, force = true)
+
+                ElevationCorrectionHelper.correctTrip(
+                    trip = trip,
+                    mode = OverrideMode.FILL_MISSING,
+                    db = dbHelper,
+                    isCancelled = { !isRunningInternal }
+                ) { done, total ->
+                    while (isPausedInternal && isRunningInternal) {
+                        Thread.sleep(200)
+                    }
+                    _progress.value = _progress.value.copy(
+                        processedPoints = done,
+                        totalPoints = total
+                    )
+                    updateNotification(appCtx, _progress.value)
+                }
+            }
+
+            if (isRunningInternal) {
+                try { CacheManager.getInstance(appCtx).calculateCacheDeficit() } catch (_: Throwable) {}
+                onAllCompleted?.invoke()
+                val summary = "Fetched missing DEM data for $totalTripsCount trips."
+                _progress.value = ElevationCorrectionProgress(
+                    isRunning = false,
+                    isDone = true,
+                    phase = ElevationCorrectionPhase.COMPLETED,
+                    processedTrips = totalTripsCount,
+                    totalTrips = totalTripsCount,
+                    statusMessage = summary
+                )
+                showCompletionNotification(appCtx, summary)
+            } else {
+                try { CacheManager.getInstance(appCtx).calculateCacheDeficit() } catch (_: Throwable) {}
+                dismissNotification(appCtx)
+            }
+
+            isRunningInternal = false
+            isPausedInternal = false
+        }
     }
 
     fun startAll(
@@ -248,6 +350,7 @@ object ElevationCorrectionManager {
             }
 
             if (isRunningInternal) {
+                try { CacheManager.getInstance(appCtx).calculateCacheDeficit() } catch (_: Throwable) {}
                 onAllCompleted?.invoke()
                 val summary = "Complete: $totalPlacesCount saved places and $totalTripsCount trips updated."
                 _progress.value = ElevationCorrectionProgress(
@@ -285,7 +388,10 @@ object ElevationCorrectionManager {
         }
     }
 
-    private fun updateNotification(context: Context, state: ElevationCorrectionProgress) {
+    private fun updateNotification(context: Context, state: ElevationCorrectionProgress, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && !state.isPaused && (now - lastNotificationUpdateMs) < 1500L) return
+        lastNotificationUpdateMs = now
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
 
         val contentIntent = Intent(context, MainActivity::class.java).apply {

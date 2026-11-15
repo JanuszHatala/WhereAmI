@@ -141,7 +141,7 @@ object OutdoorContextResolver {
                 consecutiveFailures++
                 val backoffMs = (RATE_LIMIT_COOLDOWN_MS * (1L shl consecutiveFailures.coerceAtMost(4))).coerceAtMost(300_000L)
                 cooldownUntil = System.currentTimeMillis() + backoffMs
-                DataAcquisitionManager.reportError(e)
+                DataAcquisitionManager.reportError(e, DataSourceKind.OUTDOOR_OVERPASS)
                 TelemetryLogger.log("OUTDOOR", "Outdoor resolve error: ${e.message}; backoff ${backoffMs / 1000}s")
             }
         }
@@ -198,7 +198,7 @@ object OutdoorContextResolver {
                     val body = conn.inputStream.bufferedReader().readText()
                     if (body.trimStart().startsWith("{")) {
                         mirrorCooldownUntilMs.remove(endpoint)
-                        DataAcquisitionManager.reportSuccess()
+                        DataAcquisitionManager.reportSuccess(DataSourceKind.OUTDOOR_OVERPASS)
                         return body
                     }
                     lastError = java.io.IOException("Non-JSON Overpass response from $endpoint")
@@ -212,9 +212,9 @@ object OutdoorContextResolver {
         }
 
         if (saw429) {
-            DataAcquisitionManager.reportRateLimited(30)
+            DataAcquisitionManager.reportRateLimited(30, DataSourceKind.OUTDOOR_OVERPASS)
         } else if (lastError != null) {
-            DataAcquisitionManager.reportError(lastError)
+            DataAcquisitionManager.reportError(lastError, DataSourceKind.OUTDOOR_OVERPASS)
         }
         return null
     }
@@ -243,21 +243,21 @@ object OutdoorContextResolver {
 
             val code = conn.responseCode
             if (code == 429) {
-                DataAcquisitionManager.reportRateLimited(30)
+                DataAcquisitionManager.reportRateLimited(30, DataSourceKind.OUTDOOR_OVERPASS)
                 return null
             }
             if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
                 if (body.trimStart().startsWith("<")) {
-                    DataAcquisitionManager.reportSuccess()
+                    DataAcquisitionManager.reportSuccess(DataSourceKind.OUTDOOR_OVERPASS)
                     return body
                 }
             } else if (code >= 500) {
-                DataAcquisitionManager.reportError(java.io.IOException("OSM 0.6 HTTP $code"))
+                DataAcquisitionManager.reportError(java.io.IOException("OSM 0.6 HTTP $code"), DataSourceKind.OUTDOOR_OVERPASS)
             }
             null
         } catch (e: Exception) {
-            DataAcquisitionManager.reportError(e)
+            DataAcquisitionManager.reportError(e, DataSourceKind.OUTDOOR_OVERPASS)
             TelemetryLogger.log("OUTDOOR", "OSM 0.6 fallback error: ${e.message}")
             null
         }
@@ -696,20 +696,59 @@ object OutdoorContextResolver {
         }
     }
 
-    fun parseTrailColor(osmcSymbol: String? = null, colourTag: String? = null): TrailColor {
-        val s = osmcSymbol?.lowercase(Locale.ROOT) ?: ""
-        val c = colourTag?.lowercase(Locale.ROOT) ?: ""
+    internal fun matchTrailColorToken(rawToken: String?, allowWhite: Boolean): TrailColor {
+        val t = rawToken?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return TrailColor.NONE
+        val parts = t.split('_', '-', ' ', ';', '/')
+        fun hasWord(vararg words: String): Boolean =
+            parts.any { p -> words.any { w -> p == w } } || words.any { w -> t == w || t.contains(w) }
+
         return when {
-            s.contains("red") || c == "red" || c == "#ff0000" -> TrailColor.RED
-            s.contains("blue") || c == "blue" || c == "#0000ff" -> TrailColor.BLUE
-            s.contains("yellow") || c == "yellow" || c == "#ffff00" -> TrailColor.YELLOW
-            s.contains("green") || c == "green" || c == "#00ff00" -> TrailColor.GREEN
-            s.contains("black") || c == "black" || c == "#000000" -> TrailColor.BLACK
-            s.contains("white") || c == "white" -> TrailColor.WHITE
-            s.contains("purple") || c == "purple" -> TrailColor.PURPLE
-            s.contains("orange") || c == "orange" -> TrailColor.ORANGE
-            s.contains("cyan") || c == "cyan" -> TrailColor.CYAN
+            hasWord("purple", "violet", "magenta", "#800080", "#9333ea", "#a855f7") -> TrailColor.PURPLE
+            hasWord("orange", "#ff8000", "#ffa500", "#f97316") -> TrailColor.ORANGE
+            hasWord("cyan", "turquoise", "#00ffff", "#06b6d4") -> TrailColor.CYAN
+            hasWord("red", "#ff0000", "#ef4444", "#dc2626") -> TrailColor.RED
+            hasWord("blue", "#0000ff", "#3b82f6", "#2563eb") -> TrailColor.BLUE
+            hasWord("yellow", "#ffff00", "#eab308", "#facc15") -> TrailColor.YELLOW
+            hasWord("green", "#00ff00", "#008000", "#22c55e", "#16a34a") -> TrailColor.GREEN
+            hasWord("black", "#000000", "#111827") -> TrailColor.BLACK
+            allowWhite && hasWord("white", "#ffffff", "#f8fafc") -> TrailColor.WHITE
             else -> TrailColor.NONE
         }
+    }
+
+    fun parseTrailColor(osmcSymbol: String? = null, colourTag: String? = null): TrailColor {
+        val tokens = osmcSymbol?.split(':')?.map { it.trim() }.orEmpty()
+        val wayColorToken = tokens.firstOrNull()
+        val foregroundTokens = when {
+            tokens.size >= 3 -> tokens.drop(2)
+            tokens.size == 2 -> tokens.drop(1)
+            else -> emptyList()
+        }
+
+        // 1. Official OSMC syntax: token 0 is waycolor (e.g. purple:white:purple_bar, yellow:green:red_lower:yellow_bar)
+        val nonWhiteWay = matchTrailColorToken(wayColorToken, allowWhite = false)
+        if (nonWhiteWay != TrailColor.NONE) return nonWhiteWay
+
+        // 2. Explicit OSM colour tag
+        val nonWhiteTag = matchTrailColorToken(colourTag, allowWhite = false)
+        if (nonWhiteTag != TrailColor.NONE) return nonWhiteTag
+
+        // 3. Foreground symbol tokens before checking background/white
+        for (fg in foregroundTokens) {
+            val c = matchTrailColorToken(fg, allowWhite = false)
+            if (c != TrailColor.NONE) return c
+        }
+
+        // 4. Genuine white trails (waycolor=white, colour=white, or white foreground)
+        val whiteWay = matchTrailColorToken(wayColorToken, allowWhite = true)
+        if (whiteWay != TrailColor.NONE) return whiteWay
+        val whiteTag = matchTrailColorToken(colourTag, allowWhite = true)
+        if (whiteTag != TrailColor.NONE) return whiteTag
+        for (fg in foregroundTokens) {
+            val c = matchTrailColorToken(fg, allowWhite = true)
+            if (c != TrailColor.NONE) return c
+        }
+
+        return TrailColor.NONE
     }
 }

@@ -32,7 +32,8 @@ data class TrailVectorSegment(
     val kind: TrailRouteKind = TrailRouteKind.HIKING,
     val color: TrailColor = TrailColor.NONE,
     val network: String? = null,
-    val points: List<GeoPoint>
+    val points: List<GeoPoint>,
+    val relationId: Long? = null
 )
 
 data class WaymarkedRelationMeta(
@@ -59,7 +60,7 @@ object TrailVectorRepository {
     private const val MACRO_GRID_DEG = 2.0
     private const val MAX_MACRO_SPAN_DEG = 6.0
     private const val MAX_FALLBACK_TILES = 16
-    private const val MAX_DETAIL_FETCHES_PER_BATCH = 20
+    private const val MAX_DETAIL_FETCHES_PER_BATCH = 64
 
     private val memoryCache = ConcurrentHashMap<String, List<TrailVectorSegment>>()
     private val relMetaCache = ConcurrentHashMap<String, WaymarkedRelationMeta>()
@@ -137,7 +138,8 @@ object TrailVectorRepository {
         waymarkedTileUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/tiles/12/{x}/{y}.json",
         waymarkedDetailsUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/details/relation/{id}",
         overpassEndpoints: List<String>? = null,
-        osmMapBaseUrl: String = "https://api.openstreetmap.org/api/0.6/map"
+        osmMapBaseUrl: String = "https://api.openstreetmap.org/api/0.6/map",
+        supplementOsmTrails: Boolean = true
     ): List<TrailVectorSegment> = withContext(Dispatchers.IO) {
         val subdomains = subdomainsForKinds(requestedKinds)
         val wantWaymarked = subdomains.isNotEmpty()
@@ -174,20 +176,116 @@ object TrailVectorRepository {
             )
         }
 
-        val needTier2Fallback = !isWideViewport && (wantKayakingFallback || (wantWaymarked && !anyWaymarkedOk))
+        val hasOverpassOrProdSource = overpassEndpoints != null ||
+            osmMapBaseUrl != "https://api.openstreetmap.org/api/0.6/map" ||
+            waymarkedTileUrlTemplate.contains("waymarkedtrails.org")
+        val wantSupplement = supplementOsmTrails && hasOverpassOrProdSource && (requestedKinds.isEmpty() || wantWaymarked)
+        val needTier2Fallback = !isWideViewport && (wantKayakingFallback || (wantWaymarked && !anyWaymarkedOk) || wantSupplement)
         if (needTier2Fallback) {
+            val kayakOnlyMode = wantKayakingFallback && anyWaymarkedOk && !wantSupplement &&
+                requestedKinds.all { it == TrailRouteKind.KAYAKING || !wantWaymarked }
             val fallbackSegments = fetchOverpassOrOsmFallback(
                 context = context,
                 bbox = bbox,
                 allowNetwork = allowNetwork,
-                kayakOnly = wantKayakingFallback && anyWaymarkedOk && requestedKinds.all { it == TrailRouteKind.KAYAKING || !wantWaymarked },
+                kayakOnly = kayakOnlyMode,
                 overpassEndpoints = overpassEndpoints,
-                osmMapBaseUrl = osmMapBaseUrl
+                osmMapBaseUrl = osmMapBaseUrl,
+                allowOsmXmlFallback = !anyWaymarkedOk
             )
-            results.addAll(fallbackSegments)
+            val filteredFallback = if (requestedKinds.isEmpty()) {
+                fallbackSegments
+            } else {
+                fallbackSegments.filter { it.kind in requestedKinds }
+            }
+            if (anyWaymarkedOk) {
+                results.addAll(deduplicateSupplementalTrails(results, filteredFallback))
+            } else {
+                results.addAll(filteredFallback)
+            }
         }
 
         results.distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
+    }
+
+    internal fun deduplicateSupplementalTrails(
+        primary: List<TrailVectorSegment>,
+        supplemental: List<TrailVectorSegment>
+    ): List<TrailVectorSegment> {
+        if (supplemental.isEmpty()) return emptyList()
+        if (primary.isEmpty()) return supplemental
+
+        val primaryRelIds = HashSet<Long>()
+        val bucketMap = HashMap<Long, MutableList<TrailVectorSegment>>()
+
+        fun bucketKey(lat: Double, lon: Double): Long {
+            val qLat = floor(lat * 2000.0).toLong() // ~55m lat cell
+            val qLon = floor(lon * 2000.0).toLong()
+            return (qLat shl 32) xor (qLon and 0xFFFF_FFFFL)
+        }
+
+        for (seg in primary) {
+            seg.relationId?.let { primaryRelIds.add(it) }
+            if (seg.points.size < 2) continue
+            val first = seg.points.first()
+            val mid = seg.points[seg.points.size / 2]
+            val last = seg.points.last()
+            for (pt in arrayOf(first, mid, last)) {
+                bucketMap.getOrPut(bucketKey(pt.latitude, pt.longitude)) { ArrayList(2) }.add(seg)
+            }
+        }
+
+        val added = ArrayList<TrailVectorSegment>(supplemental.size)
+        for (sup in supplemental) {
+            val supRel = sup.relationId
+            if (supRel != null && supRel in primaryRelIds) continue
+            if (sup.points.size < 2) continue
+
+            val sFirst = sup.points.first()
+            val sMid = sup.points[sup.points.size / 2]
+            val sLast = sup.points.last()
+
+            val qLat = floor(sMid.latitude * 2000.0).toLong()
+            val qLon = floor(sMid.longitude * 2000.0).toLong()
+            var isDup = false
+            for (dLat in -1L..1L) {
+                if (isDup) break
+                for (dLon in -1L..1L) {
+                    val candidates = bucketMap[((qLat + dLat) shl 32) xor ((qLon + dLon) and 0xFFFF_FFFFL)] ?: continue
+                    for (p in candidates) {
+                        if (p.kind != sup.kind) continue
+                        val compatibleColor = p.color == sup.color || p.color == TrailColor.NONE || sup.color == TrailColor.NONE
+                        if (!compatibleColor) continue
+                        val pFirst = p.points.first()
+                        val pMid = p.points[p.points.size / 2]
+                        val pLast = p.points.last()
+                        val midClose = haversineMeters(pMid, sMid) <= 35.0
+                        val endsForward = haversineMeters(pFirst, sFirst) <= 35.0 && haversineMeters(pLast, sLast) <= 35.0
+                        val endsReverse = haversineMeters(pFirst, sLast) <= 35.0 && haversineMeters(pLast, sFirst) <= 35.0
+                        if (midClose && (endsForward || endsReverse || supRel != null)) {
+                            isDup = true
+                            break
+                        }
+                    }
+                    if (isDup) break
+                }
+            }
+            if (!isDup) {
+                added.add(sup)
+            }
+        }
+        return added
+    }
+
+    private fun haversineMeters(a: GeoPoint, b: GeoPoint): Double {
+        val dLat = Math.toRadians(b.latitude - a.latitude)
+        val dLon = Math.toRadians(b.longitude - a.longitude)
+        val rLat1 = Math.toRadians(a.latitude)
+        val rLat2 = Math.toRadians(b.latitude)
+        val sinDLat = kotlin.math.sin(dLat / 2.0)
+        val sinDLon = kotlin.math.sin(dLon / 2.0)
+        val h = sinDLat * sinDLat + kotlin.math.cos(rLat1) * kotlin.math.cos(rLat2) * sinDLon * sinDLon
+        return 6_371_000.0 * 2.0 * kotlin.math.asin(kotlin.math.min(1.0, kotlin.math.sqrt(h)))
     }
 
     private fun subdomainsForKinds(requestedKinds: Set<TrailRouteKind>): List<String> {
@@ -276,7 +374,7 @@ object TrailVectorRepository {
                                     file.writeText(body)
                                 } catch (_: Exception) {
                                 }
-                                DataAcquisitionManager.reportSuccess()
+                                DataAcquisitionManager.reportSuccess(DataSourceKind.TRAILS)
                                 LoadedTile(sub, tx, ty, segKey, body, null) to true
                             } else {
                                 markTileFailed(key)
@@ -405,7 +503,8 @@ object TrailVectorRepository {
         allowNetwork: Boolean,
         kayakOnly: Boolean,
         overpassEndpoints: List<String>?,
-        osmMapBaseUrl: String
+        osmMapBaseUrl: String,
+        allowOsmXmlFallback: Boolean = true
     ): List<TrailVectorSegment> = coroutineScope {
         val minLat = bbox.latSouth
         val maxLat = bbox.latNorth
@@ -447,8 +546,9 @@ object TrailVectorRepository {
                 val diskFile = File(getCacheDir(context), "$key.json")
                 if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
                     try {
-                        val parsed = parseTileJson(diskFile.readText())
-                        if (parsed.isNotEmpty()) {
+                        val rawText = diskFile.readText()
+                        if (rawText.trimStart().startsWith("[")) {
+                            val parsed = parseTileJson(rawText)
                             memoryCache[key] = parsed
                             results.addAll(parsed)
                             continue
@@ -510,6 +610,11 @@ object TrailVectorRepository {
                         memoryCache[key] = parsed
                         saveTileJson(diskFile, parsed)
                         results.addAll(parsed)
+                        continue
+                    }
+
+                    if (!allowOsmXmlFallback) {
+                        markTileFailed(key)
                         continue
                     }
 
@@ -606,8 +711,9 @@ object TrailVectorRepository {
                 val diskFile = File(getCacheDir(context), "$key.json")
                 if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
                     try {
-                        val parsed = parseTileJson(diskFile.readText())
-                        if (parsed.isNotEmpty()) {
+                        val rawText = diskFile.readText()
+                        if (rawText.trimStart().startsWith("[")) {
+                            val parsed = parseTileJson(rawText)
                             memoryCache[key] = parsed
                             results.addAll(parsed)
                             continue
@@ -1049,15 +1155,15 @@ object TrailVectorRepository {
             } else {
                 logDebug("HTTP $code for $urlStr")
                 if (code == 429) {
-                    DataAcquisitionManager.reportRateLimited()
+                    DataAcquisitionManager.reportRateLimited(source = DataSourceKind.TRAILS)
                 } else if (code >= 500) {
-                    DataAcquisitionManager.reportCachedOnly("Trail Tiles HTTP $code")
+                    DataAcquisitionManager.reportCachedOnly("Trail Tiles HTTP $code", source = DataSourceKind.TRAILS)
                 }
                 code to null
             }
         } catch (e: Exception) {
             logDebug("HTTP error for $urlStr: ${e.message}")
-            DataAcquisitionManager.reportError(e)
+            DataAcquisitionManager.reportError(e, DataSourceKind.TRAILS)
             -1 to null
         } finally {
             conn?.disconnect()
@@ -1305,7 +1411,8 @@ object TrailVectorRepository {
                             ref = ref,
                             kind = kind,
                             color = finalColor,
-                            points = pts
+                            points = pts,
+                            relationId = relId
                         )
                     )
                 }
@@ -1441,7 +1548,8 @@ object TrailVectorRepository {
                                     kind = kind,
                                     color = color,
                                     network = network,
-                                    points = pts
+                                    points = pts,
+                                    relationId = relId
                                 )
                             )
                         }
@@ -1578,7 +1686,8 @@ object TrailVectorRepository {
                                 kind = kind,
                                 color = color,
                                 network = network,
-                                points = pts
+                                points = pts,
+                                relationId = relId
                             )
                         )
                     }
@@ -1632,6 +1741,7 @@ object TrailVectorRepository {
                     put("kind", s.kind.name)
                     put("color", s.color.name)
                     put("network", s.network)
+                    if (s.relationId != null) put("relId", s.relationId)
                     val ptsArr = JSONArray()
                     for (p in s.points) {
                         val pt = JSONArray().apply {
@@ -1667,7 +1777,8 @@ object TrailVectorRepository {
                     kind = try { TrailRouteKind.valueOf(obj.optString("kind")) } catch (_: Exception) { TrailRouteKind.HIKING },
                     color = try { TrailColor.valueOf(obj.optString("color")) } catch (_: Exception) { TrailColor.NONE },
                     network = obj.optString("network").takeIf { it.isNotBlank() },
-                    points = pts
+                    points = pts,
+                    relationId = obj.optLong("relId", 0L).takeIf { it > 0L }
                 )
             )
         }

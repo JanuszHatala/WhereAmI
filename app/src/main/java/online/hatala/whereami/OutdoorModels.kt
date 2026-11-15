@@ -97,6 +97,35 @@ data class OutdoorContext(
     val nearestPass: OutdoorFeatureInfo? get() = nearestFeatures.firstOrNull { it.kind == PlaceKind.MOUNTAIN_PASS }
     val nearestHut: OutdoorFeatureInfo? get() = nearestFeatures.firstOrNull { it.kind == PlaceKind.MOUNTAIN_HUT }
     val nearestWater: OutdoorFeatureInfo? get() = waterBody ?: nearestFeatures.firstOrNull { it.kind == PlaceKind.WATER_BODY }
+
+    /**
+     * Recompute distanceMeters on cached point-of-interest features (peaks, passes, huts, water bodies)
+     * in memory against current GPS coordinates without triggering any DB or network IO.
+     */
+    fun withUpdatedDistances(lat: Double, lng: Double): OutdoorContext {
+        if (nearestFeatures.isEmpty() && waterBody == null) return this
+        val updatedFeatures = nearestFeatures.map { feature ->
+            if (feature.latitude == 0.0 && feature.longitude == 0.0) feature
+            else feature.copy(distanceMeters = haversineDistanceMeters(lat, lng, feature.latitude, feature.longitude))
+        }.sortedBy { it.distanceMeters }
+        val updatedWater = waterBody?.let { water ->
+            if (water.latitude == 0.0 && water.longitude == 0.0) water
+            else water.copy(distanceMeters = haversineDistanceMeters(lat, lng, water.latitude, water.longitude))
+        }
+        return copy(nearestFeatures = updatedFeatures, waterBody = updatedWater)
+    }
+
+    private fun haversineDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val earthRadiusM = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val sinDLat = kotlin.math.sin(dLat * 0.5)
+        val sinDLon = kotlin.math.sin(dLon * 0.5)
+        val a = sinDLat * sinDLat +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) * sinDLon * sinDLon
+        val c = 2.0 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1.0 - a))
+        return (earthRadiusM * c).toFloat()
+    }
 }
 
 enum class TrailThickness(val label: String, val widthMultiplier: Float) {

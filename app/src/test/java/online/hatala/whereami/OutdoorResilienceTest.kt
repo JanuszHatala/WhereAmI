@@ -371,4 +371,50 @@ class OutdoorResilienceTest {
         assertTrue(authEmpty.isAuthoritative)
         assertFalse(authEmpty.hasAnyOutdoor)
     }
+
+    @Test
+    fun outdoorContextWithUpdatedDistancesUpdatesFeaturesSortsNearestAndSkipsZeroCoords() {
+        val farPeak = OutdoorFeatureInfo(
+            osmId = 1L, name = "Peak Far", kind = PlaceKind.PEAK,
+            elevationMeters = 718, distanceMeters = 9000f, latitude = 50.865, longitude = 16.708
+        )
+        val nearPeak = OutdoorFeatureInfo(
+            osmId = 2L, name = "Peak Near", kind = PlaceKind.PEAK,
+            elevationMeters = 450, distanceMeters = 8000f, latitude = 50.720, longitude = 16.840
+        )
+        val zeroFixture = OutdoorFeatureInfo(
+            osmId = 3L, name = "Unpositioned Fixture", kind = PlaceKind.MOUNTAIN_HUT,
+            distanceMeters = 123f, latitude = 0.0, longitude = 0.0
+        )
+        val river = OutdoorFeatureInfo(
+            osmId = 4L, name = "Ślęża", kind = PlaceKind.WATER_BODY,
+            distanceMeters = 950f, latitude = 50.715, longitude = 16.835
+        )
+        val initial = OutdoorContext(
+            nearestFeatures = listOf(farPeak, nearPeak, zeroFixture),
+            waterBody = river
+        )
+
+        // Move right next to Peak Near (50.7205, 16.8400, ~55 m away) and river (~650 m away)
+        val updated = initial.withUpdatedDistances(50.7205, 16.8400)
+        assertEquals("Peak Near", updated.nearestFeatures[0].name)
+        assertTrue(updated.nearestFeatures[0].distanceMeters in 30f..90f)
+        assertEquals("Unpositioned Fixture", updated.nearestFeatures[1].name) // 123 m preserved
+        assertEquals(123f, updated.nearestFeatures[1].distanceMeters, 0.01f)
+        assertEquals("Peak Far", updated.nearestFeatures[2].name)
+        assertTrue(updated.nearestFeatures[2].distanceMeters > 10_000f)
+        assertNotNull(updated.waterBody)
+        assertTrue(updated.waterBody!!.distanceMeters in 500f..850f)
+    }
+
+    @Test
+    fun parseTrailColorPrefersOsmcWaycolorTokenOverBackgroundAndForeground() {
+        assertEquals(TrailColor.PURPLE, OutdoorContextResolver.parseTrailColor("purple:white:purple_bar"))
+        assertEquals(TrailColor.YELLOW, OutdoorContextResolver.parseTrailColor("yellow:green:red_lower:yellow_bar"))
+        assertEquals(TrailColor.BLUE, OutdoorContextResolver.parseTrailColor("blue:white:blue_cross"))
+        assertEquals(TrailColor.BLACK, OutdoorContextResolver.parseTrailColor("black:yellow:black_dot"))
+        assertEquals(TrailColor.ORANGE, OutdoorContextResolver.parseTrailColor(null, "orange"))
+        assertEquals(TrailColor.WHITE, OutdoorContextResolver.parseTrailColor("white:green:white_bar"))
+        assertEquals(TrailColor.NONE, OutdoorContextResolver.parseTrailColor(":white:", null))
+    }
 }

@@ -105,12 +105,20 @@ object RoadNameNormalizer {
 
     /**
      * Road number of the reverse-geocoded way. Nominatim's `address` has no `ref`; `namedetails` has the
-     * result object's own name and ref, which belong to [road] only when that object is the road itself.
+     * result object's own name and ref, which belong to [road] only when that object is the road itself,
+     * or when Nominatim resolved an unnamed `class=highway` way ([isHighwayObject] == true and [road] is blank).
      */
-    fun wayRef(road: String?, nameDetails: Pair<String?, String?>?): String? {
+    fun wayRef(
+        road: String?,
+        nameDetails: Pair<String?, String?>?,
+        isHighwayObject: Boolean = false
+    ): String? {
         val (name, ref) = nameDetails ?: return null
-        if (road.isNullOrBlank() || ref.isNullOrBlank() || name == null) return null
-        return ref.trim().takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
+        if (ref.isNullOrBlank()) return null
+        if (!road.isNullOrBlank() && name != null) {
+            return ref.trim().takeIf { name.trim().equals(road.trim(), ignoreCase = true) }
+        }
+        return if (isHighwayObject && road.isNullOrBlank()) ref.trim() else null
     }
 
     fun shouldShieldMajorCorridor(

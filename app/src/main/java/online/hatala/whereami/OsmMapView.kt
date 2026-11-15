@@ -12,6 +12,10 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.TextUtils
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -813,6 +817,10 @@ fun OsmMapView(
         mutableStateOf(initialProfileConfig.enabledTrailColors)
     }
 
+    var supplementMissingOsmTrails by remember(activityProfile) {
+        mutableStateOf(initialProfileConfig.supplementMissingOsmTrails)
+    }
+
     var fontScale by remember(activityProfile) {
         mutableStateOf(initialProfileConfig.fontScale)
     }
@@ -954,6 +962,7 @@ fun OsmMapView(
         trailOverlayMode = config.trailOverlayMode
         enabledTrailKinds = config.enabledTrailKinds
         enabledTrailColors = config.enabledTrailColors
+        supplementMissingOsmTrails = config.supplementMissingOsmTrails
         fontScale = config.fontScale
         trackColorHex = config.trackColorHex
         if (orientationMode != config.orientationMode) {
@@ -977,7 +986,7 @@ fun OsmMapView(
     }
 
     // Dynamic Hiking / Tourist Trail Overlay (base-map-aware; never stacks duplicate overlays or over Freemap Outdoor)
-    LaunchedEffect(baseLayer, showHikingOverlay, trailThickness, trailLineStyle, trailOpacity, trailOverlayMode, enabledTrailKinds, enabledTrailColors, mapView) {
+    LaunchedEffect(baseLayer, showHikingOverlay, trailThickness, trailLineStyle, trailOpacity, trailOverlayMode, enabledTrailKinds, enabledTrailColors, supplementMissingOsmTrails, mapView) {
         val map = mapView ?: return@LaunchedEffect
         MapProfileConfigHelper.setHikingOverlay(context, activityProfile, showHikingOverlay)
         MapProfileConfigHelper.setTrailThickness(context, activityProfile, trailThickness)
@@ -986,6 +995,7 @@ fun OsmMapView(
         MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, trailOverlayMode)
         MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, enabledTrailKinds)
         MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, enabledTrailColors)
+        MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, supplementMissingOsmTrails)
 
         val trailsAllowedOnBase = baseLayer != MapBaseLayer.FREEMAP_OUTDOOR
         if (trailsAllowedOnBase && showHikingOverlay) {
@@ -1027,6 +1037,7 @@ fun OsmMapView(
                     it.trailOpacity = trailOpacity
                     it.enabledKinds = enabledTrailKinds
                     it.enabledColors = enabledTrailColors
+                    it.supplementOsmTrails = supplementMissingOsmTrails
                     it.onTrailSelected = onTrailSelected
                     if (!map.overlays.contains(it)) {
                         val insertIdx = if (map.overlays.size > 1) 1 else 0
@@ -2676,6 +2687,11 @@ fun OsmMapView(
                 enabledTrailColors = colors
                 MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, colors)
             },
+            supplementMissingOsmTrails = supplementMissingOsmTrails,
+            onSupplementMissingOsmTrailsChange = { enabled ->
+                supplementMissingOsmTrails = enabled
+                MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, enabled)
+            },
             showBorders = showBorders,
             onToggleBorders = onToggleBorders,
             showHeatMap = showHeatMap,
@@ -2834,16 +2850,43 @@ private fun BoxScope.MapFloatingControlsColumn(
         var showFitMenu by remember { mutableStateOf(false) }
 
         // Floating Zoom Controls & Map Tools:
-        // Unified stacked column for BOTH Portrait and Landscape, centered vertically on the screen (Alignment.CenterEnd).
-        // Each control is an exact 42dp Box with 4dp separation, preventing touch-target overlap and guaranteeing a clean visual gap.
-        // Automatically centers vertically based on the number of currently active controls.
-        Column(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        // Bounded within the unobstructed vertical viewport [topClearanceDp, maxHeight - safeBottomClearance]
+        // so enlarged LocalityCard (portrait) or compact screen height (landscape) never overlaps buttons.
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val topClearanceDp = if (!isLandscape && measuredTopInsetPx != null && measuredTopInsetPx > 0) {
+                (measuredTopInsetPx / density).dp + 8.dp
+            } else if (isLandscape) {
+                12.dp
+            } else {
+                84.dp
+            }
+            val maxHeightPx = maxHeight.value * density
+            val measuredBottomDp = if (measuredBottomInsetPx != null && measuredBottomInsetPx in 1 until maxHeightPx.toInt()) {
+                ((maxHeightPx - measuredBottomInsetPx) / density).dp + 8.dp
+            } else {
+                if (isLandscape) 68.dp else 88.dp
+            }
+            val portraitDestFloorDp = if (!isLandscape && (destinationPoint != null || selectedSavedPlace != null)) 220.dp else 0.dp
+            val bottomClearanceDp = maxOf(
+                measuredBottomDp,
+                portraitDestFloorDp,
+                if (isLandscape) 64.dp else 80.dp
+            )
+            val safeBottomClearance = bottomClearanceDp.coerceAtMost(
+                (maxHeight - topClearanceDp - 48.dp).coerceAtLeast(0.dp)
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = topClearanceDp, bottom = safeBottomClearance, end = 12.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
             // Zoom In [+] Button
             Box(
                 modifier = Modifier
@@ -3594,6 +3637,8 @@ private fun BoxScope.MapFloatingControlsColumn(
                     )
                 }
             }
+                }
+            }
         }
 }
 
@@ -3893,6 +3938,8 @@ private fun MapSettingsDialogHost(
     onEnabledTrailKindsChange: (Set<TrailRouteKind>) -> Unit = {},
     enabledTrailColors: Set<TrailColor> = emptySet(),
     onEnabledTrailColorsChange: (Set<TrailColor>) -> Unit = {},
+    supplementMissingOsmTrails: Boolean = true,
+    onSupplementMissingOsmTrailsChange: (Boolean) -> Unit = {},
     showBorders: Boolean,
     onToggleBorders: (() -> Unit)?,
     showHeatMap: Boolean,
@@ -3950,6 +3997,8 @@ private fun MapSettingsDialogHost(
         onEnabledTrailKindsChange = onEnabledTrailKindsChange,
         enabledTrailColors = enabledTrailColors,
         onEnabledTrailColorsChange = onEnabledTrailColorsChange,
+        supplementMissingOsmTrails = supplementMissingOsmTrails,
+        onSupplementMissingOsmTrailsChange = onSupplementMissingOsmTrailsChange,
         showBorders = showBorders,
         onToggleBorders = { onToggleBorders?.invoke() },
         showHeatMap = showHeatMap,
@@ -3996,6 +4045,7 @@ private fun MapSettingsDialogHost(
             onTrailOverlayModeChange(cfg.trailOverlayMode)
             onEnabledTrailKindsChange(cfg.enabledTrailKinds)
             onEnabledTrailColorsChange(cfg.enabledTrailColors)
+            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -4013,6 +4063,7 @@ private fun MapSettingsDialogHost(
             onTrailOverlayModeChange(cfg.trailOverlayMode)
             onEnabledTrailKindsChange(cfg.enabledTrailKinds)
             onEnabledTrailColorsChange(cfg.enabledTrailColors)
+            onSupplementMissingOsmTrailsChange(cfg.supplementMissingOsmTrails)
             onFontScaleChange(cfg.fontScale)
             onTrackColorChange(cfg.trackColorHex)
             onOrientationModeChange?.invoke(cfg.orientationMode)
@@ -4047,6 +4098,8 @@ private fun MapSettingsDialog(
     onEnabledTrailKindsChange: (Set<TrailRouteKind>) -> Unit = {},
     enabledTrailColors: Set<TrailColor> = emptySet(),
     onEnabledTrailColorsChange: (Set<TrailColor>) -> Unit = {},
+    supplementMissingOsmTrails: Boolean = true,
+    onSupplementMissingOsmTrailsChange: (Boolean) -> Unit = {},
     showBorders: Boolean = false,
     onToggleBorders: () -> Unit = {},
     showHeatMap: Boolean = false,
@@ -4759,6 +4812,49 @@ private fun MapSettingsDialog(
                                     )
                                 }
                             }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSupplementMissingOsmTrailsChange(!supplementMissingOsmTrails) }
+                                .padding(vertical = 4.dp, horizontal = 6.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Supplement Missing OSM Trails",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = ComposeColor.White,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
+                                Text(
+                                    text = "Fill gaps via Overpass alongside Waymarked tiles",
+                                    fontSize = 11.sp,
+                                    color = ComposeColor(0xFF94A3B8),
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                            }
+                            Switch(
+                                checked = supplementMissingOsmTrails,
+                                onCheckedChange = { onSupplementMissingOsmTrailsChange(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = ComposeColor.White,
+                                    checkedTrackColor = ComposeColor(0xFF10B981),
+                                    uncheckedThumbColor = ComposeColor(0xFF94A3B8),
+                                    uncheckedTrackColor = ComposeColor(0xFF334155)
+                                )
+                            )
                         }
                     }
                 }
@@ -5858,21 +5954,29 @@ internal fun makeOutdoorAreaBadgeIcon(
     val accentColor = Color.parseColor(accentHex)
     val iconEmoji = if (isRange) "⛰️" else if (kind == OutdoorAreaKind.NATIONAL_PARK) "🏞️" else "🌲"
 
-    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 12f * density
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.LEFT
     }
     val fullText = "$iconEmoji $name"
-    val textBounds = Rect()
-    textPaint.getTextBounds(fullText, 0, fullText.length, textBounds)
+    val maxContentWidth = (210f * density).toInt().coerceAtLeast(1)
+    val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint, maxContentWidth)
+        .setAlignment(Layout.Alignment.ALIGN_CENTER)
+        .setIncludePad(false)
+        .setLineSpacing(1.5f * density, 1f)
+        .setMaxLines(3)
+        .setEllipsize(TextUtils.TruncateAt.END)
+        .setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED)
+        .build()
 
+    val maxLineWidth = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
     val padH = (10f * density).toInt()
-    val width = textBounds.width() + padH * 2
-    val height = (26f * density).toInt()
+    val padV = (5f * density).toInt()
+    val width = maxOf(kotlin.math.ceil(maxLineWidth).toInt() + 2 + padH * 2, (48f * density).toInt())
+    val height = maxOf(layout.height + padV * 2, (26f * density).toInt())
 
-    val bmp = Bitmap.createBitmap(maxOf(width, (40f * density).toInt()), height, Bitmap.Config.ARGB_8888)
+    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -5885,13 +5989,15 @@ internal fun makeOutdoorAreaBadgeIcon(
         strokeWidth = 2f * density
     }
 
-    val rect = RectF(1.5f * density, 1.5f * density, bmp.width - 1.5f * density, height - 1.5f * density)
+    val rect = RectF(1.5f * density, 1.5f * density, bmp.width - 1.5f * density, bmp.height - 1.5f * density)
     val cornerRadius = 6f * density
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)
 
-    val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
-    canvas.drawText(fullText, padH.toFloat(), textY, textPaint)
+    canvas.save()
+    canvas.translate((bmp.width - layout.width) / 2f, (bmp.height - layout.height) / 2f)
+    layout.draw(canvas)
+    canvas.restore()
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }

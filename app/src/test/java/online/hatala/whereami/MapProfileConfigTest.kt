@@ -218,4 +218,17 @@ class MapProfileConfigTest {
         assertEquals(TrailLineStyle.SOLID, resetMtb.trailLineStyle)
         assertEquals(TrailOpacity.NORMAL, resetMtb.trailOpacity)
     }
+
+    @Test
+    fun testSupplementMissingOsmTrailsPersistenceAndReset() {
+        val ctx = testContext()
+        assertTrue(MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING).supplementMissingOsmTrails)
+
+        MapProfileConfigHelper.setSupplementMissingOsmTrails(ctx, ActivityProfile.HIKING, false)
+        assertFalse(MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING).supplementMissingOsmTrails)
+        assertTrue(MapProfileConfigHelper.getConfig(ctx, ActivityProfile.CYCLING).supplementMissingOsmTrails)
+
+        MapProfileConfigHelper.resetProfileDefaults(ctx, ActivityProfile.HIKING)
+        assertTrue(MapProfileConfigHelper.getConfig(ctx, ActivityProfile.HIKING).supplementMissingOsmTrails)
+    }
 }

@@ -1020,7 +1020,7 @@ class TripManager private constructor(private val context: Context) {
                 val requiredDisplacement = when (currentProfile) {
                     ActivityProfile.CAR -> 25.0
                     ActivityProfile.CYCLING, ActivityProfile.MTB -> 20.0
-                    else -> 12.0
+                    else -> 25.0
                 }
                 val gate = autoStartGateFor(currentProfile)
                 if (gate.offer(

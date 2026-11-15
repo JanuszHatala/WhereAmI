@@ -41,6 +41,9 @@ class CacheManager private constructor(private val context: Context) {
         @Volatile
         private var instance: CacheManager? = null
 
+        internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
+            isRecording || isGeocoderRateLimited
+
         fun getInstance(context: Context): CacheManager {
             return instance ?: synchronized(this) {
                 instance ?: CacheManager(context.applicationContext).also { instance = it }
@@ -187,7 +190,15 @@ class CacheManager private constructor(private val context: Context) {
     private val _prefetchState = kotlinx.coroutines.flow.MutableStateFlow<PrefetchState>(PrefetchState.Idle)
     val prefetchState: StateFlow<PrefetchState> = _prefetchState.asStateFlow()
 
-    data class CacheDeficit(val missingRoutes: Int, val missingBoundaries: Int)
+    data class CacheDeficit(
+        val missingRoutes: Int,
+        val missingBoundaries: Int,
+        val missingDemTrips: Int = 0,
+        val missingDemPoints: Int = 0
+    )
+
+    internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
+        Companion.shouldAutoPausePrefetch(isRecording, isGeocoderRateLimited)
     fun resetPrefetchState() {
         if (_prefetchState.value is PrefetchState.Completed || _prefetchState.value is PrefetchState.Error || _prefetchState.value is PrefetchState.Blocked) {
             _prefetchState.value = PrefetchState.Idle
@@ -483,8 +494,12 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 1: Macro Coverage", pass1Current, pass1Total, false)
 
                 for (pt in pass1Candidates) {
-                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
-                        kotlinx.coroutines.delay(1000L)
+                    while (isPrefetchPaused || shouldAutoPausePrefetch(
+                            TripManager.getInstance(context).activeTrip.value != null,
+                            locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                        )
+                    ) {
+                        kotlinx.coroutines.delay(1500L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -526,8 +541,12 @@ class CacheManager private constructor(private val context: Context) {
                 updateNotification("Pass 2: Fine Precision", pass2Current, pass2Total, false)
 
                 for (pt in pass2Candidates) {
-                    while (isPrefetchPaused || locManager.isOsmRateLimited()) {
-                        kotlinx.coroutines.delay(1000L)
+                    while (isPrefetchPaused || shouldAutoPausePrefetch(
+                            TripManager.getInstance(context).activeTrip.value != null,
+                            locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                        )
+                    ) {
+                        kotlinx.coroutines.delay(1500L)
                     }
 
                     if (!allowOnBattery && !isDeviceCharging()) {
@@ -770,8 +789,12 @@ class CacheManager private constructor(private val context: Context) {
                         val locManager = LocationManager.getInstance(context)
                         for (pt in pointsToRefresh) {
                             if (!allowOnBattery && !isDeviceCharging()) break
-                            while (locManager.isOsmRateLimited()) {
-                                kotlinx.coroutines.delay(1000L)
+                            while (shouldAutoPausePrefetch(
+                                    TripManager.getInstance(context).activeTrip.value != null,
+                                    locManager.isOsmRateLimited() || DataAcquisitionManager.isGeocoderRateLimited()
+                                )
+                            ) {
+                                kotlinx.coroutines.delay(1500L)
                             }
                             locManager.resolveMultiLanguageData(
                                 pt.latitude, pt.longitude, forceCache = true, allowNetwork = true, forceRefresh = true, speedKmh = 30f
@@ -843,7 +866,13 @@ class CacheManager private constructor(private val context: Context) {
                 
                 val boundaryTargets = getDistinctBoundaryTargets()
                 val missingBoundaries = boundaryTargets.count { !BoundaryHelper.hasBoundary(context, it.name, it.countryCode, it.municipality) }
-                val deficit = CacheDeficit(missingRoutes, missingBoundaries)
+                val missingDem = TripDatabaseHelper.getInstance(context).getMissingDemSummary()
+                val deficit = CacheDeficit(
+                    missingRoutes = missingRoutes,
+                    missingBoundaries = missingBoundaries,
+                    missingDemTrips = missingDem.tripCount,
+                    missingDemPoints = missingDem.pointCount
+                )
                 _cacheDeficit.value = deficit
 
                 val totalMissing = missingRoutes + missingBoundaries

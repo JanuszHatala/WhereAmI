@@ -408,22 +408,22 @@ object BoundaryHelper {
             if (code == 429) {
                 coolDownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
                 TelemetryLogger.log("BOUNDARY", "Nominatim HTTP 429 received. Backing off for 30s")
-                DataAcquisitionManager.reportRateLimited(30)
+                DataAcquisitionManager.reportRateLimited(30, DataSourceKind.BOUNDARIES)
                 return null
             }
 
             if (code == 200) {
-                DataAcquisitionManager.reportSuccess()
+                DataAcquisitionManager.reportSuccess(DataSourceKind.BOUNDARIES)
                 val body = conn.inputStream.bufferedReader().readText()
                 val array = JSONArray(body)
                 return selectBestBoundaryPolygon(array, mustContain = mustContain)
             }
             if (code in 500..599) {
-                DataAcquisitionManager.reportError(java.io.IOException("Nominatim HTTP $code"))
+                DataAcquisitionManager.reportError(java.io.IOException("Nominatim HTTP $code"), DataSourceKind.BOUNDARIES)
             }
             null
         } catch (e: Exception) {
-            DataAcquisitionManager.reportError(e)
+            DataAcquisitionManager.reportError(e, DataSourceKind.BOUNDARIES)
             TelemetryLogger.log("BOUNDARY", "Network fetch error for $cityName: ${e.message}")
             null
         }
@@ -447,12 +447,12 @@ object BoundaryHelper {
             if (code == 429) {
                 coolDownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
                 TelemetryLogger.log("BOUNDARY", "Nominatim HTTP 429 received. Backing off for 30s")
-                DataAcquisitionManager.reportRateLimited(30)
+                DataAcquisitionManager.reportRateLimited(30, DataSourceKind.BOUNDARIES)
                 return null
             }
 
             if (code == 200) {
-                DataAcquisitionManager.reportSuccess()
+                DataAcquisitionManager.reportSuccess(DataSourceKind.BOUNDARIES)
                 val body = conn.inputStream.bufferedReader().readText()
                 val obj = JSONObject(body)
                 val geojson = obj.optJSONObject("geojson") ?: return null
@@ -470,7 +470,7 @@ object BoundaryHelper {
             }
             null
         } catch (e: Exception) {
-            DataAcquisitionManager.reportError(e)
+            DataAcquisitionManager.reportError(e, DataSourceKind.BOUNDARIES)
             TelemetryLogger.log("BOUNDARY", "Reverse boundary error at ($lat, $lon, zoom=$zoom): ${e.message}")
             null
         }

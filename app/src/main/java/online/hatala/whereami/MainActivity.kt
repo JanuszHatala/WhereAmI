@@ -10379,22 +10379,35 @@ private fun DataAcquisitionStatusPill(
     isLandscape: Boolean = false
 ) {
     val isStaleUnverified = staleUnverifiedMeters != null && staleUnverifiedMeters > 400f
-    if (health.status == DataAcquisitionStatus.HEALTHY && !isStaleUnverified) return
+    val rawCandidate = remember(health.status, health.detailMessage, isStaleUnverified) {
+        AcquisitionPillCandidate.from(health, isStaleUnverified)
+    }
+    val stabilizer = remember { AcquisitionPillStabilizer() }
+    var stabilizedCandidate by remember { mutableStateOf<AcquisitionPillCandidate?>(null) }
+    LaunchedEffect(rawCandidate) {
+        while (true) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            stabilizedCandidate = stabilizer.update(rawCandidate, now)
+            val waitMs = stabilizer.nextDelayMs(rawCandidate, now) ?: break
+            kotlinx.coroutines.delay(waitMs)
+        }
+    }
+
     val context = LocalContext.current
     val distLabel = if (isStaleUnverified) {
         val m = staleUnverifiedMeters ?: 0f
         if (m >= 1000f) String.format(java.util.Locale.US, "%.1f km", m / 1000f) else "${m.toInt()} m"
     } else null
 
-    val config = when {
-        health.status == DataAcquisitionStatus.RATE_LIMITED_429 -> QualityPillConfig(
+    val currentConfig = when (stabilizedCandidate?.kind) {
+        PillBadgeKind.RATE_LIMITED -> QualityPillConfig(
             bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.HourglassTop,
             label = if (distLabel != null) "429 Throttled • Unverified ($distLabel)" else "429 Throttled",
             tooltip = "OSM Nominatim rate limit (HTTP 429). Using offline spatial cache & OSM vector roads."
         )
-        health.status == DataAcquisitionStatus.OFFLINE -> QualityPillConfig(
+        PillBadgeKind.OFFLINE -> QualityPillConfig(
             bg = Color(0xEE1F1622),
             fg = Color(0xFFF87171),
             icon = Icons.Default.CloudOff,
@@ -10405,7 +10418,7 @@ private fun DataAcquisitionStatusPill(
                 "No internet connection. Locality and roads resolved from offline spatial cache."
             }
         )
-        health.status == DataAcquisitionStatus.CACHED_ONLY -> QualityPillConfig(
+        PillBadgeKind.CACHED -> QualityPillConfig(
             bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.Storage,
@@ -10416,15 +10429,20 @@ private fun DataAcquisitionStatusPill(
                 "Network geocoding failed or unavailable. Displaying cached spatial data."
             }
         )
-        isStaleUnverified -> QualityPillConfig(
+        PillBadgeKind.STALE -> QualityPillConfig(
             bg = Color(0xEE182032),
             fg = Color(0xFFFBBF24),
             icon = Icons.Default.Warning,
-            label = "Unverified ($distLabel)",
-            tooltip = "Display relies on last verified place $distLabel away; live locality lookup pending."
+            label = "Unverified (${distLabel ?: ""})",
+            tooltip = "Display relies on last verified place ${distLabel ?: ""} away; live locality lookup pending."
         )
-        else -> null
-    } ?: return
+        PillBadgeKind.NONE, null -> null
+    }
+    var lastRenderedConfig by remember { mutableStateOf<QualityPillConfig?>(null) }
+    if (currentConfig != null) {
+        lastRenderedConfig = currentConfig
+    }
+    val renderConfig = currentConfig ?: lastRenderedConfig
 
     val pillShape = if (isCompactDocked) {
         RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
@@ -10434,50 +10452,59 @@ private fun DataAcquisitionStatusPill(
     val startPadding = if (isLandscape) if (isCompactDocked) 16.dp else 12.dp else 0.dp
     val heightDp = if (isCompactDocked) 22.dp else 24.dp
 
-    if (!isCompactDocked) {
-        Spacer(modifier = Modifier.height(3.dp))
-    }
-    Surface(
-        onClick = {
-            android.widget.Toast.makeText(context, config.tooltip, android.widget.Toast.LENGTH_LONG).show()
-        },
-        shape = pillShape,
-        color = config.bg,
-        border = BorderStroke(1.dp, config.fg.copy(alpha = 0.45f)),
-        shadowElevation = 4.dp,
-        modifier = Modifier
-            .padding(start = startPadding)
-            .height(heightDp)
+    AnimatedVisibility(
+        visible = stabilizedCandidate != null && renderConfig != null,
+        enter = fadeIn(animationSpec = tween(220)),
+        exit = fadeOut(animationSpec = tween(380))
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(horizontal = 10.dp)
-        ) {
-            Icon(
-                imageVector = config.icon,
-                contentDescription = config.label,
-                tint = config.fg,
-                modifier = Modifier.size(13.dp)
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-            Text(
-                text = config.label,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = config.fg,
-                maxLines = 1,
-                softWrap = false,
-                style = TextStyle(
-                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                    lineHeightStyle = LineHeightStyle(
-                        alignment = LineHeightStyle.Alignment.Center,
-                        trim = LineHeightStyle.Trim.Both
-                    ),
-                    lineHeight = 11.sp
-                )
-            )
+        val config = renderConfig ?: return@AnimatedVisibility
+        Column(horizontalAlignment = if (isLandscape) Alignment.Start else Alignment.CenterHorizontally) {
+            if (!isCompactDocked) {
+                Spacer(modifier = Modifier.height(3.dp))
+            }
+            Surface(
+                onClick = {
+                    android.widget.Toast.makeText(context, config.tooltip, android.widget.Toast.LENGTH_LONG).show()
+                },
+                shape = pillShape,
+                color = config.bg,
+                border = BorderStroke(1.dp, config.fg.copy(alpha = 0.45f)),
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .padding(start = startPadding)
+                    .height(heightDp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 10.dp)
+                ) {
+                    Icon(
+                        imageVector = config.icon,
+                        contentDescription = config.label,
+                        tint = config.fg,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = config.label,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = config.fg,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 11.sp
+                        )
+                    )
+                }
+            }
         }
     }
 }
@@ -10856,7 +10883,7 @@ private fun LocalityCard(
                         onOutdoorAreaClick = onOutdoorAreaClick,
                         onTrailClick = onTrailClick,
                         onFeatureClick = onFeatureClick,
-                        modifier = Modifier.padding(top = 1.dp)
+                        modifier = Modifier.padding(top = 3.dp, bottom = 1.dp)
                     )
                 }
 
@@ -11441,7 +11468,7 @@ private fun LocalityCard(
                         onOutdoorAreaClick = onOutdoorAreaClick,
                         onTrailClick = onTrailClick,
                         onFeatureClick = onFeatureClick,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 5.dp, bottom = 1.dp)
                     )
                 }
 
@@ -13396,7 +13423,7 @@ fun TripDetailDialog(
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                             Text(
                                                                 text = if (isRunningThisTrip) {
-                                                                    "Correcting… ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints}"
+                                                                    "DEM ${elevationCorrectionProgress.processedPoints}/${elevationCorrectionProgress.totalPoints}"
                                                                 } else {
                                                                     "Correct Altitude"
                                                                 },

@@ -41,6 +41,8 @@ fun CacheManagerDialog(
     var boundaryCount by remember { mutableStateOf(0) }
     var spatialBytes by remember { mutableStateOf(0L) }
     var spatialCount by remember { mutableStateOf(0L) }
+    var demGridCount by remember { mutableStateOf(0) }
+    val elevationProgress by ElevationCorrectionManager.progress.collectAsState()
 
     var allowOnBattery by remember { mutableStateOf(cacheManager.allowOnBattery) }
     var allowMobileData by remember { mutableStateOf(cacheManager.allowMobileData) }
@@ -60,12 +62,21 @@ fun CacheManagerDialog(
             boundaryCount = cacheManager.getBoundaryCacheCount()
             spatialBytes = cacheManager.getSpatialCacheBytes()
             spatialCount = cacheManager.getSpatialCacheCount()
+            demGridCount = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                TripDatabaseHelper.getInstance(context).getElevationCacheCount()
+            }
         }
     }
 
     // Refresh metrics on start and when prefetch finishes
     LaunchedEffect(prefetchState) {
         if (prefetchState is CacheManager.PrefetchState.Idle || prefetchState is CacheManager.PrefetchState.Completed) {
+            refreshMetrics()
+        }
+    }
+
+    LaunchedEffect(elevationProgress.isRunning) {
+        if (!elevationProgress.isRunning) {
             refreshMetrics()
         }
     }
@@ -419,6 +430,127 @@ fun CacheManagerDialog(
                                 ) {
                                     Text(
                                         text = "Clear",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        Divider(color = Color(0xFF1E293B))
+
+                        // 4. Elevation Data (DEM)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "Elevation Data (DEM)",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                val missingDemTrips = cacheDeficit?.missingDemTrips
+                                val missingDemPoints = cacheDeficit?.missingDemPoints
+                                when {
+                                    elevationProgress.isRunning -> Text(
+                                        text = "⏳ Trip ${elevationProgress.processedTrips + 1}/${elevationProgress.totalTrips.coerceAtLeast(1)} (${elevationProgress.processedPoints}/${elevationProgress.totalPoints})",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingDemPoints == null -> Text(
+                                        text = "…",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingDemPoints == 0 -> Text(
+                                        text = "✓ complete",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    else -> Text(
+                                        text = "⚠ $missingDemPoints missing (${missingDemTrips ?: 0} ${(missingDemTrips ?: 0).let { if (it == 1) "trip" else "trips" }})",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = "$demGridCount cached elevation grid points",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
+                            }
+                            if (elevationProgress.isRunning) {
+                                OutlinedButton(
+                                    onClick = { ElevationCorrectionManager.stop() },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
+                                ) {
+                                    Text(
+                                        text = "Stop",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                            } else if ((cacheDeficit?.missingDemPoints ?: 0) > 0) {
+                                Button(
+                                    onClick = {
+                                        ElevationCorrectionManager.startMissingTrips(context) {
+                                            refreshMetrics()
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Text(
+                                        text = "Fetch",
                                         fontSize = 11.sp,
                                         color = Color.White,
                                         fontWeight = FontWeight.SemiBold,

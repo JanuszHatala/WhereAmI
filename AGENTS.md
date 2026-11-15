@@ -130,8 +130,8 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
 - **Display Road Snap (live only)**: Cursor and live polyline may apply a bounded EMA pull (≤18 m) toward OSRM `/nearest` coordinates for map alignment; recorded `track_points` must remain filter/smoother geometry.
 - **Named street over bare highway code**: If OSRM returns only `DW*`/`DK*`/`A*`/`S*` but OSM confirms the same way via `roadRef`, show `Krakowska (DW948)` via `coalesceOsrmAndOsmStreet`. Never glue an OSRM-only code onto an unrelated named way (`Kardynała Karola Wojtyły (DK52)`). Spatial cache must not overwrite a named street with a bare code; bare highway-only rows and false `(DK*)` on commemorative names are purged on open.
 - **House Number Speed & Accuracy Gating**:
-  - House numbers must ONLY be resolved, accepted, and displayed at pedestrian or stationary speeds ($\le 10\text{ km/h}$) with high GPS accuracy ($\le 15\text{m}$).
-  - At driving speeds ($> 10\text{ km/h}$), house numbers must NEVER be locked or updated to prevent flickering across adjacent building parcels.
+  - House numbers must ONLY be resolved, accepted, and displayed at slow speeds ($< 15\text{ km/h}$) or stationary rest with speed-tiered GPS horizontal accuracy ($\le 40\text{m}$ stationary or $< 1\text{ km/h}$, $\le 35\text{m}$ below $5\text{ km/h}$, $\le 25\text{m}$ below $15\text{ km/h}$).
+  - At driving speeds ($\ge 15\text{ km/h}$), house numbers must NEVER be locked or updated to prevent flickering across adjacent building parcels.
   - A residential/service road or house-numbered street address must NEVER be shielded with arterial highway codes (`(DK*)`, `(DW*)`, etc.) in display titles or cache entries.
 - **Spatial SQLite Composite Indexes & Envelope Pre-Check**:
   - All columns queried during startup sanitization or periodic sweeps (e.g. `$COL_HIGHWAY_TYPE, $COL_ROAD_REF` in `spatial_cache`) must have explicit composite indexes (`idx_spatial_highway_ref`) created in `onCreate` and `onOpen` to guarantee $\mathcal{O}(1)$ or minimal index scans.

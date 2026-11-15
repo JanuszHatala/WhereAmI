@@ -367,5 +367,29 @@ class RoadNameNormalizerTest {
         assertFalse(RoadNameNormalizer.shouldPreferExistingStreet("Ignacego Daszyńskiego 638", "A4 (E40)"))
         assertTrue(RoadNameNormalizer.shouldPreferExistingStreet("ul. Krakowska", "DW948"))
     }
+
+    @Test
+    fun testWayRefForUnnamedHighwayObjectVsPoi() {
+        // Unnamed highway way in Nominatim (road == null, isHighwayObject == true) must still resolve its ref
+        assertEquals(
+            "DK52",
+            RoadNameNormalizer.wayRef(null, null to "DK52", isHighwayObject = true)
+        )
+        assertEquals(
+            "DW946",
+            RoadNameNormalizer.wayRef(null, "Łącznik" to "DW946", isHighwayObject = true)
+        )
+        // Standard non-highway object (e.g. building/POI) or default flag must NOT attach ref when road is missing
+        assertEquals(
+            null,
+            RoadNameNormalizer.wayRef(null, null to "DK52", isHighwayObject = false)
+        )
+        assertEquals(
+            null,
+            RoadNameNormalizer.wayRef("ul. Lipowa", "Sklep" to "DK52", isHighwayObject = true)
+        )
+        // Normalizing resolved ref without street produces canonical highway code in PL
+        assertEquals("DK52", RoadNameNormalizer.normalize(null, "DK52", countryCode = "PL"))
+    }
 }
 

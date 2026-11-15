@@ -28,6 +28,7 @@ class VectorTrailOverlay(
     var trailOpacity: TrailOpacity = TrailOpacity.NORMAL,
     var enabledKinds: Set<TrailRouteKind> = emptySet(),
     var enabledColors: Set<TrailColor> = emptySet(),
+    var supplementOsmTrails: Boolean = true,
     var onTrailSelected: ((TrailVectorSegment) -> Unit)? = null
 ) : Overlay() {
 
@@ -64,6 +65,32 @@ class VectorTrailOverlay(
                 TrailRouteKind.HIKING -> "#EF4444"
             }
         }
+
+        /**
+         * Lateral center offset in pixels for coincident stacked trails. Uses [spacingRatio] = 0.55f
+         * so adjacent colors overlap slightly without creating bulky multi-trail ribbons.
+         */
+        internal fun computeLaneOffsetPx(
+            rank: Int,
+            count: Int,
+            strokeWidthPx: Float,
+            spacingRatio: Float = 0.55f
+        ): Float {
+            if (count <= 1) return 0f
+            val centeredSlot = rank.toFloat() - (count - 1).toFloat() * 0.5f
+            return centeredSlot * strokeWidthPx * spacingRatio
+        }
+
+        internal fun undirectedAngleBucket(dx: Float, dy: Float): Int {
+            var angle = kotlin.math.atan2(dy.toDouble(), dx.toDouble())
+            if (angle < 0.0) angle += kotlin.math.PI
+            if (angle >= kotlin.math.PI) angle -= kotlin.math.PI
+            val bucket = (angle / (kotlin.math.PI / 6.0)).toInt()
+            return bucket.coerceIn(0, 5)
+        }
+
+        internal fun bitRankInMask(mask: Int, singleBit: Int): Int =
+            Integer.bitCount(mask and (singleBit - 1))
 
         /**
          * Computes `[dashOnPx, dashOffPx]` intervals compensated for round stroke caps and halo casing
@@ -111,6 +138,7 @@ class VectorTrailOverlay(
     private val currentTrails = CopyOnWriteArrayList<TrailVectorSegment>()
     private var lastQueriedBbox: BoundingBox? = null
     private var lastFetchedKinds: Set<TrailRouteKind>? = null
+    private var lastFetchedSupplementOsm: Boolean? = null
     private var lastFailedAtMs: Long = 0L
     private var lastFailedBbox: BoundingBox? = null
     private var fetchJob: Job? = null
@@ -140,9 +168,10 @@ class VectorTrailOverlay(
     fun updateTrailsForViewport(mapView: MapView) {
         val bbox = mapView.boundingBox ?: return
         val kindsScope = enabledKinds.toSet()
+        val supplementScope = supplementOsmTrails
         val kindsCovered = lastFetchedKinds?.let { prevKinds ->
             prevKinds.isEmpty() || (kindsScope.isNotEmpty() && kindsScope.all { it in prevKinds })
-        } == true
+        } == true && lastFetchedSupplementOsm == supplementScope
 
         val prev = lastQueriedBbox
         if (kindsCovered &&
@@ -182,13 +211,15 @@ class VectorTrailOverlay(
             val trails = TrailVectorRepository.getTrailsForBoundingBox(
                 context = context,
                 bbox = expanded,
-                requestedKinds = kindsScope
+                requestedKinds = kindsScope,
+                supplementOsmTrails = supplementScope
             )
             if (trails.isNotEmpty()) {
                 currentTrails.clear()
                 currentTrails.addAll(trails)
                 lastQueriedBbox = expanded
                 lastFetchedKinds = kindsScope
+                lastFetchedSupplementOsm = supplementScope
                 lastFailedBbox = null
             } else {
                 val centerInPrev = prev != null &&
@@ -199,6 +230,7 @@ class VectorTrailOverlay(
                 }
                 lastQueriedBbox = null
                 lastFetchedKinds = kindsScope
+                lastFetchedSupplementOsm = supplementScope
                 lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
                 lastFailedBbox = bbox
             }
@@ -239,21 +271,141 @@ class VectorTrailOverlay(
         val minStepPxSq = (2.0f * density) * (2.0f * density)
         val p1 = Point()
         val p2 = Point()
-        val path = Path()
+
+        // Project segments and sample undirected quantized cells so shared corridors fan out consistently.
+        val cellPx = (10.0f * density).coerceAtLeast(12f)
+        val tolPx = 2.5f * density
+        val screenCoords = ArrayList<FloatArray?>(trailsToDraw.size)
+        val canonicalSigns = FloatArray(trailsToDraw.size) { 1f }
+        val colorBits = IntArray(trailsToDraw.size)
+        val cellColorMask = HashMap<Long, Int>(trailsToDraw.size * 6)
+
+        fun cellKey(cx: Int, cy: Int, ang: Int): Long =
+            ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
+
+        fun markCell(sx: Float, sy: Float, ang: Int, bit: Int) {
+            val cx0 = kotlin.math.floor((sx - tolPx) / cellPx).toInt()
+            val cx1 = kotlin.math.floor((sx + tolPx) / cellPx).toInt()
+            val cy0 = kotlin.math.floor((sy - tolPx) / cellPx).toInt()
+            val cy1 = kotlin.math.floor((sy + tolPx) / cellPx).toInt()
+            for (cx in cx0..cx1) {
+                for (cy in cy0..cy1) {
+                    val k = cellKey(cx, cy, ang)
+                    cellColorMask[k] = (cellColorMask[k] ?: 0) or bit
+                }
+            }
+        }
+
+        for (tIdx in trailsToDraw.indices) {
+            val trail = trailsToDraw[tIdx]
+            val pts = trail.points
+            if (pts.size < 2) {
+                screenCoords.add(null)
+                continue
+            }
+            val coords = projectDecimatedScreenCoords(proj, pts, p1, p2, minStepPxSq)
+            if (coords.size < 4) {
+                screenCoords.add(null)
+                continue
+            }
+            screenCoords.add(coords)
+            canonicalSigns[tIdx] = computeCanonicalSign(coords)
+            val bit = 1 shl trail.color.ordinal
+            colorBits[tIdx] = bit
+
+            val vCount = coords.size / 2
+            for (i in 0 until vCount - 1) {
+                val ax = coords[i * 2]
+                val ay = coords[i * 2 + 1]
+                val bx = coords[(i + 1) * 2]
+                val by = coords[(i + 1) * 2 + 1]
+                val dx = bx - ax
+                val dy = by - ay
+                val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                if (segLen < 0.5f) continue
+                val ang = undirectedAngleBucket(dx, dy)
+                val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
+                for (s in 0..steps) {
+                    val t = s.toFloat() / steps.toFloat()
+                    markCell(ax + dx * t, ay + dy * t, ang, bit)
+                }
+            }
+        }
+
+        fun lookupMask(vx: Float, vy: Float, ang: Int, selfBit: Int): Int {
+            val cx = kotlin.math.floor(vx / cellPx).toInt()
+            val cy = kotlin.math.floor(vy / cellPx).toInt()
+            val prevAng = (ang + 5) % 6
+            val nextAng = (ang + 1) % 6
+            var mask = selfBit
+            mask = mask or (cellColorMask[cellKey(cx, cy, ang)] ?: 0)
+            mask = mask or (cellColorMask[cellKey(cx, cy, prevAng)] ?: 0)
+            mask = mask or (cellColorMask[cellKey(cx, cy, nextAng)] ?: 0)
+            return mask
+        }
+
+        val paths = ArrayList<Path?>(trailsToDraw.size)
+        for (tIdx in trailsToDraw.indices) {
+            val coords = screenCoords[tIdx]
+            if (coords == null) {
+                paths.add(null)
+                continue
+            }
+            val path = Path()
+            val vCount = coords.size / 2
+            val cSign = canonicalSigns[tIdx]
+            val selfBit = colorBits[tIdx]
+            var prevNx = 0f
+            var prevNy = 0f
+            for (i in 0 until vCount) {
+                val vx = coords[i * 2]
+                val vy = coords[i * 2 + 1]
+                val prevIdx = if (i > 0) i - 1 else 0
+                val nextIdx = if (i < vCount - 1) i + 1 else vCount - 1
+                val tx = (coords[nextIdx * 2] - coords[prevIdx * 2]) * cSign
+                val ty = (coords[nextIdx * 2 + 1] - coords[prevIdx * 2 + 1]) * cSign
+                val tLen = kotlin.math.hypot(tx.toDouble(), ty.toDouble()).toFloat()
+                val offsetX: Float
+                val offsetY: Float
+                if (tLen > 0.001f) {
+                    val ux = tx / tLen
+                    val uy = ty / tLen
+                    var nx = -uy
+                    var ny = ux
+                    if ((prevNx != 0f || prevNy != 0f) && (nx * prevNx + ny * prevNy) < 0f) {
+                        // Guard against sudden 180-degree chord flips along gentle bends.
+                        nx = -nx
+                        ny = -ny
+                    }
+                    prevNx = nx
+                    prevNy = ny
+                    val mask = lookupMask(vx, vy, undirectedAngleBucket(ux, uy), selfBit)
+                    val count = Integer.bitCount(mask)
+                    val offsetPx = if (count > 1) {
+                        val rank = bitRankInMask(mask, selfBit)
+                        computeLaneOffsetPx(rank, count, strokeWidthPx)
+                    } else 0f
+                    offsetX = vx + nx * offsetPx
+                    offsetY = vy + ny * offsetPx
+                } else {
+                    offsetX = vx
+                    offsetY = vy
+                }
+                if (i == 0) path.moveTo(offsetX, offsetY) else path.lineTo(offsetX, offsetY)
+            }
+            paths.add(path)
+        }
 
         // 1. Draw Halo Casing
-        for (trail in trailsToDraw) {
-            val pts = trail.points
-            if (pts.size < 2) continue
-            buildScreenPath(proj, pts, p1, p2, minStepPxSq, path)
+        for (tIdx in trailsToDraw.indices) {
+            val path = paths[tIdx] ?: continue
             canvas.drawPath(path, haloPaint)
         }
 
         // 2. Draw Colored Strokes
-        for (trail in trailsToDraw) {
-            val pts = trail.points
-            if (pts.size < 2) continue
-            buildScreenPath(proj, pts, p1, p2, minStepPxSq, path)
+        for (tIdx in trailsToDraw.indices) {
+            val path = paths[tIdx] ?: continue
+            val trail = trailsToDraw[tIdx]
             val colorArgb = try {
                 Color.parseColor(resolveStrokeColorHex(trail))
             } catch (_: Exception) {
@@ -269,19 +421,43 @@ class VectorTrailOverlay(
         }
     }
 
-    private fun buildScreenPath(
+    private fun computeCanonicalSign(coords: FloatArray): Float {
+        val vCount = coords.size / 2
+        if (vCount < 2) return 1f
+        val fx = coords[0]
+        val fy = coords[1]
+        var ax = coords[(vCount - 1) * 2]
+        var ay = coords[(vCount - 1) * 2 + 1]
+        if (kotlin.math.hypot((ax - fx).toDouble(), (ay - fy).toDouble()) < 4.0 && vCount > 2) {
+            var bestDistSq = -1.0
+            for (i in 1 until vCount - 1) {
+                val dx = (coords[i * 2] - fx).toDouble()
+                val dy = (coords[i * 2 + 1] - fy).toDouble()
+                val dSq = dx * dx + dy * dy
+                if (dSq > bestDistSq) {
+                    bestDistSq = dSq
+                    ax = coords[i * 2]
+                    ay = coords[i * 2 + 1]
+                }
+            }
+        }
+        return if (fx < ax || (fx == ax && fy <= ay)) 1f else -1f
+    }
+
+    private fun projectDecimatedScreenCoords(
         proj: Projection,
         pts: List<GeoPoint>,
         p1: Point,
         p2: Point,
-        minStepPxSq: Float,
-        path: Path
-    ) {
-        path.reset()
+        minStepPxSq: Float
+    ): FloatArray {
+        val buf = FloatArray(pts.size * 2)
         proj.toPixels(pts[0], p1)
         var lastX = p1.x.toFloat()
         var lastY = p1.y.toFloat()
-        path.moveTo(lastX, lastY)
+        buf[0] = lastX
+        buf[1] = lastY
+        var count = 1
         val lastIdx = pts.size - 1
         for (i in 1 until lastIdx) {
             proj.toPixels(pts[i], p2)
@@ -290,13 +466,20 @@ class VectorTrailOverlay(
             val dx = x - lastX
             val dy = y - lastY
             if (dx * dx + dy * dy >= minStepPxSq) {
-                path.lineTo(x, y)
+                buf[count * 2] = x
+                buf[count * 2 + 1] = y
+                count++
                 lastX = x
                 lastY = y
             }
         }
         proj.toPixels(pts[lastIdx], p2)
-        path.lineTo(p2.x.toFloat(), p2.y.toFloat())
+        val endX = p2.x.toFloat()
+        val endY = p2.y.toFloat()
+        buf[count * 2] = endX
+        buf[count * 2 + 1] = endY
+        count++
+        return buf.copyOf(count * 2)
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {

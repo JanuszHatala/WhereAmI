@@ -187,10 +187,10 @@ It tracks the workflow and architectural decisions across all development sessio
   - *Evolution (v2.4.0)*: Upgraded `HIKING`, `MTB`, and `KAYAKING` defaults to clean `MapBaseLayer.TOPO` + `TrailOverlayMode.VECTOR` (with profile-appropriate `enabledTrailKinds`) and added one-time `pref_migrated_clean_map_views_v240` migration while keeping manual selection intact.
 
 ### MAP-03: Filterable Vector Trails & Waymarked Overlay
-- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, with user-configurable zoom-tapered thickness (`Standard`/`Thick`/`Bold`), halo-compensated line style (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
+- **Core Value**: Selective display of vector trail categories (`HIKING`, `MTB`, `CYCLING`, `EDUCATIONAL`, `KAYAKING`, `SKI`, `HORSE`) and trail blaze colors (`RED`, `BLUE`, `GREEN`, `YELLOW`, `BLACK`) across all zoom levels via Waymarked Trails `z=12` GeoJSON vector tiles (`parseWaymarkedTileJson` + relation details cache) plus macro long-distance (`iwn|nwn|icn|ncn` / canoe-kayak) routes, optional deduplicated OSM Overpass supplemental coverage (`supplementMissingOsmTrails`, default ON), OSM `0.6/{way,relation}/{id}/full` direct route geometry lookup, hardened Overpass and viewport-centered OSM `0.6/map` XML fallback, parallel overlap-stepped multi-color lane rendering (`computeLaneOffsetPx`), user-configurable zoom-tapered thickness (`Standard`/`Thick`/`Bold`), halo-compensated line style (`Solid`/`Dashed`/`Dotted`), and opacity (`Normal`/`Soft`/`Transparent`), plus mutually exclusive Waymarked raster fallback.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`, `computeDashIntervals`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`, `parseOsmFullXmlLines`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`).
+  - `VectorTrailOverlay.kt` (`matchesFilters`, `resolveStrokeColorHex`, `computeStrokeWidthDp`, `computeDashIntervals`, `computeLaneOffsetPx`), `TrailVectorRepository.kt` (`fetchMacroRoutesForWideZoom`, `fetchTrailRouteByOsmId`, `parseOsmFullXmlLines`, `deduplicateSupplementalTrails`), `OsmMapView.kt` (`MapSettingsDialog` selective filter/style/supplement chips & MultiPolygon focus), `MapProfileConfigHelper.kt` (`enabledTrailKinds`, `enabledTrailColors`, `trailThickness`, `trailLineStyle`, `trailOpacity`, `TrailOverlayMode`, `supplementMissingOsmTrails`).
 
 ### MAP-04: Map Recenter & Floating Recenter Pill
 - **Core Value**: Allows free map browsing without permanent loss of location tracking, with an intuitive 1-tap recenter control.
@@ -319,7 +319,7 @@ It tracks the workflow and architectural decisions across all development sessio
   - `TripDatabaseHelper.kt` (DB v6): Persists altitude in `points_json` as optional `"alt"` attribute with backward compatibility. Since DB v10 (v1.11.0) altitude and its source (`GPS`/`DEM`) live in the `track_points` table; legacy `points_json` is kept read-only and backfilled idempotently.
   - `TripModels.kt`: `ElevationStats` computation with moving-average noise reduction for cumulative ascent/descent, elevation range, and peak vertical speed (`m/min`).
   - `MainActivity.kt`: Live altitude badge (`▲ XXX m`) in LocalityCard compact Row 3; collapsible Elevation Profile section in `TripDetailDialog` with `ElevationProfileChart` Canvas composable and `ElevationOverrideModeDialog` mode selector.
-  - `ElevationRepository.kt` & `ElevationCorrectionHelper.kt`: Open-Elevation DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing; single-trip correction and bulk "Correct All Trips" tool in Settings.
+  - `ElevationRepository.kt`, `ElevationCorrectionHelper.kt` & `ElevationCorrectionManager.kt`: Open-Elevation / OpenTopoData DEM REST API client batched in 100-point requests with exponential backoff and 150ms pacing, live-recording-safe in-place `track_points` updates (`updateTrackPointElevationsInPlace`), throttled notification progress, single-trip correction, "Correct All Trips" in Settings, and missing-DEM count/batch downloader (`MissingDemSummary` / `startMissingTrips`) in `CacheManagerDialog`.
   - Unit test suite: `ElevationStatsTest.kt`, `PointsAltitudeSerializationTest.kt`.
 
 ---
@@ -577,7 +577,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Full offline resilience with controlled disk usage.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - Map tile cache management (500MB limit) and boundary polygon caching in `cacheDir/boundaries`.
+  - `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionManager.kt`: Map tile cache management (500MB limit), boundary polygon caching in `cacheDir/boundaries`, missing-DEM backlog counter and batch fetcher, automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, and per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis.
 
 ### OPS-05: Architectural Standards Documentation (`AGENTS.md`)
 - **Core Value**: Mandatory architectural guidelines, Git branching rules, and pre-completion gates.

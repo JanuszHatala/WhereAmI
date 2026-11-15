@@ -633,4 +633,159 @@ class TrailVectorRepositoryTest {
         assertTrue("Expected off($off) - halo($haloWidthPx) = $clearHaloGap > stroke($strokeWidthPx)", clearHaloGap > strokeWidthPx * 1.5f)
         assertTrue("Expected off($off) > on($on)", off > on)
     }
+
+    @Test
+    fun `VectorTrailOverlay computeLaneOffsetPx uses compact symmetric half-width stacking`() {
+        val w = 10f
+        assertEquals(0f, VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 1, strokeWidthPx = w), 0.001f)
+
+        val l2a = VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 2, strokeWidthPx = w)
+        val l2b = VectorTrailOverlay.computeLaneOffsetPx(rank = 1, count = 2, strokeWidthPx = w)
+        assertEquals(-l2a, l2b, 0.001f)
+        assertEquals(5.5f, l2b - l2a, 0.001f)
+
+        val l3a = VectorTrailOverlay.computeLaneOffsetPx(rank = 0, count = 3, strokeWidthPx = w)
+        val l3b = VectorTrailOverlay.computeLaneOffsetPx(rank = 1, count = 3, strokeWidthPx = w)
+        val l3c = VectorTrailOverlay.computeLaneOffsetPx(rank = 2, count = 3, strokeWidthPx = w)
+        assertEquals(-5.5f, l3a, 0.001f)
+        assertEquals(0f, l3b, 0.001f)
+        assertEquals(5.5f, l3c, 0.001f)
+    }
+
+    @Test
+    fun `deduplicateSupplementalTrails drops Waymarked duplicates and close corridors while keeping missing trails`() {
+        val primaryRed = TrailVectorSegment(
+            id = 1001L,
+            name = "Red Waymarked",
+            kind = TrailRouteKind.HIKING,
+            color = TrailColor.RED,
+            points = listOf(GeoPoint(50.7100, 16.8400), GeoPoint(50.7150, 16.8450)),
+            relationId = 555001L
+        )
+        val suppSameRel = primaryRed.copy(id = 9001L, relationId = 555001L)
+        val suppSameCorridorDiffRel = primaryRed.copy(
+            id = 9002L,
+            relationId = 999999L,
+            points = listOf(GeoPoint(50.71005, 16.84005), GeoPoint(50.71505, 16.84505))
+        )
+        val suppMissingBlueCoincident = TrailVectorSegment(
+            id = 9003L,
+            name = "Blue Missing Trail",
+            kind = TrailRouteKind.HIKING,
+            color = TrailColor.BLUE,
+            points = listOf(GeoPoint(50.7100, 16.8400), GeoPoint(50.7150, 16.8450)),
+            relationId = 555002L
+        )
+        val suppMissingGreenNearby = TrailVectorSegment(
+            id = 9004L,
+            name = "Green Missing Trail",
+            kind = TrailRouteKind.HIKING,
+            color = TrailColor.GREEN,
+            points = listOf(GeoPoint(50.7200, 16.8600), GeoPoint(50.7250, 16.8650)),
+            relationId = 555003L
+        )
+
+        val kept = TrailVectorRepository.deduplicateSupplementalTrails(
+            primary = listOf(primaryRed),
+            supplemental = listOf(suppSameRel, suppSameCorridorDiffRel, suppMissingBlueCoincident, suppMissingGreenNearby)
+        )
+        assertEquals(listOf(9003L, 9004L), kept.map { it.id })
+    }
+
+    @Test
+    fun `getTrailsForBoundingBox supplements missing Overpass trails alongside Waymarked when enabled`() = runBlocking {
+        // Coordinates inside zoom-12 tile (2240, 1375): lat ~50.715, lon ~16.842
+        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/wm/tiles/") { ex ->
+                val geoJson = """
+                    {
+                      "type": "FeatureCollection",
+                      "features": [
+                        {
+                          "type": "Feature",
+                          "geometry": {
+                            "type": "LineString",
+                            "coordinates": [[1874800.0, 6571000.0], [1875000.0, 6571200.0]]
+                          },
+                          "properties": { "type": "way", "top_relations": [1001], "shields": ["osmc_REG_white_red-bar"] }
+                        }
+                      ]
+                    }
+                """.trimIndent().toByteArray()
+                ex.sendResponseHeaders(200, geoJson.size.toLong())
+                ex.responseBody.use { it.write(geoJson) }
+            }
+            createContext("/wm/details/") { ex ->
+                val meta = """{"id":1001,"name":"WM Red","tags":{"route":"hiking","colour":"red"}}""".toByteArray()
+                ex.sendResponseHeaders(200, meta.size.toLong())
+                ex.responseBody.use { it.write(meta) }
+            }
+            createContext("/overpass") { ex ->
+                val overpassJson = """
+                    {
+                      "elements": [
+                        {
+                          "type": "relation",
+                          "id": 1001,
+                          "tags": { "type": "route", "route": "hiking", "name": "OP Red Dup", "osmc:symbol": "red:white:red_bar" },
+                          "members": [
+                            { "type": "way", "ref": 10, "role": "", "geometry": [{ "lat": 50.7145, "lon": 16.8415 }, { "lat": 50.7155, "lon": 16.8425 }] }
+                          ]
+                        },
+                        {
+                          "type": "relation",
+                          "id": 2002,
+                          "tags": { "type": "route", "route": "hiking", "name": "Missing Blue Trail", "osmc:symbol": "blue:white:blue_bar" },
+                          "members": [
+                            { "type": "way", "ref": 20, "role": "", "geometry": [{ "lat": 50.7160, "lon": 16.8430 }, { "lat": 50.7170, "lon": 16.8440 }] }
+                          ]
+                        },
+                        {
+                          "type": "relation",
+                          "id": 3003,
+                          "tags": { "type": "route", "route": "hiking", "name": "Missing Green Trail", "osmc:symbol": "green:white:green_bar" },
+                          "members": [
+                            { "type": "way", "ref": 30, "role": "", "geometry": [{ "lat": 50.7180, "lon": 16.8450 }, { "lat": 50.7190, "lon": 16.8460 }] }
+                          ]
+                        }
+                      ]
+                    }
+                """.trimIndent().toByteArray()
+                ex.sendResponseHeaders(200, overpassJson.size.toLong())
+                ex.responseBody.use { it.write(overpassJson) }
+            }
+            start()
+        }
+        server = srv
+        val base = "http://127.0.0.1:${srv.address.port}"
+        val ctx = fakeContext()
+        val bbox = BoundingBox(50.720, 16.850, 50.710, 16.835)
+
+        val supplemented = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = bbox,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/wm/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/wm/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass"),
+            supplementOsmTrails = true
+        )
+        assertTrue(supplemented.any { it.name == "WM Red" && it.color == TrailColor.RED })
+        assertTrue(supplemented.any { it.name == "Missing Blue Trail" && it.color == TrailColor.BLUE })
+        assertTrue(supplemented.any { it.name == "Missing Green Trail" && it.color == TrailColor.GREEN })
+        assertFalse(supplemented.any { it.name == "OP Red Dup" })
+
+        TrailVectorRepository.resetCachesForTest()
+        val waymarkedOnly = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = bbox,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/wm/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/wm/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass"),
+            supplementOsmTrails = false
+        )
+        assertTrue(waymarkedOnly.any { it.name == "WM Red" })
+        assertFalse(waymarkedOnly.any { it.name == "Missing Blue Trail" })
+    }
 }

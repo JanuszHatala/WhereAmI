@@ -84,8 +84,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
 | **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
 | **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
+| **Round 60** | Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3) | 4 | 4 | 0 | 0 |
+| **Round 61** | Field Test Round 60 Diagnostics: Stacked Parallel Vector Trails & Overpass Supplement, Per-Source Signal Pill Hysteresis, Geocoder Contention/Gmina Stability, Safe Live-Trip DEM & Batch Missing-DEM UI, Wrapped Badges & Safe Controls Framing (2026-11-15 v2.4.4) | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **391** | **383** | **0** | **8** |
+| **Total** | | **397** | **389** | **0** | **8** |
 
 
 ---
@@ -1878,6 +1880,26 @@ User feedback & root causes:
 | **VEC-60-02** | Widen `TrailLineStyle.DASHED` and `DOTTED` clear intervals via `computeDashIntervals`. | `VectorTrailOverlay.kt`, `TrailVectorRepositoryTest.kt` | Implemented | `computeDashIntervals` unit test verifies clear gap exceeds stroke/halo width. |
 | **OUT-60-03** | Fast OSM `0.6/{way,relation}/{id}/full` resolution, cached `wm_*.geojson`/`memoryCache` fallback, `searchRouteFitTrigger`, and `selectOutdoorFeature` null-anchor Toast. | `TrailVectorRepository.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `MainActivity.kt`, `TrailVectorRepositoryTest.kt` | Implemented | OSM `0.6/full` relation/way fallback & cached GeoJSON unit tests pass. |
 | **VER-60** | Bump to `versionCode = 204`, `versionName = "2.4.3"`. | `app/build.gradle.kts` | Implemented | Unit tests, `assembleDebug`, and server tests pass. |
+
+---
+
+## Round 61 - Vector Trail Parallel Stacking & Overpass Supplement, Per-Source Signal Hysteresis, Safe Live-Trip DEM & Field Stability (2026-11-15 v2.4.4)
+
+User feedback, telemetry diagnostics & root causes:
+- Coincident & missing vector trails (`11:31:08`): `parseTrailColor` matched `red`/`white` substrings ahead of token `0` (`waycolor` in `osmc:symbol`), turning purple-white or multi-token blazes white/red, while `VectorTrailOverlay` painted coincident routes at `0px` offset so white routes hid underlying green/blue/yellow lanes. Fixed token `0` precedence via `matchTrailColorToken`, added `50%` overlap-stepped parallel normal-vector lanes (`computeLaneOffsetPx`, `undirectedAngleBucket`), tightened `DASHED` spacing (`50%` reduction), raised `MAX_DETAIL_FETCHES_PER_BATCH` to `64`, and added `supplementMissingOsmTrails` (default ON) with ~35 m deduplication (`deduplicateSupplementalTrails`).
+- Signal pill video flicker & Nominatim 429 saturation (`10:18..11:20`, `trip327`): `DataAcquisitionManager` mixed HTTP 200s from OSRM/Waymarked with Nominatim `429` states and had zero hysteresis, while concurrent `CacheManager` prefetching starved Nominatim. Added `DataSourceKind` isolation, `AcquisitionPillStabilizer` entry/exit hysteresis, and `CacheManager.shouldAutoPausePrefetch` during active recording or geocoder `429`.
+- Hierarchy flicker, unnamed placeholders & stale fallback (`09:46..11:20`, `14:39..14:44`): Scoped `loc_gmina_*` fallback strictly by locality identity and proximity, fixed `RoadNameNormalizer.wayRef` when `namedetails.name == null` (`isHighwayObject`), suppressed Android unnamed placeholders when OSM confirms an unnamed highway, capped `lastGood` locality fallback at `2500f` m, and aligned `AGENTS.md`/`GEMINI.md` house-number rules to `< 15 km/h` and tiered `40m/35m/25m` accuracy thresholds.
+- DEM live-trip split crash & truncated badge (`12:58:11`, `trip328`): Replaced `replaceTrackPoints` in `ElevationCorrectionHelper.correctTrip` with atomic `TripDatabaseHelper.updateTrackPointElevationsInPlace`, throttled `ElevationCorrectionManager.updateNotification`, shortened `TripDetailDialog` progress text to `"DEM done/total"`, and added `MissingDemSummary` + `ElevationCorrectionManager.startMissingTrips` to `CacheManagerDialog`.
+- Spacing, wrapped map badges, controls inset overlap, live distances & walking auto-start (`09:19:13`, `09:20:45`, `15:56:21`, `trip333`): Added symmetrical top padding above `OutdoorContextRow`, balanced multi-line `StaticLayout` badge wrapping in `makeOutdoorAreaBadgeIcon`, constrained `MapFloatingControlsColumn` between `measuredTopInsetPx` and `measuredBottomInsetPx` with vertical scroll for landscape, updated `OutdoorContext.withUpdatedDistances` on live fixes, and increased walking auto-start displacement to `25.0` m.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **VEC-61-01** | Fix OSMC token-0 `parseTrailColor`, parallel stacked lanes (`computeLaneOffsetPx`), tighter dashed gaps, `MAX_DETAIL_FETCHES_PER_BATCH = 64`, and `supplementMissingOsmTrails` deduplicated Overpass supplement. | `OutdoorContextResolver.kt`, `VectorTrailOverlay.kt`, `TrailVectorRepository.kt`, `MapProfileConfigHelper.kt`, `OsmMapView.kt`, `TrailVectorRepositoryTest.kt`, `MapProfileConfigTest.kt` | Implemented | Unit tests cover OSMC token `0`, lane offsets, tight dashes, and deduplication. |
+| **SIG-61-02** | Isolate per-source health (`DataSourceKind`), stabilize pill with `AcquisitionPillStabilizer`, and auto-pause `CacheManager` prefetch during recording/429. | `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `LocationManager.kt`, `OsmMapMatcher.kt`, `OutdoorContextResolver.kt`, `TrailVectorRepository.kt`, `CacheManager.kt`, `MainActivity.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | Hysteresis, per-source isolation, and auto-pause unit tests pass. |
+| **GEO-61-03** | Fix `wayRef` on unnamed highway segments, suppress OSM-confirmed unnamed placeholders, cap `lastGood` at `2500f` m, scope `gmina` fallback, and align house-number docs. | `RoadNameNormalizer.kt`, `LocationManager.kt`, `AGENTS.md`, `GEMINI.md`, `RoadNameNormalizerTest.kt`, `OutdoorResilienceTest.kt` | Implemented | `wayRef`, 2.5 km cap, and `GlobalUniversalityInvariantTest` pass. |
+| **DEM-61-04** | In-place `track_points` DEM updates safe for active recording, throttled notifications, `"DEM done/total"` text, and missing-DEM batch downloader in `CacheManagerDialog`. | `TripDatabaseHelper.kt`, `ElevationCorrectionHelper.kt`, `ElevationCorrectionManager.kt`, `MainActivity.kt`, `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | Non-destructive merge/sequence tests & APK compilation pass. |
+| **UI-61-05** | Balance `OutdoorContextRow` top spacing, `StaticLayout` multi-line map badge wrap, safe `MapFloatingControlsColumn` insets (portrait/landscape scroll), live outdoor distance updates, and `25.0` m walk start gate. | `MainActivity.kt`, `OsmMapView.kt`, `OutdoorModels.kt`, `LocationManager.kt`, `TripManager.kt`, `OutdoorResilienceTest.kt`, `ResumeMotionGateTest.kt` | Implemented | Distance recalculation, `25.0` m gate, and full suite pass. |
+| **VER-61** | Bump to `versionCode = 205`, `versionName = "2.4.4"`. | `app/build.gradle.kts` | Implemented | 706 passed / 1 skipped (`FieldReplayTest` fixture absent) + `assembleDebug` pass. |
 
 
 
