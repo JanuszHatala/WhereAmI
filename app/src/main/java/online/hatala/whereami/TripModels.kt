@@ -35,7 +35,9 @@ data class TripPause(
     val longitude: Double,
     val durationMs: Long = 0L,
     val pointIndex: Int = 0,
-    val distanceMeters: Double = 0.0
+    val distanceMeters: Double = 0.0,
+    val isGap: Boolean = false,
+    val gapDistanceMeters: Double = 0.0
 )
 
 fun geoDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -56,8 +58,10 @@ fun calculatePauseDistanceMeters(trip: TripRecord, pause: TripPause, cumulativeD
     if (cumulativeDistances != null && idx < cumulativeDistances.size) {
         return cumulativeDistances[idx]
     }
+    val breakIndices = trip.effectiveSegmentBreakIndices()
     var cum = 0.0
     for (i in 1..idx) {
+        if (i in breakIndices) continue
         val p1 = trip.points[i - 1]
         val p2 = trip.points[i]
         cum += geoDistanceMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
@@ -65,13 +69,21 @@ fun calculatePauseDistanceMeters(trip: TripRecord, pause: TripPause, cumulativeD
     return cum
 }
 
-fun calculateCumulativeDistances(points: List<GeoPoint>): DoubleArray {
+/**
+ * Cumulative recorded distance along [points], excluding unrecorded straight-line jumps at [segmentBreakIndices].
+ */
+fun calculateCumulativeDistances(
+    points: List<GeoPoint>,
+    segmentBreakIndices: Set<Int> = emptySet()
+): DoubleArray {
     if (points.isEmpty()) return DoubleArray(0)
     val arr = DoubleArray(points.size)
     var sum = 0.0
     arr[0] = 0.0
     for (i in 1 until points.size) {
-        sum += geoDistanceMeters(points[i - 1].latitude, points[i - 1].longitude, points[i].latitude, points[i].longitude)
+        if (i !in segmentBreakIndices) {
+            sum += geoDistanceMeters(points[i - 1].latitude, points[i - 1].longitude, points[i].latitude, points[i].longitude)
+        }
         arr[i] = sum
     }
     return arr
@@ -84,14 +96,16 @@ fun calculateCumulativeDistances(points: List<GeoPoint>): DoubleArray {
  *
  * @param points Raw GeoPoint track list.
  * @param numSamples Number of uniform distance-spaced evaluation samples for vector chart rendering (default 100).
+ * @param segmentBreakIndices Point indices starting disconnected segments (excluded from cumulative distance).
  * @return List of (distanceMeters, altitudeMeters) pairs, guaranteed to be distance-ordered and smooth.
  */
 fun smoothElevationProfile(
     points: List<GeoPoint>,
-    numSamples: Int = 100
+    numSamples: Int = 100,
+    segmentBreakIndices: Set<Int> = emptySet()
 ): List<Pair<Double, Double>> {
     if (points.size < 2) return emptyList()
-    val distances = calculateCumulativeDistances(points)
+    val distances = calculateCumulativeDistances(points, segmentBreakIndices)
     val rawPairs = ArrayList<Pair<Double, Double>>(points.size)
     for (i in points.indices) {
         val a = points[i].altitude
@@ -209,8 +223,63 @@ data class TripRecord(
     val points: List<GeoPoint> = emptyList(),
     val rawPoints: List<GeoPoint> = emptyList(),
     val placesVisited: List<VisitedPlace> = emptyList(),
-    val pauses: List<TripPause> = emptyList()
-)
+    val pauses: List<TripPause> = emptyList(),
+    val segmentBreakIndices: Set<Int> = emptySet()
+) {
+    /**
+     * Indices in [points] where a disconnected recorded segment starts (caused by trip merging,
+     * post-stop resume, or a pause relocation >= 60 m). Edges `(idx - 1) -> idx` are rendered as
+     * dashed gap junctions and excluded from cumulative recorded distance.
+     */
+    fun effectiveSegmentBreakIndices(): Set<Int> {
+        if (points.size < 2) return emptySet()
+        val breaks = LinkedHashSet<Int>()
+        for (idx in segmentBreakIndices) {
+            if (idx in 1 until points.size) breaks.add(idx)
+        }
+        for (pause in pauses) {
+            val idx = pause.pointIndex + 1
+            if (idx !in 1 until points.size) continue
+            if (pause.isGap) {
+                breaks.add(idx)
+            } else {
+                val p1 = points[idx - 1]
+                val p2 = points[idx]
+                if (geoDistanceMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude) >= LEGACY_PAUSE_GAP_METERS) {
+                    breaks.add(idx)
+                }
+            }
+        }
+        return breaks
+    }
+
+    /** Contiguous recorded polyline slices split at every index in [effectiveSegmentBreakIndices]. */
+    fun recordedSegments(): List<List<GeoPoint>> {
+        if (points.isEmpty()) return emptyList()
+        val breaks = effectiveSegmentBreakIndices()
+        if (breaks.isEmpty()) return listOf(points)
+        val sortedBreaks = breaks.sorted()
+        val out = ArrayList<List<GeoPoint>>(sortedBreaks.size + 1)
+        var start = 0
+        for (b in sortedBreaks) {
+            if (b > start) out.add(points.subList(start, b))
+            start = b
+        }
+        if (start < points.size) out.add(points.subList(start, points.size))
+        return out
+    }
+
+    /** Endpoint pairs `(segmentEnd, nextSegmentStart)` across unrecorded gaps for dashed connector rendering. */
+    fun gapConnectors(): List<Pair<GeoPoint, GeoPoint>> {
+        val breaks = effectiveSegmentBreakIndices()
+        if (breaks.isEmpty()) return emptyList()
+        return breaks.sorted().map { idx -> points[idx - 1] to points[idx] }
+    }
+
+    companion object {
+        const val LEGACY_PAUSE_GAP_METERS = 60.0
+    }
+}
 
 
 enum class TripMode {

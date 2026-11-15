@@ -116,6 +116,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                     put("dur", p.durationMs)
                     put("idx", p.pointIndex)
                     if (p.distanceMeters > 0.0) put("dist", p.distanceMeters)
+                    if (p.isGap) put("gap", true)
+                    if (p.gapDistanceMeters > 0.0) put("gapDist", p.gapDistanceMeters)
                 }
                 array.put(obj)
             }
@@ -137,7 +139,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                             longitude = obj.getDouble("lng"),
                             durationMs = obj.optLong("dur", 0L),
                             pointIndex = obj.optInt("idx", 0),
-                            distanceMeters = obj.optDouble("dist", 0.0)
+                            distanceMeters = obj.optDouble("dist", 0.0),
+                            isGap = obj.optBoolean("gap", false),
+                            gapDistanceMeters = obj.optDouble("gapDist", 0.0)
                         )
                     )
                 }
@@ -1211,6 +1215,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val rows = if (pointsFromTable) getTrackPointRows(id) else emptyList()
         val points = if (pointsFromTable) rowsToGeoPoints(rows) else jsonToPoints(pointsJson)
         val rawPoints = if (pointsFromTable) rowsToRawGeoPoints(rows) else emptyList()
+        val segmentBreakIndices = if (rows.isNotEmpty()) {
+            rows.indices.filter { idx -> idx > 0 && rows[idx].isSegmentStart }.toSet()
+        } else {
+            emptySet()
+        }
 
         return TripRecord(
             id = id,
@@ -1225,7 +1234,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             points = points,
             rawPoints = rawPoints,
             placesVisited = jsonToPlaces(placesJson),
-            pauses = jsonToPauses(pausesJson)
+            pauses = jsonToPauses(pausesJson),
+            segmentBreakIndices = segmentBreakIndices
         )
     }
 
@@ -1374,6 +1384,8 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val allRawPoints = mutableListOf<GeoPoint>()
         val allPlaces = mutableListOf<VisitedPlace>()
         val allPauses = mutableListOf<TripPause>()
+        val mergedSegmentBreaks = LinkedHashSet<Int>()
+        val mergedRows = ArrayList<TrackPointRow>()
         var totalDist = 0.0
         var maxSpd = 0f
         var totalDurationSec = 0.0
@@ -1383,8 +1395,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         for (i in sorted.indices) {
             val trip = sorted[i]
             val pointOffset = allPoints.size
+            val tripRows = getTrackPointRows(trip.id)
 
-            // 1. Preserve existing pauses from this trip, shifting pointIndex by pointOffset AND shifting distanceMeters
+            // 1. Preserve existing pauses & segment breaks from this trip shifted by pointOffset
+            for (bIdx in trip.segmentBreakIndices) {
+                mergedSegmentBreaks.add(bIdx + pointOffset)
+            }
             for (pause in trip.pauses) {
                 allPauses.add(
                     pause.copy(
@@ -1392,6 +1408,19 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                         distanceMeters = cumulativeDistanceOffset + pause.distanceMeters
                     )
                 )
+            }
+
+            if (i > 0 && trip.points.isNotEmpty()) {
+                mergedSegmentBreaks.add(pointOffset)
+            }
+            if (tripRows.isNotEmpty()) {
+                if (i > 0 && pointOffset > 0) {
+                    val firstRow = tripRows.first()
+                    mergedRows.add(firstRow.copy(flags = firstRow.flags or TrackPointRow.FLAG_SEGMENT_START))
+                    for (rIdx in 1 until tripRows.size) mergedRows.add(tripRows[rIdx])
+                } else {
+                    mergedRows.addAll(tripRows)
+                }
             }
 
             allPoints.addAll(trip.points)
@@ -1404,20 +1433,23 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 )
             }
 
-            // 3. Mark the inter-trip time gap as a rest stop (TripPause)
+            // 3. Mark the inter-trip time or spatial gap as a rest/merge pause (without adding gap distance)
             if (i < sorted.size - 1) {
                 val nextTrip = sorted[i + 1]
                 val gapStart = trip.endTime ?: (trip.startTime + 60_000L)
                 val gapEnd = nextTrip.startTime
                 val gapDuration = (gapEnd - gapStart).coerceAtLeast(0L)
+                val lastPt = trip.points.lastOrNull()
+                val nextStartPt = nextTrip.points.firstOrNull()
+                val gapMeters = if (lastPt != null && nextStartPt != null) {
+                    geoDistanceMeters(lastPt.latitude, lastPt.longitude, nextStartPt.latitude, nextStartPt.longitude)
+                } else {
+                    0.0
+                }
 
-                if (gapDuration >= 10_000L) {
-                    val pauseLat = trip.points.lastOrNull()?.latitude
-                        ?: nextTrip.points.firstOrNull()?.latitude
-                        ?: 0.0
-                    val pauseLng = trip.points.lastOrNull()?.longitude
-                        ?: nextTrip.points.firstOrNull()?.longitude
-                        ?: 0.0
+                if (gapDuration >= 10_000L || gapMeters >= 50.0) {
+                    val pauseLat = lastPt?.latitude ?: nextStartPt?.latitude ?: 0.0
+                    val pauseLng = lastPt?.longitude ?: nextStartPt?.longitude ?: 0.0
                     val junctionIndex = (allPoints.size - 1).coerceAtLeast(0)
 
                     allPauses.add(
@@ -1428,7 +1460,9 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
                             longitude = pauseLng,
                             durationMs = gapDuration,
                             pointIndex = junctionIndex,
-                            distanceMeters = cumulativeDistanceOffset + trip.distanceMeters
+                            distanceMeters = cumulativeDistanceOffset + trip.distanceMeters,
+                            isGap = true,
+                            gapDistanceMeters = gapMeters
                         )
                     )
                 }
@@ -1470,11 +1504,11 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             points = allPoints,
             rawPoints = allRawPoints,
             placesVisited = allPlaces,
-            pauses = allPauses.sortedBy { it.startTime }
+            pauses = allPauses.sortedBy { it.startTime },
+            segmentBreakIndices = mergedSegmentBreaks
         )
 
-        val mergedRows = sorted.flatMap { getTrackPointRows(it.id) }
-        val newId = insertTrip(mergedTrip, rows = mergedRows)
+        val newId = insertTrip(mergedTrip, rows = mergedRows.ifEmpty { null })
 
         // Remove original fragmented trips
         val db = writableDatabase
@@ -1696,13 +1730,28 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val trip = getTripsByIds(listOf(tripId)).firstOrNull() ?: return null
         if (pauseIndex !in trip.pauses.indices) return null
         val pause = trip.pauses[pauseIndex]
-        val splitIdx = pause.pointIndex.coerceIn(1, (trip.points.size - 1).coerceAtLeast(1))
+        val breakIndices = trip.effectiveSegmentBreakIndices()
+        val isBoundaryGap = pause.isGap || (pause.pointIndex + 1) in breakIndices
+        val splitIdx = if (isBoundaryGap) {
+            (pause.pointIndex + 1).coerceIn(1, (trip.points.size - 1).coerceAtLeast(1))
+        } else {
+            pause.pointIndex.coerceIn(1, (trip.points.size - 1).coerceAtLeast(1))
+        }
 
         val allRows = getTrackPointRows(tripId)
         val pointsPart1 = trip.points.take(splitIdx)
         val pointsPart2 = trip.points.drop(splitIdx)
 
         if (pointsPart1.isEmpty() || pointsPart2.isEmpty()) return null
+
+        val rowsPart1 = allRows.take(splitIdx)
+        val rawRowsPart2 = allRows.drop(splitIdx)
+        val rowsPart2 = if (rawRowsPart2.isNotEmpty() && rawRowsPart2.first().isSegmentStart) {
+            val first = rawRowsPart2.first()
+            listOf(first.copy(flags = first.flags and TrackPointRow.FLAG_SEGMENT_START.inv())) + rawRowsPart2.drop(1)
+        } else {
+            rawRowsPart2
+        }
 
         val pausesPart1 = trip.pauses.take(pauseIndex)
         val pausesPart2 = trip.pauses.drop(pauseIndex + 1).map {
@@ -1715,25 +1764,14 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val placesPart1 = trip.placesVisited.filter { it.timestamp <= splitTime }
         val placesPart2 = trip.placesVisited.filter { it.timestamp > splitTime }
 
-        // Recalculate distance for Part 1
-        var dist1 = 0.0
-        for (i in 0 until pointsPart1.size - 1) {
-            val p1 = pointsPart1[i]
-            val p2 = pointsPart1[i + 1]
-            val res = FloatArray(1)
-            android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
-            dist1 += res[0]
-        }
+        val part1Breaks = breakIndices.filter { it in 1 until pointsPart1.size }.toSet()
+        val part2Breaks = breakIndices.mapNotNull { b ->
+            val shifted = b - splitIdx
+            if (shifted in 1 until pointsPart2.size) shifted else null
+        }.toSet()
 
-        // Recalculate distance for Part 2
-        var dist2 = 0.0
-        for (i in 0 until pointsPart2.size - 1) {
-            val p1 = pointsPart2[i]
-            val p2 = pointsPart2[i + 1]
-            val res = FloatArray(1)
-            android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
-            dist2 += res[0]
-        }
+        val dist1 = calculateCumulativeDistances(pointsPart1, part1Breaks).lastOrNull() ?: 0.0
+        val dist2 = calculateCumulativeDistances(pointsPart2, part2Breaks).lastOrNull() ?: 0.0
 
         val baseTitle = if (trip.title.isNotBlank()) {
             trip.title
@@ -1749,12 +1787,13 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             endTime = splitTime,
             distanceMeters = dist1,
             points = pointsPart1,
-            rawPoints = rowsToRawGeoPoints(allRows.take(splitIdx)),
+            rawPoints = rowsToRawGeoPoints(rowsPart1),
             placesVisited = placesPart1,
-            pauses = pausesPart1
+            pauses = pausesPart1,
+            segmentBreakIndices = part1Breaks
         )
         updateTripMeta(trip1)
-        replaceTrackPoints(trip.id, allRows.take(splitIdx))
+        replaceTrackPoints(trip.id, rowsPart1)
         invalidateMatch(trip.id)
 
         val trip2 = TripRecord(
@@ -1767,11 +1806,12 @@ class TripDatabaseHelper(context: Context) : SQLiteOpenHelper(
             isAutoDetected = trip.isAutoDetected,
             activityProfile = trip.activityProfile,
             points = pointsPart2,
-            rawPoints = rowsToRawGeoPoints(allRows.drop(splitIdx)),
+            rawPoints = rowsToRawGeoPoints(rowsPart2),
             placesVisited = placesPart2,
-            pauses = pausesPart2
+            pauses = pausesPart2,
+            segmentBreakIndices = part2Breaks
         )
-        val trip2Id = insertTrip(trip2, rows = allRows.drop(splitIdx))
+        val trip2Id = insertTrip(trip2, rows = rowsPart2)
 
         return Pair(trip.id, trip2Id)
     }

@@ -1311,8 +1311,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshOutdoorLayerPrefs() {
+        updateLiveOutdoorBoundary(_locationData.value.outdoorContext)
+        locationManager.refreshOutdoorContextNow()
+    }
+
     private fun updateLiveOutdoorBoundary(outdoor: OutdoorContext?) {
-        val area = outdoor?.parkOrReserve ?: outdoor?.primaryRange
+        val showOutdoorAreas = MapProfileConfigHelper.getConfig(getApplication(), activityProfile.value).showOutdoorAreasOverlay
+        val area = if (showOutdoorAreas) outdoor?.parkOrReserve ?: outdoor?.primaryRange else null
         if (area == null) {
             lastOutdoorAreaId = null
             _liveOutdoorAreaPolygons.value = null

@@ -39,7 +39,7 @@ class StatsOutdoorTripOverlayTest {
     }
 
     @Test
-    fun `OutdoorContext forDisplay hides protected areas and ranges when layer is off`() {
+    fun `OutdoorContext forDisplay gates areas water features and trails strictly by map layer switches`() {
         val park = OutdoorArea(
             id = "rel:123",
             name = "Obszar chronionego krajobrazu Wzgórza Niemczańsko-Strzelińskie",
@@ -61,6 +61,13 @@ class StatsOutdoorTripOverlayTest {
             kind = TrailRouteKind.HIKING,
             color = TrailColor.YELLOW
         )
+        val peak = OutdoorFeatureInfo(
+            osmId = 77L,
+            name = "Wielka Sowa",
+            kind = PlaceKind.PEAK,
+            elevationMeters = 1015,
+            distanceMeters = 400f
+        )
         val water = OutdoorFeatureInfo(
             osmId = 88L,
             name = "Dopływ z Nowej Wsi Niemczańskiej",
@@ -73,20 +80,104 @@ class StatsOutdoorTripOverlayTest {
             protectedAreas = listOf(park),
             valley = valley,
             activeTrails = listOf(trail),
+            nearestFeatures = listOf(peak),
             waterBody = water
         )
 
-        val hidden = full.forDisplay(showOutdoorAreas = false)
-        assertNull(hidden.primaryRange)
-        assertNull(hidden.parkOrReserve)
-        assertNull(hidden.valley)
-        assertEquals(trail, hidden.activeTrail)
-        assertEquals(water, hidden.nearestWater)
-        assertTrue(hidden.hasAnyOutdoor)
+        // Both switches OFF -> nothing shown in Locality Card
+        val allOff = full.forDisplay(showOutdoorAreas = false, showHikingTrails = false)
+        assertFalse(allOff.hasAnyOutdoor)
+        assertNull(allOff.primaryRange)
+        assertNull(allOff.parkOrReserve)
+        assertNull(allOff.valley)
+        assertNull(allOff.activeTrail)
+        assertNull(allOff.nearestPeak)
+        assertNull(allOff.nearestWater)
 
-        val areasOnly = OutdoorContext(mountainRange = range, protectedAreas = listOf(park))
-        assertFalse(areasOnly.forDisplay(showOutdoorAreas = false).hasAnyOutdoor)
-        assertTrue(areasOnly.forDisplay(showOutdoorAreas = true).hasAnyOutdoor)
+        // Only Hiking Trails ON -> trail pill visible, areas/water/peaks hidden
+        val trailsOnly = full.forDisplay(showOutdoorAreas = false, showHikingTrails = true)
+        assertEquals(trail, trailsOnly.activeTrail)
+        assertNull(trailsOnly.parkOrReserve)
+        assertNull(trailsOnly.nearestWater)
+        assertNull(trailsOnly.nearestPeak)
+        assertTrue(trailsOnly.hasAnyOutdoor)
+
+        // Only Outdoor Areas ON -> areas/peaks/water visible, trail pill hidden
+        val areasOnly = full.forDisplay(showOutdoorAreas = true, showHikingTrails = false)
+        assertEquals(park, areasOnly.parkOrReserve)
+        assertEquals(water, areasOnly.nearestWater)
+        assertEquals(peak, areasOnly.nearestPeak)
+        assertNull(areasOnly.activeTrail)
+        assertTrue(areasOnly.hasAnyOutdoor)
+
+        // Both ON -> everything visible
+        val allOn = full.forDisplay(showOutdoorAreas = true, showHikingTrails = true)
+        assertEquals(park, allOn.parkOrReserve)
+        assertEquals(trail, allOn.activeTrail)
+        assertEquals(water, allOn.nearestWater)
+    }
+
+    @Test
+    fun `computeOutdoorFetchDecision disables Overpass network when outdoor layers are off unless recording outdoor trip`() {
+        // Driving with both outdoor layers OFF -> skip Overpass & network even in foreground
+        val drivingForegroundOff = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = true,
+            hasActiveTrip = false,
+            activeTripIsOutdoorProfile = false,
+            activeTripPaused = false
+        )
+        assertFalse(drivingForegroundOff.shouldResolve)
+        assertFalse(drivingForegroundOff.allowNetwork)
+
+        // Active driving trip with both layers OFF -> still skip Overpass & network
+        val drivingRecordingOff = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = true,
+            hasActiveTrip = true,
+            activeTripIsOutdoorProfile = false,
+            activeTripPaused = false
+        )
+        assertFalse(drivingRecordingOff.shouldResolve)
+        assertFalse(drivingRecordingOff.allowNetwork)
+
+        // Hiking Trails ON in foreground -> allow resolution & network
+        val trailsOnForeground = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = true,
+            isRealTimeNeeded = true,
+            hasActiveTrip = false,
+            activeTripIsOutdoorProfile = false,
+            activeTripPaused = false
+        )
+        assertTrue(trailsOnForeground.shouldResolve)
+        assertTrue(trailsOnForeground.allowNetwork)
+
+        // Active unpaused HIKING trip with screen off -> keep outdoor POI collection alive for trip history
+        val hikingRecordingScreenOff = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = false,
+            hasActiveTrip = true,
+            activeTripIsOutdoorProfile = true,
+            activeTripPaused = false
+        )
+        assertTrue(hikingRecordingScreenOff.shouldResolve)
+        assertTrue(hikingRecordingScreenOff.allowNetwork)
+
+        // Paused HIKING trip with both UI switches OFF and screen off -> conserve battery
+        val hikingPausedOff = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = false,
+            hasActiveTrip = true,
+            activeTripIsOutdoorProfile = true,
+            activeTripPaused = true
+        )
+        assertFalse(hikingPausedOff.shouldResolve)
+        assertFalse(hikingPausedOff.allowNetwork)
     }
 
     @Test

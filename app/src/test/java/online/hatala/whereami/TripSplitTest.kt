@@ -240,8 +240,69 @@ class TripSplitTest {
             durationMs = (p2.endTime!! - p1.startTime).coerceAtLeast(p1.durationMs + p2.durationMs)
         )
         assertEquals(1000L, merged.startTime)
-        assertEquals(360_000L, merged.endTime)
-        assertEquals(359_000L, merged.durationMs)
+        assertEquals(360000L, merged.endTime)
+        assertEquals(359000L, merged.durationMs)
+    }
+
+    @Test
+    fun `merged trip segments split at gap junction and exclude unrecorded gap from cumulative distance and GPX trkseg`() {
+        val seg1Start = org.osmdroid.util.GeoPoint(50.000, 19.000)
+        val seg1End = org.osmdroid.util.GeoPoint(50.001, 19.000) // ~111 m north
+        val seg2Start = org.osmdroid.util.GeoPoint(50.010, 19.000) // ~1000 m unrecorded jump!
+        val seg2End = org.osmdroid.util.GeoPoint(50.012, 19.000) // ~222 m north
+
+        val gapPause = TripPause(
+            startTime = 2000L,
+            endTime = 560_000L,
+            latitude = seg1End.latitude,
+            longitude = seg1End.longitude,
+            durationMs = 558_000L,
+            pointIndex = 1,
+            distanceMeters = geoDistanceMeters(seg1Start.latitude, seg1Start.longitude, seg1End.latitude, seg1End.longitude),
+            isGap = true,
+            gapDistanceMeters = geoDistanceMeters(seg1End.latitude, seg1End.longitude, seg2Start.latitude, seg2Start.longitude)
+        )
+
+        val trip = TripRecord(
+            id = 42L,
+            startTime = 1000L,
+            endTime = 600_000L,
+            points = listOf(seg1Start, seg1End, seg2Start, seg2End),
+            pauses = listOf(gapPause),
+            segmentBreakIndices = setOf(2)
+        )
+
+        val segments = trip.recordedSegments()
+        assertEquals(2, segments.size)
+        assertEquals(listOf(seg1Start, seg1End), segments[0])
+        assertEquals(listOf(seg2Start, seg2End), segments[1])
+
+        val connectors = trip.gapConnectors()
+        assertEquals(1, connectors.size)
+        assertEquals(seg1End to seg2Start, connectors[0])
+
+        val dSeg1 = geoDistanceMeters(seg1Start.latitude, seg1Start.longitude, seg1End.latitude, seg1End.longitude)
+        val dSeg2 = geoDistanceMeters(seg2Start.latitude, seg2Start.longitude, seg2End.latitude, seg2End.longitude)
+        val cum = calculateCumulativeDistances(trip.points, trip.effectiveSegmentBreakIndices())
+        assertEquals(4, cum.size)
+        assertEquals(0.0, cum[0], 0.01)
+        assertEquals(dSeg1, cum[1], 0.5)
+        // Index 2 (start of segment 2) must stay at dSeg1 without adding the ~1 km gap chord!
+        assertEquals(dSeg1, cum[2], 0.5)
+        assertEquals(dSeg1 + dSeg2, cum[3], 1.0)
+
+        // Legacy merged trips without FLAG_SEGMENT_START still infer gap break from >= 60m pause jump
+        val legacyMerged = trip.copy(
+            pauses = listOf(gapPause.copy(isGap = false, gapDistanceMeters = 0.0)),
+            segmentBreakIndices = emptySet()
+        )
+        assertEquals(setOf(2), legacyMerged.effectiveSegmentBreakIndices())
+        assertEquals(2, legacyMerged.recordedSegments().size)
+
+        // GPX 1.1 export emits separate <trkseg> blocks at segment break
+        val gpx = GpxExporter.buildGpx(trip, rows = null)
+        assertEquals(2, Regex("<trkseg>").findAll(gpx).count())
+        assertEquals(2, Regex("</trkseg>").findAll(gpx).count())
     }
 }
 

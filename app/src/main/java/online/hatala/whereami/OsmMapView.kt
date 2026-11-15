@@ -2757,6 +2757,89 @@ private fun addTripOverlayAboveMapLayers(map: MapView, overlay: org.osmdroid.vie
     map.overlays.add(insertIdx.coerceIn(0, map.overlays.size), overlay)
 }
 
+/**
+ * Adds a [trip] to [map] split cleanly at [TripRecord.effectiveSegmentBreakIndices], drawing
+ * solid cased segments for recorded geometry and high-contrast dashed amber junction lines across
+ * any unrecorded gaps between merged or resumed sub-trips.
+ */
+internal fun addTripWithGapConnectorsToMap(
+    map: MapView,
+    trip: TripRecord,
+    strokeColorArgb: Int,
+    coreWidthPx: Float,
+    casingColorArgb: Int = MapProfileConfigHelper.SELECTED_TRIP_CASING_COLOR_ARGB,
+    casingWidthPx: Float = MapProfileConfigHelper.selectedTripCasingWidthPx(coreWidthPx),
+    addAboveMapLayers: Boolean = true,
+    useCatmullRomCurve: Boolean = true
+): List<Polyline> {
+    val added = mutableListOf<Polyline>()
+    val attach: (Polyline) -> Unit = { line ->
+        if (addAboveMapLayers) addTripOverlayAboveMapLayers(map, line) else map.overlays.add(line)
+        added.add(line)
+    }
+
+    val connectors = trip.gapConnectors()
+    val dashEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 16f), 0f)
+    for ((gapStart, gapEnd) in connectors) {
+        if (geoDistanceMeters(gapStart.latitude, gapStart.longitude, gapEnd.latitude, gapEnd.longitude) < 5.0) continue
+        val connectorPts = listOf(gapStart, gapEnd)
+        val gapCasing = Polyline(map).apply {
+            outlinePaint.color = casingColorArgb
+            outlinePaint.strokeWidth = (coreWidthPx * 0.55f + 4f).coerceAtLeast(6f)
+            outlinePaint.strokeCap = Paint.Cap.ROUND
+            outlinePaint.strokeJoin = Paint.Join.ROUND
+            outlinePaint.pathEffect = dashEffect
+            outlinePaint.isAntiAlias = true
+            infoWindow = null
+            setOnClickListener { _, _, _ -> true }
+            setPoints(connectorPts)
+        }
+        attach(gapCasing)
+
+        val gapLine = Polyline(map).apply {
+            outlinePaint.color = Color.parseColor("#FBBF24")
+            outlinePaint.strokeWidth = (coreWidthPx * 0.50f).coerceAtLeast(4f)
+            outlinePaint.strokeCap = Paint.Cap.ROUND
+            outlinePaint.strokeJoin = Paint.Join.ROUND
+            outlinePaint.pathEffect = dashEffect
+            outlinePaint.isAntiAlias = true
+            infoWindow = null
+            setOnClickListener { _, _, _ -> true }
+            setPoints(connectorPts)
+        }
+        attach(gapLine)
+    }
+
+    for (segment in trip.recordedSegments()) {
+        if (segment.size < 2) continue
+        val pts = if (useCatmullRomCurve) LiveTrackLine.curved(segment) else segment
+        val casingLine = Polyline(map).apply {
+            outlinePaint.color = casingColorArgb
+            outlinePaint.strokeWidth = casingWidthPx
+            outlinePaint.strokeCap = Paint.Cap.ROUND
+            outlinePaint.strokeJoin = Paint.Join.ROUND
+            outlinePaint.isAntiAlias = true
+            infoWindow = null
+            setOnClickListener { _, _, _ -> true }
+            setPoints(pts)
+        }
+        attach(casingLine)
+
+        val line = Polyline(map).apply {
+            outlinePaint.color = strokeColorArgb
+            outlinePaint.strokeWidth = coreWidthPx
+            outlinePaint.strokeCap = Paint.Cap.ROUND
+            outlinePaint.strokeJoin = Paint.Join.ROUND
+            outlinePaint.isAntiAlias = true
+            infoWindow = null
+            setOnClickListener { _, _, _ -> true }
+            setPoints(pts)
+        }
+        attach(line)
+    }
+    return added
+}
+
 @Composable
 private fun MapSelectedAndHeatEffects(
     mapView: MapView?,
@@ -2844,47 +2927,64 @@ private fun MapSelectedAndHeatEffects(
                     singleTripColorHex = singleTripColor
                 )
                 val coreWidth = MapProfileConfigHelper.selectedTripTrackWidthPx(effectiveTripThickness)
-                val curvedPoints = LiveTrackLine.curved(trip.points)
-
-                val casingLine = Polyline(map).apply {
-                    outlinePaint.color = MapProfileConfigHelper.SELECTED_TRIP_CASING_COLOR_ARGB
-                    outlinePaint.strokeWidth = MapProfileConfigHelper.selectedTripCasingWidthPx(coreWidth)
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    outlinePaint.isAntiAlias = true
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(curvedPoints)
-                }
-                addTripOverlayAboveMapLayers(map, casingLine)
-                newLines.add(casingLine)
-
-                val line = Polyline(map).apply {
-                    outlinePaint.color = try { Color.parseColor(colorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
-                    outlinePaint.strokeWidth = coreWidth
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    outlinePaint.isAntiAlias = true
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(curvedPoints)
-                }
-                addTripOverlayAboveMapLayers(map, line)
-                newLines.add(line)
+                val strokeArgb = try { Color.parseColor(colorHex) } catch (_: Exception) { Color.parseColor("#EF4444") }
+                newLines.addAll(
+                    addTripWithGapConnectorsToMap(
+                        map = map,
+                        trip = trip,
+                        strokeColorArgb = strokeArgb,
+                        coreWidthPx = coreWidth,
+                        addAboveMapLayers = true,
+                        useCatmullRomCurve = true
+                    )
+                )
             }
 
             if (showRawPolyline && trip.rawPoints.size >= 2) {
-                val rawLine = Polyline(map).apply {
-                    outlinePaint.color = Color.parseColor("#06B6D4")
-                    outlinePaint.strokeWidth = 4f
-                    outlinePaint.strokeCap = Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = Paint.Join.ROUND
-                    infoWindow = null
-                    setOnClickListener { _, _, _ -> true }
-                    setPoints(trip.rawPoints)
+                val rawBreakPts = trip.gapConnectors()
+                val rawSegments = if (rawBreakPts.isEmpty()) {
+                    listOf(trip.rawPoints)
+                } else {
+                    val splitAt = LinkedHashSet<Int>()
+                    for ((gapStart, gapEnd) in rawBreakPts) {
+                        var bestIdx = -1
+                        var bestScore = 150.0
+                        for (j in 1 until trip.rawPoints.size) {
+                            val d1 = geoDistanceMeters(trip.rawPoints[j - 1].latitude, trip.rawPoints[j - 1].longitude, gapStart.latitude, gapStart.longitude)
+                            val d2 = geoDistanceMeters(trip.rawPoints[j].latitude, trip.rawPoints[j].longitude, gapEnd.latitude, gapEnd.longitude)
+                            val score = d1 + d2
+                            if (score < bestScore) {
+                                bestScore = score
+                                bestIdx = j
+                            }
+                        }
+                        if (bestIdx > 0) splitAt.add(bestIdx)
+                    }
+                    if (splitAt.isEmpty()) listOf(trip.rawPoints) else {
+                        val out = ArrayList<List<GeoPoint>>()
+                        var start = 0
+                        for (b in splitAt.sorted()) {
+                            if (b > start) out.add(trip.rawPoints.subList(start, b))
+                            start = b
+                        }
+                        if (start < trip.rawPoints.size) out.add(trip.rawPoints.subList(start, trip.rawPoints.size))
+                        out
+                    }
                 }
-                addTripOverlayAboveMapLayers(map, rawLine)
-                newRawLines.add(rawLine)
+                for (rawSeg in rawSegments) {
+                    if (rawSeg.size < 2) continue
+                    val rawLine = Polyline(map).apply {
+                        outlinePaint.color = Color.parseColor("#06B6D4")
+                        outlinePaint.strokeWidth = 4f
+                        outlinePaint.strokeCap = Paint.Cap.ROUND
+                        outlinePaint.strokeJoin = Paint.Join.ROUND
+                        infoWindow = null
+                        setOnClickListener { _, _, _ -> true }
+                        setPoints(rawSeg)
+                    }
+                    addTripOverlayAboveMapLayers(map, rawLine)
+                    newRawLines.add(rawLine)
+                }
             }
         }
         selectedTripPolylines = newLines

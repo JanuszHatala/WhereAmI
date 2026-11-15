@@ -173,6 +173,27 @@ class LocationManager private constructor(private val context: Context) {
         @Volatile
         private var INSTANCE: LocationManager? = null
 
+        internal data class OutdoorFetchDecision(
+            val shouldResolve: Boolean,
+            val allowNetwork: Boolean
+        )
+
+        internal fun computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay: Boolean,
+            showHikingOverlay: Boolean,
+            isRealTimeNeeded: Boolean,
+            hasActiveTrip: Boolean,
+            activeTripIsOutdoorProfile: Boolean,
+            activeTripPaused: Boolean
+        ): OutdoorFetchDecision {
+            val anyOutdoorUi = showOutdoorAreasOverlay || showHikingOverlay
+            val activeIncludeOutdoor = hasActiveTrip && !activeTripPaused && (activeTripIsOutdoorProfile || showOutdoorAreasOverlay)
+            return OutdoorFetchDecision(
+                shouldResolve = anyOutdoorUi || activeIncludeOutdoor,
+                allowNetwork = (isRealTimeNeeded && anyOutdoorUi) || activeIncludeOutdoor
+            )
+        }
+
         fun getInstance(context: Context): LocationManager {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: LocationManager(context.applicationContext).also {
@@ -1470,26 +1491,54 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
-    private fun scheduleOutdoorContextEnrichment(lat: Double, lng: Double) {
+    fun refreshOutdoorContextNow() {
+        val snap = lastLocationSnapshot ?: return
+        if (snap.lat == 0.0 && snap.lng == 0.0) return
+        lastOutdoorResolvedTimeMs = 0L
+        scheduleOutdoorContextEnrichment(snap.lat, snap.lng, force = true)
+    }
+
+    private fun scheduleOutdoorContextEnrichment(lat: Double, lng: Double, force: Boolean = false) {
+        val tripMgr = TripManager.getInstance(context)
+        val activeTrip = tripMgr.activeTrip.value
+        val activeProfile = activeTrip?.activityProfile ?: tripMgr.activityProfile.value
+        val mapConfig = MapProfileConfigHelper.getConfig(context, activeProfile)
+        val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
+        val decision = computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = mapConfig.showOutdoorAreasOverlay,
+            showHikingOverlay = mapConfig.showHikingOverlay,
+            isRealTimeNeeded = realTimeNeeded,
+            hasActiveTrip = activeTrip != null,
+            activeTripIsOutdoorProfile = activeTrip?.activityProfile?.isOutdoorProfile == true,
+            activeTripPaused = tripMgr.isPaused.value
+        )
+        if (!decision.shouldResolve) {
+            if (lastOutdoorContext != null) {
+                lastOutdoorContext = null
+                lastLocationSnapshot?.let { snap ->
+                    val cleared = snap.copy(outdoorContext = null)
+                    lastLocationSnapshot = cleared
+                    snapshotChannelSend?.invoke(cleared)
+                }
+            }
+            return
+        }
+
         val now = SystemClock.elapsedRealtime()
         val distMoved = FloatArray(1)
         AndroidLocation.distanceBetween(lastOutdoorResolvedLat, lastOutdoorResolvedLng, lat, lng, distMoved)
-        if (lastOutdoorResolvedTimeMs != 0L && distMoved[0] < 250f && (now - lastOutdoorResolvedTimeMs < 30_000L)) {
+        if (!force && lastOutdoorResolvedTimeMs != 0L && distMoved[0] < 250f && (now - lastOutdoorResolvedTimeMs < 30_000L)) {
             return
         }
         synchronized(outdoorLock) {
             if (outdoorWorkerJob?.isActive == true) return
             outdoorWorkerJob = ioScope.launch {
                 try {
-                    val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
-                    val tripMgr = TripManager.getInstance(context)
-                    val activeTrip = tripMgr.activeTrip.value
-                    val activeOutdoorRecording = (activeTrip?.activityProfile?.isOutdoorProfile == true) && !tripMgr.isPaused.value
                     val outdoorCtx = OutdoorContextResolver.resolveOutdoorContext(
                         lat = lat,
                         lng = lng,
                         context = context,
-                        allowNetwork = realTimeNeeded || activeOutdoorRecording
+                        allowNetwork = decision.allowNetwork
                     )
                     if (outdoorCtx != null) {
                         val movedFromAnchor = if (lastOutdoorAnchorLat != 0.0 || lastOutdoorAnchorLng != 0.0) {

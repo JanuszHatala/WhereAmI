@@ -345,16 +345,26 @@ fun LocationScreen(viewModel: MainViewModel) {
     var showOutdoorAreasInCard by remember(activityProfile) {
         mutableStateOf(MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay)
     }
+    var showHikingTrailsInCard by remember(activityProfile) {
+        mutableStateOf(MapProfileConfigHelper.getConfig(context, activityProfile).showHikingOverlay)
+    }
     DisposableEffect(context, activityProfile) {
         val mapPrefs = context.getSharedPreferences(MapProfileConfigHelper.PREFS_NAME, android.content.Context.MODE_PRIVATE)
-        val prefKey = "profile_${activityProfile.name}_outdoor_areas"
+        val areasKey = "profile_${activityProfile.name}_outdoor_areas"
+        val trailsKey = "profile_${activityProfile.name}_hiking_overlay"
+        fun syncOutdoorPrefs(refreshNetwork: Boolean) {
+            val cfg = MapProfileConfigHelper.getConfig(context, activityProfile)
+            showOutdoorAreasInCard = cfg.showOutdoorAreasOverlay
+            showHikingTrailsInCard = cfg.showHikingOverlay
+            if (refreshNetwork) viewModel.refreshOutdoorLayerPrefs()
+        }
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
-            if (changedKey == null || changedKey == prefKey) {
-                showOutdoorAreasInCard = MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay
+            if (changedKey == null || changedKey == areasKey || changedKey == trailsKey) {
+                syncOutdoorPrefs(refreshNetwork = changedKey != null)
             }
         }
         mapPrefs.registerOnSharedPreferenceChangeListener(listener)
-        showOutdoorAreasInCard = MapProfileConfigHelper.getConfig(context, activityProfile).showOutdoorAreasOverlay
+        syncOutdoorPrefs(refreshNetwork = false)
         onDispose { mapPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val autoStopMinutes by viewModel.autoStopMinutes.collectAsState()
@@ -684,7 +694,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
             matchesProfile && matchesDate
         }
-        filtered.forEach { tracks.add(it.points) }
+        filtered.forEach { tracks.addAll(it.recordedSegments()) }
 
         val currentActiveTrip = activeTrip
         if (heatMapFilterState.includeActiveTrip && currentActiveTrip != null && currentActiveTrip.points.isNotEmpty()) {
@@ -697,7 +707,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 else -> true
             }
             if (matchesProfile && matchesDate) {
-                tracks.add(currentActiveTrip.points)
+                tracks.addAll(currentActiveTrip.recordedSegments())
             }
         }
         tracks
@@ -981,6 +991,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         LocalityCard(
                             locationData = locationData,
                             showOutdoorAreas = showOutdoorAreasInCard,
+                            showHikingTrails = showHikingTrailsInCard,
                             activeTrip = activeTrip,
                             liveSession = liveSession,
                             savedPlaces = savedPlaces,
@@ -1111,6 +1122,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                 LocalityCard(
                     locationData = locationData,
                     showOutdoorAreas = showOutdoorAreasInCard,
+                    showHikingTrails = showHikingTrailsInCard,
                     activeTrip = activeTrip,
                     liveSession = liveSession,
                     savedPlaces = savedPlaces,
@@ -3083,7 +3095,9 @@ fun LocationScreen(viewModel: MainViewModel) {
                                                                     }
 
                                                                     if (isPausesExpanded) {
-                                                                        val tripCumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
+                                                                        val tripCumulativeDistances = remember(trip.points, trip.segmentBreakIndices, trip.pauses) {
+                                                                            calculateCumulativeDistances(trip.points, trip.effectiveSegmentBreakIndices())
+                                                                        }
                                                                         trip.pauses.forEachIndexed { pauseIdx, pause ->
                                                                             val pauseTimeStr = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pause.startTime))
                                                                             val durMin = (pause.durationMs / 60000L).coerceAtLeast(1)
@@ -10714,6 +10728,7 @@ private fun DataAcquisitionStatusPill(
 private fun LocalityCard(
     locationData: LocationData,
     showOutdoorAreas: Boolean = true,
+    showHikingTrails: Boolean = true,
     activeTrip: TripRecord?,
     liveSession: LiveSession?,
     savedPlaces: List<SavedPlace>,
@@ -11083,7 +11098,7 @@ private fun LocalityCard(
 
                 // ── Compact Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext
-                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas)
+                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas, showHikingTrails = showHikingTrails)
                     ?.takeIf { it.hasAnyOutdoor }
                     ?.let { outdoor ->
                     OutdoorContextRow(
@@ -11675,7 +11690,7 @@ private fun LocalityCard(
 
                 // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
                 locationData.outdoorContext
-                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas)
+                    ?.forDisplay(showOutdoorAreas = showOutdoorAreas, showHikingTrails = showHikingTrails)
                     ?.takeIf { it.hasAnyOutdoor }
                     ?.let { outdoor ->
                     OutdoorContextRow(
@@ -12904,7 +12919,12 @@ fun TripDetailDialog(
         "In Progress / Live"
     }
 
-    val cumulativeDistances = remember(trip.points) { calculateCumulativeDistances(trip.points) }
+    val effectiveBreakIndices = remember(trip.points, trip.segmentBreakIndices, trip.pauses) {
+        trip.effectiveSegmentBreakIndices()
+    }
+    val cumulativeDistances = remember(trip.points, effectiveBreakIndices) {
+        calculateCumulativeDistances(trip.points, effectiveBreakIndices)
+    }
 
     val timelineItems = remember(trip, cumulativeDistances, effectiveEndTime) {
         val totalTripDist = (cumulativeDistances.lastOrNull() ?: trip.distanceMeters).coerceAtLeast(0.0)
@@ -12988,6 +13008,29 @@ fun TripDetailDialog(
                 curTime = pauseEnd
                 curDist = pauseDist
             }
+        }
+
+        // Synthesize terminal "Trip End" point for single-locality round trips or post-pause segments
+        // finishing > 300 m inside the last locality so the final leg distance and end time stay visible.
+        val placeItems = items.filterIsInstance<RouteTimelineItem.Place>()
+        val lastPlaceItem = placeItems.lastOrNull()
+        val endsDirectlyAfterPause = items.size >= 2 && items[items.lastIndex - 1] is RouteTimelineItem.Pause
+        if (lastPlaceItem != null &&
+            (placeItems.size == 1 || endsDirectlyAfterPause) &&
+            totalTripDist > 300.0 &&
+            (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters) > 300.0 &&
+            tripEndTime > lastPlaceItem.place.timestamp
+        ) {
+            val endPt = trip.points.lastOrNull()
+            val destinationPlace = lastPlaceItem.place.copy(
+                timestamp = tripEndTime,
+                latitude = endPt?.latitude ?: lastPlaceItem.place.latitude,
+                longitude = endPt?.longitude ?: lastPlaceItem.place.longitude,
+                distanceAtEntryMeters = totalTripDist
+            )
+            val finalLegDist = (totalTripDist - lastPlaceItem.place.distanceAtEntryMeters).coerceAtLeast(0.0)
+            val finalLegDur = (tripEndTime - lastPlaceItem.place.timestamp).coerceAtLeast(0L)
+            items.add(RouteTimelineItem.Place(destinationPlace, 0, finalLegDist, finalLegDur))
         }
 
         // 3. Assign sequential order (recounting a place only when left and re-entered)
@@ -13139,14 +13182,14 @@ fun TripDetailDialog(
                                                     setMultiTouchControls(false)
                                                     setBuiltInZoomControls(false)
                                                     setTileSource(TileSourceFactory.MAPNIK)
-                                                    val line = Polyline(this).apply {
-                                                        outlinePaint.color = android.graphics.Color.parseColor("#EF4444")
-                                                        outlinePaint.strokeWidth = 8f
-                                                        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                                                        outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
-                                                        setPoints(trip.points)
-                                                    }
-                                                    overlays.add(line)
+                                                    addTripWithGapConnectorsToMap(
+                                                        map = this,
+                                                        trip = trip,
+                                                        strokeColorArgb = android.graphics.Color.parseColor("#EF4444"),
+                                                        coreWidthPx = 8f,
+                                                        addAboveMapLayers = false,
+                                                        useCatmullRomCurve = false
+                                                    )
                                                     trip.points.firstOrNull()?.let { startPt ->
                                                         val startMarker = Marker(this).apply {
                                                             position = startPt
@@ -13679,6 +13722,7 @@ fun TripDetailDialog(
 
                                         ElevationProfileChart(
                                             points = trip.points,
+                                            segmentBreakIndices = effectiveBreakIndices,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(150.dp)
@@ -13914,8 +13958,20 @@ fun TripDetailDialog(
                                                         modifier = Modifier.weight(1f),
                                                         verticalArrangement = Arrangement.spacedBy(1.dp)
                                                     ) {
+                                                        val isGapPause = pause.isGap || (pause.pointIndex + 1) in effectiveBreakIndices
+                                                        val unrecordedGapMeters = if (pause.gapDistanceMeters > 0.0) {
+                                                            pause.gapDistanceMeters
+                                                        } else if (pause.pointIndex in 0 until trip.points.size - 1) {
+                                                            val pA = trip.points[pause.pointIndex]
+                                                            val pB = trip.points[pause.pointIndex + 1]
+                                                            geoDistanceMeters(pA.latitude, pA.longitude, pB.latitude, pB.longitude)
+                                                        } else 0.0
                                                         Text(
-                                                            text = "Stop #${item.pauseIndex + 1} ($durMin min rest)",
+                                                            text = if (isGapPause) {
+                                                                "Stop #${item.pauseIndex + 1} ($durMin min break • Joined segment)"
+                                                            } else {
+                                                                "Stop #${item.pauseIndex + 1} ($durMin min rest)"
+                                                            },
                                                             fontSize = 12.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             color = Color(0xFFFBBF24),
@@ -13939,6 +13995,19 @@ fun TripDetailDialog(
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.Medium,
                                                                 color = Color(0xFF38BDF8),
+                                                                style = LocalTextStyle.current.copy(
+                                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                                                    lineHeight = 11.sp
+                                                                )
+                                                            )
+                                                        }
+                                                        if (isGapPause && unrecordedGapMeters >= 50.0) {
+                                                            val gapStr = LiveGuest.formatDistance(unrecordedGapMeters.toFloat())
+                                                            Text(
+                                                                text = "Unrecorded gap: ~$gapStr (excluded from distance)",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Medium,
+                                                                color = Color(0xFFF59E0B),
                                                                 style = LocalTextStyle.current.copy(
                                                                     platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
                                                                     lineHeight = 11.sp
@@ -14403,9 +14472,13 @@ private fun ElevationStatChip(label: String, color: Color, modifier: Modifier = 
 }
 
 @Composable
-fun ElevationProfileChart(points: List<org.osmdroid.util.GeoPoint>, modifier: Modifier = Modifier) {
-    val altPairs = remember(points) {
-        smoothElevationProfile(points)
+fun ElevationProfileChart(
+    points: List<org.osmdroid.util.GeoPoint>,
+    segmentBreakIndices: Set<Int> = emptySet(),
+    modifier: Modifier = Modifier
+) {
+    val altPairs = remember(points, segmentBreakIndices) {
+        smoothElevationProfile(points, segmentBreakIndices = segmentBreakIndices)
     }
 
     if (altPairs.size < 2) return

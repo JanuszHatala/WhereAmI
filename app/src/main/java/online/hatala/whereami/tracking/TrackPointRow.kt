@@ -22,12 +22,14 @@ data class TrackPointRow(
     val rawLng: Double? = null
 ) {
     val isStationary: Boolean get() = flags and FLAG_STATIONARY != 0
+    val isSegmentStart: Boolean get() = flags and FLAG_SEGMENT_START != 0
 
     companion object {
         const val FLAG_STATIONARY = 1
         const val FLAG_MATCHED = 2 // geometry replaced by post-trip road snapping
+        const val FLAG_SEGMENT_START = 4 // first sample after a merge/resume gap
 
-        fun from(p: SmoothedPoint, altitudeM: Double?, altSource: String?): TrackPointRow = TrackPointRow(
+        fun from(p: SmoothedPoint, altitudeM: Double?, altSource: String?, extraFlags: Int = 0): TrackPointRow = TrackPointRow(
             tUtcMs = p.tUtcMs,
             lat = p.lat,
             lng = p.lng,
@@ -36,7 +38,7 @@ data class TrackPointRow(
             speedMps = p.speedMps.toFloat(),
             hAccM = p.accuracyM,
             bearingDeg = p.headingDeg.toFloat(),
-            flags = if (p.isStationary) FLAG_STATIONARY else 0,
+            flags = (if (p.isStationary) FLAG_STATIONARY else 0) or extraFlags,
             rawLat = p.rawLat,
             rawLng = p.rawLng
         )
