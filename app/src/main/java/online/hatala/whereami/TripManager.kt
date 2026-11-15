@@ -68,7 +68,8 @@ class TripManager private constructor(private val context: Context) {
                 longitude = lastPt?.longitude ?: 0.0,
                 durationMs = gapMs,
                 pointIndex = (saved.points.size - 1).coerceAtLeast(0),
-                distanceMeters = saved.distanceMeters
+                distanceMeters = saved.distanceMeters,
+                isGap = true
             )
             return (saved.pauses + gapPause).sortedBy { it.startTime }
         }
@@ -136,6 +137,7 @@ class TripManager private constructor(private val context: Context) {
     private var persistedPointCount = 0
     private var lastRowFlushMs = 0L
     private var lastSmoothedForDistance: SmoothedPoint? = null
+    private var pendingSegmentBreakOnNextAppend = false
     private val trackSampler = AdaptiveTrackSampler()
 
     /** Elapsed-realtime timestamp of the newest committed track vertex (the live map draws past it). */
@@ -707,6 +709,7 @@ class TripManager private constructor(private val context: Context) {
             persistedPointCount = reopened.points.size
         }
         lastSmoothedForDistance = null
+        pendingSegmentBreakOnNextAppend = reopened.points.isNotEmpty()
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
         lastCommittedUtcMs = -1L
@@ -778,6 +781,7 @@ class TripManager private constructor(private val context: Context) {
             persistedPointCount = 0
         }
         lastSmoothedForDistance = null
+        pendingSegmentBreakOnNextAppend = false
         trackSampler.reset()
         lastCommittedElapsedMs = -1L
         lastCommittedUtcMs = -1L
@@ -1394,6 +1398,7 @@ class TripManager private constructor(private val context: Context) {
         }
         val newPoints = ArrayList<GeoPoint>(current.points.size + points.size + 1)
         newPoints.addAll(current.points)
+        val segmentBreaks = current.segmentBreakIndices.toMutableSet()
         var distance = current.distanceMeters
         var smoothedMaxSpeedKmh = current.maxSpeedKmh
         var committed = 0
@@ -1405,11 +1410,18 @@ class TripManager private constructor(private val context: Context) {
                 return
             }
             val alt = p.altitudeM?.takeIf { !it.isNaN() && it != 0.0 }
+            val extraFlags = if (pendingSegmentBreakOnNextAppend && newPoints.isNotEmpty()) {
+                segmentBreaks.add(newPoints.size)
+                pendingSegmentBreakOnNextAppend = false
+                TrackPointRow.FLAG_SEGMENT_START
+            } else {
+                0
+            }
             newPoints.add(if (alt != null) GeoPoint(p.lat, p.lng, alt) else GeoPoint(p.lat, p.lng))
             if (!p.isStationary && newPoints.size >= 2 && p.speedMps.isFinite() && p.speedMps > 0.0) {
                 smoothedMaxSpeedKmh = maxOf(smoothedMaxSpeedKmh, (p.speedMps * 3.6).toFloat())
             }
-            val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null)
+            val row = TrackPointRow.from(p, alt, if (alt != null && alt > 0.0) "GPS" else null, extraFlags)
             synchronized(rowLock) { pendingRows.add(row) }
             lastCommittedElapsedMs = p.tElapsedMs
             lastCommittedUtcMs = p.tUtcMs
@@ -1529,7 +1541,8 @@ class TripManager private constructor(private val context: Context) {
             points = newPoints,
             rawPoints = liveRawPoints.toList(),
             distanceMeters = distance,
-            maxSpeedKmh = smoothedMaxSpeedKmh
+            maxSpeedKmh = smoothedMaxSpeedKmh,
+            segmentBreakIndices = segmentBreaks
         )
         _activeTrip.value = updated
         if (committed > 0) persistTripAsync(updated, force = false, alwaysMeta = false)

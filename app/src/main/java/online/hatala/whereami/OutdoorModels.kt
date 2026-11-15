@@ -99,12 +99,28 @@ data class OutdoorContext(
     val nearestWater: OutdoorFeatureInfo? get() = waterBody ?: nearestFeatures.firstOrNull { it.kind == PlaceKind.WATER_BODY }
 
     /**
-     * Filters area-level badges (mountain ranges, parks, reserves, valleys) when the user has
-     * disabled the Outdoor & Protected Areas layer, while retaining trail and summit/water context.
+     * Filters outdoor card badges by the active profile's map layer settings:
+     * - [showOutdoorAreas] controls ranges, parks/reserves, valleys, peaks/passes/huts and water bodies.
+     * - [showHikingTrails] controls active trail pills.
      */
-    fun forDisplay(showOutdoorAreas: Boolean): OutdoorContext =
-        if (showOutdoorAreas) this
-        else copy(mountainRange = null, protectedAreas = emptyList(), valley = null)
+    fun forDisplay(
+        showOutdoorAreas: Boolean,
+        showHikingTrails: Boolean = true
+    ): OutdoorContext {
+        val filteredTrails = if (showHikingTrails) activeTrails else emptyList()
+        return if (showOutdoorAreas) {
+            copy(activeTrails = filteredTrails)
+        } else {
+            copy(
+                mountainRange = null,
+                protectedAreas = emptyList(),
+                valley = null,
+                activeTrails = filteredTrails,
+                nearestFeatures = emptyList(),
+                waterBody = null
+            )
+        }
+    }
 
     /**
      * Recompute distanceMeters on cached point-of-interest features (peaks, passes, huts, water bodies)

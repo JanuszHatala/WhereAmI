@@ -57,12 +57,17 @@ object GpxExporter {
             gpxBuilder.append("  </wpt>\n")
         }
 
-        // Add track (trk) and segment (trkseg)
+        // Add track (trk) and segments (trkseg; split on merged/resumed gaps)
+        val breakIndices = trip.effectiveSegmentBreakIndices()
         gpxBuilder.append("""  <trk>""").append("\n")
         gpxBuilder.append("    <name>").append(titleSafe).append("</name>\n")
         gpxBuilder.append("""    <trkseg>""").append("\n")
         if (rows != null) {
-            for (r in rows) {
+            rows.forEachIndexed { idx, r ->
+                if (idx > 0 && idx in breakIndices) {
+                    gpxBuilder.append("""    </trkseg>""").append("\n")
+                    gpxBuilder.append("""    <trkseg>""").append("\n")
+                }
                 gpxBuilder.append("      <trkpt lat=\"").append(r.lat).append("\" lon=\"").append(r.lng).append("\">\n")
                 val alt = r.altitudeM
                 if (alt != null && !alt.isNaN()) gpxBuilder.append("        <ele>").append(String.format(Locale.US, "%.1f", alt)).append("</ele>\n")
@@ -71,7 +76,11 @@ object GpxExporter {
                 gpxBuilder.append("      </trkpt>\n")
             }
         } else {
-            for (pt in trip.points) {
+            trip.points.forEachIndexed { idx, pt ->
+                if (idx > 0 && idx in breakIndices) {
+                    gpxBuilder.append("""    </trkseg>""").append("\n")
+                    gpxBuilder.append("""    <trkseg>""").append("\n")
+                }
                 gpxBuilder.append("      <trkpt lat=\"").append(pt.latitude).append("\" lon=\"").append(pt.longitude).append("\"/>\n")
             }
         }

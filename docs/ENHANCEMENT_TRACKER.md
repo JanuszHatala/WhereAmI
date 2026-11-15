@@ -84,6 +84,7 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
 | **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
 | **Round 66** | Field Testing UI & Map Polish (2026-11-15 v2.4.10): Stats Frequent Localities Layout, Outdoor Areas LocalityCard Toggle Gating, Multi-Trip High-Contrast Map Overlays Above All Layers & Exact Profile Activity Filter | 5 | 5 | 0 | 0 |
+| **Round 67** | Outdoor Layer Network/Card Gating & Merged Trip Junction Segments (2026-11-15 v2.4.11): Full Outdoor Badge Toggle Sync, Overpass/Nominatim Outdoor Network Gating & Merged/Resumed Sub-Trip Segment Boundaries + Dashed Junction Connectors | 6 | 6 | 0 | 0 |
 | **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
 | **Round 60** | Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3) | 4 | 4 | 0 | 0 |
 | **Round 61** | Field Test Round 60 Diagnostics: Stacked Parallel Vector Trails & Overpass Supplement, Per-Source Signal Pill Hysteresis, Geocoder Contention/Gmina Stability, Safe Live-Trip DEM & Batch Missing-DEM UI, Wrapped Badges & Safe Controls Framing (2026-11-15 v2.4.4) | 6 | 6 | 0 | 0 |
@@ -1990,6 +1991,26 @@ User field testing screenshot feedback (`v2.4.9`):
 | **MAP-66-03** | Improve multi-selected trip polyline contrast (`SELECTED_TRIP_MULTI_COLORS` + `#0F172A` casing) and re-stack above tile/vector layers (including Freemap). | `MapProfileConfigHelper.kt`, `OsmMapView.kt`, `MapProfileConfigTest.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | Palette, casing width & `MapProfileConfigTest` pass. |
 | **TRP-66-04** | Filter Trips tab strictly by `trip.activityProfile` via `matchesTripActivityFilter` instead of max-speed heuristics. | `MainActivity.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | High-speed `HIKING` trip excluded under `CAR` filter in unit test. |
 | **VER-66** | Bump to `versionCode = 211`, `versionName = "2.4.10"`. | `app/build.gradle.kts` | Implemented | Full `testDebugUnitTest` (`729` tests, `0` failed) & `assembleDebug` pass. |
+
+---
+
+## Round 67 - Full Outdoor Layer Network/Card Gating & Merged Trip Segment Junctions (2026-11-15 v2.4.11)
+
+User field testing screenshot feedback (`v2.4.10`):
+- **LocalityCard Outdoor Badge Gating**: Extended `OutdoorContext.forDisplay(showOutdoorAreas, showHikingTrails)` so `Outdoor & Protected Areas` = OFF hides all outdoor area elements (mountain ranges, protected areas, valleys, nearest peaks/passes/huts, and water bodies) while `Outdoor & Hiking Trails` = OFF hides active trail pills; `LocationScreen` observes `profile_<PROFILE>_hiking_overlay` alongside `profile_<PROFILE>_outdoor_areas` and triggers `MainViewModel.refreshOutdoorLayerPrefs()`.
+- **Network & Battery Gating for Disabled Outdoor Layers**: Added `LocationManager.computeOutdoorFetchDecision` so `scheduleOutdoorContextEnrichment` skips Overpass/SQLite lookups and clears stale `lastOutdoorContext` when both outdoor toggles are OFF and no active unpaused trip needs outdoor telemetry (`isOutdoorProfile || showOutdoorAreasOverlay`), preserving `TripManager.commitVisitedPlaces` outdoor place logging during `HIKING`/`MTB`/`KAYAKING` trips. Gated `MainViewModel.updateLiveOutdoorBoundary` on `showOutdoorAreasOverlay` to avoid Nominatim polygon fetches when OFF.
+- **Merged & Resumed Trip Segment Boundaries**: Added `TrackPointRow.FLAG_SEGMENT_START = 4`, `TripPause.isGap` + `gapDistanceMeters`, and `TripRecord.effectiveSegmentBreakIndices()` / `recordedSegments()` / `gapConnectors()` (also detecting legacy merged/resumed pauses with >= 60 m chord automatically). Updated `mergeTrips`, `TripManager.resumeSavedTrip`, `splitTripAtPause`, `calculateCumulativeDistances`, `calculatePauseDistanceMeters`, `smoothElevationProfile`, and `GpxExporter` (`<trkseg>` per segment) so unrecorded gaps between merged/resumed trips are excluded from distances, elevation smoothing, and GPX tracks.
+- **Map Junction Rendering & Timeline End Leg Fix**: Added `addTripWithGapConnectorsToMap` in `OsmMapView` (used by map selection overlays and `TripDetailDialog` minimap) to draw recorded sub-trips as separate solid cased polylines linked across unrecorded gaps by high-contrast dashed amber `#FBBF24` connectors (`DashPathEffect(12f, 16f)`). Updated `MainActivity` route timeline to distinguish joined-segment breaks from normal rest pauses and synthesize the terminal `Trip End` place when a post-pause leg ends inside the same locality (`> 300 m` from pause).
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **OUT-67-01** | Hide peaks/passes/huts/water when `Outdoor & Protected Areas` is OFF and trail pills when `Outdoor & Hiking Trails` is OFF. | `OutdoorModels.kt`, `MainActivity.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | Matrix unit tests for all `(showOutdoorAreas, showHikingTrails)` flags pass. |
+| **OUT-67-02** | Skip Overpass & Nominatim outdoor polygon fetches when outdoor toggles are OFF while preserving outdoor place logging on active outdoor trips. | `LocationManager.kt`, `MainViewModel.kt`, `MainActivity.kt`, `StatsOutdoorTripOverlayTest.kt` | Implemented | `computeOutdoorFetchDecision` unit tests & live callback gating verified. |
+| **MRG-67-03** | Mark sub-trip starts (`FLAG_SEGMENT_START = 4`), tag merge/resume gaps (`TripPause.isGap`), preserve distance exclusion across splits/elevation/heatmap/GPX (`<trkseg>`). | `TrackPointRow.kt`, `TripModels.kt`, `TripDatabaseHelper.kt`, `TripManager.kt`, `GpxExporter.kt`, `TripSplitTest.kt` | Implemented | Merge/split distance, segment break, GPX `<trkseg>`, and legacy pause detection tests pass. |
+| **MRG-67-04** | Render unrecorded merge/resume gaps as dashed amber junctions (`addTripWithGapConnectorsToMap`) instead of solid track chords on main map & detail minimap. | `OsmMapView.kt`, `MainActivity.kt` | Implemented | Main map + detail minimap + filtered/raw track splitting compile cleanly. |
+| **MRG-67-05** | Clarify joined-segment pauses vs rest stops and append terminal `Trip End` leg when finishing inside the post-pause locality (`> 300 m`). | `MainActivity.kt` | Implemented | `TripTimelineChronologyTest` and full unit test suite pass. |
+| **VER-67** | Bump to `versionCode = 212`, `versionName = "2.4.11"`. | `app/build.gradle.kts` | Implemented | `testDebugUnitTest` (`731` tests: `730` passed, `0` failed, `1` pre-existing `FieldReplayTest.replay` skipped) & `assembleDebug` pass. |
+
 
 
 
