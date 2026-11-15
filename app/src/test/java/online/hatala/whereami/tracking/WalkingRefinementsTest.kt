@@ -243,4 +243,25 @@ class WalkingRefinementsTest {
         assertTrue("east drift=${frame.east(p.lng)}", abs(frame.east(p.lng)) < 0.3)
         assertFalse(p.headingFresh)
     }
+
+    @Test
+    fun `poor-accuracy bogus high Doppler fix while walking does not escalate envelope or fling state`() {
+        val engine = TrackingEngine(TrackingProfile.HIKING)
+        var t = 0L
+        repeat(10) {
+            engine.ingest(fix(t, 0.0, 1.0 * it, acc = 6f, speed = 1.0f, bearing = 0f, bAcc = 15f))
+            t += 1000L
+        }
+        assertEquals("HIKING", engine.activeProfile.name)
+
+        // Inject 3 bogus high-Doppler glitches (acc > 20m, 0m spatial move, 15..20 m/s Doppler)
+        repeat(3) {
+            t += 1000L
+            engine.ingest(fix(t, 0.0, 9.0, acc = 28f, speed = 18.0f, bearing = 90f, bAcc = 15f))
+        }
+        assertEquals("Uncorroborated poor-accuracy Doppler must not escalate", "HIKING", engine.activeProfile.name)
+        val st = engine.lastState!!
+        assertTrue("Bogus Doppler must not inject 18 m/s speed into EKF: ${st.speedMps}", st.speedMps < 5.0)
+        assertTrue("State position must remain near (0, 9): east=${frame.east(st.lng)}", abs(frame.east(st.lng)) < 12.0)
+    }
 }

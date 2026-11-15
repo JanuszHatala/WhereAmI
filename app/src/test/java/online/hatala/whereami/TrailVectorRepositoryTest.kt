@@ -863,4 +863,64 @@ class TrailVectorRepositoryTest {
         assertTrue(waymarkedOnly.any { it.name == "WM Red" })
         assertFalse(waymarkedOnly.any { it.name == "Missing Blue Trail" })
     }
+
+    @Test
+    fun getTrailsForBoundingBoxAllowNetworkFalseReadsDiskCacheWithoutNetworkCall() = runBlocking {
+        var httpCalls = 0
+        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/wm/tiles/") { ex ->
+                httpCalls++
+                val body = """{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"type":"way","top_relations":[555],"shields":["osmc_REG_white_blue-bar"]},"geometry":{"type":"LineString","coordinates":[[1874800.0,6571000.0],[1875000.0,6571200.0]]}}]}""".toByteArray()
+                ex.sendResponseHeaders(200, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            createContext("/wm/details/") { ex ->
+                httpCalls++
+                val body = """{"id":555,"name":"Instant Cached Ridge","tags":{"route":"hiking","colour":"blue"}}""".toByteArray()
+                ex.sendResponseHeaders(200, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            createContext("/overpass") { ex ->
+                httpCalls++
+                val body = """{"elements":[]}""".toByteArray()
+                ex.sendResponseHeaders(200, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            start()
+        }
+        server = srv
+        val base = "http://127.0.0.1:${srv.address.port}"
+        val ctx = fakeContext()
+        val bbox = BoundingBox(50.720, 16.850, 50.710, 16.835)
+
+        // Populate disk/memory cache once online
+        val warmed = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = bbox,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/wm/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/wm/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass"),
+            supplementOsmTrails = false,
+            allowNetwork = true
+        )
+        assertTrue(warmed.any { it.name == "Instant Cached Ridge" })
+        val callsAfterWarm = httpCalls
+        assertTrue(callsAfterWarm > 0)
+
+        // Cold-restart in-memory cache but keep disk cache; allowNetwork = false must load immediately with zero HTTP calls
+        TrailVectorRepository.resetCachesForTest()
+        val offlineInstant = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = bbox,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/wm/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/wm/details/{sub}/{id}",
+            overpassEndpoints = listOf("$base/overpass"),
+            supplementOsmTrails = true,
+            allowNetwork = false
+        )
+        assertTrue("allowNetwork=false must return disk-cached trails immediately", offlineInstant.any { it.name == "Instant Cached Ridge" })
+        assertEquals("allowNetwork=false must make zero HTTP requests", callsAfterWarm, httpCalls)
+    }
 }

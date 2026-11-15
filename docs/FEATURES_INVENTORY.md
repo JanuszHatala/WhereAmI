@@ -578,7 +578,7 @@ It tracks the workflow and architectural decisions across all development sessio
 - **Core Value**: Full offline resilience with controlled disk usage.
 - **Status**: **Implemented & Verified**
 - **Architecture & Implementation**:
-  - `CacheManager.kt`, `CacheManagerDialog.kt`, `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `TripDatabaseHelper.kt`: Map tile cache management, boundary polygon caching in `cacheDir/boundaries` with municipality-scoped parity (`BoundaryHelper.buildLocalityCacheKey`, `CacheManager.filterMissingBoundaryTargetsInDir`), safe sibling retention in `loadFromDiskCacheInDir`, bounded 429 retries, missing-DEM backlog counter and occupied `elevation_cache` storage readout (`getElevationCacheBytes`), automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, and per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis.
+  - `CacheManager.kt`, `CacheManagerDialog.kt`, `MapTileCorridorPlanner.kt`, `MapTileSourceRegistry.kt`, `DataAcquisitionManager.kt`, `BoundaryHelper.kt`, `TripDatabaseHelper.kt`: Map tile cache management with saved-trip corridor deficit checks (`MapTileCorridorPlanner` zooms 13..15 across Standard OSM and per-trip base layers checked against osmdroid `cache.db`), boundary polygon caching in `cacheDir/boundaries` with municipality-scoped parity (`BoundaryHelper.buildLocalityCacheKey`, `CacheManager.filterMissingBoundaryTargetsInDir`), safe sibling retention in `loadFromDiskCacheInDir`, bounded 429 retries, missing-DEM backlog counter and occupied `elevation_cache` storage readout (`getElevationCacheBytes`), automatic prefetch pause (`shouldAutoPausePrefetch`) during active trip recording or geocoder `429`, per-source health tracking (`DataSourceKind`) with `AcquisitionPillStabilizer` hysteresis, plus per-profile configurable track polyline thickness (`Normal`/`Thick`/`Bold` in `MapProfileConfigHelper`) and saved-trip resuming (`TripManager.resumeSavedTrip`) with manual Stop confirmation.
 
 ### OPS-05: Architectural Standards Documentation (`AGENTS.md`)
 - **Core Value**: Mandatory architectural guidelines, Git branching rules, and pre-completion gates.
@@ -656,4 +656,4 @@ This section documents features that were requested, prototyped, or previously d
 
 ---
 
-*Last Comprehensive Audit: 2026-09-25 (Field Test UI/UX alignment fixes: start/end markers, hiking pace/speed overflow prevention, activity profile emoji disentanglement, landscape heat map optimization)*
+*Last Comprehensive Audit: 2026-11-15 (Round 65 v2.4.9: performance & ART DEX decomposition, corroborated EKF escalation, back-swipe guard, OSM ref/cycleway/POI cleaning, saved-trip resume & stop confirmation, missing map tile corridor cache, track thickness)*

@@ -391,5 +391,30 @@ class RoadNameNormalizerTest {
         // Normalizing resolved ref without street produces canonical highway code in PL
         assertEquals("DK52", RoadNameNormalizer.normalize(null, "DK52", countryCode = "PL"))
     }
+
+    @Test
+    fun testCombineHighwayRefsForNationalAndInternationalCorridors() {
+        assertEquals("8;E 67", RoadNameNormalizer.combineHighwayRefs("8", "E 67"))
+        assertEquals("DK8 (E67)", RoadNameNormalizer.normalize(null, "8;E 67", countryCode = "PL"))
+        assertEquals("DK8 (E67)", RoadNameNormalizer.normalize("E 67", "8;E 67", countryCode = "PL"))
+        assertEquals("DK8 (E67)", RoadNameNormalizer.normalize("8", "8;E 67", countryCode = "PL"))
+        // Deduplicate repeating tokens ignoring spaces
+        assertEquals("E 67", RoadNameNormalizer.combineHighwayRefs("E 67", "E67"))
+    }
+
+    @Test
+    fun testCyclewayStreetProfileGating() {
+        assertTrue(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.HIKING))
+        assertTrue(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.CAR))
+        assertTrue(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.WALKING))
+        assertTrue(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.RUNNING))
+        assertFalse(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.CYCLING))
+        assertFalse(RoadNameNormalizer.isCyclewayStreetHiddenForProfile("cycleway", ActivityProfile.MTB))
+
+        assertEquals(null, RoadNameNormalizer.displayStreetForProfile("Singletrack Trail", "cycleway", ActivityProfile.CAR))
+        assertEquals(null, RoadNameNormalizer.displayStreetForProfile("Loop Route", "cycleway", ActivityProfile.HIKING))
+        assertEquals("Loop Route", RoadNameNormalizer.displayStreetForProfile("Loop Route", "cycleway", ActivityProfile.MTB))
+        assertEquals("Main St", RoadNameNormalizer.displayStreetForProfile("Main St", "residential", ActivityProfile.CAR))
+    }
 }
 

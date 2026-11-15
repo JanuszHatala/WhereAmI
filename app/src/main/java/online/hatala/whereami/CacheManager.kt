@@ -11,7 +11,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.modules.SqlTileWriter
+import org.osmdroid.util.MapTileIndex
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 import org.json.JSONObject
 
@@ -49,6 +54,59 @@ class CacheManager private constructor(private val context: Context) {
             targets: List<BoundaryTarget>
         ): List<BoundaryTarget> =
             targets.filter { !BoundaryHelper.hasBoundaryInDir(dir, it.name, it.countryCode, it.municipality) }
+
+        internal fun filterMissingMapTilesInDb(
+            cacheDbFile: File,
+            tileDir: File?,
+            plannedTiles: List<TileCoordKey>
+        ): List<TileCoordKey> {
+            if (plannedTiles.isEmpty()) return emptyList()
+            val foundKeysByProvider = HashMap<String, MutableSet<Long>>()
+            if (cacheDbFile.exists() && cacheDbFile.isFile) {
+                var db: android.database.sqlite.SQLiteDatabase? = null
+                try {
+                    db = android.database.sqlite.SQLiteDatabase.openDatabase(
+                        cacheDbFile.absolutePath,
+                        null,
+                        android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                    )
+                    val byLayer = plannedTiles.groupBy { it.layer }
+                    for ((layer, tiles) in byLayer) {
+                        val provider = MapTileSourceRegistry.providerNameFor(layer)
+                        val found = foundKeysByProvider.getOrPut(provider) { HashSet() }
+                        val sqlKeys = tiles.map { it.osmdroidSqlKey }.distinct()
+                        for (chunk in sqlKeys.chunked(450)) {
+                            val placeholders = chunk.joinToString(",") { "?" }
+                            val args = Array(chunk.size + 1) { idx ->
+                                if (idx == 0) provider else chunk[idx - 1].toString()
+                            }
+                            db.rawQuery(
+                                "SELECT DISTINCT key FROM tiles WHERE provider = ? AND key IN ($placeholders)",
+                                args
+                            ).use { c ->
+                                while (c.moveToNext()) {
+                                    found.add(c.getLong(0))
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    try { db?.close() } catch (_: Exception) {}
+                }
+            }
+            return plannedTiles.filter { tile ->
+                val provider = MapTileSourceRegistry.providerNameFor(tile.layer)
+                val inDb = foundKeysByProvider[provider]?.contains(tile.osmdroidSqlKey) == true
+                if (inDb) return@filter false
+                if (tileDir != null) {
+                    val ext = MapTileSourceRegistry.tileSourceFor(tile.layer).imageFilenameEnding()
+                    val legacyFile = File(tileDir, "$provider/${tile.zoom}/${tile.x}/${tile.y}$ext.tile")
+                    if (legacyFile.exists() && legacyFile.length() > 0L) return@filter false
+                }
+                true
+            }
+        }
 
         fun getInstance(context: Context): CacheManager {
             return instance ?: synchronized(this) {
@@ -186,7 +244,8 @@ class CacheManager private constructor(private val context: Context) {
         ) : PrefetchState()
         data class Completed(
             val addedRoutes: Int,
-            val addedBoundaries: Int
+            val addedBoundaries: Int,
+            val addedMapTiles: Int = 0
         ) : PrefetchState()
         data class Blocked(val reason: String) : PrefetchState()
         data class Error(val message: String) : PrefetchState()
@@ -204,7 +263,8 @@ class CacheManager private constructor(private val context: Context) {
         val missingRoutes: Int,
         val missingBoundaries: Int,
         val missingDemTrips: Int = 0,
-        val missingDemPoints: Int = 0
+        val missingDemPoints: Int = 0,
+        val missingMapTiles: Int = 0
     )
 
     internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
@@ -610,7 +670,21 @@ class CacheManager private constructor(private val context: Context) {
                     kotlinx.coroutines.delay(1500L)
                 }
 
-                _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries)
+                // PASS 4: Offline Map Tiles along saved trip corridors (zooms 13..15)
+                val plannedTiles = planSavedTripMapTiles(completedTrips)
+                val missingTiles = findMissingMapTiles(plannedTiles)
+                val (addedTiles, _) = if (missingTiles.isNotEmpty()) {
+                    downloadMissingMapTilesLoop(
+                        missingTiles = missingTiles,
+                        passNumber = 4,
+                        passLabel = "Pass 4: Map Tiles",
+                        baseAdded = addedRoutes + addedBoundaries
+                    )
+                } else {
+                    0 to null
+                }
+
+                _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries, addedTiles)
                 dismissNotification()
                 calculateCacheDeficit()
             } catch (_: kotlinx.coroutines.CancellationException) {
@@ -747,6 +821,193 @@ class CacheManager private constructor(private val context: Context) {
                 dismissNotification()
             }
         }
+    }
+
+    fun fetchMissingMapTiles(isUserInitiated: Boolean = true) {
+        if (_prefetchState.value is PrefetchState.Running) return
+
+        if (!isUserInitiated) {
+            val isRecording = TripManager.getInstance(context).activeTrip.value != null
+            val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+            if (isRecording || isLiveSharing) {
+                TelemetryLogger.log("CACHE", "Auto map tile prefetch suppressed during active trip recording or live sharing.")
+                return
+            }
+        }
+
+        if (!allowOnBattery && !isDeviceCharging()) {
+            _prefetchState.value = PrefetchState.Blocked("Device is not charging.")
+            return
+        }
+        if (!allowMobileData && !isUnmeteredWifi()) {
+            _prefetchState.value = PrefetchState.Blocked("Not on Wi-Fi.")
+            return
+        }
+
+        isPrefetchPaused = false
+        prefetchJob?.cancel()
+        _prefetchState.value = PrefetchState.Running(4, "Pass 4: Map Tiles", 0, 0, 0)
+        updateNotification("Map Tiles...", 0, 0, false)
+
+        prefetchJob = managerScope.launch(Dispatchers.IO) {
+            try {
+                val activeTripId = TripManager.getInstance(context).activeTrip.value?.id
+                val completedTrips = TripDatabaseHelper.getInstance(context).getAllTrips()
+                    .filter { it.endTime != null && it.endTime > 0 && it.id != activeTripId }
+                val planned = planSavedTripMapTiles(completedTrips)
+                val missing = findMissingMapTiles(planned)
+                val (added, blockReason) = downloadMissingMapTilesLoop(
+                    missingTiles = missing,
+                    passNumber = 4,
+                    passLabel = "Pass 4: Map Tiles",
+                    baseAdded = 0
+                )
+                if (blockReason != null) {
+                    _prefetchState.value = PrefetchState.Blocked(blockReason)
+                    dismissNotification()
+                    calculateCacheDeficit()
+                } else {
+                    _prefetchState.value = PrefetchState.Completed(0, 0, added)
+                    dismissNotification()
+                    calculateCacheDeficit()
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                dismissNotification()
+            } catch (e: Exception) {
+                _prefetchState.value = PrefetchState.Error(e.message ?: "Map tile prefetch failed")
+                dismissNotification()
+            }
+        }
+    }
+
+    private fun planSavedTripMapTiles(completedTrips: List<TripRecord>): List<TileCoordKey> {
+        if (completedTrips.isEmpty()) return emptyList()
+        val layerByProfile = HashMap<ActivityProfile, MapBaseLayer>()
+        val specs = completedTrips.map { trip ->
+            val layer = layerByProfile.getOrPut(trip.activityProfile) {
+                MapProfileConfigHelper.getConfig(context, trip.activityProfile).baseLayer
+            }
+            val coords = trip.points.map { it.latitude to it.longitude }
+            coords to layer
+        }
+        return MapTileCorridorPlanner.planForTrips(specs)
+    }
+
+    private fun findMissingMapTiles(plannedTiles: List<TileCoordKey>): List<TileCoordKey> {
+        if (plannedTiles.isEmpty()) return emptyList()
+        val tileDir = Configuration.getInstance().osmdroidTileCache
+        val cacheDb = if (tileDir != null) File(tileDir, SqlTileWriter.DATABASE_FILENAME) else return emptyList()
+        return filterMissingMapTilesInDb(cacheDb, tileDir, plannedTiles)
+    }
+
+    private fun getTotalCachedBytesSync(): Long {
+        val tileBytes = computeDirSize(Configuration.getInstance().osmdroidTileCache)
+        val boundaryBytes = computeDirSize(File(context.cacheDir, "boundaries"))
+        val spatialBytes = SpatialCacheHelper.getInstance(context).getStorageBytes()
+        val elevationBytes = TripDatabaseHelper.getInstance(context).getElevationCacheBytes()
+        return tileBytes + boundaryBytes + spatialBytes + elevationBytes
+    }
+
+    private suspend fun downloadMissingMapTilesLoop(
+        missingTiles: List<TileCoordKey>,
+        passNumber: Int,
+        passLabel: String,
+        baseAdded: Int
+    ): Pair<Int, String?> {
+        val total = missingTiles.size
+        if (total == 0) return 0 to null
+        val maxBytes = maxCacheSizeMb.toLong() * 1024L * 1024L
+        var currentTotalBytes = getTotalCachedBytesSync()
+        if (currentTotalBytes >= maxBytes) {
+            return 0 to "Max storage limit (${maxCacheSizeMb} MB) reached."
+        }
+
+        val tileWriter = SqlTileWriter()
+        val userAgent = Configuration.getInstance().userAgentValue.ifBlank {
+            "WhereAmI/2.0 (Android; https://github.com/janush74/WhereAmI)"
+        }
+        var current = 0
+        var added = 0
+        var bytesSinceCheck = 0L
+        var consecutiveRateLimits = 0
+
+        _prefetchState.value = PrefetchState.Running(passNumber, passLabel, current, total, baseAdded + added)
+        updateNotification("Pass $passNumber: Map Tiles", current, total, false)
+
+        for (tile in missingTiles) {
+            while (isPrefetchPaused || TripManager.getInstance(context).activeTrip.value != null) {
+                kotlinx.coroutines.delay(1000L)
+            }
+            if (!allowOnBattery && !isDeviceCharging()) {
+                return added to "Charging disconnected."
+            }
+            if (!allowMobileData && !isUnmeteredWifi()) {
+                return added to "Wi-Fi disconnected."
+            }
+
+            if (bytesSinceCheck >= 512 * 1024L) {
+                currentTotalBytes = getTotalCachedBytesSync()
+                bytesSinceCheck = 0L
+            }
+            if (currentTotalBytes + bytesSinceCheck >= maxBytes) {
+                return added to "Max storage limit (${maxCacheSizeMb} MB) reached."
+            }
+
+            val tileSource = MapTileSourceRegistry.tileSourceFor(tile.layer)
+            val mapTileIndex = MapTileIndex.getTileIndex(tile.zoom, tile.x, tile.y)
+            val urlStr = MapTileSourceRegistry.tileUrlFor(tile.layer, tile.zoom, tile.x, tile.y)
+            var downloaded = false
+
+            for (attempt in 0..1) {
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 10_000
+                        readTimeout = 10_000
+                        setRequestProperty("User-Agent", userAgent)
+                        setRequestProperty("Referer", "https://whereami.hatala.online/")
+                    }
+                    val code = conn.responseCode
+                    if (code in 200..299) {
+                        val bytes = conn.inputStream.use { it.readBytes() }
+                        if (bytes.isNotEmpty()) {
+                            val expiresAt = System.currentTimeMillis() + 30L * 86_400_000L
+                            val saved = tileWriter.saveFile(tileSource, mapTileIndex, ByteArrayInputStream(bytes), expiresAt)
+                            if (saved) {
+                                added++
+                                bytesSinceCheck += bytes.size.toLong()
+                                downloaded = true
+                                consecutiveRateLimits = 0
+                            }
+                        }
+                        break
+                    } else if (code == 429 || code == 503) {
+                        consecutiveRateLimits++
+                        if (attempt == 0) {
+                            kotlinx.coroutines.delay(1500L)
+                        } else if (consecutiveRateLimits >= 3) {
+                            return added to "Tile server rate-limited. Try again later."
+                        }
+                    } else {
+                        consecutiveRateLimits = 0
+                        break
+                    }
+                } catch (_: Exception) {
+                    if (attempt == 0) kotlinx.coroutines.delay(400L)
+                } finally {
+                    try { conn?.disconnect() } catch (_: Exception) {}
+                }
+            }
+
+            current++
+            _prefetchState.value = PrefetchState.Running(passNumber, passLabel, current, total, baseAdded + added)
+            updateNotification("Pass $passNumber: Map Tiles", current, total, false)
+            if (downloaded) {
+                kotlinx.coroutines.delay(180L)
+            }
+        }
+
+        return added to null
     }
 
     private fun filterMissingBoundaryTargets(targets: List<BoundaryTarget>): List<BoundaryTarget> =
@@ -897,15 +1158,18 @@ class CacheManager private constructor(private val context: Context) {
                 val boundaryTargets = getDistinctBoundaryTargets()
                 val missingBoundaries = filterMissingBoundaryTargets(boundaryTargets).size
                 val missingDem = TripDatabaseHelper.getInstance(context).getMissingDemSummary()
+                val plannedMapTiles = planSavedTripMapTiles(completedTrips)
+                val missingMapTiles = findMissingMapTiles(plannedMapTiles).size
                 val deficit = CacheDeficit(
                     missingRoutes = missingRoutes,
                     missingBoundaries = missingBoundaries,
                     missingDemTrips = missingDem.tripCount,
-                    missingDemPoints = missingDem.pointCount
+                    missingDemPoints = missingDem.pointCount,
+                    missingMapTiles = missingMapTiles
                 )
                 _cacheDeficit.value = deficit
 
-                val totalMissing = missingRoutes + missingBoundaries
+                val totalMissing = missingRoutes + missingBoundaries + missingMapTiles
                 if (totalMissing > 0 && _prefetchState.value is PrefetchState.Idle) {
                     val isRecording = TripManager.getInstance(context).activeTrip.value != null
                     if (isRecording) {
@@ -970,10 +1234,10 @@ class CacheManager private constructor(private val context: Context) {
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
 
-        val total = deficit.missingRoutes + deficit.missingBoundaries
+        val total = deficit.missingRoutes + deficit.missingBoundaries + deficit.missingMapTiles
         val builder = androidx.core.app.NotificationCompat.Builder(context, NOTIF_CHANNEL_AVAILABLE)
             .setContentTitle("WhereAmI — Map Cache Updates Available")
-            .setContentText("$total items need updating (${deficit.missingRoutes} routes, ${deficit.missingBoundaries} boundaries).")
+            .setContentText("$total items need updating (${deficit.missingRoutes} routes, ${deficit.missingBoundaries} boundaries, ${deficit.missingMapTiles} tiles).")
             .setSmallIcon(R.drawable.ic_stat_location)
             .setContentIntent(openIntent)
             .setAutoCancel(true)

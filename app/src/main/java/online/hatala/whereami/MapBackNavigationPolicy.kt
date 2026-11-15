@@ -35,3 +35,51 @@ internal object MapBackNavigationPolicy {
         return if (withinExitWindow) MapBackAction.FINISH_APP else MapBackAction.SHOW_EXIT_TOAST
     }
 }
+
+internal class MapTouchFollowTracker(
+    private val touchSlopPx: Float,
+    private val edgeSlopPx: Float
+) {
+    var downX: Float = 0f
+        private set
+    var downY: Float = 0f
+        private set
+    var wasFollowingAtDown: Boolean = false
+        private set
+    var startedInGestureEdge: Boolean = false
+        private set
+    var isUserDragging: Boolean = false
+        private set
+
+    fun onDown(x: Float, y: Float, viewWidth: Int, currentlyFollowing: Boolean) {
+        downX = x
+        downY = y
+        wasFollowingAtDown = currentlyFollowing
+        startedInGestureEdge = viewWidth > 0 && (x <= edgeSlopPx || x >= (viewWidth - edgeSlopPx))
+        isUserDragging = false
+    }
+
+    /** Returns true when this move is an intentional non-edge map pan that should detach follow mode. */
+    fun onMove(x: Float, y: Float): Boolean {
+        val dx = x - downX
+        val dy = y - downY
+        val pastSlop = (dx * dx + dy * dy) > (touchSlopPx * touchSlopPx)
+        if (pastSlop && !startedInGestureEdge) {
+            isUserDragging = true
+            return true
+        }
+        return false
+    }
+
+    /** Returns restored follow flag when a system gesture cancels the touch stream after starting in follow mode. */
+    fun onCancel(): Boolean? {
+        isUserDragging = false
+        startedInGestureEdge = false
+        return if (wasFollowingAtDown) true else null
+    }
+
+    fun onUp() {
+        isUserDragging = false
+        startedInGestureEdge = false
+    }
+}

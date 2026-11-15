@@ -282,6 +282,27 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                   AND $COL_STREET GLOB '* [0-9]*'
                 """.trimIndent()
             )
+
+            // Purge non-highway natural/tourism POI rows that leaked as highway_type (use idx_spatial_highway_ref)
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IN ('stone', 'viewpoint', 'peak', 'rock', 'cliff')
+                """.trimIndent()
+            )
+
+            // Invalidate trunk cells whose street/ref collapsed to bare international E-route or null without national trunk ref
+            db.execSQL(
+                """
+                DELETE FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IN ('trunk', 'trunk_link')
+                  AND ($COL_STREET IS NULL
+                       OR ($COL_ROAD_REF GLOB 'E[0-9]*'
+                           AND $COL_ROAD_REF NOT LIKE '%/%'
+                           AND $COL_ROAD_REF NOT LIKE '%;%'
+                           AND $COL_STREET = $COL_ROAD_REF))
+                """.trimIndent()
+            )
         } catch (e: Exception) {
             TelemetryLogger.log("SPATIAL_CACHE", "sanitizeUniversalInvariants error: ${e.message}")
         }
