@@ -225,4 +225,35 @@ class DataAcquisitionAndDemResilienceTest {
         val estimated = TripDatabaseHelper.estimateElevationCacheBytes(rowCount = 10_000, keyBytes = 150_000L)
         assertEquals(740_000L, estimated)
     }
+
+    @Test
+    fun `BoundaryHelper expires stale empty sentinel after TTL so missing city borders retry`() {
+        val dir = Files.createTempDirectory("boundary_negative_ttl").toFile()
+        try {
+            val staleKey = BoundaryHelper.buildLocalityCacheKey("Ośno", "pl", "Gmina Wiązów")!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, staleKey, emptyList())
+            val sentinelFile = File(dir, "$staleKey.json")
+            assertTrue(BoundaryHelper.hasBoundaryInDir(dir, "Ośno", "pl", "Gmina Wiązów"))
+
+            // Simulate 7-hour-old empty sentinel (> 6h NEGATIVE_CACHE_TTL_MS)
+            sentinelFile.setLastModified(System.currentTimeMillis() - (7L * 60L * 60L * 1000L))
+            assertFalse(
+                "Stale negative sentinel must expire so border can be fetched",
+                BoundaryHelper.hasBoundaryInDir(dir, "Ośno", "pl", "Gmina Wiązów")
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `LocationManager resolvePrimaryNativeLocale prefers primary national language over English regional locale`() {
+        val plLocale = LocationManager.resolvePrimaryNativeLocale("PL", java.util.Locale.ENGLISH)
+        assertEquals("pl", plLocale.language)
+        assertEquals("PL", plLocale.country)
+
+        val deLocale = LocationManager.resolvePrimaryNativeLocale("DE", java.util.Locale.ENGLISH)
+        assertEquals("de", deLocale.language)
+        assertEquals("DE", deLocale.country)
+    }
 }

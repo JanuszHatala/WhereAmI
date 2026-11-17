@@ -29,7 +29,8 @@ class VectorTrailOverlay(
     var enabledKinds: Set<TrailRouteKind> = emptySet(),
     var enabledColors: Set<TrailColor> = emptySet(),
     var supplementOsmTrails: Boolean = true,
-    var onTrailSelected: ((TrailVectorSegment) -> Unit)? = null
+    var onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
+    var onLoadingStateChange: ((Boolean) -> Unit)? = null
 ) : Overlay() {
 
     companion object {
@@ -245,6 +246,31 @@ class VectorTrailOverlay(
     private var lastDrawTrailsVersion: Long = -1L
     private var lastDrawFilterHash: Int = 0
     private var lastDrawStyleHash: Int = 0
+    private var lastDrawClustered: Boolean = true
+    private var lastCameraMoveElapsedMs: Long = 0L
+    private var settleRunnableScheduled: Boolean = false
+    @Volatile private var loadingActive: Boolean = false
+
+    private fun setLoading(active: Boolean) {
+        if (loadingActive == active) return
+        loadingActive = active
+        onLoadingStateChange?.invoke(active)
+    }
+
+    private fun intersectsViewport(pts: List<GeoPoint>, latS: Double, latN: Double, lonW: Double, lonE: Double): Boolean {
+        var minLat = Double.MAX_VALUE
+        var maxLat = -Double.MAX_VALUE
+        var minLon = Double.MAX_VALUE
+        var maxLon = -Double.MAX_VALUE
+        for (i in pts.indices) {
+            val p = pts[i]
+            if (p.latitude < minLat) minLat = p.latitude
+            if (p.latitude > maxLat) maxLat = p.latitude
+            if (p.longitude < minLon) minLon = p.longitude
+            if (p.longitude > maxLon) maxLon = p.longitude
+        }
+        return !(maxLat < latS || minLat > latN || maxLon < lonW || minLon > lonE)
+    }
 
     private class PrimitiveCellGrid {
         companion object {
@@ -357,6 +383,12 @@ class VectorTrailOverlay(
         return effect
     }
 
+    fun cancelLoading() {
+        fetchJob?.cancel()
+        fetchJob = null
+        setLoading(false)
+    }
+
     fun onFiltersUpdated(mapView: MapView) {
         updateTrailsForViewport(mapView)
         mapView.invalidate()
@@ -405,52 +437,65 @@ class VectorTrailOverlay(
         )
 
         fetchJob = scope.launch(Dispatchers.IO) {
-            // Phase 1: Immediately serve cached offline vector tiles so trails appear instantaneously
-            val cachedTrails = TrailVectorRepository.getTrailsForBoundingBox(
-                context = context,
-                bbox = expanded,
-                allowNetwork = false,
-                requestedKinds = kindsScope,
-                supplementOsmTrails = supplementScope
-            )
-            if (cachedTrails.isNotEmpty()) {
-                currentTrails.clear()
-                currentTrails.addAll(cachedTrails)
-                trailsVersion++
-                mapView.postInvalidate()
-            }
-
-            // Phase 2: Concurrently enrich missing relation details and Overpass supplement tiles
-            val trails = TrailVectorRepository.getTrailsForBoundingBox(
-                context = context,
-                bbox = expanded,
-                allowNetwork = true,
-                requestedKinds = kindsScope,
-                supplementOsmTrails = supplementScope
-            )
-            if (trails.isNotEmpty()) {
-                currentTrails.clear()
-                currentTrails.addAll(trails)
-                trailsVersion++
-                lastQueriedBbox = expanded
-                lastFetchedKinds = kindsScope
-                lastFetchedSupplementOsm = supplementScope
-                lastFailedBbox = null
-            } else {
-                val centerInPrev = prev != null &&
-                    bbox.centerLatitude >= prev.latSouth && bbox.centerLatitude <= prev.latNorth &&
-                    bbox.centerLongitude >= prev.lonWest && bbox.centerLongitude <= prev.lonEast
-                if (!centerInPrev && cachedTrails.isEmpty()) {
+            try {
+                // Phase 1: Immediately serve cached offline vector tiles so trails appear instantaneously
+                val cachedTrails = TrailVectorRepository.getTrailsForBoundingBox(
+                    context = context,
+                    bbox = expanded,
+                    allowNetwork = false,
+                    requestedKinds = kindsScope,
+                    supplementOsmTrails = supplementOsmTrails
+                )
+                if (cachedTrails.isNotEmpty()) {
                     currentTrails.clear()
+                    currentTrails.addAll(cachedTrails)
                     trailsVersion++
+                    mapView.postInvalidate()
                 }
-                lastQueriedBbox = null
-                lastFetchedKinds = kindsScope
-                lastFetchedSupplementOsm = supplementScope
-                lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
-                lastFailedBbox = bbox
+
+                // Phase 2: Stream network tiles progressively and enrich metadata / Overpass supplement
+                setLoading(true)
+                val trails = TrailVectorRepository.getTrailsForBoundingBox(
+                    context = context,
+                    bbox = expanded,
+                    allowNetwork = true,
+                    requestedKinds = kindsScope,
+                    supplementOsmTrails = supplementOsmTrails,
+                    onProgressiveUpdate = { partial ->
+                        if (partial.isNotEmpty()) {
+                            currentTrails.clear()
+                            currentTrails.addAll(partial)
+                            trailsVersion++
+                            mapView.postInvalidate()
+                        }
+                    }
+                )
+                if (trails.isNotEmpty()) {
+                    currentTrails.clear()
+                    currentTrails.addAll(trails)
+                    trailsVersion++
+                    lastQueriedBbox = expanded
+                    lastFetchedKinds = kindsScope
+                    lastFetchedSupplementOsm = supplementScope
+                    lastFailedBbox = null
+                } else {
+                    val centerInPrev = prev != null &&
+                        bbox.centerLatitude >= prev.latSouth && bbox.centerLatitude <= prev.latNorth &&
+                        bbox.centerLongitude >= prev.lonWest && bbox.centerLongitude <= prev.lonEast
+                    if (!centerInPrev && cachedTrails.isEmpty()) {
+                        currentTrails.clear()
+                        trailsVersion++
+                    }
+                    lastQueriedBbox = null
+                    lastFetchedKinds = kindsScope
+                    lastFetchedSupplementOsm = supplementScope
+                    lastFailedAtMs = android.os.SystemClock.elapsedRealtime()
+                    lastFailedBbox = bbox
+                }
+                mapView.postInvalidate()
+            } finally {
+                setLoading(false)
             }
-            mapView.postInvalidate()
         }
     }
 
@@ -504,6 +549,17 @@ class VectorTrailOverlay(
         highlightPaint.strokeWidth = strokeWidthPx + 3.5f * density
         highlightPaint.strokeCap = strokeCap
 
+        val cameraChanged = zoom != lastDrawZoom ||
+            centerLat != lastDrawCenterLat ||
+            centerLon != lastDrawCenterLon ||
+            orientation != lastDrawOrientation
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        if (cameraChanged && !lastDrawZoom.isNaN()) {
+            lastCameraMoveElapsedMs = nowElapsed
+        }
+        val isActivelyMoving = (nowElapsed - lastCameraMoveElapsedMs) < 110L
+        val useClusteredLanes = !isActivelyMoving
+
         val canReplayCachedPaths =
             rev == lastDrawTrailsVersion &&
             filterHash == lastDrawFilterHash &&
@@ -513,14 +569,22 @@ class VectorTrailOverlay(
             centerLon == lastDrawCenterLon &&
             orientation == lastDrawOrientation &&
             mapWidth == lastDrawWidth &&
-            mapHeight == lastDrawHeight
+            mapHeight == lastDrawHeight &&
+            useClusteredLanes == lastDrawClustered
 
         if (!canReplayCachedPaths) {
             filteredTrailsScratch.clear()
+            val vBox = mapView.boundingBox
+            val padLat = if (vBox != null) (vBox.latNorth - vBox.latSouth) * 0.1 else 0.0
+            val padLon = if (vBox != null) (vBox.lonEast - vBox.lonWest) * 0.1 else 0.0
             for (seg in currentTrails) {
-                if (matchesFilters(seg, enabledKinds, enabledColors)) {
-                    filteredTrailsScratch.add(seg)
+                if (!matchesFilters(seg, enabledKinds, enabledColors)) continue
+                if (vBox != null && seg.points.size >= 2 &&
+                    !intersectsViewport(seg.points, vBox.latSouth - padLat, vBox.latNorth + padLat, vBox.lonWest - padLon, vBox.lonEast + padLon)
+                ) {
+                    continue
                 }
+                filteredTrailsScratch.add(seg)
             }
             if (filteredTrailsScratch.isEmpty()) {
                 drawnCount = 0
@@ -555,7 +619,9 @@ class VectorTrailOverlay(
             val minStepPxSq = (1.5f * density) * (1.5f * density)
             val cellPx = (strokeWidthPx * 2.4f).coerceIn(4.5f * density, 8.0f * density)
             val tolPx = (strokeWidthPx * 0.9f).coerceIn(1.5f * density, 2.8f * density)
-            cellGrid.reset(count * 8)
+            if (useClusteredLanes) {
+                cellGrid.reset(count * 8)
+            }
 
             fun cellKey(cx: Int, cy: Int, ang: Int): Long =
                 ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
@@ -594,26 +660,28 @@ class VectorTrailOverlay(
                 val bit = resolveVisualColorBit(trail)
                 colorBitsScratch[tIdx] = bit
 
-                val vCount = floatLen / 2
-                for (i in 0 until vCount - 1) {
-                    val ax = buf[i * 2]
-                    val ay = buf[i * 2 + 1]
-                    val bx = buf[(i + 1) * 2]
-                    val by = buf[(i + 1) * 2 + 1]
-                    val dx = bx - ax
-                    val dy = by - ay
-                    val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                    if (segLen < 0.5f) continue
-                    val ang = undirectedAngleBucket(dx, dy)
-                    val ux = dx / segLen
-                    val uy = dy / segLen
-                    val sign = canonicalTangentSign(ux, uy, ang)
-                    val refUx = ux * sign
-                    val refUy = uy * sign
-                    val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
-                    for (s in 0..steps) {
-                        val t = s.toFloat() / steps.toFloat()
-                        markCell(ax + dx * t, ay + dy * t, ang, bit, refUx, refUy)
+                if (useClusteredLanes) {
+                    val vCount = floatLen / 2
+                    for (i in 0 until vCount - 1) {
+                        val ax = buf[i * 2]
+                        val ay = buf[i * 2 + 1]
+                        val bx = buf[(i + 1) * 2]
+                        val by = buf[(i + 1) * 2 + 1]
+                        val dx = bx - ax
+                        val dy = by - ay
+                        val segLen = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                        if (segLen < 0.5f) continue
+                        val ang = undirectedAngleBucket(dx, dy)
+                        val ux = dx / segLen
+                        val uy = dy / segLen
+                        val sign = canonicalTangentSign(ux, uy, ang)
+                        val refUx = ux * sign
+                        val refUy = uy * sign
+                        val steps = ((segLen / cellPx).toInt()).coerceAtLeast(1).coerceAtMost(32)
+                        for (s in 0..steps) {
+                            val t = s.toFloat() / steps.toFloat()
+                            markCell(ax + dx * t, ay + dy * t, ang, bit, refUx, refUy)
+                        }
                     }
                 }
             }
@@ -641,7 +709,7 @@ class VectorTrailOverlay(
                     val tLen = kotlin.math.hypot(tx.toDouble(), ty.toDouble()).toFloat()
                     val offsetX: Float
                     val offsetY: Float
-                    if (tLen > 0.001f) {
+                    if (useClusteredLanes && tLen > 0.001f) {
                         val ux = tx / tLen
                         val uy = ty / tLen
                         val ang = undirectedAngleBucket(ux, uy)
@@ -711,6 +779,14 @@ class VectorTrailOverlay(
             lastDrawOrientation = orientation
             lastDrawWidth = mapWidth
             lastDrawHeight = mapHeight
+            lastDrawClustered = useClusteredLanes
+            if (!useClusteredLanes && !settleRunnableScheduled) {
+                settleRunnableScheduled = true
+                mapView.postDelayed({
+                    settleRunnableScheduled = false
+                    mapView.invalidate()
+                }, 130L)
+            }
         }
 
         if (drawnCount == 0) return

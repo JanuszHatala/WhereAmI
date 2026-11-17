@@ -244,5 +244,21 @@ When a sheet or dialog presents multiple primary/secondary actions:
 - Use **top-left `ArrowBack`** (`Icons.Default.ArrowBack`, `Color.White`) for dismissal, matching standard Android navigation bars.
 - The top-right header area is reserved for contextual secondary tool icon buttons (GPX export, rename, delete).
 
+---
+
+## 8. Settings & Modal Vertical Spacing Standard (Non-Negotiable)
+
+All settings sheets (`SettingsSheet`, `ProfileConfigSheet`, `MapSettingsDialog`, `HeatMapSettingsDialog`, `CacheManagerDialog`) must follow a consistent three-step vertical rhythm:
+
+| Element Boundary | Spacing | Purpose |
+| :--- | :---: | :--- |
+| Section Title to Helper Subtitle | `2.dp` (`padding(top = 2.dp)`) | Tightly binds the explanatory caption to its heading |
+| Title/Subtitle to Option Control Row | `4.dp` (`padding(top = 4.dp)` or `Spacer(height = 4.dp)`) | Keeps radio buttons, chips, or dropdowns visually attached to their section header |
+| Between Separate Settings Sections | `12.dp` (`Spacer(height = 12.dp)`) | Clear visual separation without wasted scroll height |
+
+- Never use uneven `6.dp`/`8.dp`/`10.dp`/`14.dp`/`20.dp` vertical gaps between titles and controls across sibling sections.
+- Private / ADB-only / unpublished developer settings (e.g., Android Auto dev diagnostics) must be isolated in a dashed-border amber (`#F59E0B`) card labeled `LOCAL DEV / ADB ONLY`, strictly gated by `AppBuildEnv.isLocalDevInstall(context)` so Google Play releases stay clean.
+
+
 
 

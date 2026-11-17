@@ -622,6 +622,7 @@ fun OsmMapView(
     searchRouteColorHex: String = "#EF4444",
     searchRouteFitTrigger: Long = 0L,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
+    onVectorTrailsLoadingChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -716,10 +717,12 @@ fun OsmMapView(
         context.getSharedPreferences("where_am_i_map_prefs", Context.MODE_PRIVATE)
     }
 
-    val initialProfileConfig = remember(activityProfile) {
-        MapProfileConfigHelper.getConfig(context, activityProfile)
+    // Hold one OsmMapLayerState per MapView instance so profile switches never orphan
+    // prior overlay references inside map.overlays; LaunchedEffect(activityProfile) syncs config.
+    val layerState = remember {
+        OsmMapLayerState(MapProfileConfigHelper.getConfig(context, activityProfile))
     }
-    val layerState = remember(activityProfile) { OsmMapLayerState(initialProfileConfig) }
+    val cameraAnimationDeadlineMs = remember { java.util.concurrent.atomic.AtomicLong(0L) }
 
     var prePinZoom by remember { mutableStateOf<Double?>(null) }
     var prePinCenter by remember { mutableStateOf<GeoPoint?>(null) }
@@ -827,6 +830,7 @@ fun OsmMapView(
         onCurrentZoomChange = { currentZoom = it },
         onCurrentMapOrientationChange = { currentMapOrientation = it },
         onTrailSelected = onTrailSelected,
+        onVectorTrailsLoadingChange = onVectorTrailsLoadingChange,
         onOrientationModeChange = { next -> onOrientationModeChange?.invoke(next) }
     )
 
@@ -1278,7 +1282,8 @@ fun OsmMapView(
                         lastRenderedIsFallback = latestIsAltitudeFallback
                         lastRenderedFontScaleFactor = latestFontScale.scaleFactor
 
-                        if (isFollowing && destinationPoint == null && selectedSavedPlace == null) {
+                        val isAnimating = android.os.SystemClock.elapsedRealtime() < cameraAnimationDeadlineMs.get()
+                        if (isFollowing && destinationPoint == null && selectedSavedPlace == null && !isAnimating) {
                             val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
                             map.controller.setCenter(centerGp)
                         }
@@ -1306,6 +1311,7 @@ fun OsmMapView(
         savedPlaces = savedPlaces,
         pauses = pauses,
         baseLayer = layerState.baseLayer,
+        fontScale = layerState.fontScale,
         altitudeOverlay = altitudeOverlay,
         effectiveOpticalOffsetY = effectiveOpticalOffsetY,
         effectiveOpticalOffsetX = effectiveOpticalOffsetX,
@@ -1462,6 +1468,7 @@ fun OsmMapView(
         isAutoStandby = isAutoStandby,
         effectiveOpticalOffsetY = effectiveOpticalOffsetY,
         effectiveOpticalOffsetX = effectiveOpticalOffsetX,
+        cameraAnimationDeadlineMs = cameraAnimationDeadlineMs,
         onFollowingChange = { isFollowing = it },
         onZoomChange = { currentZoom = it },
         onFollowingChanged = onFollowingChanged,
@@ -1756,6 +1763,7 @@ private fun MapTileAndTrailLayerEffects(
     onCurrentZoomChange: (Double) -> Unit,
     onCurrentMapOrientationChange: (Float) -> Unit,
     onTrailSelected: ((TrailVectorSegment) -> Unit)?,
+    onVectorTrailsLoadingChange: ((Boolean) -> Unit)? = null,
     onOrientationModeChange: (MapOrientationMode) -> Unit
 ) {
     LaunchedEffect(layerState.baseLayer, mapView) {
@@ -1768,7 +1776,6 @@ private fun MapTileAndTrailLayerEffects(
             onCurrentZoomChange(layerMaxZoom)
         }
         map.setTileSource(tileSource)
-        MapProfileConfigHelper.setBaseLayer(context, activityProfile, layerState.baseLayer)
         map.invalidate()
     }
 
@@ -1808,19 +1815,16 @@ private fun MapTileAndTrailLayerEffects(
         mapView
     ) {
         val map = mapView ?: return@LaunchedEffect
-        MapProfileConfigHelper.setHikingOverlay(context, activityProfile, layerState.showHikingOverlay)
-        MapProfileConfigHelper.setTrailThickness(context, activityProfile, layerState.trailThickness)
-        MapProfileConfigHelper.setTrailLineStyle(context, activityProfile, layerState.trailLineStyle)
-        MapProfileConfigHelper.setTrailOpacity(context, activityProfile, layerState.trailOpacity)
-        MapProfileConfigHelper.setTrailOverlayMode(context, activityProfile, layerState.trailOverlayMode)
-        MapProfileConfigHelper.setEnabledTrailKinds(context, activityProfile, layerState.enabledTrailKinds)
-        MapProfileConfigHelper.setEnabledTrailColors(context, activityProfile, layerState.enabledTrailColors)
-        MapProfileConfigHelper.setSupplementMissingOsmTrails(context, activityProfile, layerState.supplementMissingOsmTrails)
 
         val trailsAllowedOnBase = layerState.baseLayer != MapBaseLayer.FREEMAP_OUTDOOR
         if (trailsAllowedOnBase && layerState.showHikingOverlay) {
             if (layerState.trailOverlayMode == TrailOverlayMode.WAYMARKED) {
-                layerState.vectorTrailOverlayRef?.let { map.overlays.remove(it) }
+                layerState.vectorTrailOverlayRef?.let {
+                    it.cancelLoading()
+                    map.overlays.remove(it)
+                }
+                map.overlays.removeAll { it is VectorTrailOverlay }
+                onVectorTrailsLoadingChange?.invoke(false)
                 var activeOverlay = layerState.hikingOverlayRef
                 var activeProvider = layerState.hikingProviderRef
                 if (activeOverlay == null) {
@@ -1848,7 +1852,8 @@ private fun MapTileAndTrailLayerEffects(
                         trailOpacity = layerState.trailOpacity,
                         enabledKinds = layerState.enabledTrailKinds,
                         enabledColors = layerState.enabledTrailColors,
-                        onTrailSelected = onTrailSelected
+                        onTrailSelected = onTrailSelected,
+                        onLoadingStateChange = onVectorTrailsLoadingChange
                     )
                     layerState.vectorTrailOverlayRef = vOverlay
                 }
@@ -1859,6 +1864,7 @@ private fun MapTileAndTrailLayerEffects(
                 vOverlay.enabledColors = layerState.enabledTrailColors
                 vOverlay.supplementOsmTrails = layerState.supplementMissingOsmTrails
                 vOverlay.onTrailSelected = onTrailSelected
+                vOverlay.onLoadingStateChange = onVectorTrailsLoadingChange
                 if (!map.overlays.contains(vOverlay)) {
                     val insertIdx = if (map.overlays.size > 1) 1 else 0
                     map.overlays.add(insertIdx, vOverlay)
@@ -1867,7 +1873,12 @@ private fun MapTileAndTrailLayerEffects(
             }
         } else {
             layerState.hikingOverlayRef?.let { map.overlays.remove(it) }
-            layerState.vectorTrailOverlayRef?.let { map.overlays.remove(it) }
+            layerState.vectorTrailOverlayRef?.let {
+                it.cancelLoading()
+                map.overlays.remove(it)
+            }
+            map.overlays.removeAll { it is VectorTrailOverlay }
+            onVectorTrailsLoadingChange?.invoke(false)
         }
         map.invalidate()
     }
@@ -2176,6 +2187,7 @@ private fun MapDestinationAndPlaceEffects(
     savedPlaces: List<SavedPlace>,
     pauses: List<TripPause>,
     baseLayer: MapBaseLayer,
+    fontScale: MapFontScale,
     altitudeOverlay: AltitudeCursorBadgeOverlay,
     effectiveOpticalOffsetY: Int,
     effectiveOpticalOffsetX: Int,
@@ -2255,7 +2267,7 @@ private fun MapDestinationAndPlaceEffects(
     }
 
     var pauseMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
-    LaunchedEffect(pauses, mapView, baseLayer) {
+    LaunchedEffect(pauses, mapView, baseLayer, fontScale) {
         val map = mapView ?: return@LaunchedEffect
         pauseMarkers.forEach { map.overlays.remove(it) }
         pauseMarkers = emptyList()
@@ -2275,7 +2287,7 @@ private fun MapDestinationAndPlaceEffects(
                     p.durationMs < 3600_000L -> "${p.durationMs / 60000}m"
                     else -> "${p.durationMs / 3600000}h ${(p.durationMs % 3600000) / 60000}m"
                 }
-                icon = makePauseIcon(context, durText)
+                icon = makePauseIcon(context, durText, fontScale.scaleFactor)
                 infoWindow = null
                 setOnMarkerClickListener { _, _ -> true }
             }
@@ -2880,6 +2892,7 @@ private fun MapSelectedAndHeatEffects(
     isAutoStandby: Boolean,
     effectiveOpticalOffsetY: Int,
     effectiveOpticalOffsetX: Int,
+    cameraAnimationDeadlineMs: java.util.concurrent.atomic.AtomicLong,
     onFollowingChange: (Boolean) -> Unit,
     onZoomChange: (Double) -> Unit,
     onFollowingChanged: ((Boolean) -> Unit)?,
@@ -3129,13 +3142,16 @@ private fun MapSelectedAndHeatEffects(
 
     LaunchedEffect(recenterTrigger) {
         if (recenterTrigger > 0L) {
+            val map = mapView ?: return@LaunchedEffect
             onFollowingChange(true)
             effectiveLatLng?.let { pos ->
                 val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(mapView, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                mapView?.controller?.setCenter(centerGp)
+                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
+                map.controller.stopAnimation(false)
+                cameraAnimationDeadlineMs.set(android.os.SystemClock.elapsedRealtime() + 360L)
+                map.controller.animateTo(centerGp, null, 320L)
             }
-            mapView?.invalidate()
+            map.invalidate()
         }
     }
 
@@ -3144,13 +3160,26 @@ private fun MapSelectedAndHeatEffects(
             val map = mapView ?: return@LaunchedEffect
             onFollowingChange(true)
             val targetZoom = MAP_CONVENIENT_ZOOM.coerceIn(map.minZoomLevel, map.maxZoomLevel)
-            map.controller.stopAnimation(false)
-            map.controller.setZoom(targetZoom)
             onZoomChange(targetZoom)
-            effectiveLatLng?.let { pos ->
+            val pos = effectiveLatLng
+            if (pos != null) {
                 val gp = GeoPoint(pos.first, pos.second)
-                val centerGp = getOpticalCenter(map, gp, effectiveOpticalOffsetY, effectiveOpticalOffsetX)
-                map.controller.setCenter(centerGp)
+                val centerGp = calculateOpticalCenter(
+                    lat = gp.latitude,
+                    lon = gp.longitude,
+                    zoom = targetZoom,
+                    mapOrientation = map.mapOrientation,
+                    offsetPixelsY = effectiveOpticalOffsetY,
+                    offsetPixelsX = effectiveOpticalOffsetX,
+                    tilesScaleFactor = map.tilesScaleFactor
+                )
+                map.controller.stopAnimation(false)
+                cameraAnimationDeadlineMs.set(android.os.SystemClock.elapsedRealtime() + 420L)
+                map.controller.animateTo(centerGp, targetZoom, 380L)
+            } else {
+                map.controller.stopAnimation(false)
+                cameraAnimationDeadlineMs.set(android.os.SystemClock.elapsedRealtime() + 420L)
+                map.controller.animateTo(map.mapCenter, targetZoom, 380L)
             }
             map.invalidate()
         }
@@ -4327,9 +4356,15 @@ private fun MapSettingsDialogHost(
     MapSettingsDialog(
         activityProfile = activityProfile,
         currentBaseLayer = layerState.baseLayer,
-        onBaseLayerChange = { layerState.baseLayer = it },
+        onBaseLayerChange = { layer ->
+            layerState.baseLayer = layer
+            MapProfileConfigHelper.setBaseLayer(context, activityProfile, layer)
+        },
         hikingOverlayEnabled = layerState.showHikingOverlay,
-        onHikingOverlayToggle = { layerState.showHikingOverlay = it },
+        onHikingOverlayToggle = { enabled ->
+            layerState.showHikingOverlay = enabled
+            MapProfileConfigHelper.setHikingOverlay(context, activityProfile, enabled)
+        },
         showOutdoorAreasOverlay = layerState.showOutdoorAreasOverlay,
         onOutdoorAreasOverlayToggle = { enabled ->
             layerState.showOutdoorAreasOverlay = enabled
@@ -4517,7 +4552,7 @@ private fun MapSettingsDialog(
                 .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 12.dp)
                 .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -4556,19 +4591,18 @@ private fun MapSettingsDialog(
             }
 
             // Map Orientation Mode (Course-Up AUTO vs Fixed North)
-            Text(
-                text = "Map Orientation",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = ComposeColor(0xFF94A3B8)
-            )
-            // Row 1: AUTO + North-Up
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Map Orientation",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                // Row 1: AUTO + North-Up
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                 listOf(
                     MapOrientationMode.COURSE_UP to "AUTO\nCourse-Up",
                     MapOrientationMode.NORTH to "North-Up\n(0°)"
@@ -4629,17 +4663,19 @@ private fun MapSettingsDialog(
                     }
                 }
             }
+            }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
 
             // Base Map Selection
-            Text(
-                text = "Base Map",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = ComposeColor(0xFF94A3B8)
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Base Map",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 MapBaseLayer.values().forEach { layer ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -4684,6 +4720,7 @@ private fun MapSettingsDialog(
                         }
                     }
                 }
+            }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
@@ -4818,7 +4855,7 @@ private fun MapSettingsDialog(
                                 fontWeight = FontWeight.SemiBold,
                                 color = ComposeColor(0xFFCBD5E1)
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -4850,14 +4887,14 @@ private fun MapSettingsDialog(
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 text = "Trail Line Style",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = ComposeColor(0xFFCBD5E1)
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -4885,14 +4922,14 @@ private fun MapSettingsDialog(
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 text = "Trail Opacity",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = ComposeColor(0xFFCBD5E1)
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -5461,7 +5498,7 @@ private fun MapSettingsDialog(
                         fontWeight = FontWeight.SemiBold,
                         color = ComposeColor(0xFF94A3B8)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -5660,7 +5697,7 @@ private fun MapSettingsDialog(
                         fontWeight = FontWeight.SemiBold,
                         color = ComposeColor(0xFF94A3B8)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -5922,18 +5959,19 @@ private fun MapSettingsDialog(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
-            Text(
-                text = "Track Polyline Thickness (${activityProfile.displayName})",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = ComposeColor(0xFF94A3B8)
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Track Polyline Thickness (${activityProfile.displayName})",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                 TrailThickness.values().forEach { thickness ->
                     val isSelected = currentTrackThickness == thickness
                     Button(
@@ -5960,6 +5998,7 @@ private fun MapSettingsDialog(
                         )
                     }
                 }
+            }
             }
 
             HorizontalDivider(color = ComposeColor(0xFF334155))
@@ -6302,11 +6341,16 @@ private fun makeSavedPlaceIcon(context: Context, place: SavedPlace): android.gra
     return android.graphics.drawable.BitmapDrawable(context.resources, bmp)
 }
 
-internal fun makePauseIcon(context: Context, durText: String): android.graphics.drawable.BitmapDrawable {
+internal fun makePauseIcon(
+    context: Context,
+    durText: String,
+    fontScaleFactor: Float = 1.0f
+): android.graphics.drawable.BitmapDrawable {
     val density = context.resources.displayMetrics.density
+    val scale = fontScaleFactor.coerceIn(0.85f, 1.8f)
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 10f * density
+        textSize = 10f * density * scale
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
@@ -6314,11 +6358,11 @@ internal fun makePauseIcon(context: Context, durText: String): android.graphics.
     val textBounds = Rect()
     textPaint.getTextBounds(fullText, 0, fullText.length, textBounds)
 
-    val padH = (8f * density).toInt()
+    val padH = (8f * density * scale).toInt()
     val width = textBounds.width() + padH * 2
-    val height = (20f * density).toInt()
+    val height = (20f * density * scale).toInt()
 
-    val bmp = Bitmap.createBitmap(maxOf(width, (36f * density).toInt()), height, Bitmap.Config.ARGB_8888)
+    val bmp = Bitmap.createBitmap(maxOf(width, (36f * density * scale).toInt()), height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -6328,10 +6372,11 @@ internal fun makePauseIcon(context: Context, durText: String): android.graphics.
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 1.5f * density
+        strokeWidth = 1.5f * density * scale.coerceAtMost(1.35f)
     }
 
-    val rect = RectF(1f * density, 1f * density, bmp.width - 1f * density, height - 1f * density)
+    val inset = 1f * density
+    val rect = RectF(inset, inset, bmp.width - inset, height - inset)
     val cornerRadius = height / 2f
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
     canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)

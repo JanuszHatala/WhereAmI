@@ -416,5 +416,35 @@ class RoadNameNormalizerTest {
         assertEquals("Loop Route", RoadNameNormalizer.displayStreetForProfile("Loop Route", "cycleway", ActivityProfile.MTB))
         assertEquals("Main St", RoadNameNormalizer.displayStreetForProfile("Main St", "residential", ActivityProfile.CAR))
     }
+
+    @Test
+    fun testRichMultiRefPreservationA4E40AndDk1E75E462() {
+        // Rich ref with parenthesized E-routes must not truncate after the first paren group
+        assertEquals(
+            "A4 (E40)",
+            RoadNameNormalizer.normalizeHighwayRef("A4 (E40)", "PL")
+        )
+        assertEquals(
+            "DK1 (E75 / E462)",
+            RoadNameNormalizer.normalizeHighwayRef("1;E 75;E 462", "PL")
+        )
+        assertEquals(
+            "Beskidzka (DK1 / S52)",
+            RoadNameNormalizer.formatStreetDisplay("Beskidzka", "1;S 52", "PL")
+        )
+        assertEquals(
+            "al. Górnośląska (DK1 / E75 / E462)",
+            RoadNameNormalizer.formatStreetDisplay("al. Górnośląska (E462)", "1;E 75;E 462", "PL")
+        )
+        // OSRM returning partial E462 alongside OSM ref 1;E 75;E 462 must preserve full corridor codes
+        val (coalescedStreet, coalescedRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+            osrmStreet = "E462",
+            osmStreet = "al. Górnośląska",
+            osmRoadRef = "1;E 75;E 462",
+            candidateHighwayType = "trunk"
+        )
+        assertEquals("al. Górnośląska", coalescedStreet)
+        assertEquals("1;E 75;E 462", coalescedRef)
+    }
 }
 

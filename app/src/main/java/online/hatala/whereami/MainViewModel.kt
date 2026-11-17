@@ -1110,6 +1110,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         tripManager.setAutoStopMinutesForProfile(profile, minutes)
     }
 
+    fun getRecordOutdoorPlacesForProfile(profile: ActivityProfile): Boolean {
+        return tripManager.getRecordOutdoorPlacesForProfile(profile)
+    }
+
+    fun setRecordOutdoorPlacesForProfile(profile: ActivityProfile, enabled: Boolean) {
+        tripManager.setRecordOutdoorPlacesForProfile(profile, enabled)
+        if (tripManager.activityProfile.value == profile) {
+            locationManager.refreshOutdoorContextNow()
+        }
+    }
+
     fun startManualTrip() {
         tripManager.startManualTrip()
     }
@@ -1291,6 +1302,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var lastAutoBoundaryRetryMs: Long = 0L
+    private var lastAutoBoundaryCity: String? = null
+
     private fun fetchCurrentBoundary() {
         val place = _locationData.value.primaryPlace ?: return
         if (place.city == "Unknown City" || place.city.isBlank()) return
@@ -1299,6 +1313,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val curLng = _currentLatLng.value?.second
         val curGeoPoint = if (curLat != null && curLng != null) org.osmdroid.util.GeoPoint(curLat, curLng) else null
 
+        lastAutoBoundaryRetryMs = android.os.SystemClock.elapsedRealtime()
+        lastAutoBoundaryCity = place.city
         viewModelScope.launch {
             val poly = BoundaryHelper.getLocalityBoundary(
                 context = getApplication(),
@@ -1391,9 +1407,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (_showBorders.value) {
                     val newCity = data.primaryPlace?.city
-                    if (newCity != null && newCity != previousCity && newCity != "Unknown City") {
-                        _boundaryPoints.value = null // Discard previous locality boundary immediately
-                        fetchCurrentBoundary()
+                    if (newCity != null && newCity != "Unknown City") {
+                        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+                        val cityChanged = newCity != previousCity || newCity != lastAutoBoundaryCity
+                        val shouldRetryMissing = _boundaryPoints.value == null &&
+                            !BoundaryHelper.isCoolingDown() &&
+                            (nowElapsed - lastAutoBoundaryRetryMs) >= 15_000L
+                        if (cityChanged) {
+                            _boundaryPoints.value = null // Discard previous locality boundary immediately
+                            fetchCurrentBoundary()
+                        } else if (shouldRetryMissing) {
+                            fetchCurrentBoundary()
+                        }
                     }
                 }
             }

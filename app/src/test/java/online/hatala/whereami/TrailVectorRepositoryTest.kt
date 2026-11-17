@@ -923,4 +923,66 @@ class TrailVectorRepositoryTest {
         assertTrue("allowNetwork=false must return disk-cached trails immediately", offlineInstant.any { it.name == "Instant Cached Ridge" })
         assertEquals("allowNetwork=false must make zero HTTP requests", callsAfterWarm, httpCalls)
     }
+
+    @Test
+    fun getTrailsForBoundingBoxStreamsProgressiveBatchesAsTilesResolve() = runBlocking {
+        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/wm/tiles/") { ex ->
+                val json = if (ex.requestURI.path.contains("/hiking/")) {
+                    """
+                    {
+                      "type": "FeatureCollection",
+                      "features": [
+                        {
+                          "type": "Feature",
+                          "geometry": {
+                            "type": "LineString",
+                            "coordinates": [[1874000.0, 6570500.0], [1874200.0, 6570700.0]]
+                          },
+                          "properties": {
+                            "type": "way",
+                            "top_relations": [8001],
+                            "shields": ["osmc_REG_white_red-bar"]
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                } else {
+                    """{"type":"FeatureCollection","features":[]}"""
+                }
+                val bytes = json.toByteArray()
+                ex.sendResponseHeaders(200, bytes.size.toLong())
+                ex.responseBody.use { it.write(bytes) }
+            }
+            createContext("/wm/details/") { ex ->
+                val bytes = """{"id":8001,"name":"Streamed Ridge Trail","tags":{"route":"hiking","colour":"red"}}""".toByteArray()
+                ex.sendResponseHeaders(200, bytes.size.toLong())
+                ex.responseBody.use { it.write(bytes) }
+            }
+            start()
+        }
+        server = srv
+        val base = "http://127.0.0.1:${srv.address.port}"
+        val ctx = fakeContext()
+        val bbox = BoundingBox(50.716, 16.840, 50.710, 16.830)
+        val progressiveEmissions = mutableListOf<Int>()
+
+        val result = TrailVectorRepository.getTrailsForBoundingBox(
+            context = ctx,
+            bbox = bbox,
+            requestedKinds = setOf(TrailRouteKind.HIKING),
+            waymarkedTileUrlTemplate = "$base/wm/tiles/{sub}/12/{x}/{y}.json",
+            waymarkedDetailsUrlTemplate = "$base/wm/details/{sub}/{id}",
+            overpassEndpoints = emptyList(),
+            supplementOsmTrails = false,
+            allowNetwork = true,
+            onProgressiveUpdate = { partial ->
+                progressiveEmissions.add(partial.size)
+            }
+        )
+        assertTrue(result.any { it.name == "Streamed Ridge Trail" })
+        assertTrue("Expected at least one progressive update before final completion", progressiveEmissions.isNotEmpty())
+        assertTrue(progressiveEmissions.last() >= 1)
+    }
 }

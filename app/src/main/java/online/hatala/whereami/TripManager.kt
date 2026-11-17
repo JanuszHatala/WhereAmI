@@ -40,6 +40,7 @@ class TripManager private constructor(private val context: Context) {
         private const val KEY_AUTO_START_SPEED_PREFIX = "pref_auto_start_speed_"
         private const val KEY_AUTO_STOP_PREFIX = "pref_auto_stop_min_"
         private const val KEY_TRIP_MODE_PREFIX = "pref_trip_mode_"
+        private const val KEY_RECORD_OUTDOOR_PREFIX = "pref_record_outdoor_places_"
         private const val KEY_AUTO_RESUME_ON_MOTION = "pref_auto_resume_on_motion"
         private const val KEY_IS_PAUSED = "pref_trip_is_paused"
         private const val KEY_PAUSE_START_TIME = "pref_trip_pause_start_time"
@@ -255,6 +256,20 @@ class TripManager private constructor(private val context: Context) {
             _autoStopMinutes.value = clamped
         }
         TelemetryLogger.log("SETTINGS", "AutoStopMinutes for ${profile.name} changed to $clamped")
+    }
+
+    fun getRecordOutdoorPlacesForProfile(profile: ActivityProfile): Boolean {
+        val key = KEY_RECORD_OUTDOOR_PREFIX + profile.name
+        return if (prefs.contains(key)) {
+            prefs.getBoolean(key, profile.isOutdoorProfile)
+        } else {
+            profile.isOutdoorProfile
+        }
+    }
+
+    fun setRecordOutdoorPlacesForProfile(profile: ActivityProfile, enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_RECORD_OUTDOOR_PREFIX + profile.name, enabled).apply()
+        TelemetryLogger.log("SETTINGS", "RecordOutdoorPlaces for ${profile.name} changed to $enabled")
     }
 
     private val _activeTrip = MutableStateFlow<TripRecord?>(null)
@@ -1651,8 +1666,7 @@ class TripManager private constructor(private val context: Context) {
         var listModified = false
 
         // 1. Structured Outdoor Waypoint, Enclosing Area & Sustained Trail detection
-        val includeOutdoorPlaces = _activityProfile.value.isOutdoorProfile ||
-            MapProfileConfigHelper.getConfig(context, _activityProfile.value).showOutdoorAreasOverlay
+        val includeOutdoorPlaces = getRecordOutdoorPlacesForProfile(_activityProfile.value)
         if (outdoorContext != null && includeOutdoorPlaces) {
             val cityLabel = currentPlace.city.takeIf { it != "Unknown City" && it != "--" }
             val ccLower = currentPlace.countryCode.lowercase(java.util.Locale.ROOT)
