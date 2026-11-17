@@ -203,4 +203,41 @@ class StatsOutdoorTripOverlayTest {
             assertTrue(casing > core)
         }
     }
+
+    @Test
+    fun `computeOutdoorFetchDecision respects explicit recordOutdoorPlacesEnabled override`() {
+        // Explicit override false disables background Overpass even if activity profile were outdoor
+        val disabledBySetting = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = false,
+            hasActiveTrip = true,
+            activeTripIsOutdoorProfile = true,
+            activeTripPaused = false,
+            recordOutdoorPlacesEnabled = false
+        )
+        assertFalse(disabledBySetting.shouldResolve)
+        assertFalse(disabledBySetting.allowNetwork)
+
+        // Explicit override true enables recording outdoor places even on Driving profile
+        val enabledBySetting = LocationManager.computeOutdoorFetchDecision(
+            showOutdoorAreasOverlay = false,
+            showHikingOverlay = false,
+            isRealTimeNeeded = false,
+            hasActiveTrip = true,
+            activeTripIsOutdoorProfile = false,
+            activeTripPaused = false,
+            recordOutdoorPlacesEnabled = true
+        )
+        assertTrue(enabledBySetting.shouldResolve)
+        assertTrue(enabledBySetting.allowNetwork)
+    }
+
+    @Test
+    fun `appBuildEnv distinguishes Play Store install from debug or sideloaded ADB install`() {
+        assertFalse(AppBuildEnv.isLocalDevInstall(installerPackageName = "com.android.vending", isDebuggable = false))
+        assertTrue(AppBuildEnv.isLocalDevInstall(installerPackageName = "com.android.shell", isDebuggable = false))
+        assertTrue(AppBuildEnv.isLocalDevInstall(installerPackageName = null, isDebuggable = false))
+        assertTrue(AppBuildEnv.isLocalDevInstall(installerPackageName = "com.android.vending", isDebuggable = true))
+    }
 }

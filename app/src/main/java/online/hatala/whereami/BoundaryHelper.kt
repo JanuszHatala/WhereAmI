@@ -45,6 +45,13 @@ object BoundaryHelper {
 
     private const val MIN_REQUEST_INTERVAL_MS = 1500L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
+    internal const val NEGATIVE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
+
+    internal fun shouldTrustNegativeDiskSentinel(
+        isPinMode: Boolean,
+        fileAgeMs: Long,
+        negativeTtlMs: Long = NEGATIVE_CACHE_TTL_MS
+    ): Boolean = !isPinMode && fileAgeMs in 0 until negativeTtlMs
 
     fun isCoolingDown(nowMs: Long = System.currentTimeMillis()): Boolean = nowMs < coolDownUntil
 
@@ -198,11 +205,15 @@ object BoundaryHelper {
                 memoryCache[cleanKey] = usable
                 return@withContext usable
             }
+            val diskFile = File(getCacheDir(context), "$cleanKey.json")
             if (diskPoints.isEmpty()) {
-                // Live: trust negative cache. Pin: fall through to reverse-first.
-                if (!pinMode) return@withContext null
+                val fileAgeMs = System.currentTimeMillis() - diskFile.lastModified()
+                if (shouldTrustNegativeDiskSentinel(pinMode, fileAgeMs)) {
+                    return@withContext null
+                }
+                diskFile.delete()
             } else if (pinMode) {
-                File(getCacheDir(context), "$cleanKey.json").delete()
+                diskFile.delete()
             }
         }
 
@@ -355,11 +366,19 @@ object BoundaryHelper {
         return forPin && geoPoint != null
     }
 
-    /** Live borders keep the named locality polygon if GPS is inside or near the border (within margin). */
+    /** Live borders keep the named locality polygon if GPS is inside or near the border (scaled for subsampled rings). */
     fun isCachePolygonUsableForLive(points: List<GeoPoint>, gps: GeoPoint): Boolean {
         if (points.size < 3) return false
         if (polygonContains(points, gps.latitude, gps.longitude)) return true
-        return isNearPolygon(points, gps.latitude, gps.longitude, marginMeters = 180.0)
+        val minLat = points.minOf { it.latitude }
+        val maxLat = points.maxOf { it.latitude }
+        val minLon = points.minOf { it.longitude }
+        val maxLon = points.maxOf { it.longitude }
+        val latSpanM = (maxLat - minLat) * 111_320.0
+        val lonSpanM = (maxLon - minLon) * 111_320.0 * kotlin.math.cos(Math.toRadians(gps.latitude)).coerceAtLeast(0.1)
+        val diagMeters = kotlin.math.hypot(latSpanM, lonSpanM)
+        val adaptiveMargin = maxOf(180.0, (diagMeters * 0.03).coerceAtMost(450.0))
+        return isNearPolygon(points, gps.latitude, gps.longitude, marginMeters = adaptiveMargin)
     }
 
     fun isNearPolygon(points: List<GeoPoint>, lat: Double, lon: Double, marginMeters: Double = 800.0): Boolean {
@@ -401,7 +420,9 @@ object BoundaryHelper {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
         } ?: return true
         val cleanKey = buildLocalityCacheKey(cleanCity, countryCode, fallbackMunicipality) ?: return true
-        return File(dir, "$cleanKey.json").exists()
+        val file = File(dir, "$cleanKey.json")
+        if (!file.exists()) return false
+        return file.length() > 4L || (System.currentTimeMillis() - file.lastModified()) in 0 until NEGATIVE_CACHE_TTL_MS
     }
 
     private fun fetchFromNetwork(

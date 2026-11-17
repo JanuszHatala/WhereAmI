@@ -63,6 +63,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -498,6 +499,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val usbConnectionManager = remember { UsbConnectionManager.getInstance(context) }
     val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
     val isTripPaused by viewModel.isTripPaused.collectAsState()
+    var isVectorTrailsLoading by remember { mutableStateOf(false) }
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var showLiveQuickShareModal by remember { mutableStateOf(false) }
@@ -957,6 +959,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             searchRoutePolylines = searchRoutePolylines,
             searchRouteColorHex = searchRouteColorHex,
             searchRouteFitTrigger = searchRouteFitTrigger,
+            onVectorTrailsLoadingChange = { isVectorTrailsLoading = it },
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
                     SearchResultItem(
@@ -992,6 +995,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             locationData = locationData,
                             showOutdoorAreas = showOutdoorAreasInCard,
                             showHikingTrails = showHikingTrailsInCard,
+                            isVectorTrailsLoading = isVectorTrailsLoading,
                             activeTrip = activeTrip,
                             liveSession = liveSession,
                             savedPlaces = savedPlaces,
@@ -1123,6 +1127,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     locationData = locationData,
                     showOutdoorAreas = showOutdoorAreasInCard,
                     showHikingTrails = showHikingTrailsInCard,
+                    isVectorTrailsLoading = isVectorTrailsLoading,
                     activeTrip = activeTrip,
                     liveSession = liveSession,
                     savedPlaces = savedPlaces,
@@ -3556,7 +3561,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             title = { Text("Stop Recording Trip?", color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "Finish and save the active trip? You can resume it anytime from Trip History.",
+                    "Finish and save the active trip? You can pause it temporarily or resume it later from Trip History.",
                     color = Color(0xFFCBD5E1)
                 )
             },
@@ -3569,6 +3574,21 @@ fun LocationScreen(viewModel: MainViewModel) {
                     TextButton(onClick = { showStopTripConfirmDialog = false }) {
                         Text("Cancel", color = Color.White)
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Button(
+                        onClick = {
+                            showStopTripConfirmDialog = false
+                            if (isTripPaused) viewModel.resumeTrip() else viewModel.pauseTrip()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFD97706),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(if (isTripPaused) "Resume" else "Pause", color = Color.White)
+                    }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
@@ -3579,7 +3599,8 @@ fun LocationScreen(viewModel: MainViewModel) {
                             containerColor = Color(0xFFEF4444),
                             contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text("Stop", color = Color.White)
                     }
@@ -3747,7 +3768,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Activity Profiles Hub: Manage configurations independently of active profile - Promoted to Top
                 Row(
@@ -3779,7 +3800,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -3876,7 +3897,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Locality Card Style (Normal vs Compact)
                 Text(
@@ -3893,7 +3914,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     text = "Normal provides maximum readability; Compact minimizes card height on map",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                    modifier = Modifier.padding(top = 2.dp),
                     style = TextStyle(
                         platformStyle = PlatformTextStyle(includeFontPadding = false),
                         lineHeight = 15.sp
@@ -3924,7 +3945,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Compact Street Names Toggle
                 Row(
@@ -3949,7 +3970,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             )
                         )
                         Text(
-                            text = "Abbreviate honorifics and first names (e.g. ul. J. Lompy). Always enabled in Android Auto.",
+                            text = "Shortens titles and given names to initials in supported locales (e.g. Ave. J. Pasteur, Blvd. W. Wilson).",
                             fontSize = 12.sp,
                             color = Color(0xFF94A3B8),
                             modifier = Modifier.padding(top = 2.dp),
@@ -3972,7 +3993,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Telemetry Logging & Diagnostics
                 Row(
@@ -4014,7 +4035,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 TextButton(
                     onClick = {
                         try {
@@ -4026,12 +4047,12 @@ fun LocationScreen(viewModel: MainViewModel) {
                             android.widget.Toast.makeText(context, "Open battery settings manually for WhereAmI", android.widget.Toast.LENGTH_LONG).show()
                         }
                     },
-                    modifier = Modifier.padding(top = 4.dp)
+                    modifier = Modifier.padding(top = 2.dp)
                 ) {
                     Text("⚡ Allow Unrestricted Background Battery (Prevents OS Killing)", fontSize = 12.sp, color = Color(0xFF38BDF8))
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Power & Battery Profile Section
                 Row(
@@ -4470,19 +4491,33 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Language Selector
+                // Place & Map Names Language Selector
                 Text(
-                    text = "Display Language",
+                    text = "Place & Map Names Language",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White
+                    color = Color.White,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 15.sp
+                    )
+                )
+                Text(
+                    text = "Applies to geocoded locality, street, region, and country names (app menus stay English).",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(top = 2.dp),
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeight = 15.sp
+                    )
                 )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     listOf(
@@ -4505,7 +4540,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Storage & Offline Data Management
                 Row(
@@ -4876,7 +4911,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedButton(
                     onClick = { showResetDefaultsConfirm = true },
@@ -4890,7 +4925,91 @@ fun LocationScreen(viewModel: MainViewModel) {
                     Text("Restore All Default Settings", fontSize = 13.sp, color = Color(0xFFEF4444), fontWeight = FontWeight.SemiBold)
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                if (AppBuildEnv.isLocalDevInstall(context)) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val amberAccent = Color(0xFFF59E0B)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1C1917))
+                            .drawBehind {
+                                drawRoundRect(
+                                    color = amberAccent,
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx(), 12.dp.toPx()),
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                        width = 1.5.dp.toPx(),
+                                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(14f, 8f), 0f)
+                                    )
+                                )
+                            }
+                            .padding(14.dp)
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFF78350F)
+                                ) {
+                                    Text(
+                                        text = "LOCAL DEV / ADB ONLY",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFDE68A),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 10.sp
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = "Private ADB Install",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFFBBF24),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Unpublished private developer options hidden from Play Store installs.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFD6D3D1),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 14.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Android Auto Module (Unpublished)",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 13.sp
+                                )
+                            )
+                            Text(
+                                text = "Uses hardware head-unit display with compact localized street abbreviation always enabled in AutoMediaService.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8),
+                                modifier = Modifier.padding(top = 2.dp),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeight = 14.sp
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
                 Text(
@@ -9504,13 +9623,66 @@ private fun ProfileConfigSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+                val initialRecordOutdoor = remember(profile) { viewModel.getRecordOutdoorPlacesForProfile(profile) }
+                var recordOutdoorPlaces by remember(profile) { mutableStateOf(initialRecordOutdoor) }
 
-            // Auto-Stop Stationary Timeout
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E293B))
+                        .clickable {
+                            val next = !recordOutdoorPlaces
+                            recordOutdoorPlaces = next
+                            viewModel.setRecordOutdoorPlacesForProfile(profile, next)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = "Record Outdoor Areas in Trip Route",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 13.sp
+                            )
+                        )
+                        Text(
+                            text = "Saves national parks, reserves, and trails visited during trips (${profile.displayName} default: ${if (profile == ActivityProfile.CAR) "Off" else "On"}).",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(top = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
+                            )
+                        )
+                    }
+                    Switch(
+                        checked = recordOutdoorPlaces,
+                        onCheckedChange = { checked ->
+                            recordOutdoorPlaces = checked
+                            viewModel.setRecordOutdoorPlacesForProfile(profile, checked)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF0284C7),
+                            uncheckedThumbColor = Color(0xFF94A3B8),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Auto-Stop Stationary Timeout
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -9753,7 +9925,7 @@ private fun HeatMapSettingsDialog(
                     text = "Configure thermal intensity, consolidated corridors, and trip filters.",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
+                    modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
                 )
 
                 // 1. Date Period Filter Dropdown
@@ -10729,6 +10901,7 @@ private fun LocalityCard(
     locationData: LocationData,
     showOutdoorAreas: Boolean = true,
     showHikingTrails: Boolean = true,
+    isVectorTrailsLoading: Boolean = false,
     activeTrip: TripRecord?,
     liveSession: LiveSession?,
     savedPlaces: List<SavedPlace>,
@@ -10862,9 +11035,13 @@ private fun LocalityCard(
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
                     val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
                     val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
-                    val cacheNum = if (savedNum == null && currentLatLng != null) {
-                        SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
-                    } else null
+                    val cacheNum by produceState<String?>(initialValue = null, currentLatLng, effectiveStreet, savedNum) {
+                        value = if (savedNum == null && currentLatLng != null) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
+                            }
+                        } else null
+                    }
                     val effectiveNum = savedNum ?: cacheNum
                     if (effectiveNum != null) {
                         val highway = RoadNameNormalizer.extractHighwayCode(effectiveStreet)
@@ -11603,9 +11780,13 @@ private fun LocalityCard(
                 val augmentedStreet = if (allowHouseNum && RoadNameNormalizer.extractHouseNumber(effectiveStreet).isNullOrBlank()) {
                     val savedMatch = nearbySavedPlace?.street?.takeIf { RoadNameNormalizer.streetsMatch(effectiveStreet, it) }
                     val savedNum = savedMatch?.let { RoadNameNormalizer.extractHouseNumber(it) }
-                    val cacheNum = if (savedNum == null && currentLatLng != null) {
-                        SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
-                    } else null
+                    val cacheNum by produceState<String?>(initialValue = null, currentLatLng, effectiveStreet, savedNum) {
+                        value = if (savedNum == null && currentLatLng != null) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                SpatialCacheHelper.getInstance(context).findNearbyHouseNumber(currentLatLng.first, currentLatLng.second, effectiveStreet, 35.0)
+                            }
+                        } else null
+                    }
                     val effectiveNum = savedNum ?: cacheNum
                     if (effectiveNum != null) {
                         val highway = RoadNameNormalizer.extractHighwayCode(effectiveStreet)
@@ -11870,12 +12051,67 @@ private fun LocalityCard(
             }
         }
         }
-        DataAcquisitionStatusPill(
-            health = dataHealth,
-            staleUnverifiedMeters = if (isStaleUnverified) locationData.staleSinceDistanceMeters else null,
-            isCompactDocked = isCompact,
-            isLandscape = isLandscape
-        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp, if (isLandscape) Alignment.Start else Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DataAcquisitionStatusPill(
+                health = dataHealth,
+                staleUnverifiedMeters = if (isStaleUnverified) locationData.staleSinceDistanceMeters else null,
+                isCompactDocked = isCompact,
+                isLandscape = isLandscape
+            )
+            AnimatedVisibility(
+                visible = isVectorTrailsLoading,
+                enter = fadeIn(animationSpec = tween(220)),
+                exit = fadeOut(animationSpec = tween(320))
+            ) {
+                val pillShape = if (isCompact) {
+                    RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
+                } else {
+                    RoundedCornerShape(12.dp)
+                }
+                Surface(
+                    shape = pillShape,
+                    color = Color(0xEE182032),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f)),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .padding(top = if (isCompact) 0.dp else 3.dp)
+                        .height(if (isCompact) 22.dp else 24.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .padding(horizontal = 10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(11.dp),
+                            strokeWidth = 1.6.dp,
+                            color = Color(0xFF38BDF8)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Loading trails...",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8),
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both
+                                ),
+                                lineHeight = 11.sp
+                            )
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -13218,11 +13454,12 @@ fun TripDetailDialog(
                                                             pause.durationMs < 3600_000L -> "${pause.durationMs / 60000}m"
                                                             else -> "${pause.durationMs / 3600000}h ${(pause.durationMs % 3600000) / 60000}m"
                                                         }
+                                                        val tripFontScale = MapProfileConfigHelper.getConfig(ctx, trip.activityProfile).fontScale.scaleFactor
                                                         val pauseMarker = Marker(this).apply {
                                                             position = GeoPoint(pause.latitude, pause.longitude)
                                                             title = "Stop #${pauseIdx + 1} ($durText)"
                                                             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                                                            icon = makePauseIcon(ctx, durText)
+                                                            icon = makePauseIcon(ctx, durText, fontScaleFactor = tripFontScale)
                                                             infoWindow = null
                                                             setOnMarkerClickListener { _, _ -> true }
                                                         }

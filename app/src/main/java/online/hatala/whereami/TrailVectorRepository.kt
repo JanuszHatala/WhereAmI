@@ -139,7 +139,8 @@ object TrailVectorRepository {
         waymarkedDetailsUrlTemplate: String = "https://{sub}.waymarkedtrails.org/api/v1/details/relation/{id}",
         overpassEndpoints: List<String>? = null,
         osmMapBaseUrl: String = "https://api.openstreetmap.org/api/0.6/map",
-        supplementOsmTrails: Boolean = true
+        supplementOsmTrails: Boolean = true,
+        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null
     ): List<TrailVectorSegment> = withContext(Dispatchers.IO) {
         val subdomains = subdomainsForKinds(requestedKinds)
         val wantWaymarked = subdomains.isNotEmpty()
@@ -158,10 +159,14 @@ object TrailVectorRepository {
                 subdomains = subdomains,
                 allowNetwork = allowNetwork,
                 tileUrlTemplate = waymarkedTileUrlTemplate,
-                detailsUrlTemplate = waymarkedDetailsUrlTemplate
+                detailsUrlTemplate = waymarkedDetailsUrlTemplate,
+                onProgressiveUpdate = onProgressiveUpdate
             )
             results.addAll(wmSegments)
             anyWaymarkedOk = allOrAnyOk
+            if (wmSegments.isNotEmpty() && onProgressiveUpdate != null) {
+                onProgressiveUpdate.invoke(results.distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" })
+            }
         }
 
         if (isWideViewport && latSpan <= MAX_MACRO_SPAN_DEG && lonSpan <= MAX_MACRO_SPAN_DEG) {
@@ -303,7 +308,8 @@ object TrailVectorRepository {
         subdomains: List<String>,
         allowNetwork: Boolean,
         tileUrlTemplate: String,
-        detailsUrlTemplate: String
+        detailsUrlTemplate: String,
+        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null
     ): Pair<List<TrailVectorSegment>, Boolean> = coroutineScope {
         val (xMinRaw, yMaxRaw) = latLonToTileZ12(bbox.latSouth, bbox.lonWest)
         val (xMaxRaw, yMinRaw) = latLonToTileZ12(bbox.latNorth, bbox.lonEast)
@@ -344,6 +350,14 @@ object TrailVectorRepository {
 
         val loadedTiles = mutableListOf<LoadedTile>()
         var anySourceOk = false
+        val progressiveTiles = ConcurrentHashMap<String, List<TrailVectorSegment>>()
+        val emitProgressive = suspend {
+            if (onProgressiveUpdate != null && progressiveTiles.isNotEmpty()) {
+                val snapshot = progressiveTiles.values.flatten()
+                    .distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
+                if (snapshot.isNotEmpty()) onProgressiveUpdate.invoke(snapshot)
+            }
+        }
 
         val fetchJobs = sortedCoords.flatMap { xy ->
             val (tx, ty) = xy
@@ -354,11 +368,16 @@ object TrailVectorRepository {
                     val segKey = "wm_seg_${sub}_12_${tx}_${ty}"
                     val memSegs = memoryCache[segKey]
                     if (memSegs != null) {
+                        progressiveTiles[segKey] = memSegs
                         return@async LoadedTile(sub, tx, ty, segKey, null, memSegs) to true
                     }
                     val file = File(getCacheDir(context), "$key.geojson")
                     val cachedJson = readFreshCacheFile(file)
                     if (cachedJson != null) {
+                        if (onProgressiveUpdate != null) {
+                            val quick = parseWaymarkedTileJson(cachedJson, sub, relMetaCache, tx, ty)
+                            progressiveTiles[segKey] = quick
+                        }
                         LoadedTile(sub, tx, ty, segKey, cachedJson, null) to true
                     } else if (!canFetchThisTile || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
                         null to false
@@ -375,6 +394,11 @@ object TrailVectorRepository {
                                 } catch (_: Exception) {
                                 }
                                 DataAcquisitionManager.reportSuccess(DataSourceKind.TRAILS)
+                                if (onProgressiveUpdate != null) {
+                                    val quick = parseWaymarkedTileJson(body, sub, relMetaCache, tx, ty)
+                                    progressiveTiles[segKey] = quick
+                                    emitProgressive()
+                                }
                                 LoadedTile(sub, tx, ty, segKey, body, null) to true
                             } else {
                                 markTileFailed(key)

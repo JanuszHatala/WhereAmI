@@ -208,14 +208,17 @@ class SpatialCacheHelper private constructor(private val context: Context) :
             sanitizeDupeParenStreets(db)
 
             // Universal Invariant: Residential / non-major ways or house-numbered addresses
-            // must NEVER carry parenthesized arterial highway codes or primary/trunk road_ref
+            // must NEVER carry parenthesized arterial highway codes or primary/trunk road_ref.
+            // Major highway types (motorway/trunk/primary/secondary) carry corridor digits inside (...)
+            // and must only match when an actual house number outside (...) is present on non-major ways.
             val cursor = db.rawQuery(
                 """
                 SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_HIGHWAY_TYPE, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
                 FROM $TABLE_CACHE
                 WHERE ($COL_HIGHWAY_TYPE IN ('residential', 'living_street', 'service', 'track', 'path', 'pedestrian', 'footway', 'unclassified', 'steps')
-                       OR $COL_STREET GLOB '*[0-9]*')
-                  AND ($COL_ROAD_REF IS NOT NULL 
+                       OR (($COL_HIGHWAY_TYPE IS NULL OR $COL_HIGHWAY_TYPE NOT IN ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link'))
+                           AND $COL_STREET GLOB '*[0-9]*'))
+                  AND ($COL_ROAD_REF IS NOT NULL
                        OR $COL_STREET LIKE '%(DK%' OR $COL_STREET LIKE '%(DW%' OR $COL_STREET LIKE '%(A%' OR $COL_STREET LIKE '%(S%'
                        OR $COL_STREET LIKE '%(I/%' OR $COL_STREET LIKE '%(II/%')
                 """.trimIndent(),
@@ -227,6 +230,10 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                     val key = c.getString(0)
                     val street = c.getString(1)
                     val roadRef = c.getString(2)
+                    val hwType = c.getString(3)
+                    val isRes = RoadNameNormalizer.isResidentialHighwayType(hwType)
+                    val hasHouse = RoadNameNormalizer.extractHouseNumber(street) != null
+                    if (!isRes && (RoadNameNormalizer.isMajorHighwayType(hwType) || !hasHouse)) continue
                     val en = deserializePlaceInfo(c.getString(4))
                     val pl = deserializePlaceInfo(c.getString(5))
                     val native = deserializePlaceInfo(c.getString(6))
@@ -291,11 +298,11 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 """.trimIndent()
             )
 
-            // Invalidate trunk cells whose street/ref collapsed to bare international E-route or null without national trunk ref
+            // Invalidate motorway/trunk cells whose street/ref collapsed to bare international E-route or null without national ref
             db.execSQL(
                 """
                 DELETE FROM $TABLE_CACHE
-                WHERE $COL_HIGHWAY_TYPE IN ('trunk', 'trunk_link')
+                WHERE $COL_HIGHWAY_TYPE IN ('motorway', 'motorway_link', 'trunk', 'trunk_link')
                   AND ($COL_STREET IS NULL
                        OR ($COL_ROAD_REF GLOB 'E[0-9]*'
                            AND $COL_ROAD_REF NOT LIKE '%/%'
@@ -303,6 +310,54 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                            AND $COL_STREET = $COL_ROAD_REF))
                 """.trimIndent()
             )
+
+            // Upgrade major corridor rows whose stored road_ref holds richer codes than their truncated display street (e.g. "Górnośląska (E462)" + "1;E 75;E 462")
+            val healCursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_ROAD_REF, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IN ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link')
+                  AND $COL_ROAD_REF IS NOT NULL
+                  AND ($COL_ROAD_REF LIKE '%;%' OR $COL_ROAD_REF LIKE '%/%')
+                """.trimIndent(),
+                null
+            )
+            val healUpdates = mutableListOf<ContentValues>()
+            healCursor.use { c ->
+                while (c.moveToNext()) {
+                    val key = c.getString(0)
+                    val street = c.getString(1)
+                    val roadRef = c.getString(2)
+                    val pl = deserializePlaceInfo(c.getString(4))
+                    val cc = pl?.countryCode
+                    val healed = RoadNameNormalizer.formatStreetDisplay(street, roadRef, cc, allowHouseNumber = false)
+                    if (!healed.isNullOrBlank() && healed != street) {
+                        val en = deserializePlaceInfo(c.getString(3))
+                        val native = deserializePlaceInfo(c.getString(5))
+                        healUpdates.add(ContentValues().apply {
+                            put(COL_GRID_KEY, key)
+                            put(COL_STREET, healed)
+                            if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = healed)))
+                            if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = healed)))
+                            if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = healed)))
+                        })
+                    }
+                }
+            }
+            if (healUpdates.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for (cv in healUpdates) {
+                        val key = cv.getAsString(COL_GRID_KEY)
+                        cv.remove(COL_GRID_KEY)
+                        db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+                TelemetryLogger.log("SPATIAL_CACHE", "Healed ${healUpdates.size} major corridor rows with richer stored road_ref")
+            }
         } catch (e: Exception) {
             TelemetryLogger.log("SPATIAL_CACHE", "sanitizeUniversalInvariants error: ${e.message}")
         }

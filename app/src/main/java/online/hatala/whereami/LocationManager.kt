@@ -184,14 +184,49 @@ class LocationManager private constructor(private val context: Context) {
             isRealTimeNeeded: Boolean,
             hasActiveTrip: Boolean,
             activeTripIsOutdoorProfile: Boolean,
-            activeTripPaused: Boolean
+            activeTripPaused: Boolean,
+            recordOutdoorPlacesEnabled: Boolean = activeTripIsOutdoorProfile
         ): OutdoorFetchDecision {
             val anyOutdoorUi = showOutdoorAreasOverlay || showHikingOverlay
-            val activeIncludeOutdoor = hasActiveTrip && !activeTripPaused && (activeTripIsOutdoorProfile || showOutdoorAreasOverlay)
+            val activeIncludeOutdoor = hasActiveTrip && !activeTripPaused && recordOutdoorPlacesEnabled
             return OutdoorFetchDecision(
                 shouldResolve = anyOutdoorUi || activeIncludeOutdoor,
                 allowNetwork = (isRealTimeNeeded && anyOutdoorUi) || activeIncludeOutdoor
             )
+        }
+
+        /**
+         * Resolves the primary local language [Locale] for an ISO-2 [countryCode] using CLDR likely-subtags
+         * on Android (API 24+) with a deterministic [Locale.getAvailableLocales] fallback on host JVM,
+         * avoiding `en_<CC>` regional English variants shadowing native languages (e.g. `en_PL` over `pl_PL`).
+         */
+        internal fun resolvePrimaryNativeLocale(
+            countryCode: String,
+            defaultLocale: Locale = Locale.getDefault()
+        ): Locale {
+            val cc = countryCode.trim().uppercase(Locale.ROOT)
+            if (cc.isEmpty()) return defaultLocale
+            try {
+                val uLocaleCls = Class.forName("android.icu.util.ULocale")
+                val ctor = uLocaleCls.getConstructor(String::class.java, String::class.java)
+                val addLikely = uLocaleCls.getMethod("addLikelySubtags", uLocaleCls)
+                val getLang = uLocaleCls.getMethod("getLanguage")
+                val undRegion = ctor.newInstance("und", cc)
+                val resolved = addLikely.invoke(null, undRegion)
+                val lang = (getLang.invoke(resolved) as? String)?.trim().orEmpty()
+                if (lang.isNotEmpty() && lang != "und") {
+                    return Locale(lang, cc)
+                }
+            } catch (_: Throwable) {
+                // Host JVM tests without Android framework ICU: fall through to standard Locale matching
+            }
+            val matching = Locale.getAvailableLocales()
+                .filter { it.country.equals(cc, ignoreCase = true) && it.language.isNotEmpty() }
+            val nonEn = matching.firstOrNull { !it.language.equals("en", ignoreCase = true) && it.variant.isEmpty() }
+                ?: matching.firstOrNull { !it.language.equals("en", ignoreCase = true) }
+            val exactMatch = matching.firstOrNull { it.language.equals(cc, ignoreCase = true) }
+            val chosen = exactMatch ?: nonEn ?: matching.firstOrNull()
+            return if (chosen != null) Locale(chosen.language, cc) else defaultLocale
         }
 
         fun getInstance(context: Context): LocationManager {
@@ -944,9 +979,13 @@ class LocationManager private constructor(private val context: Context) {
 
         // Same base road! Update house number or minor variation immediately while preserving confirmed highway codes
         if (rawBase.equals(committedStreetBase, ignoreCase = true)) {
-            val existingHighwayCode = RoadNameNormalizer.extractHighwayCode(committedStreetPl) ?: committedPlace?.pl?.roadRef
-            val incomingHighwayCode = multiData.pl.roadRef ?: RoadNameNormalizer.extractHighwayCode(rawStreetPl)
-            val effectiveRef = incomingHighwayCode ?: existingHighwayCode
+            val incomingCode = RoadNameNormalizer.extractHighwayCode(rawStreetPl, multiData.pl.countryCode)
+            val existingCode = RoadNameNormalizer.extractHighwayCode(committedStreetPl, multiData.pl.countryCode)
+            val effectiveRef = RoadNameNormalizer.selectRicherHighwayRef(
+                incomingCode,
+                RoadNameNormalizer.combineHighwayRefs(multiData.pl.roadRef ?: incomingCode, existingCode),
+                multiData.pl.countryCode
+            )
             val isMajor = RoadNameNormalizer.isMajorRoad(rawBase, effectiveRef)
 
             val updatedStreetPl = if (isMajor && effectiveRef != null) {
@@ -1141,7 +1180,11 @@ class LocationManager private constructor(private val context: Context) {
             candidateStreetPl = null
             candidateStreetBase = null
             candidateStreetCount = 0
-            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl)
+            val committedRef = RoadNameNormalizer.selectRicherHighwayRef(
+                RoadNameNormalizer.extractHighwayCode(committedStreetPl, multiData.pl.countryCode),
+                multiData.pl.roadRef,
+                multiData.pl.countryCode
+            )
             return multiData.copy(
                 en = multiData.en.copy(street = committedStreetPl, roadRef = committedRef),
                 pl = multiData.pl.copy(street = committedStreetPl, roadRef = committedRef),
@@ -1152,7 +1195,7 @@ class LocationManager private constructor(private val context: Context) {
             // prioritize candidate street or roadRef to never leave the road display blank!
             if (isLocalityTransition) {
                 val fallbackStreet = if (!multiData.pl.roadRef.isNullOrBlank()) {
-                    RoadNameNormalizer.normalize(null, multiData.pl.roadRef, null)
+                    RoadNameNormalizer.normalize(null, multiData.pl.roadRef, null, countryCode = multiData.pl.countryCode)
                 } else {
                     rawStreetPl
                 }
@@ -1163,7 +1206,7 @@ class LocationManager private constructor(private val context: Context) {
                 )
             }
             // Keep current committed street (filter out momentary cross-street and side-street jitter)
-            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl)
+            val committedRef = RoadNameNormalizer.extractHighwayCode(committedStreetPl, multiData.pl.countryCode)
             return multiData.copy(
                 en = multiData.en.copy(street = committedStreetPl, roadRef = committedRef),
                 pl = multiData.pl.copy(street = committedStreetPl, roadRef = committedRef),
@@ -1503,6 +1546,7 @@ class LocationManager private constructor(private val context: Context) {
         val activeTrip = tripMgr.activeTrip.value
         val activeProfile = activeTrip?.activityProfile ?: tripMgr.activityProfile.value
         val mapConfig = MapProfileConfigHelper.getConfig(context, activeProfile)
+        val recordOutdoorPlaces = tripMgr.getRecordOutdoorPlacesForProfile(activeProfile)
         val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
         val decision = computeOutdoorFetchDecision(
             showOutdoorAreasOverlay = mapConfig.showOutdoorAreasOverlay,
@@ -1510,7 +1554,8 @@ class LocationManager private constructor(private val context: Context) {
             isRealTimeNeeded = realTimeNeeded,
             hasActiveTrip = activeTrip != null,
             activeTripIsOutdoorProfile = activeTrip?.activityProfile?.isOutdoorProfile == true,
-            activeTripPaused = tripMgr.isPaused.value
+            activeTripPaused = tripMgr.isPaused.value,
+            recordOutdoorPlacesEnabled = recordOutdoorPlaces
         )
         if (!decision.shouldResolve) {
             if (lastOutdoorContext != null) {
@@ -1977,11 +2022,7 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         val countryCode = baseAddress?.countryCode?.uppercase() ?: ""
-        val nativeLocale = if (countryCode.isNotEmpty()) {
-            val langForCountry = Locale.getAvailableLocales()
-                .firstOrNull { it.country.equals(countryCode, ignoreCase = true) }?.language ?: defaultLocale.language
-            Locale(langForCountry, countryCode)
-        } else defaultLocale
+        val nativeLocale = resolvePrimaryNativeLocale(countryCode, defaultLocale)
 
         val enAddress = getCachedAddress(Locale.US) ?: baseAddress
         val plAddress = getCachedAddress(Locale("pl", "PL")) ?: baseAddress
@@ -1992,7 +2033,8 @@ class LocationManager private constructor(private val context: Context) {
         }
 
         // Fetch shared OSM enrichment once to avoid rapid-fire HTTP 429 rate limits
-        val sharedOsm = geocodeWithOsm(lat, lng, if (countryCode == "PL") "pl" else defaultLocale.language, speedKmh)
+        val osmLang = if (countryCode.isNotEmpty()) nativeLocale.language.ifBlank { defaultLocale.language } else defaultLocale.language
+        val sharedOsm = geocodeWithOsm(lat, lng, osmLang, speedKmh)
         val effectiveBearing = bearing ?: lastValidBearing
 
         if (isCancelled()) {
@@ -2168,7 +2210,19 @@ class LocationManager private constructor(private val context: Context) {
             ) {
                 lastGood.city
             } else if (basePlace.city.isNotBlank() && basePlace.city != "Unknown City") {
-                sanitizeGeocoderLocality(basePlace.city, basePlace.gmina, lat, lng, lastGood)
+                val sanitized = sanitizeGeocoderLocality(basePlace.city, basePlace.gmina, lat, lng, lastGood)
+                val nearbyForCounty = if (osm == null &&
+                    basePlace.gmina.isNullOrBlank() &&
+                    !basePlace.powiat.isNullOrBlank() &&
+                    !basePlace.powiat.contains(sanitized, ignoreCase = true)
+                ) {
+                    try {
+                        SpatialCacheHelper.getInstance(context)
+                            .findNearestVerifiedLocality(lat, lng, 1500.0, null)
+                            ?.takeIf { basePlace.powiat.contains(it, ignoreCase = true) }
+                    } catch (_: Exception) { null }
+                } else null
+                nearbyForCounty ?: sanitized
             } else {
                 osm?.municipality?.removePrefix("gmina ")?.trim()
                     ?: osm?.county
@@ -2212,6 +2266,8 @@ class LocationManager private constructor(private val context: Context) {
                     Locale("", baseCc).getDisplayCountry(Locale("pl")).takeIf { it.isNotBlank() } ?: (osm?.country ?: basePlace.country)
                 cacheKey == "en" && baseCc.isNotBlank() ->
                     Locale("", baseCc).getDisplayCountry(Locale.ENGLISH).takeIf { it.isNotBlank() } ?: (osm?.country ?: basePlace.country)
+                baseCc.isNotBlank() ->
+                    osm?.country ?: Locale("", baseCc).getDisplayCountry(resolvePrimaryNativeLocale(baseCc)).takeIf { it.isNotBlank() } ?: basePlace.country
                 else -> osm?.country ?: basePlace.country
             }
 
@@ -2605,7 +2661,7 @@ class LocationManager private constructor(private val context: Context) {
         val streetName = RoadNameNormalizer.normalize(thoroughfare, houseNumber = houseNum, includeHouseNumber = true, countryCode = cc)
         val rawCountry = this.countryName ?: "Unknown Country"
         val resolvedCountry = rawCountry.ifBlank {
-            if (cc.isNotBlank()) Locale("", cc).getDisplayCountry(Locale.ENGLISH) else rawCountry
+            if (cc.isNotBlank()) Locale("", cc).getDisplayCountry(resolvePrimaryNativeLocale(cc)) else rawCountry
         }
         val isPoland = cc == "PL"
         val gminaName = if (isPoland) {

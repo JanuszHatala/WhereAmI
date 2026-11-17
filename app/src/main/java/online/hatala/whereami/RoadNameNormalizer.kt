@@ -202,7 +202,9 @@ object RoadNameNormalizer {
         val r = roadRef?.trim()?.takeIf { it.isNotEmpty() }
         if (s == null && r == null) return null
         val extractedH = houseNumber ?: extractHouseNumber(s)
-        val highwayCode = extractHighwayCode(s) ?: extractHighwayCode(r)
+        val streetCode = extractHighwayCode(s, countryCode)
+        val refCode = normalizeHighwayRef(r, countryCode) ?: extractHighwayCode(r, countryCode)
+        val highwayCode = selectRicherHighwayRef(streetCode, refCode, countryCode)
         val baseStreet = stripParenHighwayRef(extractBaseStreet(s))
 
         if (baseStreet != null) {
@@ -291,14 +293,14 @@ object RoadNameNormalizer {
                 named to null
 
             // 4. Named street is present and OSRM is a bare highway code:
-            // If OSM confirms major corridor classification, coalesce named street with the OSRM highway code (e.g. "Beskidzka (DW781)")
+            // Combine any OSM ref (e.g. "1;E 75;E 462") with OSRM code (e.g. "E462") so partial E-routes never drop DK/S/A refs.
             named != null && isOsrmHighway && isMajor ->
-                named to osrm
+                named to (combineHighwayRefs(osmRef, osrm) ?: osrm)
 
             // 5. Named street is present and OSRM is a bare highway code:
-            // Prefer the named local street, attach confirmed osmRef only if confirmed by OSM
+            // Prefer the named local street, attach confirmed osmRef when present
             named != null && isOsrmHighway ->
-                named to osmRef
+                named to (if (!osmRef.isNullOrBlank()) combineHighwayRefs(osmRef, osrm) ?: osmRef else null)
 
             // 6. Named street without confirmed highway ref: keep local name, never attach stray highway ref
             named != null && osmRef == null ->
@@ -580,13 +582,44 @@ object RoadNameNormalizer {
      * Normalizes a potentially multi-reference highway designation string
      * (e.g. "44;933" -> "DK44 / DW933", "A4;E40" -> "A4 (E40)", "DK44;DW933" -> "DK44 / DW933").
      */
+    private fun splitNormalizedHighwayTokens(normalized: String?): List<String> {
+        if (normalized.isNullOrBlank()) return emptyList()
+        return normalized
+            .split(Regex("""\s*;\s*|\s+/\s+|\s*[()]\s*"""))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+
+    /**
+     * When [streetCode] (from a display string like `al. Piastów Śląskich (A4)`) is a subset of [refCode]
+     * (from structured `roadRef` like `A4 (E40)` or `DK1 (E75 / E462)`), return the richer [refCode].
+     */
+    fun selectRicherHighwayRef(
+        streetCode: String?,
+        refCode: String?,
+        countryCode: String? = null
+    ): String? {
+        val normStreet = streetCode?.let { normalizeHighwayRef(it, countryCode) ?: it }
+        val normRef = refCode?.let { normalizeHighwayRef(it, countryCode) ?: it }
+        if (normStreet.isNullOrBlank()) return normRef
+        if (normRef.isNullOrBlank()) return normStreet
+
+        val sTokens = splitNormalizedHighwayTokens(normStreet)
+        val rTokens = splitNormalizedHighwayTokens(normRef)
+        if (rTokens.size > sTokens.size && sTokens.all { sTok -> rTokens.any { it.equals(sTok, ignoreCase = true) } }) {
+            return normRef
+        }
+        return normStreet
+    }
+
     fun normalizeHighwayRef(rawRef: String?, countryCode: String? = null): String? {
         if (rawRef.isNullOrBlank()) return null
         val trimmed = rawRef.trim()
-        val tokens = if (trimmed.contains(";")) {
-            trimmed.split(";").map { it.trim() }.filter { it.isNotEmpty() }
-        } else if (trimmed.contains(" / ")) {
-            trimmed.split(" / ").map { it.trim() }.filter { it.isNotEmpty() }
+        val tokens = if (trimmed.contains(";") || trimmed.contains(" / ") || trimmed.contains("(")) {
+            trimmed.split(Regex("""\s*;\s*|\s+/\s+|\s*[()]\s*"""))
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
         } else {
             listOf(trimmed)
         }
@@ -657,10 +690,15 @@ object RoadNameNormalizer {
             val shouldAttachRef = !isRoadSelfHighway && road.isNotEmpty() && !isHighwayCodeOnly(road)
             val combined = if (shouldAttachRef) {
                 val cleanLocal = cleanStreetPrefix(extractBaseStreet(road), countryCode)
-                if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
-                    "$cleanLocal $effectiveHouseNumber ($normalizedHighway)"
+                val parenHighway = if (normalizedHighway.contains("(")) {
+                    splitNormalizedHighwayTokens(normalizedHighway).joinToString(" / ").ifEmpty { normalizedHighway }
                 } else {
-                    "$cleanLocal ($normalizedHighway)"
+                    normalizedHighway
+                }
+                if (includeHouseNumber && !effectiveHouseNumber.isNullOrBlank()) {
+                    "$cleanLocal $effectiveHouseNumber ($parenHighway)"
+                } else {
+                    "$cleanLocal ($parenHighway)"
                 }
             } else {
                 normalizedHighway
