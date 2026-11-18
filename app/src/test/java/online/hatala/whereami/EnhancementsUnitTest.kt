@@ -12,8 +12,8 @@ class EnhancementsUnitTest {
 
     @Test
     fun `ScreenDimController resolves overrides and window brightness`() {
-        assertEquals(2, ScreenDimController.clampLevelPercent(0))
-        assertEquals(60, ScreenDimController.clampLevelPercent(99))
+        assertEquals(0, ScreenDimController.clampLevelPercent(-5))
+        assertEquals(100, ScreenDimController.clampLevelPercent(120))
         assertEquals(20, ScreenDimController.clampLevelPercent(20))
 
         assertTrue(ScreenDimController.isEffectiveDimEnabled(defaultEnabled = true, sessionOverrideEnabled = null))
@@ -23,9 +23,9 @@ class EnhancementsUnitTest {
         assertEquals(15, ScreenDimController.effectiveLevelPercent(25, 15))
         assertEquals(25, ScreenDimController.effectiveLevelPercent(25, null))
 
-        // Dimmed when keepScreenOn && effectiveDimEnabled && isDimmed
+        // Dimmed when keepScreenOn && effectiveDimEnabled && isDimmed (20% -> 0.04f via perceptual quadratic curve)
         assertEquals(
-            0.20f,
+            0.04f,
             ScreenDimController.resolveWindowBrightness(
                 shouldKeepScreenOn = true,
                 isDimmed = true,
