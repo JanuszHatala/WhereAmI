@@ -12,7 +12,7 @@ class EnhancementsUnitTest {
 
     @Test
     fun `ScreenDimController resolves overrides and window brightness`() {
-        assertEquals(5, ScreenDimController.clampLevelPercent(0))
+        assertEquals(2, ScreenDimController.clampLevelPercent(0))
         assertEquals(60, ScreenDimController.clampLevelPercent(99))
         assertEquals(20, ScreenDimController.clampLevelPercent(20))
 

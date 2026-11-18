@@ -334,6 +334,31 @@ data class LocationShareTarget(
     val longitude: Double
 )
 
+private fun Modifier.dimWakeGestureHandler(
+    isScreenDimmed: Boolean,
+    onWake: () -> Unit,
+    onInteraction: () -> Unit
+): Modifier = this.pointerInput(isScreenDimmed) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val anyDown = event.changes.any { it.pressed }
+            if (anyDown) {
+                onInteraction()
+                if (isScreenDimmed) {
+                    onWake()
+                    event.changes.forEach { it.consume() }
+                    while (true) {
+                        val followUp = awaitPointerEvent(PointerEventPass.Initial)
+                        followUp.changes.forEach { it.consume() }
+                        if (followUp.changes.none { it.pressed }) break
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocationScreen(viewModel: MainViewModel) {
@@ -531,9 +556,21 @@ fun LocationScreen(viewModel: MainViewModel) {
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
     var lastUserInteractionElapsedMs by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
     var isScreenDimmed by remember { mutableStateOf(false) }
+    var isDimPreviewActive by remember { mutableStateOf(false) }
+    var dimPreviewJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showDimOverrideDialog by remember { mutableStateOf(false) }
     var magnifierState by remember { mutableStateOf(MagnifierState()) }
     var placeDetailsSnapshot by remember { mutableStateOf<PlaceDetailsSnapshot?>(null) }
+
+    val onUserInteraction = {
+        lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+    }
+    val onWakeDimmedScreen = {
+        dimPreviewJob?.cancel()
+        isDimPreviewActive = false
+        isScreenDimmed = false
+        lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+    }
 
     val dismissAllDialogs = {
         showTripsSheet = false
@@ -645,7 +682,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    LaunchedEffect(shouldKeepScreenOn, effectiveDimEnabled, screenDimTimeoutSec, lastUserInteractionElapsedMs, isScreenDimmed) {
+    LaunchedEffect(shouldKeepScreenOn, effectiveDimEnabled, screenDimTimeoutSec, lastUserInteractionElapsedMs, isScreenDimmed, isDimPreviewActive) {
+        if (isDimPreviewActive) return@LaunchedEffect
         if (!shouldKeepScreenOn || !effectiveDimEnabled) {
             isScreenDimmed = false
             return@LaunchedEffect
@@ -661,26 +699,16 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    DisposableEffect(shouldKeepScreenOn, isScreenDimmed, effectiveDimEnabled, effectiveDimLevelPercent) {
+    DisposableEffect(shouldKeepScreenOn, isScreenDimmed, effectiveDimEnabled, effectiveDimLevelPercent, isDimPreviewActive) {
         val win = activity?.window
         if (win != null) {
-            val systemBrightnessFraction = try {
-                val raw = android.provider.Settings.System.getInt(
-                    activity.contentResolver,
-                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
-                    128
-                )
-                (raw / 255f).coerceIn(0.01f, 1.0f)
-            } catch (_: Exception) {
-                1.0f
-            }
             val attrs = win.attributes
             attrs.screenBrightness = ScreenDimController.resolveWindowBrightness(
                 shouldKeepScreenOn = shouldKeepScreenOn,
                 isDimmed = isScreenDimmed,
                 effectiveDimEnabled = effectiveDimEnabled,
                 effectiveLevelPercent = effectiveDimLevelPercent,
-                systemBrightnessFraction = systemBrightnessFraction
+                isDimPreview = isDimPreviewActive
             )
             win.attributes = attrs
         }
@@ -958,27 +986,11 @@ fun LocationScreen(viewModel: MainViewModel) {
                 rootScreenWidthPx = it.size.width
                 rootScreenHeightPx = it.size.height
             }
-            .pointerInput(isScreenDimmed, shouldKeepScreenOn, effectiveDimEnabled) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val anyDown = event.changes.any { it.pressed }
-                        if (anyDown) {
-                            lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
-                            if (isScreenDimmed) {
-                                // Wake screen on first touch and consume the entire wake gesture
-                                isScreenDimmed = false
-                                event.changes.forEach { it.consume() }
-                                while (true) {
-                                    val followUp = awaitPointerEvent(PointerEventPass.Initial)
-                                    followUp.changes.forEach { it.consume() }
-                                    if (followUp.changes.none { it.pressed }) break
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            .dimWakeGestureHandler(
+                isScreenDimmed = isScreenDimmed,
+                onWake = onWakeDimmedScreen,
+                onInteraction = onUserInteraction
+            )
     ) {
         Box(
             modifier = Modifier
@@ -1791,30 +1803,39 @@ fun LocationScreen(viewModel: MainViewModel) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (isLandscape) 64.dp else 84.dp),
-                contentAlignment = Alignment.BottomCenter
+                    .background(Color(0x66000000))
+            )
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = Color(0xF40F172A),
+                border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                shadowElevation = 14.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = 12.dp,
+                        end = 12.dp,
+                        bottom = if (isLandscape) 12.dp else 20.dp
+                    )
+                    .widthIn(max = if (isLandscape) 480.dp else 440.dp)
+                    .fillMaxWidth()
+                    .height(54.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xDD0F172A),
-                    border = BorderStroke(1.dp, Color(0x5538BDF8)),
-                    shadowElevation = 8.dp
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        EmojiText(emoji = "🌙", fontSize = 13.sp, yOffsetDp = 0.dp)
-                        Text(
-                            text = "Screen Dimmed • Tap to wake",
-                            color = Color(0xFFF1F5F9),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    EmojiText(emoji = "🌙", fontSize = 16.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Screen Dimmed • Tap anywhere to wake",
+                        color = Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -3916,15 +3937,24 @@ fun LocationScreen(viewModel: MainViewModel) {
             containerColor = Color(0xFF0F172A),
             tonalElevation = 8.dp
         ) {
-            Column(
+            Box(
                 modifier = Modifier
                     .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .align(Alignment.CenterHorizontally)
-                    .verticalScroll(settingsScrollState)
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
+                    .dimWakeGestureHandler(
+                        isScreenDimmed = isScreenDimmed,
+                        onWake = onWakeDimmedScreen,
+                        onInteraction = onUserInteraction
+                    )
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(settingsScrollState)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .navigationBarsPadding()
+                ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -4187,10 +4217,17 @@ fun LocationScreen(viewModel: MainViewModel) {
                     onSelectTimeoutSec = { viewModel.setScreenDimTimeoutSec(it) },
                     onChangeLevelPercent = { viewModel.setScreenDimLevelPercent(it) },
                     onPreviewDim = {
-                        scope.launch {
+                        dimPreviewJob?.cancel()
+                        dimPreviewJob = scope.launch {
+                            isDimPreviewActive = true
                             isScreenDimmed = true
-                            kotlinx.coroutines.delay(3000L)
-                            isScreenDimmed = false
+                            try {
+                                kotlinx.coroutines.delay(3000L)
+                            } finally {
+                                isDimPreviewActive = false
+                                isScreenDimmed = false
+                                lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+                            }
                         }
                     }
                 )
@@ -5222,7 +5259,46 @@ fun LocationScreen(viewModel: MainViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+
+            if (isScreenDimmed) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color(0x66000000)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color(0xF40F172A),
+                        border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                        shadowElevation = 14.dp,
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp)
+                            .height(50.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .padding(horizontal = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            EmojiText(emoji = "🌙", fontSize = 16.sp, yOffsetDp = 0.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Screen Dimmed • Tap anywhere to wake",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
     }
     }
     LocationScreenHost1()
