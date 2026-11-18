@@ -358,6 +358,62 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 }
                 TelemetryLogger.log("SPATIAL_CACHE", "Healed ${healUpdates.size} major corridor rows with richer stored road_ref")
             }
+
+            // Universal Invariant: Major corridor rows lacking road_ref (e.g. older primary cells on national corridors)
+            // should be healed if a confirmed road_ref exists for the same street/city in neighboring cells
+            val missingRefCursor = db.rawQuery(
+                """
+                SELECT $COL_GRID_KEY, $COL_STREET, $COL_CITY, $COL_LAT, $COL_LNG, $COL_HIGHWAY_TYPE, $COL_EN_JSON, $COL_PL_JSON, $COL_NATIVE_JSON
+                FROM $TABLE_CACHE
+                WHERE $COL_HIGHWAY_TYPE IN ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link')
+                  AND $COL_ROAD_REF IS NULL
+                  AND $COL_STREET IS NOT NULL
+                """.trimIndent(),
+                null
+            )
+            val missingRefUpdates = mutableListOf<ContentValues>()
+            missingRefCursor.use { c ->
+                while (c.moveToNext()) {
+                    val key = c.getString(0)
+                    val street = c.getString(1)
+                    val city = c.getString(2)
+                    val lat = c.getDouble(3)
+                    val lng = c.getDouble(4)
+                    val confirmedRef = findConfirmedCorridorRefForStreet(city, street, lat, lng, radiusMeters = 600.0, db = db)
+                    if (!confirmedRef.isNullOrBlank()) {
+                        val pl = deserializePlaceInfo(c.getString(7))
+                        val cc = pl?.countryCode
+                        val cleanBase = RoadNameNormalizer.extractBaseStreet(street).trim()
+                        val healedStreet = RoadNameNormalizer.formatStreetDisplay(cleanBase, confirmedRef, cc, allowHouseNumber = false)
+                        if (!healedStreet.isNullOrBlank()) {
+                            val en = deserializePlaceInfo(c.getString(6))
+                            val native = deserializePlaceInfo(c.getString(8))
+                            missingRefUpdates.add(ContentValues().apply {
+                                put(COL_GRID_KEY, key)
+                                put(COL_STREET, healedStreet)
+                                put(COL_ROAD_REF, confirmedRef)
+                                if (en != null) put(COL_EN_JSON, serializePlaceInfo(en.copy(street = healedStreet, roadRef = confirmedRef)))
+                                if (pl != null) put(COL_PL_JSON, serializePlaceInfo(pl.copy(street = healedStreet, roadRef = confirmedRef)))
+                                if (native != null) put(COL_NATIVE_JSON, serializePlaceInfo(native.copy(street = healedStreet, roadRef = confirmedRef)))
+                            })
+                        }
+                    }
+                }
+            }
+            if (missingRefUpdates.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for (cv in missingRefUpdates) {
+                        val key = cv.getAsString(COL_GRID_KEY)
+                        cv.remove(COL_GRID_KEY)
+                        db.update(TABLE_CACHE, cv, "$COL_GRID_KEY = ?", arrayOf(key))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+                TelemetryLogger.log("SPATIAL_CACHE", "Healed ${missingRefUpdates.size} major corridor rows missing road_ref from neighboring cells")
+            }
         } catch (e: Exception) {
             TelemetryLogger.log("SPATIAL_CACHE", "sanitizeUniversalInvariants error: ${e.message}")
         }
@@ -569,6 +625,7 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                             val roadRef = it.getString(3)
                             val isCorridor = RoadNameNormalizer.isMajorRoad(street, roadRef)
                             val isDegraded = (isCorridor && hw == null && roadRef == null) ||
+                                (RoadNameNormalizer.isMajorHighwayType(hw) && roadRef.isNullOrBlank()) ||
                                 city.contains(".") || city.matches(Regex(""".*-\d+$"""))
                             if (isDegraded) {
                                 degradedOrMissing.add(pt)
@@ -812,6 +869,61 @@ class SpatialCacheHelper private constructor(private val context: Context) :
                 }
             }
         }
+        return null
+    }
+
+    /**
+     * Universal data-driven helper: queries nearby spatial cache entries within [radiusMeters]
+     * for a confirmed corridor [road_ref] matching the base street name and city.
+     * Prevents older cells or building parcels from dropping national/regional highway codes.
+     */
+    fun findConfirmedCorridorRefForStreet(
+        city: String?,
+        street: String?,
+        lat: Double,
+        lng: Double,
+        radiusMeters: Double = 350.0,
+        db: SQLiteDatabase = readableDatabase
+    ): String? {
+        if (street.isNullOrBlank()) return null
+        val cleanTargetStreet = RoadNameNormalizer.extractBaseStreet(street).trim()
+        val targetNorm = RoadNameNormalizer.stripParenHighwayRef(cleanTargetStreet)?.trim() ?: cleanTargetStreet
+        if (targetNorm.isBlank()) return null
+
+        val deltaLat = radiusMeters / 111_320.0
+        val deltaLng = radiusMeters / (111_320.0 * kotlin.math.cos(Math.toRadians(lat)).coerceAtLeast(0.1))
+        val minLat = lat - deltaLat
+        val maxLat = lat + deltaLat
+        val minLng = lng - deltaLng
+        val maxLng = lng + deltaLng
+
+        try {
+            val cursor = db.rawQuery(
+                """
+                SELECT $COL_STREET, $COL_ROAD_REF, $COL_CITY
+                FROM $TABLE_CACHE
+                WHERE $COL_LAT BETWEEN ? AND ? AND $COL_LNG BETWEEN ? AND ?
+                  AND $COL_ROAD_REF IS NOT NULL
+                  AND $COL_HIGHWAY_TYPE IN ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link')
+                """.trimIndent(),
+                arrayOf(minLat.toString(), maxLat.toString(), minLng.toString(), maxLng.toString())
+            )
+            cursor.use { c ->
+                while (c.moveToNext()) {
+                    val cCity = c.getString(2)
+                    if (!city.isNullOrBlank() && !cCity.isNullOrBlank() && !city.equals(cCity, ignoreCase = true)) {
+                        continue
+                    }
+                    val cStreet = c.getString(0) ?: continue
+                    val cRef = c.getString(1) ?: continue
+                    val cBase = RoadNameNormalizer.extractBaseStreet(cStreet).trim()
+                    val cNorm = RoadNameNormalizer.stripParenHighwayRef(cBase)?.trim() ?: cBase
+                    if (RoadNameNormalizer.streetsMatch(targetNorm, cNorm)) {
+                        return cRef
+                    }
+                }
+            }
+        } catch (_: Exception) {}
         return null
     }
 

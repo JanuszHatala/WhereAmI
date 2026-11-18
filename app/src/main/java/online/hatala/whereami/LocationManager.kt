@@ -1935,19 +1935,47 @@ class LocationManager private constructor(private val context: Context) {
                             return sanitizeMultiDataHouseNumbers(preserved, speedKmh, accuracyMeters)
                         }
                     } else {
-                        // Bare highway-only cache cells or missing house numbers during stationary dwell require revalidation
-                        val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street)
+                        // Enrich cached major corridor cells lacking road_ref from neighboring cells
+                        var enrichedCached = diskCached
+                        if (diskCached.pl.roadRef == null && (RoadNameNormalizer.isMajorHighwayType(diskCached.pl.highwayType) || (speedKmh != null && speedKmh >= 15f))) {
+                            val confirmedRef = SpatialCacheHelper.getInstance(context).findConfirmedCorridorRefForStreet(
+                                city = diskCached.pl.city,
+                                street = diskCached.pl.street,
+                                lat = lat,
+                                lng = lng
+                            )
+                            if (!confirmedRef.isNullOrBlank()) {
+                                val cleanBase = RoadNameNormalizer.extractBaseStreet(diskCached.pl.street ?: "").trim()
+                                val display = RoadNameNormalizer.formatStreetDisplay(cleanBase, confirmedRef, diskCached.pl.countryCode, allowHouseNumber = false)
+                                if (!display.isNullOrBlank()) {
+                                    enrichedCached = diskCached.copy(
+                                        en = diskCached.en.copy(street = display, roadRef = confirmedRef),
+                                        pl = diskCached.pl.copy(street = display, roadRef = confirmedRef),
+                                        native = diskCached.native.copy(street = display, roadRef = confirmedRef)
+                                    )
+                                    ioScope.launch {
+                                        try {
+                                            SpatialCacheHelper.getInstance(context).put(lat, lng, enrichedCached)
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                        }
+
+                        // Bare highway-only cache cells, major corridor rows lacking ref, or missing house numbers during stationary dwell require revalidation
+                        val bareHighwayCache = RoadNameNormalizer.isHighwayCodeOnly(enrichedCached.pl.street)
                         val isStationaryOrLowSpeed = (speedKmh == null || speedKmh < 15f) && (accuracyMeters == null || accuracyMeters <= 35f)
-                        val cachedHasBareStreet = diskCached.pl.street != null &&
-                            !RoadNameNormalizer.isHighwayCodeOnly(diskCached.pl.street) &&
-                            !RoadNameNormalizer.isMajorRoad(diskCached.pl.street, diskCached.pl.roadRef) &&
-                            RoadNameNormalizer.extractHouseNumber(diskCached.pl.street) == null
-                        if ((bareHighwayCache || (isStationaryOrLowSpeed && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
+                        val cachedHasBareStreet = enrichedCached.pl.street != null &&
+                            !RoadNameNormalizer.isHighwayCodeOnly(enrichedCached.pl.street) &&
+                            !RoadNameNormalizer.isMajorRoad(enrichedCached.pl.street, enrichedCached.pl.roadRef) &&
+                            RoadNameNormalizer.extractHouseNumber(enrichedCached.pl.street) == null
+                        val majorLacksRef = RoadNameNormalizer.isMajorHighwayType(enrichedCached.pl.highwayType) && enrichedCached.pl.roadRef == null
+                        if ((bareHighwayCache || majorLacksRef || (isStationaryOrLowSpeed && cachedHasBareStreet)) && isNetworkConnected() && allowNetwork) {
                             scheduleBackgroundRevalidation(lat, lng, bearing, speedKmh, accuracyMeters)
                         }
 
-                        spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, diskCached)
-                        val result = sanitizeMultiDataHouseNumbers(diskCached, speedKmh, accuracyMeters)
+                        spatialPlaceCache[gridKey] = CachedMultiPlace(now, lat, lng, enrichedCached)
+                        val result = sanitizeMultiDataHouseNumbers(enrichedCached, speedKmh, accuracyMeters)
 
                         // 3-Tier Staleness Gates
                         val isOnline = isNetworkConnected()
@@ -2059,8 +2087,8 @@ class LocationManager private constructor(private val context: Context) {
         // Never shield OSRM before geocoding or spatial caching: corridor shielding belongs strictly in applyStreetHysteresis.
         val osrmStreet = rawOsrmStreet
 
-        // If OSRM snaps within 12m to a canonical highway corridor (e.g. DW948, DK52), infer major highway type for coalescing
-        val candidateHighwayType = sharedOsm?.highwayType ?: if (nearest != null && nearest.distanceM <= 12.0 && RoadNameNormalizer.isHighwayCodeOnly(nearest.name)) "primary" else null
+        // If OSRM snaps within 25m to a canonical highway corridor (e.g. DW948, DK52), infer major highway type for coalescing
+        val candidateHighwayType = sharedOsm?.highwayType ?: if (nearest != null && nearest.distanceM <= 25.0 && RoadNameNormalizer.isHighwayCodeOnly(nearest.name)) "primary" else null
 
         val enPlace   = resolvePlace(lat, lng, "en",     enAddress,     "en",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters, candidateHighwayType = candidateHighwayType)
         val plPlace   = resolvePlace(lat, lng, "pl",     plAddress,     "pl",     countryCode, prefs, sharedOsm, osrmStreet, speedKmh, accuracyMeters, candidateHighwayType = candidateHighwayType)
@@ -2313,19 +2341,23 @@ class LocationManager private constructor(private val context: Context) {
                 }
 
                 val rawCountry = osm.country ?: address?.countryName ?: lastGood?.country ?: "Unknown Country"
-                val osmNorm = osm.street?.let {
-                    val isMaj = RoadNameNormalizer.isMajorRoad(it) || !osm.roadRef.isNullOrBlank()
-                    val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !osm.houseNumber.isNullOrBlank()
-                    RoadNameNormalizer.normalize(it, osm.roadRef, osm.houseNumber, includeHouseNumber = cacheH, countryCode = cc)
-                }
                 val allowAddrNorm = !(osm.isHighwayFeature && osm.street.isNullOrBlank())
-                val addrNorm = if (allowAddrNorm) {
-                    address?.thoroughfare?.let {
-                        val isMaj = RoadNameNormalizer.isMajorRoad(it)
-                        val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(it) && !address.subThoroughfare.isNullOrBlank()
-                        RoadNameNormalizer.normalize(it, null, address.subThoroughfare, includeHouseNumber = cacheH, countryCode = cc)
-                    }
-                } else null
+                val (coalescedStreet, coalescedRef) = RoadNameNormalizer.coalesceOsrmAndOsmStreet(
+                    osrmStreet = osrmStreet,
+                    osmStreet = osm.street,
+                    osmRoadRef = osm.roadRef,
+                    geocoderStreet = if (allowAddrNorm) address?.thoroughfare else null,
+                    candidateHighwayType = osm.highwayType ?: candidateHighwayType
+                )
+                val targetStreet = coalescedStreet ?: osm.street ?: (if (allowAddrNorm) address?.thoroughfare else null)
+                val targetRef = coalescedRef ?: osm.roadRef
+                val isMaj = RoadNameNormalizer.isMajorRoad(targetStreet, targetRef)
+                val targetHouse = if (osmMatchesTrajectory) (osm.houseNumber ?: if (allowAddrNorm) address?.subThoroughfare else null) else null
+                val cacheH = !isMaj && !RoadNameNormalizer.isHighwayCodeOnly(targetStreet) && !targetHouse.isNullOrBlank()
+                val normalizedStreet = targetStreet?.let {
+                    RoadNameNormalizer.normalize(it, targetRef, targetHouse, includeHouseNumber = cacheH, countryCode = cc)
+                }
+
                 val resolvedCountry = when {
                     cacheKey == "pl" && cc.isNotBlank() ->
                         Locale("", cc).getDisplayCountry(Locale("pl")).takeIf { it.isNotBlank() } ?: rawCountry
@@ -2340,14 +2372,14 @@ class LocationManager private constructor(private val context: Context) {
 
                 return PlaceInfo(
                     city = city,
-                    street = osmNorm ?: addrNorm,
-                    roadRef = osm.roadRef,
+                    street = normalizedStreet,
+                    roadRef = targetRef ?: RoadNameNormalizer.extractHighwayCode(normalizedStreet),
                     gmina = effectiveGmina,
                     powiat = effectivePowiat,
                     voivodeship = effectiveVoivodeship,
                     country = resolvedCountry,
                     countryCode = cc,
-                    highwayType = osm.highwayType
+                    highwayType = osm.highwayType ?: candidateHighwayType
                 )
             }
         }

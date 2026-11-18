@@ -511,6 +511,7 @@ fun LocationScreen(viewModel: MainViewModel) {
     val isUsbConnected by usbConnectionManager.isUsbConnected.collectAsState()
     val isTripPaused by viewModel.isTripPaused.collectAsState()
     var isVectorTrailsLoading by remember { mutableStateOf(false) }
+    var vectorTrailsProgress by remember { mutableStateOf<TrailLoadProgress?>(null) }
     var showActiveTripRouteDialog by remember { mutableStateOf(false) }
     var showLiveShareDialog by remember { mutableStateOf(false) }
     var showLiveQuickShareModal by remember { mutableStateOf(false) }
@@ -1077,6 +1078,7 @@ fun LocationScreen(viewModel: MainViewModel) {
             searchRouteColorHex = searchRouteColorHex,
             searchRouteFitTrigger = searchRouteFitTrigger,
             onVectorTrailsLoadingChange = { isVectorTrailsLoading = it },
+            onVectorTrailsProgressChange = { vectorTrailsProgress = it },
             onActivateMagnifier = {
                 dismissAllDialogs()
                 magnifierState = MagnifierState(phase = MagnifierPhase.AWAITING_TAP)
@@ -1117,6 +1119,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                             showOutdoorAreas = showOutdoorAreasInCard,
                             showHikingTrails = showHikingTrailsInCard,
                             isVectorTrailsLoading = isVectorTrailsLoading,
+                            vectorTrailsProgress = vectorTrailsProgress,
                             activeTrip = activeTrip,
                             liveSession = liveSession,
                             savedPlaces = savedPlaces,
@@ -1250,6 +1253,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                     showOutdoorAreas = showOutdoorAreasInCard,
                     showHikingTrails = showHikingTrailsInCard,
                     isVectorTrailsLoading = isVectorTrailsLoading,
+                    vectorTrailsProgress = vectorTrailsProgress,
                     activeTrip = activeTrip,
                     liveSession = liveSession,
                     savedPlaces = savedPlaces,
@@ -10819,53 +10823,7 @@ private fun OutdoorContextRow(
             }
         }
 
-        // 3. Active Trail Pill
-        outdoor.activeTrail?.let { trail ->
-            val trailBadgeColor = when (trail.color) {
-                TrailColor.RED -> Color(0xFFEF4444)
-                TrailColor.BLUE -> Color(0xFF3B82F6)
-                TrailColor.GREEN -> Color(0xFF10B981)
-                TrailColor.YELLOW -> Color(0xFFF59E0B)
-                TrailColor.BLACK -> Color(0xFFCBD5E1)
-                else -> Color(0xFF38BDF8)
-            }
-            val pillShape = RoundedCornerShape(6.dp)
-            Surface(
-                shape = pillShape,
-                color = Color(0x280284C7),
-                border = BorderStroke(1.dp, trailBadgeColor.copy(alpha = 0.55f)),
-                modifier = Modifier
-                    .widthIn(max = 280.dp)
-                    .clip(pillShape)
-                    .clickable { onTrailClick?.invoke(trail) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    EmojiText(emoji = trail.kind.iconEmoji, fontSize = 11.sp, yOffsetDp = 0.dp)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = trail.name,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = trailBadgeColor,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 12.sp
-                        )
-                    )
-                }
-            }
-        }
-
-        // 4. Nearest Peak or Pass or Hut or Water Body
+        // Nearest Peak or Pass or Hut or Water Body
         val feature = outdoor.nearestPeak ?: outdoor.nearestHut ?: outdoor.nearestPass ?: outdoor.nearestWater
         if (feature != null) {
             val isWater = feature.kind == PlaceKind.WATER_BODY
@@ -11076,6 +11034,7 @@ private fun LocalityCard(
     showOutdoorAreas: Boolean = true,
     showHikingTrails: Boolean = true,
     isVectorTrailsLoading: Boolean = false,
+    vectorTrailsProgress: TrailLoadProgress? = null,
     activeTrip: TripRecord?,
     liveSession: LiveSession?,
     savedPlaces: List<SavedPlace>,
@@ -11444,6 +11403,50 @@ private fun LocalityCard(
                                 lineHeight = 13.sp
                             )
                         )
+                    }
+                }
+
+                // ── Dedicated Active Trail Line(s) (Compact: max 1 line) ──
+                if (showHikingTrails) {
+                    locationData.outdoorContext?.activeTrails?.takeIf { it.isNotEmpty() }?.let { trails ->
+                        val trailLines = formatActiveTrailLines(trails).take(1)
+                        for (line in trailLines) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 1.dp)
+                                    .clickable { onTrailClick?.invoke(line.primaryTrail) },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                EmojiText(emoji = line.primaryTrail.kind.iconEmoji, fontSize = 12.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                for (col in line.colors.filter { it != TrailColor.NONE }) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(col.hexColor)))
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                }
+                                Text(
+                                    text = line.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -12016,6 +12019,51 @@ private fun LocalityCard(
                     }
                 }
 
+                // ── Dedicated Active Trail Line(s) (Normal: up to 2 lines) ──
+                if (showHikingTrails) {
+                    locationData.outdoorContext?.activeTrails?.takeIf { it.isNotEmpty() }?.let { trails ->
+                        val trailLines = formatActiveTrailLines(trails).take(2)
+                        for (line in trailLines) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(top = 1.dp)
+                                    .clickable { onTrailClick?.invoke(line.primaryTrail) },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                EmojiText(emoji = line.primaryTrail.kind.iconEmoji, fontSize = 12.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                for (col in line.colors.filter { it != TrailColor.NONE }) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(col.hexColor)))
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                }
+                                Text(
+                                    text = line.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF38BDF8),
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 13.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Administrative Hierarchy (Gmina, Powiat, Województwo, Country)
                 val fullHierarchyNormal = buildString {
                     if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
@@ -12261,14 +12309,30 @@ private fun LocalityCard(
                             .fillMaxHeight()
                             .padding(horizontal = 10.dp)
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(11.dp),
-                            strokeWidth = 1.6.dp,
-                            color = Color(0xFF38BDF8)
-                        )
+                        val prog = vectorTrailsProgress
+                        if (prog != null && prog.total > 0) {
+                            val fraction = (prog.completed.toFloat() / prog.total.toFloat()).coerceIn(0f, 1f)
+                            CircularProgressIndicator(
+                                progress = { fraction },
+                                modifier = Modifier.size(11.dp),
+                                strokeWidth = 1.6.dp,
+                                color = Color(0xFF38BDF8)
+                            )
+                        } else {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(11.dp),
+                                strokeWidth = 1.6.dp,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(6.dp))
+                        val progressText = if (prog != null && prog.total > 0) {
+                            "Trails ${prog.completed}/${prog.total} (${prog.percentage}%)"
+                        } else {
+                            "Loading trails..."
+                        }
                         Text(
-                            text = "Loading trails...",
+                            text = progressText,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),

@@ -2025,6 +2025,26 @@ Feature enhancements:
 | **SPD-69-05** | Moving average speed & pace computation excluding pauses and LocalityCard display. | `SpeedPaceFormatter.kt`, `MainActivity.kt`, `EnhancementsUnitTest.kt` | Implemented | `SpeedPaceFormatterComputesMovingAverageExcludingPausesAndFormatsMetrics` unit test passes. |
 | **VER-69** | Bump to `versionCode = 214`, `versionName = "2.5.0"`. | `app/build.gradle.kts` | Implemented | Pre-release gates `./gradlew testDebugUnitTest` and `./gradlew assembleDebug` pass. |
 
+---
+
+## Round 70 - Boundaries Negative Cache TTL, Krakowska Corridor Ref, Parallel Trail Vector Lanes & Persistent Trail Cache (2026-11-18 v2.5.1)
+
+Field test feedback enhancements:
+- **Boundaries Negative Cache TTL & Empty Sentinel Refresh**: Decoupled `CacheManager` deficit TTL (30 days) from live map UI (6h). Re-writing empty sentinels on `[Fetch]` updates timestamps and allows negative caching to be recognized for up to 30 days without creating a perpetual "216 missing" alert.
+- **Krakowska Corridor DK52 Ref Healing & Coalescence**: In `SpatialCacheHelper`, implemented `findConfirmedCorridorRefForStreet` to scan nearby cells along the same street/city. Older cache rows with missing `road_ref` are automatically repaired at startup and query time. In `LocationManager`, expanded OSRM snap radius to 25m and coalesced OSRM corridor codes with OSM named ways (`Krakowska (DK52)`).
+- **Parallel Trail Vector Lanes & Normal Continuity**: In `VectorTrailOverlay`, assigned distinct slot indices (0..62) based on unique route identity (`(kind, color, relationId ?: id)`) so coincident trails of the same color render in parallel lanes instead of stacking. Enforced polyline normal continuity across consecutive segments to eliminate normal-flip weaving across curved bends.
+- **Determinate Trail Loading Pill & Persistent Storage**: In `LocalityCard`, rendered a determinate progress pill (`"Trails X/Y (Z%)"`) reflecting tile and metadata completion. Moved vector trail storage from `cache/trail_vectors` to persistent `files/trail_vectors` with automatic legacy migration. Integrated a 5th row ("Hiking & Cycling Trails") in `CacheManager` and `CacheManagerDialog` with tile deficit tracking, prefetching, and clear options.
+- **Active Trail Type & Color Line**: Rendered dedicated active trail lines beneath the street name in `LocalityCard` (e.g. `"Blue hiking trail: Lipnik Granica..."` or `"Red, Green hiking trail"`), replacing the duplicate trail pill in `OutdoorContextRow`.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **BND-70-01** | Eliminate recurring "216 missing" boundary deficit alert by decoupling CacheManager negative TTL (30d) from live map (6h) and refreshing empty sentinel timestamps on fetch. | `BoundaryHelper.kt`, `CacheManager.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | `BoundaryHelper respects CacheManager 30-day negative TTL while live map uses 6h` passes. |
+| **RDN-70-02** | Restore DK52 on Krakowska by healing null road_ref from neighboring corridor cells and coalescing OSRM codes. | `SpatialCacheHelper.kt`, `LocationManager.kt`, `RoadNameNormalizer.kt` | Implemented | Corridor ref lookup and cache sanitization unit tests pass. |
+| **TRL-70-03** | Parallel trail vector lanes for coincident same-color routes and normal continuity along curves. | `VectorTrailOverlay.kt`, `TrailVectorRepository.kt` | Implemented | Route slot bitmask assignment and normal dot-product verification verified. |
+| **TRL-70-04** | Determinate vector trail loading progress pill ("Trails X/Y (Z%)") and persistent filesDir storage with CacheManager 5th row. | `TrailVectorRepository.kt`, `CacheManager.kt`, `CacheManagerDialog.kt`, `MainActivity.kt`, `OsmMapView.kt`, `OutdoorFeatureTest.kt` | Implemented | Tile planning and deficit tests pass; UI verified. |
+| **LOC-70-05** | Dedicated active trail type and color line under street name in LocalityCard with color grouping. | `OutdoorModels.kt`, `MainActivity.kt`, `OutdoorFeatureTest.kt` | Implemented | `testFormatActiveTrailLinesSingleAndGrouped` passes. |
+| **VER-70** | Bump to `versionCode = 215`, `versionName = "2.5.1"`. | `app/build.gradle.kts` | Implemented | Unit tests (745 passed) and assembleDebug pass. |
+
 
 
 

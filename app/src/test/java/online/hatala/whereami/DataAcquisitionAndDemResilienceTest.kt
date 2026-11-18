@@ -247,6 +247,33 @@ class DataAcquisitionAndDemResilienceTest {
     }
 
     @Test
+    fun `BoundaryHelper respects CacheManager 30-day negative TTL while live map uses 6h`() {
+        val dir = Files.createTempDirectory("boundary_cache_mgr_ttl").toFile()
+        try {
+            val key = BoundaryHelper.buildLocalityCacheKey("Ośno", "pl", "Gmina Wiązów")!!
+            BoundaryHelper.saveToDiskCacheInDir(dir, key, emptyList())
+            val sentinelFile = File(dir, "$key.json")
+
+            // Simulate 24-hour-old empty sentinel (> 6h live TTL, but < 30-day CacheManager TTL)
+            sentinelFile.setLastModified(System.currentTimeMillis() - (24L * 60L * 60L * 1000L))
+
+            // Live map: expired after 6h so boundary can retry in background
+            assertFalse(
+                "Live map should retry after 6 hours",
+                BoundaryHelper.hasBoundaryInDir(dir, "Ośno", "pl", "Gmina Wiązów", negativeTtlMs = BoundaryHelper.NEGATIVE_CACHE_TTL_MS)
+            )
+
+            // CacheManager: recognized as valid negative cache for 30 days, avoiding perpetual deficit alarm
+            assertTrue(
+                "CacheManager should recognize negative cache up to 30 days",
+                BoundaryHelper.hasBoundaryInDir(dir, "Ośno", "pl", "Gmina Wiązów", negativeTtlMs = BoundaryHelper.CACHE_MANAGER_NEGATIVE_TTL_MS)
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `LocationManager resolvePrimaryNativeLocale prefers primary national language over English regional locale`() {
         val plLocale = LocationManager.resolvePrimaryNativeLocale("PL", java.util.Locale.ENGLISH)
         assertEquals("pl", plLocale.language)

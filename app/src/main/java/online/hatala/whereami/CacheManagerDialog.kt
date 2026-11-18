@@ -43,6 +43,8 @@ fun CacheManagerDialog(
     var spatialCount by remember { mutableStateOf(0L) }
     var demBytes by remember { mutableStateOf(0L) }
     var demGridCount by remember { mutableStateOf(0) }
+    var trailBytes by remember { mutableStateOf(0L) }
+    var trailCount by remember { mutableStateOf(0) }
     val elevationProgress by ElevationCorrectionManager.progress.collectAsState()
 
     var allowOnBattery by remember { mutableStateOf(cacheManager.allowOnBattery) }
@@ -53,7 +55,7 @@ fun CacheManagerDialog(
     var maxCacheSizeMb by remember { mutableStateOf(cacheManager.maxCacheSizeMb) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL"
+    var cacheClearConfirmTarget by remember { mutableStateOf<String?>(null) } // "TILES", "BOUNDARIES", "SPATIAL", "TRAILS"
 
     fun refreshMetrics() {
         cacheManager.calculateCacheDeficit()
@@ -67,6 +69,8 @@ fun CacheManagerDialog(
             demGridCount = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 TripDatabaseHelper.getInstance(context).getElevationCacheCount()
             }
+            trailBytes = cacheManager.getTrailCacheBytes()
+            trailCount = cacheManager.getTrailCacheFileCount()
         }
     }
 
@@ -630,6 +634,118 @@ fun CacheManagerDialog(
 
                         Divider(color = Color(0xFF1E293B))
 
+                        // 5. Hiking & Cycling Trails
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "Hiking & Cycling Trails",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 15.sp
+                                    )
+                                )
+                                val missingTrails = cacheDeficit?.missingTrailTiles
+                                when {
+                                    missingTrails == null -> Text(
+                                        text = "…",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    missingTrails == 0 -> Text(
+                                        text = "✓ complete",
+                                        color = Color(0xFF4ADE80),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                    else -> Text(
+                                        text = "⚠ $missingTrails missing",
+                                        color = Color(0xFFFBBF24),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = "${formatBytes(trailBytes)} • $trailCount tiles",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeight = 14.sp
+                                    )
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                val missingTrails = cacheDeficit?.missingTrailTiles
+                                if (missingTrails != null && missingTrails > 0) {
+                                    Button(
+                                        onClick = { if (!isRunning) cacheManager.fetchMissingTrails() },
+                                        enabled = !isRunning,
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                    ) {
+                                        if (isRunning) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(12.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "Fetch",
+                                                fontSize = 11.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                style = TextStyle(
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                    lineHeight = 13.sp
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { cacheClearConfirmTarget = "TRAILS" },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f))
+                                ) {
+                                    Text(
+                                        text = "Clear",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 13.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        Divider(color = Color(0xFF1E293B))
+
                         // Total
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -646,7 +762,7 @@ fun CacheManagerDialog(
                                 )
                             )
                             Text(
-                                text = formatBytes(tileBytes + boundaryBytes + spatialBytes + demBytes),
+                                text = formatBytes(tileBytes + boundaryBytes + spatialBytes + demBytes + trailBytes),
                                 color = Color(0xFF38BDF8),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1487,6 +1603,7 @@ fun CacheManagerDialog(
             "TILES" -> "Clear Map Tiles Cache?" to "This will delete all downloaded offline map tiles. They will be re-downloaded when viewing the map."
             "BOUNDARIES" -> "Clear Administrative Boundaries?" to "This will delete all saved town and city boundary polygons. They will be fetched again on demand."
             "SPATIAL" -> "Clear Addresses & Streets Cache?" to "This will clear all locally cached reverse-geocoded coordinates and street names."
+            "TRAILS" -> "Clear Hiking & Cycling Trails?" to "This will delete all saved offline vector trail tiles. They will be downloaded again when viewing the map."
             else -> "Clear Cache?" to "Are you sure you want to clear this cached data?"
         }
 
@@ -1540,6 +1657,7 @@ fun CacheManagerDialog(
                                     "TILES" -> cacheManager.clearTileCache()
                                     "BOUNDARIES" -> cacheManager.clearBoundaryCache()
                                     "SPATIAL" -> cacheManager.clearSpatialCache()
+                                    "TRAILS" -> cacheManager.clearTrailCache()
                                 }
                                 cacheClearConfirmTarget = null
                                 refreshMetrics()

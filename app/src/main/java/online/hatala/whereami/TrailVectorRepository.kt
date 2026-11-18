@@ -36,6 +36,15 @@ data class TrailVectorSegment(
     val relationId: Long? = null
 )
 
+data class TrailLoadProgress(
+    val phase: String,
+    val completed: Int,
+    val total: Int
+) {
+    val percentage: Int
+        get() = if (total > 0) ((completed.toDouble() / total.toDouble()) * 100.0).toInt().coerceIn(0, 100) else 0
+}
+
 data class WaymarkedRelationMeta(
     val relationId: Long,
     val name: String? = null,
@@ -52,7 +61,7 @@ object TrailVectorRepository {
     private const val TILE_SIZE_DEG = 0.08
     private const val WAYMARKED_ZOOM = 12
     private const val MERCATOR_ORIGIN_SHIFT = 20037508.342789244
-    private const val CACHE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+    private const val CACHE_TTL_MS = 30L * 24L * 60L * 60L * 1000L
     private const val FAILURE_COOLDOWN_MS = 15_000L
     private const val MAX_WAYMARKED_CACHED_TILES = 144
     private const val MAX_WAYMARKED_NETWORK_TILES = 16
@@ -100,10 +109,126 @@ object TrailVectorRepository {
         return GeoPoint(lat, lon)
     }
 
-    private fun getCacheDir(context: Context): File {
-        val dir = File(context.cacheDir, "trail_vectors")
+    internal fun getStorageDir(context: Context): File {
+        val baseDir = try {
+            context.filesDir ?: context.cacheDir
+        } catch (_: Throwable) {
+            try { context.cacheDir } catch (_: Throwable) { File(System.getProperty("java.io.tmpdir") ?: "/tmp") }
+        }
+        val dir = File(baseDir, "trail_vectors")
         if (!dir.exists()) dir.mkdirs()
+        // One-time idempotent migration from legacy context.cacheDir/trail_vectors
+        try {
+            val legacy = File(context.cacheDir, "trail_vectors")
+            if (legacy.exists() && legacy.isDirectory && legacy.canonicalPath != dir.canonicalPath) {
+                legacy.listFiles()?.forEach { f ->
+                    val dest = File(dir, f.name)
+                    if (!dest.exists()) {
+                        f.renameTo(dest)
+                    } else {
+                        f.delete()
+                    }
+                }
+                legacy.delete()
+            }
+        } catch (_: Throwable) {}
         return dir
+    }
+
+    fun getStorageBytes(context: Context): Long {
+        val dir = getStorageDir(context)
+        if (!dir.exists()) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
+    fun getStorageFileCount(context: Context): Int {
+        val dir = getStorageDir(context)
+        if (!dir.exists()) return 0
+        return dir.listFiles()?.size ?: 0
+    }
+
+    fun clearStorage(context: Context): Boolean {
+        memoryCache.clear()
+        relMetaCache.clear()
+        val dir = getStorageDir(context)
+        if (!dir.exists()) return true
+        return dir.listFiles()?.all { it.delete() } ?: true
+    }
+
+    fun planSavedTripTrailTileKeys(trips: List<TripRecord>): List<String> {
+        val keys = linkedSetOf<String>()
+        val subdomains = arrayOf("hiking", "cycling", "mtb")
+        for (trip in trips) {
+            if (trip.points.isEmpty()) continue
+            var minLat = 90.0
+            var maxLat = -90.0
+            var minLon = 180.0
+            var maxLon = -180.0
+            for (pt in trip.points) {
+                if (pt.latitude < minLat) minLat = pt.latitude
+                if (pt.latitude > maxLat) maxLat = pt.latitude
+                if (pt.longitude < minLon) minLon = pt.longitude
+                if (pt.longitude > maxLon) maxLon = pt.longitude
+            }
+
+            val (xMinRaw, yMaxRaw) = latLonToTileZ12(minLat, minLon)
+            val (xMaxRaw, yMinRaw) = latLonToTileZ12(maxLat, maxLon)
+            val minX = minOf(xMinRaw, xMaxRaw)
+            val maxX = maxOf(xMinRaw, xMaxRaw)
+            val minY = minOf(yMinRaw, yMaxRaw)
+            val maxY = maxOf(yMinRaw, yMaxRaw)
+            for (sub in subdomains) {
+                for (tx in minX..maxX) {
+                    for (ty in minY..maxY) {
+                        keys.add("wm_${sub}_${WAYMARKED_ZOOM}_${tx}_${ty}")
+                    }
+                }
+            }
+        }
+        return keys.toList()
+    }
+
+    fun filterMissingTrailTileKeys(context: Context, plannedKeys: List<String>): List<String> {
+        if (plannedKeys.isEmpty()) return emptyList()
+        val dir = getStorageDir(context)
+        val missing = mutableListOf<String>()
+        for (key in plannedKeys) {
+            val file = File(dir, "$key.geojson")
+            if (!file.exists() || (System.currentTimeMillis() - file.lastModified()) > CACHE_TTL_MS) {
+                missing.add(key)
+            }
+        }
+        return missing
+    }
+
+    suspend fun fetchMissingTrailTiles(
+        context: Context,
+        missingKeys: List<String>,
+        onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null
+    ): Int = withContext(Dispatchers.IO) {
+        if (missingKeys.isEmpty()) return@withContext 0
+        val dir = getStorageDir(context)
+        var added = 0
+        val total = missingKeys.size
+        for ((idx, key) in missingKeys.withIndex()) {
+            val parts = key.split("_")
+            if (parts.size >= 5) {
+                val sub = parts[1]
+                val z = parts[2]
+                val x = parts[3]
+                val y = parts[4]
+                val urlStr = "https://$sub.waymarkedtrails.org/api/v1/details/tile/$z/$x/$y.geojson"
+                val body = httpGetString(urlStr, connectTimeoutMs = 6000, readTimeoutMs = 10000)
+                if (body != null) {
+                    try {
+                        File(dir, "$key.geojson").writeText(body)
+                        added++
+                    } catch (_: Exception) {}
+                }
+            }
+            onProgress?.invoke(idx + 1, total)
+        }
+        added
     }
 
     internal fun resetCachesForTest() {
@@ -140,7 +265,8 @@ object TrailVectorRepository {
         overpassEndpoints: List<String>? = null,
         osmMapBaseUrl: String = "https://api.openstreetmap.org/api/0.6/map",
         supplementOsmTrails: Boolean = true,
-        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null
+        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null,
+        onProgress: (suspend (TrailLoadProgress) -> Unit)? = null
     ): List<TrailVectorSegment> = withContext(Dispatchers.IO) {
         val subdomains = subdomainsForKinds(requestedKinds)
         val wantWaymarked = subdomains.isNotEmpty()
@@ -160,7 +286,8 @@ object TrailVectorRepository {
                 allowNetwork = allowNetwork,
                 tileUrlTemplate = waymarkedTileUrlTemplate,
                 detailsUrlTemplate = waymarkedDetailsUrlTemplate,
-                onProgressiveUpdate = onProgressiveUpdate
+                onProgressiveUpdate = onProgressiveUpdate,
+                onProgress = onProgress
             )
             results.addAll(wmSegments)
             anyWaymarkedOk = allOrAnyOk
@@ -309,7 +436,8 @@ object TrailVectorRepository {
         allowNetwork: Boolean,
         tileUrlTemplate: String,
         detailsUrlTemplate: String,
-        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null
+        onProgressiveUpdate: (suspend (List<TrailVectorSegment>) -> Unit)? = null,
+        onProgress: (suspend (TrailLoadProgress) -> Unit)? = null
     ): Pair<List<TrailVectorSegment>, Boolean> = coroutineScope {
         val (xMinRaw, yMaxRaw) = latLonToTileZ12(bbox.latSouth, bbox.lonWest)
         val (xMaxRaw, yMinRaw) = latLonToTileZ12(bbox.latNorth, bbox.lonEast)
@@ -359,6 +487,9 @@ object TrailVectorRepository {
             }
         }
 
+        val totalTiles = sortedCoords.size * subdomains.size
+        val completedTileCount = java.util.concurrent.atomic.AtomicInteger(0)
+
         val fetchJobs = sortedCoords.flatMap { xy ->
             val (tx, ty) = xy
             val canFetchThisTile = xy in networkAllowedCoords
@@ -366,52 +497,57 @@ object TrailVectorRepository {
                 async {
                     val key = "wm_${sub}_12_${tx}_${ty}"
                     val segKey = "wm_seg_${sub}_12_${tx}_${ty}"
-                    val memSegs = memoryCache[segKey]
-                    if (memSegs != null) {
-                        progressiveTiles[segKey] = memSegs
-                        return@async LoadedTile(sub, tx, ty, segKey, null, memSegs) to true
-                    }
-                    val file = File(getCacheDir(context), "$key.geojson")
-                    val cachedJson = readFreshCacheFile(file)
-                    if (cachedJson != null) {
-                        if (onProgressiveUpdate != null) {
-                            val quick = parseWaymarkedTileJson(cachedJson, sub, relMetaCache, tx, ty)
-                            progressiveTiles[segKey] = quick
+                    val tileResult = run {
+                        val memSegs = memoryCache[segKey]
+                        if (memSegs != null) {
+                            progressiveTiles[segKey] = memSegs
+                            return@run LoadedTile(sub, tx, ty, segKey, null, memSegs) to true
                         }
-                        LoadedTile(sub, tx, ty, segKey, cachedJson, null) to true
-                    } else if (!canFetchThisTile || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
-                        null to false
-                    } else {
-                        try {
-                            val urlStr = tileUrlTemplate
-                                .replace("{sub}", sub)
-                                .replace("{x}", tx.toString())
-                                .replace("{y}", ty.toString())
-                            val body = httpGetString(urlStr, connectTimeoutMs = 6000, readTimeoutMs = 10000)
-                            if (body != null) {
-                                try {
-                                    file.writeText(body)
-                                } catch (_: Exception) {
-                                }
-                                DataAcquisitionManager.reportSuccess(DataSourceKind.TRAILS)
-                                if (onProgressiveUpdate != null) {
-                                    val quick = parseWaymarkedTileJson(body, sub, relMetaCache, tx, ty)
-                                    progressiveTiles[segKey] = quick
-                                    emitProgressive()
-                                }
-                                LoadedTile(sub, tx, ty, segKey, body, null) to true
-                            } else {
-                                markTileFailed(key)
-                                null to false
+                        val file = File(getStorageDir(context), "$key.geojson")
+                        val cachedJson = readFreshCacheFile(file)
+                        if (cachedJson != null) {
+                            if (onProgressiveUpdate != null) {
+                                val quick = parseWaymarkedTileJson(cachedJson, sub, relMetaCache, tx, ty)
+                                progressiveTiles[segKey] = quick
                             }
-                        } catch (e: Exception) {
-                            markTileFailed(key)
-                            logDebug("Waymarked tile $key error: ${e.message}")
+                            LoadedTile(sub, tx, ty, segKey, cachedJson, null) to true
+                        } else if (!canFetchThisTile || isTileOnFailureCooldown(key) || !pendingTiles.add(key)) {
                             null to false
-                        } finally {
-                            pendingTiles.remove(key)
+                        } else {
+                            try {
+                                val urlStr = tileUrlTemplate
+                                    .replace("{sub}", sub)
+                                    .replace("{x}", tx.toString())
+                                    .replace("{y}", ty.toString())
+                                val body = httpGetString(urlStr, connectTimeoutMs = 6000, readTimeoutMs = 10000)
+                                if (body != null) {
+                                    try {
+                                        file.writeText(body)
+                                    } catch (_: Exception) {
+                                    }
+                                    DataAcquisitionManager.reportSuccess(DataSourceKind.TRAILS)
+                                    if (onProgressiveUpdate != null) {
+                                        val quick = parseWaymarkedTileJson(body, sub, relMetaCache, tx, ty)
+                                        progressiveTiles[segKey] = quick
+                                        emitProgressive()
+                                    }
+                                    LoadedTile(sub, tx, ty, segKey, body, null) to true
+                                } else {
+                                    markTileFailed(key)
+                                    null to false
+                                }
+                            } catch (e: Exception) {
+                                markTileFailed(key)
+                                logDebug("Waymarked tile $key error: ${e.message}")
+                                null to false
+                            } finally {
+                                pendingTiles.remove(key)
+                            }
                         }
                     }
+                    val done = completedTileCount.incrementAndGet()
+                    onProgress?.invoke(TrailLoadProgress("Trails", done, totalTiles))
+                    tileResult
                 }
             }
         }
@@ -442,6 +578,9 @@ object TrailVectorRepository {
 
         val fetchedMetaRelIds = HashSet<Long>()
         if (allowTileNetwork && uncachedRels.isNotEmpty()) {
+            val totalMeta = uncachedRels.size
+            val completedMetaCount = java.util.concurrent.atomic.AtomicInteger(0)
+            onProgress?.invoke(TrailLoadProgress("Trail info", 0, totalMeta))
             val sem = Semaphore(6)
             uncachedRels.take(MAX_DETAIL_FETCHES_PER_BATCH).map { (sub, relId) ->
                 async {
@@ -458,6 +597,8 @@ object TrailVectorRepository {
                                 synchronized(fetchedMetaRelIds) { fetchedMetaRelIds.add(relId) }
                             }
                         }
+                        val doneMeta = completedMetaCount.incrementAndGet()
+                        onProgress?.invoke(TrailLoadProgress("Trail info", doneMeta, totalMeta))
                     }
                 }
             }.awaitAll()
@@ -571,7 +712,7 @@ object TrailVectorRepository {
                 continue
             }
 
-            val diskFile = File(getCacheDir(context), "$key.json")
+            val diskFile = File(getStorageDir(context), "$key.json")
             if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
                 try {
                     val rawText = diskFile.readText()
@@ -751,7 +892,7 @@ object TrailVectorRepository {
                 val key = "macro_${kindTag}_${latBin}_${lonBin}"
                 memoryCache[key]?.let { results.addAll(it); continue }
 
-                val diskFile = File(getCacheDir(context), "$key.json")
+                val diskFile = File(getStorageDir(context), "$key.json")
                 if (diskFile.exists() && System.currentTimeMillis() - diskFile.lastModified() < CACHE_TTL_MS) {
                     try {
                         val rawText = diskFile.readText()
@@ -825,7 +966,7 @@ object TrailVectorRepository {
         osmFullBaseUrl: String = "https://api.openstreetmap.org/api/0.6"
     ): List<List<GeoPoint>> = withContext(Dispatchers.IO) {
         if (osmId <= 0L) return@withContext emptyList()
-        val cacheDir = getCacheDir(context)
+        val cacheDir = getStorageDir(context)
         val primaryTypeTag = if (preferRelation) "r" else "w"
         val altTypeTag = if (preferRelation) "w" else "r"
         val primaryDiskFile = File(cacheDir, "rel_geom_${primaryTypeTag}_${osmId}.json")
@@ -1138,7 +1279,7 @@ object TrailVectorRepository {
     }
 
     private fun loadRelationMetaFromDisk(context: Context, subdomain: String, relId: Long): WaymarkedRelationMeta? {
-        val file = File(getCacheDir(context), "wm_rel_${subdomain}_${relId}.json")
+        val file = File(getStorageDir(context), "wm_rel_${subdomain}_${relId}.json")
         val raw = readFreshCacheFile(file) ?: return null
         return try {
             val obj = JSONObject(raw)
@@ -1158,7 +1299,7 @@ object TrailVectorRepository {
 
     private fun saveRelationMetaToDisk(context: Context, subdomain: String, meta: WaymarkedRelationMeta) {
         try {
-            val file = File(getCacheDir(context), "wm_rel_${subdomain}_${meta.relationId}.json")
+            val file = File(getStorageDir(context), "wm_rel_${subdomain}_${meta.relationId}.json")
             val obj = JSONObject().apply {
                 put("id", meta.relationId)
                 put("name", meta.name ?: JSONObject.NULL)
