@@ -39,7 +39,16 @@ enum class TrailRouteKind(val displayName: String, val iconEmoji: String) {
     EDUCATIONAL("Educational Path", "📖"),
     CYCLING("Cycling Route", "🚴"),
     MTB("MTB Trail", "🚵"),
-    KAYAKING("Waterway / Kayak Trail", "🛶")
+    KAYAKING("Waterway / Kayak Trail", "🛶");
+
+    val descriptiveLabel: String
+        get() = when (this) {
+            HIKING -> "hiking trail"
+            EDUCATIONAL -> "educational trail"
+            CYCLING -> "bicycle trail"
+            MTB -> "MTB trail"
+            KAYAKING -> "kayak trail"
+        }
 }
 
 enum class TrailColor(val hexColor: String, val displayName: String) {
@@ -64,6 +73,44 @@ data class ActiveTrailInfo(
     val network: String? = null,
     val distanceMeters: Float = 0f
 )
+
+data class FormattedTrailLine(
+    val colors: List<TrailColor>,
+    val label: String,
+    val primaryTrail: ActiveTrailInfo
+)
+
+fun formatActiveTrailLines(trails: List<ActiveTrailInfo>): List<FormattedTrailLine> {
+    if (trails.isEmpty()) return emptyList()
+    val byKind = trails.groupBy { it.kind }
+    val result = mutableListOf<FormattedTrailLine>()
+    for ((kind, kindTrails) in byKind) {
+        val distinctColors = kindTrails.map { it.color }.distinct()
+        val colorPrefix = if (distinctColors.size == 1 && distinctColors[0] == TrailColor.NONE) {
+            ""
+        } else {
+            distinctColors.filter { it != TrailColor.NONE }.joinToString(", ") { it.displayName }
+        }
+        val typeLabel = kind.descriptiveLabel
+        val header = if (colorPrefix.isNotBlank()) "$colorPrefix $typeLabel" else typeLabel
+
+        val names = kindTrails.map { it.name.trim() }
+            .filter { it.isNotBlank() && !it.startsWith("Trail #") }
+            .distinct()
+        val text = if (names.isNotEmpty()) {
+            "$header: ${names.joinToString(" • ")}"
+        } else {
+            val refs = kindTrails.mapNotNull { it.ref?.trim()?.takeIf { r -> r.isNotBlank() } }.distinct()
+            if (refs.isNotEmpty()) {
+                "$header: ${refs.joinToString(", ")}"
+            } else {
+                header
+            }
+        }
+        result.add(FormattedTrailLine(distinctColors, text, kindTrails.first()))
+    }
+    return result
+}
 
 data class OutdoorFeatureInfo(
     val osmId: Long,

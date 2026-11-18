@@ -41,6 +41,7 @@ class TrailVectorRepositoryTest {
 
     private fun fakeContext() = object : ContextWrapper(null) {
         override fun getCacheDir(): File = tempCacheDir
+        override fun getFilesDir(): File = tempCacheDir
     }
 
     @Test

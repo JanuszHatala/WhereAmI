@@ -624,6 +624,7 @@ fun OsmMapView(
     searchRouteFitTrigger: Long = 0L,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     onVectorTrailsLoadingChange: ((Boolean) -> Unit)? = null,
+    onVectorTrailsProgressChange: ((TrailLoadProgress?) -> Unit)? = null,
     onActivateMagnifier: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -835,6 +836,7 @@ fun OsmMapView(
         onCurrentMapOrientationChange = { currentMapOrientation = it },
         onTrailSelected = onTrailSelected,
         onVectorTrailsLoadingChange = onVectorTrailsLoadingChange,
+        onVectorTrailsProgressChange = onVectorTrailsProgressChange,
         onOrientationModeChange = { next -> onOrientationModeChange?.invoke(next) }
     )
 
@@ -1770,6 +1772,7 @@ private fun MapTileAndTrailLayerEffects(
     onCurrentMapOrientationChange: (Float) -> Unit,
     onTrailSelected: ((TrailVectorSegment) -> Unit)?,
     onVectorTrailsLoadingChange: ((Boolean) -> Unit)? = null,
+    onVectorTrailsProgressChange: ((TrailLoadProgress?) -> Unit)? = null,
     onOrientationModeChange: (MapOrientationMode) -> Unit
 ) {
     LaunchedEffect(layerState.baseLayer, mapView) {
@@ -1860,7 +1863,9 @@ private fun MapTileAndTrailLayerEffects(
                         enabledColors = layerState.enabledTrailColors,
                         onTrailSelected = onTrailSelected,
                         onLoadingStateChange = onVectorTrailsLoadingChange
-                    )
+                    ).apply {
+                        onProgressChange = onVectorTrailsProgressChange
+                    }
                     layerState.vectorTrailOverlayRef = vOverlay
                 }
                 vOverlay.trailThickness = layerState.trailThickness
@@ -1871,6 +1876,7 @@ private fun MapTileAndTrailLayerEffects(
                 vOverlay.supplementOsmTrails = layerState.supplementMissingOsmTrails
                 vOverlay.onTrailSelected = onTrailSelected
                 vOverlay.onLoadingStateChange = onVectorTrailsLoadingChange
+                vOverlay.onProgressChange = onVectorTrailsProgressChange
                 if (!map.overlays.contains(vOverlay)) {
                     val insertIdx = if (map.overlays.size > 1) 1 else 0
                     map.overlays.add(insertIdx, vOverlay)

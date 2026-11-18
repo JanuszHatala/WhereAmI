@@ -51,9 +51,10 @@ class CacheManager private constructor(private val context: Context) {
 
         internal fun filterMissingBoundaryTargetsInDir(
             dir: File,
-            targets: List<BoundaryTarget>
+            targets: List<BoundaryTarget>,
+            negativeTtlMs: Long = BoundaryHelper.CACHE_MANAGER_NEGATIVE_TTL_MS
         ): List<BoundaryTarget> =
-            targets.filter { !BoundaryHelper.hasBoundaryInDir(dir, it.name, it.countryCode, it.municipality) }
+            targets.filter { !BoundaryHelper.hasBoundaryInDir(dir, it.name, it.countryCode, it.municipality, negativeTtlMs) }
 
         internal fun filterMissingMapTilesInDb(
             cacheDbFile: File,
@@ -170,6 +171,20 @@ class CacheManager private constructor(private val context: Context) {
         TripDatabaseHelper.getInstance(context).getElevationCacheBytes()
     }
 
+    suspend fun getTrailCacheBytes(): Long = withContext(Dispatchers.IO) {
+        TrailVectorRepository.getStorageBytes(context)
+    }
+
+    suspend fun getTrailCacheFileCount(): Int = withContext(Dispatchers.IO) {
+        TrailVectorRepository.getStorageFileCount(context)
+    }
+
+    suspend fun clearTrailCache(): Boolean = withContext(Dispatchers.IO) {
+        val result = TrailVectorRepository.clearStorage(context)
+        calculateCacheDeficit()
+        result
+    }
+
     private fun computeDirSize(dir: File?): Long {
         if (dir == null || !dir.exists()) return 0L
         var size = 0L
@@ -245,7 +260,8 @@ class CacheManager private constructor(private val context: Context) {
         data class Completed(
             val addedRoutes: Int,
             val addedBoundaries: Int,
-            val addedMapTiles: Int = 0
+            val addedMapTiles: Int = 0,
+            val addedTrails: Int = 0
         ) : PrefetchState()
         data class Blocked(val reason: String) : PrefetchState()
         data class Error(val message: String) : PrefetchState()
@@ -264,8 +280,12 @@ class CacheManager private constructor(private val context: Context) {
         val missingBoundaries: Int,
         val missingDemTrips: Int = 0,
         val missingDemPoints: Int = 0,
-        val missingMapTiles: Int = 0
-    )
+        val missingMapTiles: Int = 0,
+        val missingTrailTiles: Int = 0
+    ) {
+        val totalMissing: Int
+            get() = missingRoutes + missingBoundaries + missingMapTiles + missingTrailTiles
+    }
 
     internal fun shouldAutoPausePrefetch(isRecording: Boolean, isGeocoderRateLimited: Boolean): Boolean =
         Companion.shouldAutoPausePrefetch(isRecording, isGeocoderRateLimited)
@@ -684,7 +704,35 @@ class CacheManager private constructor(private val context: Context) {
                     0 to null
                 }
 
-                _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries, addedTiles)
+                // PASS 5: Outdoor Hiking & Cycling Trails along saved trip corridors
+                val plannedTrailTiles = TrailVectorRepository.planSavedTripTrailTileKeys(completedTrips)
+                val missingTrailTiles = TrailVectorRepository.filterMissingTrailTileKeys(context, plannedTrailTiles)
+                var addedTrails = 0
+                val pass5Total = missingTrailTiles.size
+                var pass5Current = 0
+                if (missingTrailTiles.isNotEmpty()) {
+                    _prefetchState.value = PrefetchState.Running(5, "Pass 5: Outdoor Trails", pass5Current, pass5Total, addedRoutes + addedBoundaries + addedTiles)
+                    updateNotification("Pass 5: Trails", pass5Current, pass5Total, false)
+
+                    for (tileKey in missingTrailTiles) {
+                        while (isPrefetchPaused) {
+                            kotlinx.coroutines.delay(500L)
+                        }
+                        if (!allowOnBattery && !isDeviceCharging()) {
+                            _prefetchState.value = PrefetchState.Blocked("Charging disconnected.")
+                            dismissNotification()
+                            return@launch
+                        }
+                        val added = TrailVectorRepository.fetchMissingTrailTiles(context, listOf(tileKey))
+                        addedTrails += added
+                        pass5Current++
+                        _prefetchState.value = PrefetchState.Running(5, "Pass 5: Outdoor Trails", pass5Current, pass5Total, addedRoutes + addedBoundaries + addedTiles + addedTrails)
+                        updateNotification("Pass 5: Trails", pass5Current, pass5Total, false)
+                        kotlinx.coroutines.delay(80L)
+                    }
+                }
+
+                _prefetchState.value = PrefetchState.Completed(addedRoutes, addedBoundaries, addedTiles, addedTrails)
                 dismissNotification()
                 calculateCacheDeficit()
             } catch (_: kotlinx.coroutines.CancellationException) {
@@ -880,6 +928,75 @@ class CacheManager private constructor(private val context: Context) {
         }
     }
 
+    fun fetchMissingTrails(isUserInitiated: Boolean = true) {
+        if (_prefetchState.value is PrefetchState.Running) return
+
+        if (!isUserInitiated) {
+            val isRecording = TripManager.getInstance(context).activeTrip.value != null
+            val isLiveSharing = LiveSharingManager.getInstance(context).currentSession.value?.isActive == true
+            if (isRecording || isLiveSharing) {
+                TelemetryLogger.log("CACHE", "Auto trail prefetch suppressed during active trip recording or live sharing.")
+                return
+            }
+        }
+
+        if (!allowOnBattery && !isDeviceCharging()) {
+            _prefetchState.value = PrefetchState.Blocked("Device is not charging.")
+            return
+        }
+        if (!allowMobileData && !isUnmeteredWifi()) {
+            _prefetchState.value = PrefetchState.Blocked("Not on Wi-Fi.")
+            return
+        }
+
+        isPrefetchPaused = false
+        prefetchJob?.cancel()
+        _prefetchState.value = PrefetchState.Running(5, "Pass 5: Outdoor Trails", 0, 0, 0)
+        updateNotification("Trails...", 0, 0, false)
+
+        prefetchJob = managerScope.launch(Dispatchers.IO) {
+            try {
+                val activeTripId = TripManager.getInstance(context).activeTrip.value?.id
+                val completedTrips = TripDatabaseHelper.getInstance(context).getAllTrips()
+                    .filter { it.endTime != null && it.endTime > 0 && it.id != activeTripId }
+                val planned = TrailVectorRepository.planSavedTripTrailTileKeys(completedTrips)
+                val missing = TrailVectorRepository.filterMissingTrailTileKeys(context, planned)
+                val total = missing.size
+                var current = 0
+                var added = 0
+
+                _prefetchState.value = PrefetchState.Running(5, "Pass 5: Outdoor Trails", current, total, added)
+                updateNotification("Pass 5: Trails", current, total, false)
+
+                for (tileKey in missing) {
+                    while (isPrefetchPaused) {
+                        kotlinx.coroutines.delay(500L)
+                    }
+                    if (!allowOnBattery && !isDeviceCharging()) {
+                        _prefetchState.value = PrefetchState.Blocked("Charging disconnected.")
+                        dismissNotification()
+                        return@launch
+                    }
+                    val count = TrailVectorRepository.fetchMissingTrailTiles(context, listOf(tileKey))
+                    added += count
+                    current++
+                    _prefetchState.value = PrefetchState.Running(5, "Pass 5: Outdoor Trails", current, total, added)
+                    updateNotification("Pass 5: Trails", current, total, false)
+                    kotlinx.coroutines.delay(80L)
+                }
+
+                _prefetchState.value = PrefetchState.Completed(0, 0, 0, added)
+                dismissNotification()
+                calculateCacheDeficit()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                dismissNotification()
+            } catch (e: Exception) {
+                _prefetchState.value = PrefetchState.Error(e.message ?: "Unknown trail prefetch error")
+                dismissNotification()
+            }
+        }
+    }
+
     private fun planSavedTripMapTiles(completedTrips: List<TripRecord>): List<TileCoordKey> {
         if (completedTrips.isEmpty()) return emptyList()
         val layerByProfile = HashMap<ActivityProfile, MapBaseLayer>()
@@ -905,7 +1022,8 @@ class CacheManager private constructor(private val context: Context) {
         val boundaryBytes = computeDirSize(File(context.cacheDir, "boundaries"))
         val spatialBytes = SpatialCacheHelper.getInstance(context).getStorageBytes()
         val elevationBytes = TripDatabaseHelper.getInstance(context).getElevationCacheBytes()
-        return tileBytes + boundaryBytes + spatialBytes + elevationBytes
+        val trailBytes = TrailVectorRepository.getStorageBytes(context)
+        return tileBytes + boundaryBytes + spatialBytes + elevationBytes + trailBytes
     }
 
     private suspend fun downloadMissingMapTilesLoop(
@@ -1024,7 +1142,7 @@ class CacheManager private constructor(private val context: Context) {
             fallbackMunicipality = target.municipality,
             geoPoint = targetPoint
         )
-        if (!BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality) &&
+        if (!BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality, BoundaryHelper.CACHE_MANAGER_NEGATIVE_TTL_MS) &&
             BoundaryHelper.isCoolingDown()
         ) {
             val waitMs = BoundaryHelper.remainingCooldownMs()
@@ -1039,7 +1157,7 @@ class CacheManager private constructor(private val context: Context) {
                 geoPoint = targetPoint
             )
         }
-        return BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality)
+        return BoundaryHelper.hasBoundary(context, target.name, target.countryCode, target.municipality, BoundaryHelper.CACHE_MANAGER_NEGATIVE_TTL_MS)
     }
 
     // Queue of points that were encountered during driving and determined to be stale (> 60 days) or obsolete (> 1 year without internet)
@@ -1160,16 +1278,19 @@ class CacheManager private constructor(private val context: Context) {
                 val missingDem = TripDatabaseHelper.getInstance(context).getMissingDemSummary()
                 val plannedMapTiles = planSavedTripMapTiles(completedTrips)
                 val missingMapTiles = findMissingMapTiles(plannedMapTiles).size
+                val plannedTrailTiles = TrailVectorRepository.planSavedTripTrailTileKeys(completedTrips)
+                val missingTrailTiles = TrailVectorRepository.filterMissingTrailTileKeys(context, plannedTrailTiles).size
                 val deficit = CacheDeficit(
                     missingRoutes = missingRoutes,
                     missingBoundaries = missingBoundaries,
                     missingDemTrips = missingDem.tripCount,
                     missingDemPoints = missingDem.pointCount,
-                    missingMapTiles = missingMapTiles
+                    missingMapTiles = missingMapTiles,
+                    missingTrailTiles = missingTrailTiles
                 )
                 _cacheDeficit.value = deficit
 
-                val totalMissing = missingRoutes + missingBoundaries + missingMapTiles
+                val totalMissing = deficit.totalMissing
                 if (totalMissing > 0 && _prefetchState.value is PrefetchState.Idle) {
                     val isRecording = TripManager.getInstance(context).activeTrip.value != null
                     if (isRecording) {

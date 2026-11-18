@@ -46,6 +46,7 @@ object BoundaryHelper {
     private const val MIN_REQUEST_INTERVAL_MS = 1500L
     private const val RATE_LIMIT_COOLDOWN_MS = 30_000L
     internal const val NEGATIVE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
+    internal const val CACHE_MANAGER_NEGATIVE_TTL_MS = 30L * 24L * 60L * 60L * 1000L
 
     internal fun shouldTrustNegativeDiskSentinel(
         isPinMode: Boolean,
@@ -345,16 +346,22 @@ object BoundaryHelper {
                 if (pinMode || cleanCity == null || fetchedFromNamedCity) {
                     memoryCache[cleanKey] = simplified
                     saveToDiskCache(context, cleanKey, simplified)
-                } else if (!pinMode && cleanCity != null && System.currentTimeMillis() >= coolDownUntil && !File(getCacheDir(context), "$cleanKey.json").exists()) {
-                    // Authoritative non-429 response had no polygon for the named locality itself (only fallback).
-                    // Cache empty array sentinel so hasBoundary() becomes true and we don't query repeatedly.
-                    saveToDiskCache(context, cleanKey, emptyList())
+                } else if (!pinMode && cleanCity != null && System.currentTimeMillis() >= coolDownUntil) {
+                    val existingFile = File(getCacheDir(context), "$cleanKey.json")
+                    if (!existingFile.exists() || existingFile.length() <= 4L) {
+                        // Authoritative non-429 response had no polygon for the named locality itself (only fallback).
+                        // Cache/refresh empty array sentinel so hasBoundary() becomes true and we don't query repeatedly.
+                        saveToDiskCache(context, cleanKey, emptyList())
+                    }
                 }
                 return@withContext simplified
-            } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode && cleanCity != null && !File(getCacheDir(context), "$cleanKey.json").exists()) {
-                // Authoritative non-429 response had no polygon. Cache empty array so we don't hammer Nominatim repeatedly.
-                // Never negative-cache pin lookups — containment fallbacks must remain available.
-                saveToDiskCache(context, cleanKey, emptyList())
+            } else if (System.currentTimeMillis() >= coolDownUntil && !pinMode && cleanCity != null) {
+                val existingFile = File(getCacheDir(context), "$cleanKey.json")
+                if (!existingFile.exists() || existingFile.length() <= 4L) {
+                    // Authoritative non-429 response had no polygon. Cache/refresh empty array so we don't hammer Nominatim repeatedly.
+                    // Never negative-cache pin lookups — containment fallbacks must remain available.
+                    saveToDiskCache(context, cleanKey, emptyList())
+                }
             }
         }
 
@@ -406,15 +413,22 @@ object BoundaryHelper {
         return false
     }
 
-    fun hasBoundary(context: Context, cityName: String?, countryCode: String = "", fallbackMunicipality: String? = null): Boolean {
-        return hasBoundaryInDir(getCacheDir(context), cityName, countryCode, fallbackMunicipality)
+    fun hasBoundary(
+        context: Context,
+        cityName: String?,
+        countryCode: String = "",
+        fallbackMunicipality: String? = null,
+        negativeTtlMs: Long = NEGATIVE_CACHE_TTL_MS
+    ): Boolean {
+        return hasBoundaryInDir(getCacheDir(context), cityName, countryCode, fallbackMunicipality, negativeTtlMs)
     }
 
     internal fun hasBoundaryInDir(
         dir: File,
         cityName: String?,
         countryCode: String = "",
-        fallbackMunicipality: String? = null
+        fallbackMunicipality: String? = null,
+        negativeTtlMs: Long = NEGATIVE_CACHE_TTL_MS
     ): Boolean {
         val cleanCity = cityName?.trim()?.takeIf {
             it.isNotBlank() && it != "Unknown City" && it != "--" && !it.contains(",") && !it.contains("°")
@@ -422,7 +436,7 @@ object BoundaryHelper {
         val cleanKey = buildLocalityCacheKey(cleanCity, countryCode, fallbackMunicipality) ?: return true
         val file = File(dir, "$cleanKey.json")
         if (!file.exists()) return false
-        return file.length() > 4L || (System.currentTimeMillis() - file.lastModified()) in 0 until NEGATIVE_CACHE_TTL_MS
+        return file.length() > 4L || (System.currentTimeMillis() - file.lastModified()) in 0 until negativeTtlMs
     }
 
     private fun fetchFromNetwork(

@@ -190,4 +190,68 @@ class OutdoorFeatureTest {
             assertNotNull(kind.displayName)
         }
     }
+
+    @Test
+    fun testFormatActiveTrailLinesSingleAndGrouped() {
+        val blueTrail = ActiveTrailInfo(
+            osmId = 101L,
+            name = "Lipnik Granica - Gaiki",
+            color = TrailColor.BLUE,
+            kind = TrailRouteKind.HIKING,
+            distanceMeters = 8.5f
+        )
+        val formattedSingle = formatActiveTrailLines(listOf(blueTrail))
+        assertEquals(1, formattedSingle.size)
+        assertEquals("Blue hiking trail: Lipnik Granica - Gaiki", formattedSingle[0].label)
+        assertEquals(listOf(TrailColor.BLUE), formattedSingle[0].colors)
+
+        val redTrail = ActiveTrailInfo(
+            osmId = 102L,
+            name = "Główny Szlak Beskidzki",
+            color = TrailColor.RED,
+            kind = TrailRouteKind.HIKING,
+            distanceMeters = 12.0f
+        )
+        val greenTrail = ActiveTrailInfo(
+            osmId = 103L,
+            name = "Szlak Kościuszkowski",
+            color = TrailColor.GREEN,
+            kind = TrailRouteKind.HIKING,
+            distanceMeters = 15.0f
+        )
+        val formattedGrouped = formatActiveTrailLines(listOf(redTrail, greenTrail))
+        assertEquals(1, formattedGrouped.size)
+        assertEquals("Red, Green hiking trail: Główny Szlak Beskidzki • Szlak Kościuszkowski", formattedGrouped[0].label)
+        assertEquals(listOf(TrailColor.RED, TrailColor.GREEN), formattedGrouped[0].colors)
+
+        val mtbTrail = ActiveTrailInfo(
+            osmId = 201L,
+            name = "Trasa Rowerowa Enduro",
+            color = TrailColor.YELLOW,
+            kind = TrailRouteKind.MTB,
+            distanceMeters = 20.0f
+        )
+        val multiKind = formatActiveTrailLines(listOf(blueTrail, mtbTrail))
+        assertEquals(2, multiKind.size)
+        assertTrue(multiKind.any { it.label == "Blue hiking trail: Lipnik Granica - Gaiki" })
+        assertTrue(multiKind.any { it.label == "Yellow MTB trail: Trasa Rowerowa Enduro" })
+    }
+
+    @Test
+    fun testTrailVectorRepositoryPlanSavedTripTrailTileKeys() {
+        val samplePoints = listOf(
+            GeoPoint(49.82, 19.04), // Bielsko-Biała
+            GeoPoint(49.85, 19.12)  // Kozy / Czaniec corridor
+        )
+        val sampleTrip = TripRecord(
+            id = 1L,
+            startTime = 1000L,
+            points = samplePoints
+        )
+        val keys = TrailVectorRepository.planSavedTripTrailTileKeys(listOf(sampleTrip))
+        assertTrue(keys.isNotEmpty())
+        assertTrue("Keys must include hiking tiles", keys.any { it.startsWith("wm_hiking_12_") })
+        assertTrue("Keys must include cycling tiles", keys.any { it.startsWith("wm_cycling_12_") })
+        assertTrue("Keys must include mtb tiles", keys.any { it.startsWith("wm_mtb_12_") })
+    }
 }

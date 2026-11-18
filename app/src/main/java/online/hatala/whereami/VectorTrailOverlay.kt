@@ -164,8 +164,8 @@ class VectorTrailOverlay(
             return nx to ny
         }
 
-        internal fun bitRankInMask(mask: Int, singleBit: Int): Int =
-            Integer.bitCount(mask and (singleBit - 1))
+        internal fun bitRankInMask(mask: Long, singleBit: Long): Int =
+            java.lang.Long.bitCount(mask and (singleBit - 1L))
 
         /**
          * Computes `[dashOnPx, dashOffPx]` intervals matching the ~3:1 crisp dash-to-gap proportion
@@ -222,6 +222,7 @@ class VectorTrailOverlay(
     private var cachedEffectWidthBucket: Int = -1
     private var cachedPathEffect: PathEffect? = null
     var selectedTrailId: Long? = null
+    var onProgressChange: ((TrailLoadProgress?) -> Unit)? = null
 
     // Reusable per-frame scratch buffers to avoid allocations during draw()
     private val scratchP1 = Point()
@@ -229,7 +230,7 @@ class VectorTrailOverlay(
     private val filteredTrailsScratch = ArrayList<TrailVectorSegment>(256)
     private var coordScratchPool = ArrayList<FloatArray>(256)
     private var coordScratchLens = IntArray(256)
-    private var colorBitsScratch = IntArray(256)
+    private var colorBitsScratch = LongArray(256)
     private var pathPool = ArrayList<Path>(256)
     private var drawColorInts = IntArray(256)
     private var drawColorEnums = arrayOfNulls<TrailColor>(256)
@@ -277,7 +278,7 @@ class VectorTrailOverlay(
             const val EMPTY_KEY = Long.MIN_VALUE
         }
         private var keys = LongArray(1024) { EMPTY_KEY }
-        private var masks = IntArray(1024)
+        private var masks = LongArray(1024)
         private var refUxs = FloatArray(1024)
         private var refUys = FloatArray(1024)
         private var maskPow2 = 1023
@@ -289,7 +290,7 @@ class VectorTrailOverlay(
                 var cap = 1024
                 while (cap < needed) cap = cap shl 1
                 keys = LongArray(cap) { EMPTY_KEY }
-                masks = IntArray(cap)
+                masks = LongArray(cap)
                 refUxs = FloatArray(cap)
                 refUys = FloatArray(cap)
                 maskPow2 = cap - 1
@@ -314,7 +315,7 @@ class VectorTrailOverlay(
                 val oldUy = refUys
                 val newCap = oldKeys.size shl 1
                 keys = LongArray(newCap) { EMPTY_KEY }
-                masks = IntArray(newCap)
+                masks = LongArray(newCap)
                 refUxs = FloatArray(newCap)
                 refUys = FloatArray(newCap)
                 maskPow2 = newCap - 1
@@ -334,7 +335,7 @@ class VectorTrailOverlay(
             }
         }
 
-        fun mark(key: Long, bit: Int, refUx: Float, refUy: Float) {
+        fun mark(key: Long, bit: Long, refUx: Float, refUy: Float) {
             ensureCapacityForInsert()
             var idx = hashIndex(key)
             while (true) {
@@ -365,7 +366,7 @@ class VectorTrailOverlay(
             }
         }
 
-        fun maskAt(slot: Int): Int = masks[slot]
+        fun maskAt(slot: Int): Long = masks[slot]
         fun uxAt(slot: Int): Float = refUxs[slot]
         fun uyAt(slot: Int): Float = refUys[slot]
     }
@@ -455,6 +456,7 @@ class VectorTrailOverlay(
 
                 // Phase 2: Stream network tiles progressively and enrich metadata / Overpass supplement
                 setLoading(true)
+                launch(Dispatchers.Main) { onProgressChange?.invoke(TrailLoadProgress("Trails", 0, 0)) }
                 val trails = TrailVectorRepository.getTrailsForBoundingBox(
                     context = context,
                     bbox = expanded,
@@ -468,6 +470,9 @@ class VectorTrailOverlay(
                             trailsVersion++
                             mapView.postInvalidate()
                         }
+                    },
+                    onProgress = { progress ->
+                        launch(Dispatchers.Main) { onProgressChange?.invoke(progress) }
                     }
                 )
                 if (trails.isNotEmpty()) {
@@ -495,6 +500,7 @@ class VectorTrailOverlay(
                 mapView.postInvalidate()
             } finally {
                 setLoading(false)
+                launch(Dispatchers.Main) { onProgressChange?.invoke(null) }
             }
         }
     }
@@ -604,7 +610,7 @@ class VectorTrailOverlay(
             val count = filteredTrailsScratch.size
             if (coordScratchLens.size < count) {
                 coordScratchLens = IntArray(count)
-                colorBitsScratch = IntArray(count)
+                colorBitsScratch = LongArray(count)
                 drawColorInts = IntArray(count)
                 drawColorEnums = arrayOfNulls(count)
                 drawTrailIds = LongArray(count)
@@ -623,10 +629,24 @@ class VectorTrailOverlay(
                 cellGrid.reset(count * 8)
             }
 
+            val routeSlots = HashMap<Long, Int>(count)
+            var nextSlot = 0
+            val sortedDistinctRoutes = filteredTrailsScratch
+                .map { (it.relationId ?: it.id) to it }
+                .distinctBy { it.first }
+                .sortedWith(compareBy({ it.second.kind.ordinal }, { it.second.color.ordinal }, { it.first }))
+            for ((routeId, _) in sortedDistinctRoutes) {
+                if (nextSlot < 62) {
+                    routeSlots[routeId] = nextSlot++
+                } else {
+                    routeSlots[routeId] = 62
+                }
+            }
+
             fun cellKey(cx: Int, cy: Int, ang: Int): Long =
                 ((cx.toLong() and 0xFFFFF) shl 24) or ((cy.toLong() and 0xFFFFF) shl 4) or (ang.toLong() and 0xF)
 
-            fun markCell(sx: Float, sy: Float, ang: Int, bit: Int, refUx: Float, refUy: Float) {
+            fun markCell(sx: Float, sy: Float, ang: Int, bit: Long, refUx: Float, refUy: Float) {
                 val cx0 = kotlin.math.floor((sx - tolPx) / cellPx).toInt()
                 val cx1 = kotlin.math.floor((sx + tolPx) / cellPx).toInt()
                 val cy0 = kotlin.math.floor((sy - tolPx) / cellPx).toInt()
@@ -657,7 +677,9 @@ class VectorTrailOverlay(
                     continue
                 }
                 coordScratchLens[tIdx] = floatLen
-                val bit = resolveVisualColorBit(trail)
+                val routeId = trail.relationId ?: trail.id
+                val slot = routeSlots[routeId] ?: 0
+                val bit = 1L shl slot
                 colorBitsScratch[tIdx] = bit
 
                 if (useClusteredLanes) {
@@ -697,7 +719,7 @@ class VectorTrailOverlay(
                 val selfBit = colorBitsScratch[tIdx]
                 var prevNx = 0f
                 var prevNy = 0f
-                var prevCount = 0
+                var hasPrevNormal = false
 
                 for (i in 0 until vCount) {
                     val vx = coords[i * 2]
@@ -735,10 +757,10 @@ class VectorTrailOverlay(
                         val refUx = if (refSlot >= 0) cellGrid.uxAt(refSlot) else ux
                         val refUy = if (refSlot >= 0) cellGrid.uyAt(refSlot) else uy
 
-                        val bundleCount = Integer.bitCount(mask)
+                        val bundleCount = java.lang.Long.bitCount(mask)
                         var nx = -uy
                         var ny = ux
-                        if (prevCount > 1 && bundleCount > 1 && (prevNx != 0f || prevNy != 0f)) {
+                        if (hasPrevNormal) {
                             if (nx * prevNx + ny * prevNy < 0f) {
                                 nx = -nx
                                 ny = -ny
@@ -749,7 +771,8 @@ class VectorTrailOverlay(
                         }
                         prevNx = nx
                         prevNy = ny
-                        prevCount = bundleCount
+                        hasPrevNormal = true
+
                         val offsetPx = if (bundleCount > 1) {
                             val rank = bitRankInMask(mask, selfBit)
                             computeLaneOffsetPx(rank, bundleCount, strokeWidthPx)
