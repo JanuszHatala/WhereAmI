@@ -49,6 +49,15 @@ enum class TrailRouteKind(val displayName: String, val iconEmoji: String) {
             MTB -> "MTB trail"
             KAYAKING -> "kayak trail"
         }
+
+    val defaultLineStyle: TrailLineStyle
+        get() = when (this) {
+            HIKING -> TrailLineStyle.DASHED
+            EDUCATIONAL -> TrailLineStyle.DOTTED
+            CYCLING -> TrailLineStyle.SOLID
+            MTB -> TrailLineStyle.DASH_DOT
+            KAYAKING -> TrailLineStyle.DASH_DOT
+        }
 }
 
 enum class TrailColor(val hexColor: String, val displayName: String) {
@@ -208,7 +217,8 @@ enum class TrailThickness(val label: String, val widthMultiplier: Float) {
 enum class TrailLineStyle(val label: String) {
     SOLID("Solid"),
     DASHED("Dashed"),
-    DOTTED("Dotted")
+    DOTTED("Dotted"),
+    DASH_DOT("Dash-Dot")
 }
 
 enum class TrailOpacity(val label: String, val alphaFraction: Float) {

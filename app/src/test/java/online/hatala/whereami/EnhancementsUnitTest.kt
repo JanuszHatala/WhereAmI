@@ -177,4 +177,19 @@ class EnhancementsUnitTest {
         assertTrue(dmsSouthWest.endsWith("W"))
         assertTrue(dmsSouthWest.contains("S "))
     }
+
+    @Test
+    fun `TripDirectionOverlay distance computation calculates geodesic distance`() {
+        // ~111 km per degree latitude
+        val dist1DegLat = TripDirectionOverlay.computeDistanceMeters(50.0, 20.0, 51.0, 20.0)
+        assertTrue(dist1DegLat in 111_000.0..111_500.0)
+
+        // Zero distance
+        val dist0 = TripDirectionOverlay.computeDistanceMeters(50.0, 20.0, 50.0, 20.0)
+        assertEquals(0.0, dist0, 0.001)
+
+        // ~100 meters
+        val distSmall = TripDirectionOverlay.computeDistanceMeters(50.0, 20.0, 50.0009, 20.0)
+        assertTrue(distSmall in 95.0..105.0)
+    }
 }

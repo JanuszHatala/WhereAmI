@@ -71,7 +71,7 @@ class VectorTrailOverlay(
 
         internal fun computeStrokeCap(style: TrailLineStyle): Paint.Cap = when (style) {
             TrailLineStyle.DASHED -> Paint.Cap.BUTT
-            TrailLineStyle.SOLID, TrailLineStyle.DOTTED -> Paint.Cap.ROUND
+            TrailLineStyle.SOLID, TrailLineStyle.DOTTED, TrailLineStyle.DASH_DOT -> Paint.Cap.ROUND
         }
 
         fun matchesFilters(
@@ -186,6 +186,12 @@ class VectorTrailOverlay(
                     (0.5f * density).coerceAtLeast(1f),
                     (strokeWidthPx * 2.1f).coerceAtLeast(3.5f * density)
                 )
+                TrailLineStyle.DASH_DOT -> floatArrayOf(
+                    (strokeWidthPx * 4.5f).coerceAtLeast(5.0f * density),
+                    (strokeWidthPx * 1.8f).coerceAtLeast(2.2f * density),
+                    (0.5f * density).coerceAtLeast(1f),
+                    (strokeWidthPx * 1.8f).coerceAtLeast(2.2f * density)
+                )
             }
         }
     }
@@ -235,6 +241,7 @@ class VectorTrailOverlay(
     private var drawColorInts = IntArray(256)
     private var drawColorEnums = arrayOfNulls<TrailColor>(256)
     private var drawTrailIds = LongArray(256)
+    private var drawTrailKinds = arrayOfNulls<TrailRouteKind>(256)
     private var drawnCount: Int = 0
     private val cellGrid = PrimitiveCellGrid()
 
@@ -371,17 +378,15 @@ class VectorTrailOverlay(
         fun uyAt(slot: Int): Float = refUys[slot]
     }
 
+    private val pathEffectCache = HashMap<Pair<TrailLineStyle, Int>, PathEffect?>(8)
+
     private fun resolvePathEffect(style: TrailLineStyle, strokeWidthPx: Float, density: Float): PathEffect? {
         val bucket = (strokeWidthPx * 4f).toInt().coerceAtLeast(1)
-        if (cachedEffectStyle == style && cachedEffectWidthBucket == bucket) {
-            return cachedPathEffect
+        val key = style to bucket
+        return pathEffectCache.getOrPut(key) {
+            val intervals = computeDashIntervals(style, strokeWidthPx, density)
+            intervals?.let { DashPathEffect(it, 0f) }
         }
-        val intervals = computeDashIntervals(style, strokeWidthPx, density)
-        val effect = intervals?.let { DashPathEffect(it, 0f) }
-        cachedEffectStyle = style
-        cachedEffectWidthBucket = bucket
-        cachedPathEffect = effect
-        return effect
     }
 
     fun cancelLoading() {
@@ -538,22 +543,13 @@ class VectorTrailOverlay(
         val widthDp = computeStrokeWidthDp(zoom, trailThickness)
         val strokeWidthPx = widthDp * density
         val haloWidthPx = computeHaloWidthPx(widthDp, density)
-        val pathEffect = resolvePathEffect(trailLineStyle, strokeWidthPx, density)
-        val strokeCap = computeStrokeCap(trailLineStyle)
         val trailAlpha = (255f * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
         val darkHaloAlpha = (0x45 * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
         val lightColorHaloAlpha = (0x88 * trailOpacity.alphaFraction).toInt().coerceIn(0, 255)
 
         haloPaint.strokeWidth = haloWidthPx
-        haloPaint.strokeCap = strokeCap
-        haloPaint.pathEffect = pathEffect
-
         trailPaint.strokeWidth = strokeWidthPx
-        trailPaint.strokeCap = strokeCap
-        trailPaint.pathEffect = pathEffect
-
         highlightPaint.strokeWidth = strokeWidthPx + 3.5f * density
-        highlightPaint.strokeCap = strokeCap
 
         val cameraChanged = zoom != lastDrawZoom ||
             centerLat != lastDrawCenterLat ||
@@ -614,6 +610,7 @@ class VectorTrailOverlay(
                 drawColorInts = IntArray(count)
                 drawColorEnums = arrayOfNulls(count)
                 drawTrailIds = LongArray(count)
+                drawTrailKinds = arrayOfNulls(count)
             }
             while (coordScratchPool.size < count) {
                 coordScratchPool.add(FloatArray(64))
@@ -790,6 +787,7 @@ class VectorTrailOverlay(
                 drawColorInts[outIdx] = resolveStrokeColorInt(trail)
                 drawColorEnums[outIdx] = trail.color
                 drawTrailIds[outIdx] = trail.id
+                drawTrailKinds[outIdx] = trail.kind
                 outIdx++
             }
             drawnCount = outIdx
@@ -817,6 +815,13 @@ class VectorTrailOverlay(
         // 1. Draw Thin Contrast Halo (stronger for Yellow/White so light blazes stay crisp on pale roads)
         for (i in 0 until drawnCount) {
             val color = drawColorEnums[i]
+            val kind = drawTrailKinds[i] ?: TrailRouteKind.HIKING
+            val style = kind.defaultLineStyle
+            val effect = resolvePathEffect(style, strokeWidthPx, density)
+            val cap = computeStrokeCap(style)
+
+            haloPaint.pathEffect = effect
+            haloPaint.strokeCap = cap
             haloPaint.alpha = if (color == TrailColor.YELLOW || color == TrailColor.WHITE) lightColorHaloAlpha else darkHaloAlpha
             canvas.drawPath(pathPool[i], haloPaint)
         }
@@ -824,12 +829,21 @@ class VectorTrailOverlay(
         // 2. Draw Colored Strokes
         val selId = selectedTrailId
         for (i in 0 until drawnCount) {
+            val kind = drawTrailKinds[i] ?: TrailRouteKind.HIKING
+            val style = kind.defaultLineStyle
+            val effect = resolvePathEffect(style, strokeWidthPx, density)
+            val cap = computeStrokeCap(style)
+
+            trailPaint.pathEffect = effect
+            trailPaint.strokeCap = cap
             trailPaint.color = drawColorInts[i]
             trailPaint.alpha = trailAlpha
             val p = pathPool[i]
             canvas.drawPath(p, trailPaint)
 
             if (selId != null && drawTrailIds[i] == selId) {
+                highlightPaint.pathEffect = effect
+                highlightPaint.strokeCap = cap
                 canvas.drawPath(p, highlightPaint)
             }
         }

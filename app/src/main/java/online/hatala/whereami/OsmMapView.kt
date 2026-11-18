@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.filled.ZoomIn
+import org.osmdroid.views.overlay.Overlay
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -717,6 +718,7 @@ fun OsmMapView(
     var polyline by remember { mutableStateOf<Polyline?>(null) }
     var rawPolyline by remember { mutableStateOf<Polyline?>(null) }
     val liveLine = remember { LiveTrackLine() }
+    val liveChevrons = remember { TripDirectionOverlay() }
     var isFollowing by remember { mutableStateOf(true) }
     val headingMarkerIcon = remember(context) { makeMarkerIcon(context, true) }
     val dotMarkerIcon = remember(context) { makeMarkerIcon(context, false) }
@@ -1174,6 +1176,9 @@ fun OsmMapView(
                                 it.setOnClickListener { _, _, _ -> true }
                                 addOverlayAboveTiles(map, it)
                                 polyline = it
+                                if (!map.overlays.contains(liveChevrons)) {
+                                    addOverlayAboveTiles(map, liveChevrons)
+                                }
                             }
                             if (isPausedNow) {
                                 if (pencilTrail.size > 0 || liveLine.hasTail) {
@@ -1215,8 +1220,10 @@ fun OsmMapView(
                                 if (added || backfilled || pencilTrail.size != before || !liveLine.hasTail) {
                                     liveLine.rebuildTail(pencilTrail, gp, committedThroughMs, pose.speedMps)
                                     line.setPoints(liveLine.points)
+                                    liveChevrons.setSingleTrack(liveLine.points)
                                 } else if (liveLine.moveTip(gp)) {
                                     line.setPoints(liveLine.points)
+                                    liveChevrons.setSingleTrack(liveLine.points)
                                 }
                             }
                         } else {
@@ -1224,6 +1231,8 @@ fun OsmMapView(
                                 map.overlays.remove(polyline)
                                 polyline = null
                             }
+                            map.overlays.remove(liveChevrons)
+                            liveChevrons.setSingleTrack(emptyList())
                         }
 
                         // 2. Raw GNSS polyline (thin cyan line connecting raw antenna fixes, drawn above filtered line)
@@ -2795,11 +2804,11 @@ internal fun addTripWithGapConnectorsToMap(
     casingWidthPx: Float = MapProfileConfigHelper.selectedTripCasingWidthPx(coreWidthPx),
     addAboveMapLayers: Boolean = true,
     useCatmullRomCurve: Boolean = true
-): List<Polyline> {
-    val added = mutableListOf<Polyline>()
-    val attach: (Polyline) -> Unit = { line ->
-        if (addAboveMapLayers) addTripOverlayAboveMapLayers(map, line) else map.overlays.add(line)
-        added.add(line)
+): List<Overlay> {
+    val added = mutableListOf<Overlay>()
+    val attach: (Overlay) -> Unit = { overlay ->
+        if (addAboveMapLayers) addTripOverlayAboveMapLayers(map, overlay) else map.overlays.add(overlay)
+        added.add(overlay)
     }
 
     val connectors = trip.gapConnectors()
@@ -2861,6 +2870,15 @@ internal fun addTripWithGapConnectorsToMap(
         }
         attach(line)
     }
+
+    val segments = trip.recordedSegments().filter { it.size >= 2 }
+    if (segments.isNotEmpty()) {
+        val chevronOverlay = TripDirectionOverlay(colorArgb = Color.parseColor("#FFFFFF"), alpha = 210).apply {
+            setSegments(segments.map { if (useCatmullRomCurve) LiveTrackLine.curved(it) else it })
+        }
+        attach(chevronOverlay)
+    }
+
     return added
 }
 
@@ -2910,7 +2928,7 @@ private fun MapSelectedAndHeatEffects(
     onFollowingChanged: ((Boolean) -> Unit)?,
     onZoomChanged: ((Double) -> Unit)?
 ) {
-    var selectedTripPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
+    var selectedTripPolylines by remember { mutableStateOf<List<Overlay>>(emptyList()) }
     var selectedTripRawPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapPolylines by remember { mutableStateOf<List<Polyline>>(emptyList()) }
     var heatMapFolderOverlay by remember { mutableStateOf<FolderOverlay?>(null) }
@@ -2939,7 +2957,7 @@ private fun MapSelectedAndHeatEffects(
             return@LaunchedEffect
         }
 
-        val newLines = mutableListOf<Polyline>()
+        val newLines = mutableListOf<Overlay>()
         val newRawLines = mutableListOf<Polyline>()
         selectedTrips.forEachIndexed { index, trip ->
             if (showFilteredPolyline && trip.points.size >= 2) {
@@ -3887,8 +3905,12 @@ private fun BoxScope.MapFloatingControlsColumn(
                 list
             }
 
-            // Fit Shown Trips & Magnifier (Always visible: opens menu when fit targets exist, or enters Magnifier directly)
+            // Fit Shown Trips & Magnifier (Magnifier icon when no fit targets, CropFree icon when fit targets exist)
             if (fitOptions.isNotEmpty() || onActivateMagnifier != null) {
+                val isMagnifierOnly = fitOptions.isEmpty() && onActivateMagnifier != null
+                val mainIcon = if (isMagnifierOnly) Icons.Default.ZoomIn else Icons.Default.CropFree
+                val mainDesc = if (isMagnifierOnly) "Screen Magnifier" else "Fit to Screen & Magnifier"
+
                 Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
@@ -3906,8 +3928,8 @@ private fun BoxScope.MapFloatingControlsColumn(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = "Fit to Screen & Magnifier",
+                            imageVector = mainIcon,
+                            contentDescription = mainDesc,
                             tint = ComposeColor(0xFF38BDF8),
                             modifier = Modifier.size(22.dp)
                         )
@@ -4933,35 +4955,46 @@ private fun MapSettingsDialog(
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Trail Line Style",
+                                text = "Trail Types & Styles",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = ComposeColor(0xFFCBD5E1)
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(ComposeColor(0xFF0F172A), RoundedCornerShape(10.dp))
+                                    .border(1.dp, ComposeColor(0xFF1E293B), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                TrailLineStyle.values().forEach { style ->
-                                    val isSelected = trailLineStyle == style
-                                    Button(
-                                        onClick = { onTrailLineStyleChange(style) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSelected) ComposeColor(0xFF0284C7) else ComposeColor(0xFF1E293B)
-                                        ),
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(1f)
+                                TrailRouteKind.values().forEach { kind ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = kind.iconEmoji,
+                                                fontSize = 13.sp
+                                            )
+                                            Text(
+                                                text = kind.displayName,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = ComposeColor.White
+                                            )
+                                        }
                                         Text(
-                                            text = style.label,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = ComposeColor.White,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            textAlign = TextAlign.Center
+                                            text = kind.defaultLineStyle.label,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = ComposeColor(0xFF38BDF8)
                                         )
                                     }
                                 }

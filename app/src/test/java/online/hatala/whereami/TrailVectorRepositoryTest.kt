@@ -630,6 +630,14 @@ class TrailVectorRepositoryTest {
         assertEquals(android.graphics.Paint.Cap.BUTT, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.DASHED))
         assertEquals(android.graphics.Paint.Cap.ROUND, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.SOLID))
         assertEquals(android.graphics.Paint.Cap.ROUND, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.DOTTED))
+        assertEquals(android.graphics.Paint.Cap.ROUND, VectorTrailOverlay.computeStrokeCap(TrailLineStyle.DASH_DOT))
+
+        // TrailRouteKind mappings
+        assertEquals(TrailLineStyle.DASHED, TrailRouteKind.HIKING.defaultLineStyle)
+        assertEquals(TrailLineStyle.DOTTED, TrailRouteKind.EDUCATIONAL.defaultLineStyle)
+        assertEquals(TrailLineStyle.SOLID, TrailRouteKind.CYCLING.defaultLineStyle)
+        assertEquals(TrailLineStyle.DASH_DOT, TrailRouteKind.MTB.defaultLineStyle)
+        assertEquals(TrailLineStyle.DASH_DOT, TrailRouteKind.KAYAKING.defaultLineStyle)
 
         listOf(14.3, 13.0, 11.0).forEach { zoom ->
             val strokeWidthPx = VectorTrailOverlay.computeStrokeWidthDp(zoom, TrailThickness.NORMAL) * density

@@ -2045,6 +2045,35 @@ Field test feedback enhancements:
 | **LOC-70-05** | Dedicated active trail type and color line under street name in LocalityCard with color grouping. | `OutdoorModels.kt`, `MainActivity.kt`, `OutdoorFeatureTest.kt` | Implemented | `testFormatActiveTrailLinesSingleAndGrouped` passes. |
 | **VER-70** | Bump to `versionCode = 215`, `versionName = "2.5.1"`. | `app/build.gradle.kts` | Implemented | Unit tests (745 passed) and assembleDebug pass. |
 
+---
+
+## Round 71 - Trail Type Line Styles, Map Magnifier Dynamic Icon & Trip Direction Chevrons (2026-11-18 v2.5.2)
+
+Enhancements:
+- **Trail Type Specific Line Styles**:
+  - Assigned distinct, permanent line patterns per trail type:
+    - Hiking (`HIKING`): **Dashed**
+    - Educational (`EDUCATIONAL`): **Dotted**
+    - Cycling (`CYCLING`): **Solid**
+    - MTB (`MTB`): **Dash-Dot**
+    - Kayaking (`KAYAKING`): **Dash-Dot**
+  - Line thickness and opacity remain user-configurable and apply universally across all trail types.
+  - Replaced generic line style buttons in Map Settings dialog with an itemized, read-only legend list displaying each trail kind, emoji icon, and its line style.
+- **Dynamic Fit vs Magnifier Floating Control**:
+  - Displays `Icons.Default.ZoomIn` (Magnifier icon) when no fit targets exist (`fitOptions.isEmpty()`), entering Magnifier mode directly on tap.
+  - Displays `Icons.Default.CropFree` (Fit icon) when fit targets exist, opening the dropdown menu where the "Magnifier" item retains the `ZoomIn` icon.
+- **Subtle Trip Direction Chevrons (`TripDirectionOverlay`)**:
+  - Renders subtle white directional chevrons (`TripDirectionOverlay`) along polyline segments at ~90m regular intervals.
+  - Applied to both the active live recording polyline and historical selected trips.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **TRL-71-01** | Assign line styles per trail kind (Hiking: Dashed, Educational: Dotted, Cycling: Solid, MTB/Kayak: Dash-Dot) and display itemized legend in Map Settings. | `OutdoorModels.kt`, `VectorTrailOverlay.kt`, `OsmMapView.kt`, `TrailVectorRepositoryTest.kt` | Implemented | `defaultLineStyle` kind mappings and stroke cap tests pass. |
+| **MAG-71-02** | Dynamic ZoomIn icon when no fit targets exist, CropFree icon when targets exist. | `OsmMapView.kt` | Implemented | Visual icon and accessibility description updated. |
+| **CHV-71-03** | Subtle direction chevrons along active and historical trip polylines at regular intervals. | `TripDirectionOverlay.kt`, `OsmMapView.kt`, `EnhancementsUnitTest.kt` | Implemented | `TripDirectionOverlay` geodesic distance and chevron rendering tests pass. |
+| **VER-71** | Bump to `versionCode = 216`, `versionName = "2.5.2"`. | `app/build.gradle.kts` | Implemented | `./gradlew testDebugUnitTest` and `./gradlew assembleDebug` pass. |
+
+
 
 
 
