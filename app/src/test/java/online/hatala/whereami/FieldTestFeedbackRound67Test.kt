@@ -91,4 +91,22 @@ class FieldTestFeedbackRound67Test {
         assertEquals(10, MapProfileConfigHelper.MIN_TRAIL_PROXIMITY_METERS)
         assertEquals(150, MapProfileConfigHelper.MAX_TRAIL_PROXIMITY_METERS)
     }
+
+    @Test
+    fun testTrailTrackPatternKindAndColorFirst() {
+        val trail = ActiveTrailInfo(
+            osmId = 12345L,
+            name = "Główny Szlak Beskidzki",
+            kind = TrailRouteKind.HIKING,
+            color = TrailColor.RED
+        )
+        val candidateKey = "${trail.kind.name}:${trail.color.name}:${trail.name.lowercase(java.util.Locale.ROOT)}"
+        assertEquals("HIKING:RED:główny szlak beskidzki", candidateKey)
+
+        val colorLabel = if (trail.color != TrailColor.NONE) trail.color.displayName else null
+        val typeLabel = trail.kind.descriptiveLabel
+        val prefix = if (colorLabel != null) "$colorLabel $typeLabel" else typeLabel
+        val trailTitle = "$prefix: ${trail.name}"
+        assertEquals("Red hiking trail: Główny Szlak Beskidzki", trailTitle)
+    }
 }

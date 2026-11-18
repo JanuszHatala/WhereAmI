@@ -1790,12 +1790,18 @@ class TripManager private constructor(private val context: Context) {
                 for (activeTrail in outdoorContext.activeTrails) {
                     if (activeTrail.name.isBlank()) continue
                     val colorLabel = if (activeTrail.color != TrailColor.NONE) activeTrail.color.displayName else null
-                    val trailTitle = if (colorLabel != null && !activeTrail.name.contains(colorLabel, ignoreCase = true)) {
-                        "${activeTrail.name} ($colorLabel)"
+                    val typeLabel = activeTrail.kind.descriptiveLabel
+                    val prefix = if (colorLabel != null) {
+                        "$colorLabel $typeLabel"
                     } else {
-                        activeTrail.name
+                        typeLabel.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
                     }
-                    val candidateKey = "${activeTrail.kind.name}:${activeTrail.name.lowercase(java.util.Locale.ROOT)}:${activeTrail.color.name}"
+                    val trailTitle = if (activeTrail.name.startsWith(prefix, ignoreCase = true)) {
+                        activeTrail.name
+                    } else {
+                        "$prefix: ${activeTrail.name}"
+                    }
+                    val candidateKey = "${activeTrail.kind.name}:${activeTrail.color.name}:${activeTrail.name.lowercase(java.util.Locale.ROOT)}"
                     currentKeys.add(candidateKey)
 
                     var dwell = activeTrailDwells[candidateKey]
