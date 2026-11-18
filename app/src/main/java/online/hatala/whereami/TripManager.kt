@@ -457,9 +457,16 @@ class TripManager private constructor(private val context: Context) {
         val entryDistanceMeters: Double
     )
     private var pendingCandidate: PendingPlaceCandidate? = null
-    private var pendingTrailKey: String? = null
-    private var pendingTrailFirstSeenMs: Long = 0L
-    private var pendingTrailEntryDistanceM: Double = 0.0
+    data class TrailDwellState(
+        val trail: ActiveTrailInfo,
+        val title: String,
+        val firstSeenMs: Long,
+        val entryDistanceM: Double,
+        var lastSeenMs: Long,
+        var lastDistanceM: Double,
+        var isCommitted: Boolean = false
+    )
+    private val activeTrailDwells = HashMap<String, TrailDwellState>()
 
     // Speed samples for running average
     private var totalSpeedSamples = 0
@@ -734,7 +741,7 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = nowMs
         movingSinceTimestamp = null
         pendingCandidate = null
-        pendingTrailKey = null
+        activeTrailDwells.clear()
         resetAutoStartGates()
         pauseAnchorLocation = null
         pauseAnchorFirstStationaryTime = null
@@ -790,7 +797,7 @@ class TripManager private constructor(private val context: Context) {
         lastMovingTimestamp = now
         movingSinceTimestamp = null
         pendingCandidate = null
-        pendingTrailKey = null
+        activeTrailDwells.clear()
         synchronized(rowLock) {
             pendingRows.clear()
             persistedPointCount = 0
@@ -1025,7 +1032,7 @@ class TripManager private constructor(private val context: Context) {
         pauseAnchorDistanceMeters = null
         movingSinceInPauseTimestamp = null
         pendingCandidate = null
-        pendingTrailKey = null
+        activeTrailDwells.clear()
 
         // Stop foreground service or transition to low-power standby
         val liveSession = LiveSharingManager.getInstance(context).currentSession.value
@@ -1777,30 +1784,49 @@ class TripManager private constructor(private val context: Context) {
                 }
             }
 
-            // 1c. Sustained Active Trail (committed after >= 150m or >= 45s along trail on outdoor profiles)
-            val activeTrail = if (_activityProfile.value.isOutdoorProfile) outdoorContext.activeTrail else null
-            if (activeTrail != null && activeTrail.name.isNotBlank()) {
-                val colorLabel = if (activeTrail.color != TrailColor.NONE) {
-                    activeTrail.color.displayName
-                } else null
-                val trailTitle = if (colorLabel != null && !activeTrail.name.contains(colorLabel, ignoreCase = true)) {
-                    "${activeTrail.name} ($colorLabel)"
-                } else {
-                    activeTrail.name
-                }
-                val candidateKey = "${activeTrail.kind.name}:${activeTrail.name.lowercase(java.util.Locale.ROOT)}"
-                if (pendingTrailKey != candidateKey) {
-                    pendingTrailKey = candidateKey
-                    pendingTrailFirstSeenMs = now
-                    pendingTrailEntryDistanceM = currentDistance
-                } else {
-                    val trailDistM = (currentDistance - pendingTrailEntryDistanceM).coerceAtLeast(0.0)
-                    val trailDurMs = (now - pendingTrailFirstSeenMs).coerceAtLeast(0L)
+            // 1c. Sustained Active Trails (committed after >= 150m or >= 45s along trail on outdoor profiles)
+            if (_activityProfile.value.isOutdoorProfile && outdoorContext.activeTrails.isNotEmpty()) {
+                val currentKeys = HashSet<String>()
+                for (activeTrail in outdoorContext.activeTrails) {
+                    if (activeTrail.name.isBlank()) continue
+                    val colorLabel = if (activeTrail.color != TrailColor.NONE) activeTrail.color.displayName else null
+                    val typeLabel = activeTrail.kind.descriptiveLabel
+                    val prefix = if (colorLabel != null) {
+                        "$colorLabel $typeLabel"
+                    } else {
+                        typeLabel.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
+                    }
+                    val trailTitle = if (activeTrail.name.startsWith(prefix, ignoreCase = true)) {
+                        activeTrail.name
+                    } else {
+                        "$prefix: ${activeTrail.name}"
+                    }
+                    val candidateKey = "${activeTrail.kind.name}:${activeTrail.color.name}:${activeTrail.name.lowercase(java.util.Locale.ROOT)}"
+                    currentKeys.add(candidateKey)
+
+                    var dwell = activeTrailDwells[candidateKey]
+                    if (dwell == null) {
+                        dwell = TrailDwellState(
+                            trail = activeTrail,
+                            title = trailTitle,
+                            firstSeenMs = now,
+                            entryDistanceM = currentDistance,
+                            lastSeenMs = now,
+                            lastDistanceM = currentDistance
+                        )
+                        activeTrailDwells[candidateKey] = dwell
+                    } else {
+                        dwell.lastSeenMs = now
+                        dwell.lastDistanceM = currentDistance
+                    }
+
+                    val trailDistM = (currentDistance - dwell.entryDistanceM).coerceAtLeast(0.0)
+                    val trailDurMs = (now - dwell.firstSeenMs).coerceAtLeast(0L)
                     if (trailDistM >= 150.0 || trailDurMs >= 45_000L) {
-                        val trailAlreadyLogged = placesList.takeLast(8).any {
+                        val trailAlreadyLogged = placesList.takeLast(12).any {
                             it.placeKind == PlaceKind.TRAIL && it.placeName.equals(trailTitle, ignoreCase = true)
                         }
-                        if (!trailAlreadyLogged) {
+                        if (!trailAlreadyLogged && !dwell.isCommitted) {
                             val trailSub = listOfNotNull(
                                 activeTrail.kind.displayName,
                                 outdoorContext.mountainRange?.name,
@@ -1810,16 +1836,26 @@ class TripManager private constructor(private val context: Context) {
                                 VisitedPlace(
                                     placeName = trailTitle,
                                     hierarchySubtitle = trailSub,
-                                    timestamp = pendingTrailFirstSeenMs,
+                                    timestamp = dwell.firstSeenMs,
                                     latitude = lat,
                                     longitude = lng,
-                                    distanceAtEntryMeters = pendingTrailEntryDistanceM,
+                                    distanceAtEntryMeters = dwell.entryDistanceM,
                                     placeKind = PlaceKind.TRAIL,
                                     countryCode = ccLower
                                 )
                             )
+                            dwell.isCommitted = true
                             listModified = true
                         }
+                    }
+                }
+
+                // Clean up trail dwells that haven't been observed for > 45 seconds
+                val iter = activeTrailDwells.entries.iterator()
+                while (iter.hasNext()) {
+                    val entry = iter.next()
+                    if (entry.key !in currentKeys && (now - entry.value.lastSeenMs) > 45_000L) {
+                        iter.remove()
                     }
                 }
             }

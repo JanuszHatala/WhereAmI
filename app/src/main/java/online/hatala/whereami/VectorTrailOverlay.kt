@@ -477,7 +477,12 @@ class VectorTrailOverlay(
                         }
                     },
                     onProgress = { progress ->
-                        launch(Dispatchers.Main) { onProgressChange?.invoke(progress) }
+                        if (progress.total > 0 && progress.completed >= progress.total) {
+                            setLoading(false)
+                            launch(Dispatchers.Main) { onProgressChange?.invoke(null) }
+                        } else {
+                            launch(Dispatchers.Main) { onProgressChange?.invoke(progress) }
+                        }
                     }
                 )
                 if (trails.isNotEmpty()) {
@@ -560,7 +565,9 @@ class VectorTrailOverlay(
             lastCameraMoveElapsedMs = nowElapsed
         }
         val isActivelyMoving = (nowElapsed - lastCameraMoveElapsedMs) < 110L
-        val useClusteredLanes = !isActivelyMoving
+        // Maintain consistent lane offsets during pan and zoom gestures so coincident parallel trails
+        // (e.g. red and green cycling trails sharing geometry) never collapse, flicker, or cover each other
+        val useClusteredLanes = true
 
         val canReplayCachedPaths =
             rev == lastDrawTrailsVersion &&

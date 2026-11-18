@@ -15,13 +15,22 @@ import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
- * Renders subtle directional chevrons along trip polyline segments to indicate travel direction.
- * Chevrons are drawn at regular intervals (~80-120m) along the forward vector.
+ * Renders high-contrast directional chevrons along trip polyline segments to indicate travel direction.
+ * Chevrons use a dual-tone design (crisp white chevron with subtle dark slate outline) and are spaced
+ * at fixed screen intervals (~100-120 dp) so they remain clean, legible, and un-crowded at every zoom level.
  */
 class TripDirectionOverlay(
-    private var colorArgb: Int = Color.parseColor("#E2E8F0"),
-    private var alpha: Int = 180
+    private var colorArgb: Int = Color.WHITE,
+    private var alpha: Int = 255,
+    private var haloColorArgb: Int = Color.parseColor("#0F172A"),
+    private var haloAlpha: Int = 220
 ) : Overlay() {
+
+    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
 
     private val chevronPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -35,7 +44,7 @@ class TripDirectionOverlay(
 
     private var segments: List<List<GeoPoint>> = emptyList()
 
-    fun updateColor(colorArgb: Int, alpha: Int = 180) {
+    fun updateColor(colorArgb: Int, alpha: Int = 255) {
         this.colorArgb = colorArgb
         this.alpha = alpha
     }
@@ -53,61 +62,79 @@ class TripDirectionOverlay(
         val proj = mapView.projection ?: return
         val density = mapView.context.resources.displayMetrics.density
 
-        val chevronArmPx = 6.0f * density
+        val chevronArmPx = 7.0f * density
         val chevronHalfAngleRad = Math.toRadians(32.0)
+        val targetIntervalPx = 110.0f * density
+
+        haloPaint.color = haloColorArgb
+        haloPaint.alpha = haloAlpha.coerceIn(0, 255)
+        haloPaint.strokeWidth = 4.2f * density
+
         chevronPaint.color = colorArgb
         chevronPaint.alpha = alpha.coerceIn(0, 255)
-        chevronPaint.strokeWidth = 2.0f * density
+        chevronPaint.strokeWidth = 2.2f * density
 
-        val targetIntervalMeters = 90.0
-        val minSegmentDistMeters = 8.0
+        val mapWidth = mapView.width.toFloat()
+        val mapHeight = mapView.height.toFloat()
+        val boundsMargin = 60.0f * density
+        val minX = -boundsMargin
+        val maxX = mapWidth + boundsMargin
+        val minY = -boundsMargin
+        val maxY = mapHeight + boundsMargin
 
         for (segment in segments) {
             val size = segment.size
             if (size < 2) continue
 
-            var accumulatedMeters = 0.0
-            var nextChevronDistance = targetIntervalMeters * 0.5 // initial offset
+            var accumulatedScreenPx = 0.0
+            var nextChevronPx = targetIntervalPx * 0.5 // initial offset along segment
 
-            for (i in 0 until size - 1) {
-                val pA = segment[i]
-                val pB = segment[i + 1]
+            proj.toPixels(segment[0], scratchP1)
+            var prevX = scratchP1.x.toFloat()
+            var prevY = scratchP1.y.toFloat()
 
-                val segDistM = computeDistanceMeters(pA.latitude, pA.longitude, pB.latitude, pB.longitude)
-                if (segDistM < 0.5) continue
+            for (i in 1 until size) {
+                proj.toPixels(segment[i], scratchP2)
+                val currX = scratchP2.x.toFloat()
+                val currY = scratchP2.y.toFloat()
 
-                val segStartM = accumulatedMeters
-                val segEndM = accumulatedMeters + segDistM
+                val dx = currX - prevX
+                val dy = currY - prevY
+                val segLenPx = hypot(dx.toDouble(), dy.toDouble())
 
-                while (nextChevronDistance in segStartM..segEndM) {
-                    val fraction = ((nextChevronDistance - segStartM) / segDistM).coerceIn(0.0, 1.0)
-                    val interpLat = pA.latitude + (pB.latitude - pA.latitude) * fraction
-                    val interpLon = pA.longitude + (pB.longitude - pA.longitude) * fraction
+                if (segLenPx < 1.0) {
+                    prevX = currX
+                    prevY = currY
+                    continue
+                }
 
-                    // Convert to screen coordinates
-                    proj.toPixels(GeoPoint(interpLat, interpLon), scratchP1)
-                    val cx = scratchP1.x.toFloat()
-                    val cy = scratchP1.y.toFloat()
+                // Culling: check if both endpoints are outside the same viewport border
+                val bothLeft = prevX < minX && currX < minX
+                val bothRight = prevX > maxX && currX > maxX
+                val bothTop = prevY < minY && currY < minY
+                val bothBottom = prevY > maxY && currY > maxY
+                val outsideViewport = bothLeft || bothRight || bothTop || bothBottom
 
-                    // Quick bounds check
-                    if (cx >= -50f && cx <= mapView.width + 50f && cy >= -50f && cy <= mapView.height + 50f) {
-                        // Forward screen direction
-                        proj.toPixels(pA, scratchP1)
-                        proj.toPixels(pB, scratchP2)
-                        val dx = (scratchP2.x - scratchP1.x).toFloat()
-                        val dy = (scratchP2.y - scratchP1.y).toFloat()
-                        val len = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                val segStartPx = accumulatedScreenPx
+                val segEndPx = accumulatedScreenPx + segLenPx
 
-                        if (len >= 3.0f) {
+                while (nextChevronPx in segStartPx..segEndPx) {
+                    if (!outsideViewport) {
+                        val fraction = ((nextChevronPx - segStartPx) / segLenPx).coerceIn(0.0, 1.0).toFloat()
+                        val cx = prevX + dx * fraction
+                        val cy = prevY + dy * fraction
+
+                        if (cx in minX..maxX && cy in minY..maxY) {
                             val headingRad = atan2(dy.toDouble(), dx.toDouble())
                             drawChevron(canvas, cx, cy, headingRad, chevronArmPx, chevronHalfAngleRad)
                         }
                     }
-
-                    nextChevronDistance += targetIntervalMeters
+                    nextChevronPx += targetIntervalPx
                 }
 
-                accumulatedMeters = segEndM
+                accumulatedScreenPx = segEndPx
+                prevX = currX
+                prevY = currY
             }
         }
     }
@@ -134,6 +161,9 @@ class TripDirectionOverlay(
         chevronPath.lineTo(cx, cy)
         chevronPath.lineTo(rx, ry)
 
+        // Draw dark outline halo first for sharp contrast over any underlying polyline color
+        canvas.drawPath(chevronPath, haloPaint)
+        // Draw crisp white chevron stroke
         canvas.drawPath(chevronPath, chevronPaint)
     }
 

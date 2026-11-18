@@ -2,6 +2,19 @@ package online.hatala.whereami
 
 import java.util.Locale
 
+data class FormattedSpeedMetric(
+    val primaryText: String,
+    val separator: String? = null,
+    val secondaryText: String? = null
+) {
+    val fullText: String
+        get() = if (separator != null && secondaryText != null) {
+            "$primaryText$separator$secondaryText"
+        } else {
+            primaryText
+        }
+}
+
 /**
  * Computes active-trip moving average speed and formats combined current + average speed/pace strings.
  */
@@ -39,6 +52,41 @@ object SpeedPaceFormatter {
         return String.format(Locale.getDefault(), "%d:%02d", min, sec)
     }
 
+    fun formatSpeedOrPaceParts(
+        currentSpeedMs: Float?,
+        movingAvgSpeedKmh: Float?,
+        preferPace: Boolean
+    ): FormattedSpeedMetric {
+        val currentKmh = ((currentSpeedMs ?: 0f) * 3.6f).coerceAtLeast(0f)
+        val hasValidAvg = movingAvgSpeedKmh != null && movingAvgSpeedKmh.isFinite() && movingAvgSpeedKmh > 0.5f
+
+        return if (preferPace) {
+            val curPace = formatPaceValue(currentKmh)
+            if (hasValidAvg) {
+                val avgPace = formatPaceValue(movingAvgSpeedKmh!!)
+                FormattedSpeedMetric(
+                    primaryText = curPace,
+                    separator = " · ",
+                    secondaryText = "⌀ $avgPace /km"
+                )
+            } else {
+                FormattedSpeedMetric(primaryText = "$curPace min/km")
+            }
+        } else {
+            val curStr = String.format(Locale.getDefault(), "%.1f", currentKmh)
+            if (hasValidAvg) {
+                val avgStr = String.format(Locale.getDefault(), "%.1f", movingAvgSpeedKmh!!)
+                FormattedSpeedMetric(
+                    primaryText = curStr,
+                    separator = " · ",
+                    secondaryText = "⌀ $avgStr km/h"
+                )
+            } else {
+                FormattedSpeedMetric(primaryText = "$curStr km/h")
+            }
+        }
+    }
+
     /**
      * Formats speed or pace for LocalityCard:
      * - Without avg: "23.4 km/h" or "5:12 min/km" (or "- min/km")
@@ -48,26 +96,5 @@ object SpeedPaceFormatter {
         currentSpeedMs: Float?,
         movingAvgSpeedKmh: Float?,
         preferPace: Boolean
-    ): String {
-        val currentKmh = ((currentSpeedMs ?: 0f) * 3.6f).coerceAtLeast(0f)
-        val hasValidAvg = movingAvgSpeedKmh != null && movingAvgSpeedKmh.isFinite() && movingAvgSpeedKmh > 0.5f
-
-        return if (preferPace) {
-            val curPace = formatPaceValue(currentKmh)
-            if (hasValidAvg) {
-                val avgPace = formatPaceValue(movingAvgSpeedKmh!!)
-                "$curPace · ⌀ $avgPace /km"
-            } else {
-                "$curPace min/km"
-            }
-        } else {
-            val curStr = String.format(Locale.getDefault(), "%.1f", currentKmh)
-            if (hasValidAvg) {
-                val avgStr = String.format(Locale.getDefault(), "%.1f", movingAvgSpeedKmh!!)
-                "$curStr · ⌀ $avgStr km/h"
-            } else {
-                "$curStr km/h"
-            }
-        }
-    }
+    ): String = formatSpeedOrPaceParts(currentSpeedMs, movingAvgSpeedKmh, preferPace).fullText
 }
