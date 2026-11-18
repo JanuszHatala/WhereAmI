@@ -99,4 +99,27 @@ describe('API End-to-End Tests', () => {
     assert.equal(res.body.ended, true);
     assert.ok(res.body.message.includes('Host is currently offline'));
   });
+
+  it('GET /api/sessions/:id?guestId=... marks guest active via lastPolled heartbeat', async () => {
+    const createRes = await request(app)
+      .post('/api/sessions/session-poll-api')
+      .send({ title: 'Poll API' });
+    const token = createRes.body.session.writeToken;
+
+    await request(app)
+      .post('/api/sessions/session-poll-api/guests/g-poll')
+      .send({ lat: 49.8, lng: 19.2, acc: 8, name: 'Hiker' });
+
+    await request(app).get('/api/sessions/session-poll-api?guestId=g-poll&pv=1');
+
+    const pointsRes = await request(app)
+      .post('/api/sessions/session-poll-api/points')
+      .set('x-write-token', token)
+      .send({ current: { lat: 49.81, lng: 19.21, t: Date.now() }, points: [] });
+
+    assert.equal(pointsRes.status, 200);
+    assert.equal(pointsRes.body.guests.length, 1);
+    assert.equal(pointsRes.body.guests[0].isInactive, false);
+    assert.equal(typeof pointsRes.body.guests[0].lastPolled, 'number');
+  });
 });

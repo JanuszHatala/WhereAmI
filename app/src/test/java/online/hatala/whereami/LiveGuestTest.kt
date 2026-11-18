@@ -38,12 +38,14 @@ class LiveGuestTest {
         assertEquals(5, guest.viewCount)
         assertEquals(3, guest.colorIndex)
         assertFalse(guest.rawIsInactive)
-        // Timestamp is in 2023 (> 5 minutes ago relative to now), so it's inactive in real time
+        // Timestamp is in 2023 (> 15 minutes ago relative to now), so it's inactive in real time
         assertTrue(guest.isInactive)
-        // But relative to 1 minute after its timestamp, it was active
+        // Relative to 1 minute after its timestamp, it was active
         assertFalse(guest.isInactiveAt(1700000000000L + 60_000L))
-        // And relative to 6 minutes after its timestamp, it was inactive
-        assertTrue(guest.isInactiveAt(1700000000000L + 360_000L))
+        // Relative to 6 minutes after its timestamp, it is still active under the 15-minute position window
+        assertFalse(guest.isInactiveAt(1700000000000L + 360_000L))
+        // Relative to 16 minutes after its timestamp, it is inactive
+        assertTrue(guest.isInactiveAt(1700000000000L + 16 * 60_000L))
     }
 
     @Test
@@ -325,30 +327,51 @@ class LiveGuestTest {
     }
 
     @Test
-    fun `test dynamic 5-minute inactivity evaluation and JSON deserialization`() {
+    fun `test dynamic 15-minute position and 3-minute poll activity evaluation and 24h recency`() {
         val now = 1700000000000L
 
-        // Active guest (updated 2 minutes ago, server says false)
+        // Active guest (updated 10 minutes ago, within 15 min position window)
         val activeGuest = LiveGuest(
             id = "g_act",
             name = "Active",
             lat = 50.0,
             lng = 20.0,
-            lastUpdated = now - 120_000L,
+            lastUpdated = now - 10 * 60_000L,
             rawIsInactive = false
         )
+        assertTrue(activeGuest.isActiveAt(now))
         assertFalse(activeGuest.isInactiveAt(now))
 
-        // Inactive guest due to age (> 5 min, server still said false)
+        // Inactive guest due to age (> 15 min position, no recent poll)
         val oldGuest = LiveGuest(
             id = "g_old",
             name = "Old",
             lat = 50.0,
             lng = 20.0,
-            lastUpdated = now - 360_000L, // 6 minutes ago
+            lastUpdated = now - 16 * 60_000L,
             rawIsInactive = false
         )
+        assertFalse(oldGuest.isActiveAt(now))
         assertTrue(oldGuest.isInactiveAt(now))
+        assertTrue(oldGuest.isRecentAt(now))
+
+        // Stale position (20 min ago) but polled 2 min ago -> ACTIVE via 3-min poll threshold
+        val pollActiveGuest = LiveGuest(
+            id = "g_poll",
+            name = "Poller",
+            lat = 50.0,
+            lng = 20.0,
+            lastUpdated = now - 20 * 60_000L,
+            lastPolled = now - 2 * 60_000L,
+            rawIsInactive = false
+        )
+        assertTrue(pollActiveGuest.isActiveAt(now))
+        assertFalse(pollActiveGuest.isInactiveAt(now))
+
+        // Poll > 3 min ago and position > 15 min ago -> INACTIVE
+        val expiredPollGuest = pollActiveGuest.copy(lastPolled = now - (3 * 60_000L + 1L))
+        assertFalse(expiredPollGuest.isActiveAt(now))
+        assertTrue(expiredPollGuest.isInactiveAt(now))
 
         // Inactive guest flagged by server explicitly even if recent
         val serverInactiveGuest = LiveGuest(
@@ -357,12 +380,14 @@ class LiveGuestTest {
             lat = 50.0,
             lng = 20.0,
             lastUpdated = now - 10_000L,
+            lastPolled = now - 5_000L,
             rawIsInactive = true
         )
+        assertFalse(serverInactiveGuest.isActiveAt(now))
         assertTrue(serverInactiveGuest.isInactiveAt(now))
 
-        // Boundary test: exactly 5 minutes (300_000 ms)
-        val t0 = 1000_000L
+        // Boundary test: exactly 15 minutes (900_000 ms) and 24h recent cutoff
+        val t0 = 1_000_000L
         val boundaryGuest = LiveGuest(
             id = "g_bnd",
             name = "Boundary",
@@ -371,22 +396,26 @@ class LiveGuestTest {
             lastUpdated = t0,
             rawIsInactive = false
         )
-        assertFalse(boundaryGuest.isInactiveAt(t0 + 300_000L)) // exactly 5 min -> active
-        assertTrue(boundaryGuest.isInactiveAt(t0 + 300_001L))  // > 5 min -> inactive
+        assertFalse(boundaryGuest.isInactiveAt(t0 + LiveGuest.POSITION_ACTIVE_THRESHOLD_MS))
+        assertTrue(boundaryGuest.isInactiveAt(t0 + LiveGuest.POSITION_ACTIVE_THRESHOLD_MS + 1L))
+        assertTrue(boundaryGuest.isRecentAt(t0 + LiveGuest.RECENT_THRESHOLD_MS))
+        assertFalse(boundaryGuest.isRecentAt(t0 + LiveGuest.RECENT_THRESHOLD_MS + 1L))
 
-        // JSON deserialization test: server JSON says isInactive = false, but timestamp is 6 minutes ago
+        // JSON deserialization test: lastPolled parsed & stale position (> 16 min) evaluated as inactive
         val json = JSONObject().apply {
             put("id", "g_json")
             put("name", "JsonGuest")
             put("lat", 50.0)
             put("lng", 20.0)
-            put("t", System.currentTimeMillis() - 360_000L) // 6 min ago
+            put("t", System.currentTimeMillis() - 16 * 60_000L)
+            put("lastPolled", System.currentTimeMillis() - 5 * 60_000L)
             put("isInactive", false)
         }
         val deserialized = LiveGuest.fromJson(json)
         assertNotNull(deserialized)
-        assertFalse(deserialized!!.rawIsInactive)
-        assertTrue(deserialized.isInactive) // Client evaluates as inactive!
+        assertNotNull(deserialized!!.lastPolled)
+        assertFalse(deserialized.rawIsInactive)
+        assertTrue(deserialized.isInactive)
     }
 
     @Test

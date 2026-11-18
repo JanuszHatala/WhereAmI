@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -623,6 +624,7 @@ fun OsmMapView(
     searchRouteFitTrigger: Long = 0L,
     onTrailSelected: ((TrailVectorSegment) -> Unit)? = null,
     onVectorTrailsLoadingChange: ((Boolean) -> Unit)? = null,
+    onActivateMagnifier: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -635,17 +637,22 @@ fun OsmMapView(
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val density = androidx.compose.ui.platform.LocalDensity.current.density
 
-    // Deduplicate all active session guests with valid locations for status counters
+    // Deduplicate recent (<= 24h) session guests with valid locations (single source of truth for map & counters)
     val dedupedSessionGuests = remember(activeGuests) {
-        activeGuests.groupBy { it.name.trim().lowercase(Locale.ROOT) }
+        val nowMs = System.currentTimeMillis()
+        activeGuests
+            .filter { it.isRecentAt(nowMs) }
+            .groupBy { it.name.trim().lowercase(Locale.ROOT) }
             .values
             .mapNotNull { group -> group.maxByOrNull { it.lastUpdated } }
     }
     val sessionActiveGuestCount = remember(dedupedSessionGuests) {
-        dedupedSessionGuests.count { !it.isInactive }
+        val nowMs = System.currentTimeMillis()
+        dedupedSessionGuests.count { it.isActiveAt(nowMs) }
     }
     val sessionInactiveGuestCount = remember(dedupedSessionGuests) {
-        dedupedSessionGuests.count { it.isInactive }
+        val nowMs = System.currentTimeMillis()
+        dedupedSessionGuests.count { !it.isActiveAt(nowMs) }
     }
 
     var autoRecenterEnabled by remember {
@@ -730,12 +737,9 @@ fun OsmMapView(
     val altitudeOverlay = remember(context) { AltitudeCursorBadgeOverlay(context) }
     var showAltitudeOnMap by remember { mutableStateOf(MapProfileConfigHelper.getShowAltitudeOnMap(context)) }
     var showInactiveGuests by remember { mutableStateOf(MapProfileConfigHelper.getShowInactiveGuests(context)) }
-    val visibleGuests = remember(activeGuests, showInactiveGuests) {
-        val filtered = if (showInactiveGuests) activeGuests else activeGuests.filter { !it.isInactive }
-        // Deduplicate by guest name, retaining only the single latest position per unique person
-        filtered.groupBy { it.name.trim().lowercase(Locale.ROOT) }
-            .values
-            .mapNotNull { group -> group.maxByOrNull { it.lastUpdated } }
+    val visibleGuests = remember(dedupedSessionGuests, showInactiveGuests) {
+        val nowMs = System.currentTimeMillis()
+        if (showInactiveGuests) dedupedSessionGuests else dedupedSessionGuests.filter { it.isActiveAt(nowMs) }
     }
     var currentSpiderfyPositions by remember { mutableStateOf<Map<String, GeoPoint>>(emptyMap()) }
     var lastAppliedHeadingState by remember { mutableStateOf<Boolean?>(null) }
@@ -1552,6 +1556,7 @@ fun OsmMapView(
             activeGuestCount = sessionActiveGuestCount,
             inactiveGuestCount = sessionInactiveGuestCount,
             visibleGuests = visibleGuests,
+            recentGuests = dedupedSessionGuests,
             showInactiveGuests = showInactiveGuests,
             onToggleShowInactiveGuests = {
                 showInactiveGuests = it
@@ -1564,6 +1569,7 @@ fun OsmMapView(
             onOpenLiveVisitorsDetails = onOpenLiveVisitorsDetails,
             activityProfile = activityProfile,
             trackPoints = trackPoints,
+            onActivateMagnifier = onActivateMagnifier,
             onUserInteracted = {
                 lastMapInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
             },
@@ -3232,6 +3238,7 @@ private fun BoxScope.MapFloatingControlsColumn(
     activeGuestCount: Int,
     inactiveGuestCount: Int,
     visibleGuests: List<LiveGuest>,
+    recentGuests: List<LiveGuest>,
     showInactiveGuests: Boolean,
     onToggleShowInactiveGuests: (Boolean) -> Unit,
     showVisitorLabels: Boolean,
@@ -3239,6 +3246,7 @@ private fun BoxScope.MapFloatingControlsColumn(
     onOpenLiveVisitorsDetails: (() -> Unit)?,
     activityProfile: ActivityProfile,
     trackPoints: List<GeoPoint>,
+    onActivateMagnifier: (() -> Unit)?,
     onUserInteracted: () -> Unit,
     context: Context
 ) {
@@ -3802,10 +3810,13 @@ private fun BoxScope.MapFloatingControlsColumn(
                 selectedTrips,
                 isRecording,
                 trackPoints,
-                visibleGuests,
+                recentGuests,
                 effectiveLatLng,
                 activityProfile
             ) {
+                val nowMs = System.currentTimeMillis()
+                val activeFitGuests = recentGuests.filter { it.isActiveAt(nowMs) }
+                val recentOnlyFitGuests = recentGuests.filter { !it.isActiveAt(nowMs) }
                 val list = mutableListOf<FitTargetOption>()
                 if (selectedTrips.isNotEmpty() && !isRecording) {
                     val pts = selectedTrips.flatMap { it.points }
@@ -3837,29 +3848,41 @@ private fun BoxScope.MapFloatingControlsColumn(
                         }
                     }
 
-                    if ((isRecording || trackPoints.isNotEmpty()) && visibleGuests.isNotEmpty()) {
+                    if ((isRecording || trackPoints.isNotEmpty()) && activeFitGuests.isNotEmpty()) {
                         val combined = mutableListOf<GeoPoint>().apply {
                             addAll(tripPts)
-                            addAll(visibleGuests.map { it.geoPoint })
+                            addAll(activeFitGuests.map { it.geoPoint })
                         }
-                        list.add(FitTargetOption("Trip & Guests", Icons.Default.Groups, combined))
-                    } else if (visibleGuests.isNotEmpty() && currentHostGp != null) {
+                        list.add(FitTargetOption("Trip & Active Guests", Icons.Default.Groups, combined))
+                    } else if (activeFitGuests.isNotEmpty() && currentHostGp != null) {
                         val combined = mutableListOf<GeoPoint>().apply {
                             add(currentHostGp)
-                            addAll(visibleGuests.map { it.geoPoint })
+                            addAll(activeFitGuests.map { it.geoPoint })
                         }
-                        list.add(FitTargetOption("My Position & Guests", Icons.Default.Groups, combined))
+                        list.add(FitTargetOption("Me & Active Guests", Icons.Default.Groups, combined))
                     }
 
-                    if (visibleGuests.isNotEmpty()) {
-                        list.add(FitTargetOption("Guests", Icons.Default.Group, visibleGuests.map { it.geoPoint }))
+                    if (activeFitGuests.isNotEmpty()) {
+                        list.add(FitTargetOption("Active Guests", Icons.Default.Group, activeFitGuests.map { it.geoPoint }))
+                    }
+
+                    if (recentOnlyFitGuests.isNotEmpty() && (currentHostGp != null || isRecording || trackPoints.isNotEmpty())) {
+                        val combinedRecent = mutableListOf<GeoPoint>().apply {
+                            if (isRecording || trackPoints.isNotEmpty()) {
+                                addAll(tripPts)
+                            } else if (currentHostGp != null) {
+                                add(currentHostGp)
+                            }
+                            addAll(recentGuests.map { it.geoPoint })
+                        }
+                        list.add(FitTargetOption("Me & Recent Guests (24h)", Icons.Default.Groups, combinedRecent))
                     }
                 }
                 list
             }
 
-            // Fit Shown Trips (Single-click immediate or multi-option popup menu)
-            if (fitOptions.isNotEmpty()) {
+            // Fit Shown Trips & Magnifier (Always visible: opens menu when fit targets exist, or enters Magnifier directly)
+            if (fitOptions.isNotEmpty() || onActivateMagnifier != null) {
                 Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
@@ -3868,22 +3891,8 @@ private fun BoxScope.MapFloatingControlsColumn(
                             .background(ComposeColor(0xCC1E293B))
                             .clickable {
                                 onUserInteracted()
-                                val map = mapView ?: return@clickable
-                                if (fitOptions.size == 1) {
-                                    val opt = fitOptions.first()
-                                    onFollowingChange(false)
-                                    fitPointsToUnobstructedViewport(
-                                        map = map,
-                                        points = opt.points,
-                                        density = density,
-                                        isLandscape = isLandscape,
-                                        isCompact = isCompact,
-                                        measuredTopInsetPx = measuredTopInsetPx,
-                                        measuredBottomInsetPx = measuredBottomInsetPx,
-                                        isRecording = isRecording,
-                                        isAutoStandby = isAutoStandby,
-                                        onZoomCalculated = { onZoomChange(it) }
-                                    )
+                                if (fitOptions.isEmpty()) {
+                                    onActivateMagnifier?.invoke()
                                 } else {
                                     showFitMenu = !showFitMenu
                                 }
@@ -3892,13 +3901,13 @@ private fun BoxScope.MapFloatingControlsColumn(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CropFree,
-                            contentDescription = "Fit to Screen",
+                            contentDescription = "Fit to Screen & Magnifier",
                             tint = ComposeColor(0xFF38BDF8),
                             modifier = Modifier.size(22.dp)
                         )
                     }
 
-                    if (fitOptions.size > 1) {
+                    if (fitOptions.isNotEmpty()) {
                         DropdownMenu(
                             expanded = showFitMenu,
                             onDismissRequest = { showFitMenu = false },
@@ -3959,6 +3968,35 @@ private fun BoxScope.MapFloatingControlsColumn(
                                             isAutoStandby = isAutoStandby,
                                             onZoomCalculated = { onZoomChange(it) }
                                         )
+                                    }
+                                )
+                            }
+
+                            if (onActivateMagnifier != null) {
+                                HorizontalDivider(color = ComposeColor(0xFF334155))
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Magnifier",
+                                            color = ComposeColor.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.ZoomIn,
+                                            contentDescription = null,
+                                            tint = ComposeColor(0xFF38BDF8),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        onUserInteracted()
+                                        showFitMenu = false
+                                        onActivateMagnifier()
                                     }
                                 )
                             }

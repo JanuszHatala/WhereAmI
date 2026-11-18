@@ -2516,6 +2516,47 @@ class LocationManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Fetches extended OSM metadata (postcode, ISO 3166-2, TERYT, Wikidata, population, admin levels)
+     * on demand for the Place Details sheet without modifying the spatial cache schema.
+     */
+    suspend fun fetchExtendedNominatimMetadata(
+        lat: Double,
+        lng: Double,
+        language: DisplayLanguage = DisplayLanguage.EN
+    ): NominatimExtendedMetadata? = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (now < osmRateLimitCooldownUntil) return@withContext null
+
+        val elapsed = now - lastOsmRequestTime
+        if (elapsed < 1000L) {
+            kotlinx.coroutines.delay(1000L - elapsed)
+        }
+        lastOsmRequestTime = System.currentTimeMillis()
+
+        try {
+            val langCode = if (language == DisplayLanguage.PL) "pl" else "en"
+            val urlStr = "https://nominatim.openstreetmap.org/reverse" +
+                "?format=json&lat=$lat&lon=$lng" +
+                "&accept-language=$langCode&zoom=18&addressdetails=1&namedetails=1&extratags=1"
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "WhereAmIPersonalApp/1.1 (android)")
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+
+            if (conn.responseCode == 429) {
+                osmRateLimitCooldownUntil = System.currentTimeMillis() + 30_000L
+                return@withContext null
+            }
+            if (conn.responseCode != 200) return@withContext null
+
+            val body = conn.inputStream.bufferedReader().readText()
+            NominatimExtendedMetadata.fromNominatimJson(JSONObject(body))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun saveLastGood(prefs: SharedPreferences, key: String, lat: Double, lng: Double, place: PlaceInfo) {
         prefs.edit()
             .putString("last_good_city_$key", place.city)
