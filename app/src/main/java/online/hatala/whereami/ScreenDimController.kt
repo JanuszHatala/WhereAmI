@@ -16,7 +16,7 @@ object ScreenDimController {
     const val DEFAULT_DIM_TIMEOUT_SEC = 30
     const val DEFAULT_DIM_LEVEL_PERCENT = 20
 
-    const val MIN_DIM_LEVEL_PERCENT = 5
+    const val MIN_DIM_LEVEL_PERCENT = 2
     const val MAX_DIM_LEVEL_PERCENT = 60
 
     val TIMEOUT_OPTIONS_SEC = listOf(15, 30, 60, 120, 300)
@@ -46,20 +46,22 @@ object ScreenDimController {
         clampLevelPercent(sessionOverridePercent ?: defaultPercent)
 
     /**
-     * Returns window screenBrightness value (0.02..0.60 when dimmed capped by system brightness, BRIGHTNESS_OVERRIDE_NONE otherwise).
+     * Returns window screenBrightness value (0.02..0.60 when dimmed, BRIGHTNESS_OVERRIDE_NONE otherwise).
      */
     fun resolveWindowBrightness(
         shouldKeepScreenOn: Boolean,
         isDimmed: Boolean,
         effectiveDimEnabled: Boolean,
         effectiveLevelPercent: Int,
-        systemBrightnessFraction: Float = 1.0f
+        isDimPreview: Boolean = false
     ): Float {
+        if (isDimPreview) {
+            return (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
+        }
         if (!shouldKeepScreenOn || !effectiveDimEnabled || !isDimmed) {
             return WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }
-        val target = (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
-        return minOf(target, systemBrightnessFraction.coerceIn(0.01f, 1.0f))
+        return (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
     }
 
     fun formatTimeoutLabel(seconds: Int): String = when {

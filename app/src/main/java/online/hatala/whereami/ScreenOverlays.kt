@@ -497,19 +497,36 @@ fun ScreenDimSettingsCard(
                             color = Color(0xFF38BDF8)
                         )
                         if (onPreviewDim != null) {
-                            Button(
+                            Surface(
                                 onClick = onPreviewDim,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                shape = RoundedCornerShape(6.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(24.dp)
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF334155),
+                                border = BorderStroke(1.dp, Color(0xFF475569)),
+                                modifier = Modifier.height(28.dp)
                             ) {
-                                Text(
-                                    text = "Preview (3s)",
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 10.dp)
+                                ) {
+                                    Text(
+                                        text = "Preview (3s)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeightStyle = LineHeightStyle(
+                                                alignment = LineHeightStyle.Alignment.Center,
+                                                trim = LineHeightStyle.Trim.Both
+                                            ),
+                                            lineHeight = 11.sp
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
