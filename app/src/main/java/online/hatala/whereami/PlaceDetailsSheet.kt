@@ -7,8 +7,8 @@ import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -159,37 +159,40 @@ fun PlaceDetailsModalSheet(
 
             HorizontalDivider(color = Color(0xFF1E293B))
 
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // 1. Administrative Hierarchy
-                item {
-                    PlaceDetailSectionCard(title = "Administrative Hierarchy") {
-                        if (snapshot.hierarchySubtitle.isNotBlank()) {
-                            Text(
-                                text = snapshot.hierarchySubtitle,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF38BDF8),
-                                modifier = Modifier.padding(bottom = 6.dp)
+                PlaceDetailSectionCard(title = "Administrative Hierarchy") {
+                    if (snapshot.hierarchySubtitle.isNotBlank()) {
+                        Text(
+                            text = snapshot.hierarchySubtitle,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF38BDF8),
+                            modifier = Modifier.padding(bottom = 2.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeight = 14.sp
                             )
-                        }
-                        PlaceDetailRow("Locality", primary?.city)
-                        PlaceDetailRow("Municipality (gm.)", primary?.gmina)
-                        PlaceDetailRow("County (pow.)", primary?.powiat)
-                        PlaceDetailRow("Voivodeship / Region", primary?.voivodeship)
-                        PlaceDetailRow(
-                            "Country",
-                            listOfNotNull(
-                                primary?.country?.takeIf { it.isNotBlank() },
-                                primary?.countryCode?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)?.let { "[$it]" }
-                            ).joinToString(" ")
                         )
                     }
+                    PlaceDetailRow("Locality", primary?.city)
+                    PlaceDetailRow("Municipality (gm.)", primary?.gmina)
+                    PlaceDetailRow("County (pow.)", primary?.powiat)
+                    PlaceDetailRow("Voivodeship / Region", primary?.voivodeship)
+                    PlaceDetailRow(
+                        "Country",
+                        listOfNotNull(
+                            primary?.country?.takeIf { it.isNotBlank() },
+                            primary?.countryCode?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)?.let { "[$it]" }
+                        ).joinToString(" ")
+                    )
                 }
 
                 // 2. Road & Street
@@ -200,164 +203,159 @@ fun PlaceDetailsModalSheet(
                     allowHouseNumber = true
                 )
                 if (!formattedStreet.isNullOrBlank() || !primary?.roadRef.isNullOrBlank() || !primary?.highwayType.isNullOrBlank()) {
-                    item {
-                        PlaceDetailSectionCard(title = "Road & Street") {
-                            PlaceDetailRow("Display Road / Street", formattedStreet)
-                            PlaceDetailRow("Raw Street", primary?.street)
-                            PlaceDetailRow("Road Ref", primary?.roadRef)
-                            PlaceDetailRow("OSM Highway Class", primary?.highwayType)
-                        }
+                    PlaceDetailSectionCard(title = "Road & Street") {
+                        PlaceDetailRow("Display Road / Street", formattedStreet)
+                        PlaceDetailRow("Raw Street", primary?.street)
+                        PlaceDetailRow("Road Ref", primary?.roadRef)
+                        PlaceDetailRow("OSM Highway Class", primary?.highwayType)
                     }
                 }
 
                 // 3. Outdoor Areas, Trails & Nearby Features
                 val outdoor = snapshot.outdoorContext
                 if (outdoor != null && outdoor.hasAnyOutdoor) {
-                    item {
-                        PlaceDetailSectionCard(title = "Outdoor Context & Trails") {
-                            outdoor.mountainRange?.let { area ->
-                                PlaceDetailRow("Mountain Range", area.name, area.kind.iconEmoji)
-                            }
-                            outdoor.valley?.let { area ->
-                                PlaceDetailRow("Valley", area.name, area.kind.iconEmoji)
-                            }
-                            outdoor.protectedAreas.forEach { area ->
-                                PlaceDetailRow(area.kind.displayName, area.name, area.kind.iconEmoji)
-                            }
-                            outdoor.activeTrails.forEach { trail ->
-                                val distLabel = if (trail.distanceMeters > 0f) " (${Math.round(trail.distanceMeters)} m)" else ""
-                                val refPart = trail.ref?.let { "[$it] " } ?: ""
-                                PlaceDetailRow(trail.kind.displayName, "$refPart${trail.name}$distLabel", trail.kind.iconEmoji)
-                            }
-                            outdoor.waterBody?.let { wb ->
-                                val distLabel = if (wb.distanceMeters > 0f) " (${Math.round(wb.distanceMeters)} m)" else ""
-                                PlaceDetailRow("Water Body", "${wb.name}$distLabel")
-                            }
-                            outdoor.nearestFeatures.forEach { feat ->
-                                val elev = feat.elevationMeters?.let { " • ${it} m a.s.l." } ?: ""
-                                val dist = if (feat.distanceMeters > 0f) " • ${Math.round(feat.distanceMeters)} m" else ""
-                                PlaceDetailRow(feat.kind.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.uppercase() }, "${feat.name}$elev$dist")
-                            }
+                    PlaceDetailSectionCard(title = "Outdoor Context & Trails") {
+                        outdoor.mountainRange?.let { area ->
+                            PlaceDetailRow("Mountain Range", area.name, area.kind.iconEmoji)
+                        }
+                        outdoor.valley?.let { area ->
+                            PlaceDetailRow("Valley", area.name, area.kind.iconEmoji)
+                        }
+                        outdoor.protectedAreas.forEach { area ->
+                            PlaceDetailRow(area.kind.displayName, area.name, area.kind.iconEmoji)
+                        }
+                        outdoor.activeTrails.forEach { trail ->
+                            val distLabel = if (trail.distanceMeters > 0f) " (${Math.round(trail.distanceMeters)} m)" else ""
+                            val refPart = trail.ref?.let { "[$it] " } ?: ""
+                            PlaceDetailRow(trail.kind.displayName, "$refPart${trail.name}$distLabel", trail.kind.iconEmoji)
+                        }
+                        outdoor.waterBody?.let { wb ->
+                            val distLabel = if (wb.distanceMeters > 0f) " (${Math.round(wb.distanceMeters)} m)" else ""
+                            PlaceDetailRow("Water Body", "${wb.name}$distLabel")
+                        }
+                        outdoor.nearestFeatures.forEach { feat ->
+                            val elev = feat.elevationMeters?.let { " • ${it} m a.s.l." } ?: ""
+                            val dist = if (feat.distanceMeters > 0f) " • ${Math.round(feat.distanceMeters)} m" else ""
+                            PlaceDetailRow(feat.kind.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.uppercase() }, "${feat.name}$elev$dist")
                         }
                     }
                 }
 
                 // 4. GPS Coordinates & Telemetry
-                item {
-                    PlaceDetailSectionCard(title = "Coordinates & Telemetry") {
-                        val lat = snapshot.lat
-                        val lng = snapshot.lng
-                        if (lat != null && lng != null) {
-                            val decimalStr = CoordinateFormatHelper.formatDecimal(lat, lng)
-                            val dmsStr = CoordinateFormatHelper.formatDms(lat, lng)
-                            PlaceDetailRow("Decimal (WGS84)", decimalStr)
-                            PlaceDetailRow("DMS", dmsStr)
+                PlaceDetailSectionCard(title = "Coordinates & Telemetry") {
+                    val lat = snapshot.lat
+                    val lng = snapshot.lng
+                    if (lat != null && lng != null) {
+                        val decimalStr = CoordinateFormatHelper.formatDecimal(lat, lng)
+                        val dmsStr = CoordinateFormatHelper.formatDms(lat, lng)
+                        PlaceDetailRow("Decimal (WGS84)", decimalStr)
+                        PlaceDetailRow("DMS", dmsStr)
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    copyToClipboard(context, "Coordinates", decimalStr)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.weight(1f).height(32.dp)
                             ) {
-                                Button(
-                                    onClick = {
-                                        copyToClipboard(context, "Coordinates", decimalStr)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Copy Coords", color = Color.White, fontSize = 12.sp, maxLines = 1, softWrap = false)
-                                }
-                                Button(
-                                    onClick = {
-                                        openInGoogleMaps(context, lat, lng, primary?.city ?: "")
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Map, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Open Maps", color = Color.White, fontSize = 12.sp, maxLines = 1, softWrap = false)
-                                }
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Copy Coords", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
-                        } else {
-                            Text("Waiting for GPS coordinates...", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                            Button(
+                                onClick = {
+                                    openInGoogleMaps(context, lat, lng, primary?.city ?: "")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.weight(1f).height(32.dp)
+                            ) {
+                                Icon(Icons.Default.Map, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Open Maps", color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                            }
                         }
+                    } else {
+                        Text("Waiting for GPS coordinates...", fontSize = 11.5.sp, color = Color(0xFF94A3B8))
+                    }
 
-                        Spacer(modifier = Modifier.height(6.dp))
-                        snapshot.altitudeM?.let { alt ->
-                            PlaceDetailRow("Altitude", "${Math.round(alt)} m a.s.l.")
-                        }
-                        snapshot.accuracyM?.let { acc ->
-                            PlaceDetailRow("Horizontal Accuracy", "±${Math.round(acc)} m")
-                        }
-                        snapshot.speedMs?.let { spd ->
-                            PlaceDetailRow("Speed at Snapshot", String.format(Locale.getDefault(), "%.1f km/h", spd * 3.6f))
-                        }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    snapshot.altitudeM?.let { alt ->
+                        PlaceDetailRow("Altitude", "${Math.round(alt)} m a.s.l.")
+                    }
+                    snapshot.accuracyM?.let { acc ->
+                        PlaceDetailRow("Horizontal Accuracy", "±${Math.round(acc)} m")
+                    }
+                    snapshot.speedMs?.let { spd ->
+                        PlaceDetailRow("Speed at Snapshot", String.format(Locale.getDefault(), "%.1f km/h", spd * 3.6f))
                     }
                 }
 
                 // 5. Place Codes & OSM Metadata (On-Demand)
-                item {
-                    PlaceDetailSectionCard(title = "Codes & OSM Metadata") {
-                        when {
-                            isLoadingMeta -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = Color(0xFF38BDF8)
-                                    )
-                                    Text(
-                                        text = "Fetching postal, ISO, and OSM metadata...",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF94A3B8)
-                                    )
-                                }
-                            }
-                            extendedMeta == null -> {
+                PlaceDetailSectionCard(title = "Codes & OSM Metadata") {
+                    when {
+                        isLoadingMeta -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color(0xFF38BDF8)
+                                )
                                 Text(
-                                    text = "Extended OSM metadata unavailable offline or rate-limited.",
-                                    fontSize = 12.sp,
+                                    text = "Fetching postal, ISO, and OSM metadata...",
+                                    fontSize = 11.5.sp,
                                     color = Color(0xFF94A3B8)
                                 )
                             }
-                            else -> {
-                                val meta = extendedMeta!!
-                                PlaceDetailRow("Postal Code", meta.postcode)
-                                PlaceDetailRow("ISO 3166-2 Region", meta.iso3166Lvl4)
-                                PlaceDetailRow("TERYT / National ID", meta.terytSimc)
-                                PlaceDetailRow("Municipality Code", meta.municipalityCode)
-                                val osmObject = if (meta.osmType != null && meta.osmId != null) {
-                                    "${meta.osmType} #${meta.osmId}"
-                                } else null
-                                PlaceDetailRow("OSM Object", osmObject)
-                                val osmKind = listOfNotNull(meta.osmClass, meta.osmPlaceType).joinToString(" / ").takeIf { it.isNotBlank() }
-                                PlaceDetailRow("OSM Class / Type", osmKind)
-                                val rankAdmin = listOfNotNull(
-                                    meta.placeRank?.let { "place_rank=$it" },
-                                    meta.adminLevel?.let { "admin_level=$it" }
-                                ).joinToString(", ").takeIf { it.isNotBlank() }
-                                PlaceDetailRow("Hierarchy Rank", rankAdmin)
-                                PlaceDetailRow("Population", meta.population)
-                                PlaceDetailRow("Wikidata", meta.wikidataId)
-                                PlaceDetailRow("Wikipedia", meta.wikipediaTag)
-                                if (!meta.displayName.isNullOrBlank()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = meta.displayName,
-                                        fontSize = 11.sp,
-                                        color = Color(0xFF94A3B8)
-                                    )
-                                }
+                        }
+                        extendedMeta == null -> {
+                            Text(
+                                text = "Extended OSM metadata unavailable offline or rate-limited.",
+                                fontSize = 11.5.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                        else -> {
+                            val meta = extendedMeta!!
+                            PlaceDetailRow("Postal Code", meta.postcode)
+                            PlaceDetailRow("ISO 3166-2 Region", meta.iso3166Lvl4)
+                            PlaceDetailRow("TERYT / National ID", meta.terytSimc)
+                            PlaceDetailRow("Municipality Code", meta.municipalityCode)
+                            val osmObject = if (meta.osmType != null && meta.osmId != null) {
+                                "${meta.osmType} #${meta.osmId}"
+                            } else null
+                            PlaceDetailRow("OSM Object", osmObject)
+                            val osmKind = listOfNotNull(meta.osmClass, meta.osmPlaceType).joinToString(" / ").takeIf { it.isNotBlank() }
+                            PlaceDetailRow("OSM Class / Type", osmKind)
+                            val rankAdmin = listOfNotNull(
+                                meta.placeRank?.let { "place_rank=$it" },
+                                meta.adminLevel?.let { "admin_level=$it" }
+                            ).joinToString(", ").takeIf { it.isNotBlank() }
+                            PlaceDetailRow("Hierarchy Rank", rankAdmin)
+                            PlaceDetailRow("Population", meta.population)
+                            PlaceDetailRow("Wikidata", meta.wikidataId)
+                            PlaceDetailRow("Wikipedia", meta.wikipediaTag)
+                            if (!meta.displayName.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = meta.displayName,
+                                    fontSize = 10.5.sp,
+                                    color = Color(0xFF94A3B8),
+                                    lineHeight = 13.sp
+                                )
                             }
                         }
                     }
@@ -366,50 +364,46 @@ fun PlaceDetailsModalSheet(
                 // 6. Current Trip Route List (only while recording)
                 val route = snapshot.tripRoute
                 if (route != null) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                EmojiText(emoji = "🚩", fontSize = 16.sp, yOffsetDp = 0.dp)
-                                Text(
-                                    text = "Current Trip Route",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            EmojiText(emoji = "🚩", fontSize = 15.sp, yOffsetDp = 0.dp)
                             Text(
-                                text = "${route.placesVisited.size} places • ${String.format(Locale.getDefault(), "%.1f km", route.distanceMeters / 1000.0)}",
-                                fontSize = 12.sp,
-                                color = Color(0xFF94A3B8)
+                                text = "Current Trip Route",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
                         }
+                        Text(
+                            text = "${route.placesVisited.size} places • ${String.format(Locale.getDefault(), "%.1f km", route.distanceMeters / 1000.0)}",
+                            fontSize = 11.5.sp,
+                            color = Color(0xFF94A3B8)
+                        )
                     }
 
                     if (route.placesVisited.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF1E293B))
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No intermediate places recorded yet.",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 12.sp
-                                )
-                            }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF1E293B))
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No intermediate places recorded yet.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.5.sp
+                            )
                         }
                     } else {
-                        items(route.placesVisited) { place ->
+                        for (place in route.placesVisited) {
                             val isFirst = route.placesVisited.firstOrNull() == place
                             val isLast = route.placesVisited.lastOrNull() == place
                             val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(place.timestamp))
@@ -418,18 +412,18 @@ fun PlaceDetailsModalSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(Color(0xFF1E293B))
-                                    .padding(12.dp),
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(10.dp)
+                                        .size(8.dp)
                                         .clip(CircleShape)
                                         .background(if (isLast) Color(0xFF10B981) else if (isFirst) Color(0xFF38BDF8) else Color(0xFFFBBF24))
                                 )
-                                Spacer(modifier = Modifier.width(12.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -438,7 +432,7 @@ fun PlaceDetailsModalSheet(
                                     ) {
                                         Text(
                                             text = place.placeName,
-                                            fontSize = 14.sp,
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White,
                                             modifier = Modifier.weight(1f, fill = false),
@@ -448,7 +442,7 @@ fun PlaceDetailsModalSheet(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = timeStr,
-                                            fontSize = 12.sp,
+                                            fontSize = 11.sp,
                                             color = Color(0xFF38BDF8),
                                             fontWeight = FontWeight.SemiBold,
                                             softWrap = false
@@ -461,7 +455,7 @@ fun PlaceDetailsModalSheet(
                                     ) {
                                         Text(
                                             text = place.hierarchySubtitle,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.5.sp,
                                             color = Color(0xFF94A3B8),
                                             modifier = Modifier.weight(1f, fill = false),
                                             maxLines = 1,
@@ -470,7 +464,7 @@ fun PlaceDetailsModalSheet(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = distStr,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.5.sp,
                                             color = Color(0xFF64748B),
                                             softWrap = false
                                         )
@@ -480,6 +474,8 @@ fun PlaceDetailsModalSheet(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(36.dp))
             }
         }
     }
@@ -491,21 +487,25 @@ private fun PlaceDetailSectionCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = Color(0xFF1E293B),
         border = BorderStroke(1.dp, Color(0xFF334155)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
                 text = title.uppercase(Locale.ROOT),
-                fontSize = 11.sp,
+                fontSize = 10.5.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF94A3B8),
-                letterSpacing = 0.6.sp
+                letterSpacing = 0.6.sp,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeight = 12.sp
+                )
             )
             Spacer(modifier = Modifier.height(2.dp))
             content()
@@ -521,7 +521,9 @@ private fun PlaceDetailRow(
 ) {
     if (value.isNullOrBlank()) return
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -530,23 +532,39 @@ private fun PlaceDetailRow(
             modifier = Modifier.weight(0.42f).padding(end = 8.dp)
         ) {
             if (!leadingEmoji.isNullOrBlank()) {
-                EmojiText(emoji = leadingEmoji, fontSize = 12.sp, yOffsetDp = 0.dp)
-                Spacer(modifier = Modifier.width(5.dp))
+                EmojiText(emoji = leadingEmoji, fontSize = 11.5.sp, yOffsetDp = 0.dp)
+                Spacer(modifier = Modifier.width(4.dp))
             }
             Text(
                 text = label,
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 color = Color(0xFF94A3B8),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    ),
+                    lineHeight = 14.sp
+                )
             )
         }
         Text(
             text = value,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             color = Color.White,
-            modifier = Modifier.weight(0.58f)
+            modifier = Modifier.weight(0.58f),
+            style = TextStyle(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both
+                ),
+                lineHeight = 14.sp
+            )
         )
     }
 }

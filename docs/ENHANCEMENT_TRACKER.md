@@ -64,8 +64,9 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 79** | Walking Smooth Tracking Repair, Screen-Off Polyline Sync & Monotonic Catmull-Rom Tangents (2026-10-18) | 5 | 5 | 0 | 0 |
 | **Round 68** | Vector Trail Progressive Streaming, Cross-Profile Leak Fix, Road Refs, Border Cache TTL & Unified Settings Spacing (2026-11-17 v2.4.12) | 5 | 5 | 0 | 0 |
 | **Round 69** | Guest Activity Windows, Screen Magnifier, Idle Dimming, Place Details & Moving Average Speed (2026-11-18 v2.5.0) | 5 | 5 | 0 | 0 |
+| **Round 70** | Trail Types Legend Live Preview, Coincident Trail Corridor Fix, Condensed Place Details & Screen Dimming Polish (2026-11-18 v2.5.3) | 6 | 6 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **411** | **403** | **0** | **8** |
+| **Total** | | **417** | **409** | **0** | **8** |
 
 
 ---

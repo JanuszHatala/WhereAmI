@@ -46,18 +46,20 @@ object ScreenDimController {
         clampLevelPercent(sessionOverridePercent ?: defaultPercent)
 
     /**
-     * Returns window screenBrightness value (0.05..0.60 when dimmed, BRIGHTNESS_OVERRIDE_NONE otherwise).
+     * Returns window screenBrightness value (0.02..0.60 when dimmed capped by system brightness, BRIGHTNESS_OVERRIDE_NONE otherwise).
      */
     fun resolveWindowBrightness(
         shouldKeepScreenOn: Boolean,
         isDimmed: Boolean,
         effectiveDimEnabled: Boolean,
-        effectiveLevelPercent: Int
+        effectiveLevelPercent: Int,
+        systemBrightnessFraction: Float = 1.0f
     ): Float {
         if (!shouldKeepScreenOn || !effectiveDimEnabled || !isDimmed) {
             return WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }
-        return (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.05f, 0.60f)
+        val target = (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
+        return minOf(target, systemBrightnessFraction.coerceIn(0.01f, 1.0f))
     }
 
     fun formatTimeoutLabel(seconds: Int): String = when {

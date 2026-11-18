@@ -292,7 +292,7 @@ object TrailVectorRepository {
             results.addAll(wmSegments)
             anyWaymarkedOk = allOrAnyOk
             if (wmSegments.isNotEmpty() && onProgressiveUpdate != null) {
-                onProgressiveUpdate.invoke(results.distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" })
+                onProgressiveUpdate.invoke(results.distinctBy { "${it.id}_${it.relationId}_${it.kind.name}_${it.color.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" })
             }
         }
 
@@ -337,7 +337,7 @@ object TrailVectorRepository {
             }
         }
 
-        results.distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
+        results.distinctBy { "${it.id}_${it.relationId}_${it.kind.name}_${it.color.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
     }
 
     internal fun deduplicateSupplementalTrails(
@@ -482,7 +482,7 @@ object TrailVectorRepository {
         val emitProgressive = suspend {
             if (onProgressiveUpdate != null && progressiveTiles.isNotEmpty()) {
                 val snapshot = progressiveTiles.values.flatten()
-                    .distinctBy { "${it.id}_${it.kind.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
+                    .distinctBy { "${it.id}_${it.relationId}_${it.kind.name}_${it.color.name}_${it.points.firstOrNull()?.latitude}_${it.points.firstOrNull()?.longitude}" }
                 if (snapshot.isNotEmpty()) onProgressiveUpdate.invoke(snapshot)
             }
         }
@@ -1541,25 +1541,27 @@ object TrailVectorRepository {
 
             if (relIds.isEmpty()) {
                 val tileSalt = ((tileX * 73856093 xor tileY * 19349663) and 0x7FFF)
-                val segColor = shieldColors.firstOrNull() ?: TrailColor.NONE
+                val colorsToEmit = if (shieldColors.isNotEmpty()) shieldColors else listOf(TrailColor.NONE)
                 val kind = when (subdomain) {
                     "cycling" -> TrailRouteKind.CYCLING
                     "mtb" -> TrailRouteKind.MTB
                     else -> TrailRouteKind.HIKING
                 }
-                for (pts in lines) {
-                    localSeq++
-                    val synthId = (tileSalt.toLong() shl 16) + localSeq
-                    segments.add(
-                        TrailVectorSegment(
-                            id = synthId,
-                            name = fallbackRef ?: "Marked Trail",
-                            ref = fallbackRef,
-                            kind = kind,
-                            color = segColor,
-                            points = pts
+                for (segColor in colorsToEmit) {
+                    for (pts in lines) {
+                        localSeq++
+                        val synthId = (tileSalt.toLong() shl 16) + localSeq
+                        segments.add(
+                            TrailVectorSegment(
+                                id = synthId,
+                                name = fallbackRef ?: "Marked Trail",
+                                ref = fallbackRef,
+                                kind = kind,
+                                color = segColor,
+                                points = pts
+                            )
                         )
-                    )
+                    }
                 }
                 continue
             }
@@ -1579,8 +1581,8 @@ object TrailVectorRepository {
                 val finalColor = when {
                     metaColor != TrailColor.NONE -> metaColor
                     meta != null && relIds.size == 1 -> shieldColors.firstOrNull() ?: TrailColor.NONE
-                    meta != null -> TrailColor.NONE
-                    else -> rawShieldColors.getOrNull(rOffset) ?: shieldColors.firstOrNull() ?: TrailColor.NONE
+                    meta != null -> rawShieldColors.getOrNull(rOffset) ?: shieldColors.getOrNull(rOffset) ?: TrailColor.NONE
+                    else -> rawShieldColors.getOrNull(rOffset) ?: shieldColors.getOrNull(rOffset) ?: shieldColors.firstOrNull() ?: TrailColor.NONE
                 }
                 val ref = meta?.ref ?: fallbackRef
                 val name = meta?.name ?: ref ?: "Trail #$relId"

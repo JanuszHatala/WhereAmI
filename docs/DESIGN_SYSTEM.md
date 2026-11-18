@@ -188,6 +188,19 @@ fun EmojiText(
   The badge container MUST explicitly center its content via `Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))` inside the `Surface(shape = RoundedCornerShape(6.dp))`.
 - **Dynamic Text Single-Line Guard**: Dynamic status descriptions (such as lifecycle mode or power policy labels) that change based on state MUST declare `maxLines = 1` and `softWrap = false` to prevent multiline wrapping from pushing preceding or subsequent layout blocks down.
 
+### E. Condensed Information Density & Nested Scroll Stability Invariant
+- **Ultra-Condensed Visual Density**: WhereAmI is a real-time spatial awareness tool designed for fast glanceability in motion. Info panels, details sheets (e.g. `PlaceDetailsSheet`), section cards, and metric rows MUST follow an ultra-condensed layout convention. Sparse, bloated vertical whitespace is strictly prohibited.
+- **Section Card Padding & Spacing**:
+  - Section card internal padding must be compact (`horizontal = 12.dp, vertical = 8.dp`, never 14dp+).
+  - Row-to-row spacing inside section cards must be tight (`verticalArrangement = Arrangement.spacedBy(2.dp)`).
+  - Card-to-card spacing in vertical scroll containers must be condensed (`verticalArrangement = Arrangement.spacedBy(8.dp)`).
+- **Row Font Metric Normalization**:
+  - Labels and values must eliminate Android font padding with `PlatformTextStyle(includeFontPadding = false)` and `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)`.
+  - Explicit `lineHeight = 14.sp` for body labels (11.5–12.sp) to eliminate vertical gaps.
+- **ModalBottomSheet Nested Scroll Conflict Prevention**:
+  - Modal sheets presenting structured, finite content sections MUST use `Column(modifier = Modifier.verticalScroll(rememberScrollState()))` rather than `LazyColumn` inside `ModalBottomSheet`.
+  - Material 3's nested scroll connection in `ModalBottomSheet` conflicts with `LazyColumn` velocity flings at the bottom boundary, causing infinite bounce/jumping loops. Standard `Modifier.verticalScroll` combined with an ending `Spacer(modifier = Modifier.height(36.dp))` guarantees smooth, conflict-free scrolling to the very bottom.
+
 ---
 
 ## 6. High-Contrast Interactive Buttons & Controls Invariant (Non-Negotiable)

@@ -744,6 +744,17 @@ class VectorTrailOverlay(
                         if (sExact >= 0) mask = mask or cellGrid.maskAt(sExact)
                         if (sPrev >= 0) mask = mask or cellGrid.maskAt(sPrev)
                         if (sNext >= 0) mask = mask or cellGrid.maskAt(sNext)
+                        if (mask == selfBit) {
+                            for (dcx in -1..1) {
+                                for (dcy in -1..1) {
+                                    if (dcx == 0 && dcy == 0) continue
+                                    val sNear = cellGrid.findSlot(cellKey(cx + dcx, cy + dcy, ang))
+                                    if (sNear >= 0) {
+                                        mask = mask or cellGrid.maskAt(sNear)
+                                    }
+                                }
+                            }
+                        }
 
                         val refSlot = when {
                             sExact >= 0 -> sExact

@@ -171,6 +171,12 @@ Raw mobile GPS fixes exhibit multipath noise, satellite loss jumps, and cell-tow
   - **Two-Button Layout**: Binary action modals MUST place `[Cancel]` on the LEFT (`TextButton`, white) and `[Action]` on the RIGHT (`Button`, white text) in a single inline horizontal row (`horizontalArrangement = Arrangement.End`), with `dismissButton = null`. Action buttons must NEVER stack vertically on mobile viewports.
   - **Dismissal Redundancy**: When a dialog or bottom sheet has a top-right `X` button, NEVER add a redundant bottom `[Close]` button. Reserve bottom space for content.
   - **Multi-Button Hierarchy**: Most constructive action full-width on top; secondary actions inline 50/50 below. Fullscreen dialogs use top-left `ArrowBack`.
+- **Condensed Information Density & Bottom Sheet Nested Scroll Invariant (`docs/DESIGN_SYSTEM.md` Section 5.E)**:
+  - All info panels, detail sheets (e.g. `PlaceDetailsSheet`), section cards, and metric rows MUST follow an ultra-condensed layout convention. Sparse, bloated vertical whitespace is strictly prohibited.
+  - Section card internal padding must be compact (`horizontal = 12.dp, vertical = 8.dp`, never 14dp+).
+  - Row-to-row spacing inside section cards must be tight (`verticalArrangement = Arrangement.spacedBy(2.dp)`).
+  - Row labels and values must strictly eliminate font vertical padding using `PlatformTextStyle(includeFontPadding = false)` and `LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)` with explicit `lineHeight` (14.sp for 11.5–12.sp text).
+  - Modal sheets presenting structured content MUST use `Column(modifier = Modifier.verticalScroll(rememberScrollState()))` rather than `LazyColumn` inside `ModalBottomSheet` to prevent nested scroll drag conflicts, overscroll fling fighting, and infinite bottom bounce loops. Finish with a stable `Spacer(modifier = Modifier.height(36.dp))`.
 
 ---
 
