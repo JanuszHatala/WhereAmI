@@ -16,8 +16,8 @@ object ScreenDimController {
     const val DEFAULT_DIM_TIMEOUT_SEC = 30
     const val DEFAULT_DIM_LEVEL_PERCENT = 20
 
-    const val MIN_DIM_LEVEL_PERCENT = 2
-    const val MAX_DIM_LEVEL_PERCENT = 60
+    const val MIN_DIM_LEVEL_PERCENT = 0
+    const val MAX_DIM_LEVEL_PERCENT = 100
 
     val TIMEOUT_OPTIONS_SEC = listOf(15, 30, 60, 120, 300)
 
@@ -46,7 +46,7 @@ object ScreenDimController {
         clampLevelPercent(sessionOverridePercent ?: defaultPercent)
 
     /**
-     * Returns window screenBrightness value (0.02..0.60 when dimmed, BRIGHTNESS_OVERRIDE_NONE otherwise).
+     * Returns window screenBrightness value (0.0..1.0 when dimmed via perceptual quadratic curve, BRIGHTNESS_OVERRIDE_NONE otherwise).
      */
     fun resolveWindowBrightness(
         shouldKeepScreenOn: Boolean,
@@ -55,13 +55,26 @@ object ScreenDimController {
         effectiveLevelPercent: Int,
         isDimPreview: Boolean = false
     ): Float {
-        if (isDimPreview) {
-            return (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
-        }
-        if (!shouldKeepScreenOn || !effectiveDimEnabled || !isDimmed) {
+        if (!isDimPreview && (!shouldKeepScreenOn || !effectiveDimEnabled || !isDimmed)) {
             return WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }
-        return (clampLevelPercent(effectiveLevelPercent) / 100f).coerceIn(0.02f, 0.60f)
+        val clampedPercent = clampLevelPercent(effectiveLevelPercent)
+        val fraction = clampedPercent / 100f
+        return (fraction * fraction).coerceIn(0.0f, 1.0f)
+    }
+
+    /**
+     * Resolves dark scrim overlay alpha (0.0..0.92) to overcome hardware display minimum luminance floors
+     * and produce true deep dimming down to near-black at 0-5%.
+     */
+    fun resolveScrimAlpha(effectiveLevelPercent: Int): Float {
+        val clamped = clampLevelPercent(effectiveLevelPercent)
+        return if (clamped >= 50) {
+            0.0f
+        } else {
+            val t = (50 - clamped) / 50f // 0.0 at 50%, 1.0 at 0%
+            (t * 0.92f).coerceIn(0.0f, 0.95f)
+        }
     }
 
     fun formatTimeoutLabel(seconds: Int): String = when {

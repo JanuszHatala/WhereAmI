@@ -23,16 +23,16 @@ class ScreenDimAndTrailCoincidenceTest {
             0.001f
         )
 
-        // Dimmed with keepScreenOn -> returns exact level percentage (0.20f)
+        // Dimmed with keepScreenOn -> returns perceptual quadratic curve (20% -> 0.04f)
         val dimmedNormal = ScreenDimController.resolveWindowBrightness(
             shouldKeepScreenOn = true,
             isDimmed = true,
             effectiveDimEnabled = true,
             effectiveLevelPercent = 20
         )
-        assertEquals(0.20f, dimmedNormal, 0.001f)
+        assertEquals(0.04f, dimmedNormal, 0.001f)
 
-        // Dim preview overrides even when keepScreenOn or isDimmed is false
+        // Dim preview overrides even when keepScreenOn or isDimmed is false (15% -> 0.0225f)
         val preview = ScreenDimController.resolveWindowBrightness(
             shouldKeepScreenOn = false,
             isDimmed = false,
@@ -40,26 +40,62 @@ class ScreenDimAndTrailCoincidenceTest {
             effectiveLevelPercent = 15,
             isDimPreview = true
         )
-        assertEquals(0.15f, preview, 0.001f)
+        assertEquals(0.0225f, preview, 0.001f)
 
-        // Clamped to min 2% and max 60%
-        val previewLow = ScreenDimController.resolveWindowBrightness(
+        // 100% is fully bright (1.0f)
+        val preview100 = ScreenDimController.resolveWindowBrightness(
             shouldKeepScreenOn = true,
             isDimmed = true,
             effectiveDimEnabled = true,
-            effectiveLevelPercent = 1,
+            effectiveLevelPercent = 100,
             isDimPreview = true
         )
-        assertEquals(0.02f, previewLow, 0.001f)
+        assertEquals(1.0f, preview100, 0.001f)
+        assertEquals(0.0f, ScreenDimController.resolveScrimAlpha(100), 0.001f)
 
-        val previewHigh = ScreenDimController.resolveWindowBrightness(
+        // 60% -> 0.36f, no scrim
+        val preview60 = ScreenDimController.resolveWindowBrightness(
             shouldKeepScreenOn = true,
             isDimmed = true,
             effectiveDimEnabled = true,
-            effectiveLevelPercent = 90,
+            effectiveLevelPercent = 60,
             isDimPreview = true
         )
-        assertEquals(0.60f, previewHigh, 0.001f)
+        assertEquals(0.36f, preview60, 0.001f)
+        assertEquals(0.0f, ScreenDimController.resolveScrimAlpha(60), 0.001f)
+
+        // 5% -> 0.0025f, deep scrim
+        val preview5 = ScreenDimController.resolveWindowBrightness(
+            shouldKeepScreenOn = true,
+            isDimmed = true,
+            effectiveDimEnabled = true,
+            effectiveLevelPercent = 5,
+            isDimPreview = true
+        )
+        assertEquals(0.0025f, preview5, 0.0001f)
+        assertEquals(0.828f, ScreenDimController.resolveScrimAlpha(5), 0.01f)
+
+        // 2% -> 0.0004f, very deep scrim ~0.88f
+        val preview2 = ScreenDimController.resolveWindowBrightness(
+            shouldKeepScreenOn = true,
+            isDimmed = true,
+            effectiveDimEnabled = true,
+            effectiveLevelPercent = 2,
+            isDimPreview = true
+        )
+        assertEquals(0.0004f, preview2, 0.0001f)
+        assertEquals(0.883f, ScreenDimController.resolveScrimAlpha(2), 0.01f)
+
+        // 0% -> 0.0f, max dark scrim 0.92f
+        val preview0 = ScreenDimController.resolveWindowBrightness(
+            shouldKeepScreenOn = true,
+            isDimmed = true,
+            effectiveDimEnabled = true,
+            effectiveLevelPercent = 0,
+            isDimPreview = true
+        )
+        assertEquals(0.0f, preview0, 0.0001f)
+        assertEquals(0.92f, ScreenDimController.resolveScrimAlpha(0), 0.01f)
     }
 
     @Test

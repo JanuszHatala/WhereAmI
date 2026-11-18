@@ -1800,13 +1800,16 @@ fun LocationScreen(viewModel: MainViewModel) {
             )
         }
         if (isScreenDimmed) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x66000000))
-            )
+            val dimScrimAlpha = ScreenDimController.resolveScrimAlpha(effectiveDimLevelPercent)
+            if (dimScrimAlpha > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = dimScrimAlpha))
+                )
+            }
             Surface(
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(24.dp),
                 color = Color(0xF40F172A),
                 border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
                 shadowElevation = 14.dp,
@@ -1822,19 +1825,27 @@ fun LocationScreen(viewModel: MainViewModel) {
                     .height(54.dp)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    EmojiText(emoji = "🌙", fontSize = 16.sp, yOffsetDp = 0.dp)
-                    Spacer(modifier = Modifier.width(10.dp))
+                    EmojiText(emoji = "🌙", fontSize = 15.sp, yOffsetDp = 0.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Screen Dimmed • Tap anywhere to wake",
+                        text = "Screen Dimmed • Tap to wake",
                         color = Color.White,
-                        fontSize = 13.5.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        softWrap = false
+                        softWrap = false,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 13.sp
+                        )
                     )
                 }
             }
@@ -5261,38 +5272,54 @@ fun LocationScreen(viewModel: MainViewModel) {
             }
 
             if (isScreenDimmed) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color(0x66000000)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color(0xF40F172A),
-                        border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
-                        shadowElevation = 14.dp,
+                val dimScrimAlpha = ScreenDimController.resolveScrimAlpha(effectiveDimLevelPercent)
+                if (dimScrimAlpha > 0f) {
+                    Box(
                         modifier = Modifier
-                            .padding(horizontal = 24.dp)
-                            .height(50.dp)
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = dimScrimAlpha))
+                    )
+                }
+                if (!isDimPreviewActive) {
+                    Box(
+                        modifier = Modifier.matchParentSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Row(
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xF40F172A),
+                            border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                            shadowElevation = 14.dp,
                             modifier = Modifier
-                                .fillMaxHeight()
-                                .padding(horizontal = 18.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                                .padding(horizontal = 16.dp)
+                                .height(46.dp)
                         ) {
-                            EmojiText(emoji = "🌙", fontSize = 16.sp, yOffsetDp = 0.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Screen Dimmed • Tap anywhere to wake",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                EmojiText(emoji = "🌙", fontSize = 15.sp, yOffsetDp = 0.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Screen Dimmed • Tap to wake",
+                                    color = Color.White,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 12.5.sp
+                                    )
+                                )
+                            }
                         }
                     }
                 }
