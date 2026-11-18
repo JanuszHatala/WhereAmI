@@ -383,7 +383,8 @@ fun ScreenDimSettingsCard(
     dimLevelPercent: Int,
     onToggleDimEnabled: (Boolean) -> Unit,
     onSelectTimeoutSec: (Int) -> Unit,
-    onChangeLevelPercent: (Int) -> Unit
+    onChangeLevelPercent: (Int) -> Unit,
+    onPreviewDim: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
@@ -473,24 +474,45 @@ fun ScreenDimSettingsCard(
                 }
             }
 
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Minimum dim brightness",
+                        text = "Dimmed backlight level",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFCBD5E1)
                     )
-                    Text(
-                        text = "$dimLevelPercent%",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF38BDF8)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "$dimLevelPercent%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                        if (onPreviewDim != null) {
+                            Button(
+                                onClick = onPreviewDim,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(24.dp)
+                            ) {
+                                Text(
+                                    text = "Preview (3s)",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
                 }
                 Slider(
                     value = dimLevelPercent.toFloat(),
@@ -505,7 +527,16 @@ fun ScreenDimSettingsCard(
                 Text(
                     text = "Tip: Long-press the eye button on the map to adjust or disable dimming for one trip.",
                     fontSize = 11.sp,
-                    color = Color(0xFF94A3B8)
+                    color = Color(0xFF94A3B8),
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        ),
+                        lineHeight = 13.sp
+                    ),
+                    modifier = Modifier.padding(top = 0.dp)
                 )
             }
         }

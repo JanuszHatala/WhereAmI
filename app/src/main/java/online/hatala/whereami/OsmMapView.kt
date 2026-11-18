@@ -4955,52 +4955,6 @@ private fun MapSettingsDialog(
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Trail Types & Styles",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = ComposeColor(0xFFCBD5E1)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(ComposeColor(0xFF0F172A), RoundedCornerShape(10.dp))
-                                    .border(1.dp, ComposeColor(0xFF1E293B), RoundedCornerShape(10.dp))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                TrailRouteKind.values().forEach { kind ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = kind.iconEmoji,
-                                                fontSize = 13.sp
-                                            )
-                                            Text(
-                                                text = kind.displayName,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = ComposeColor.White
-                                            )
-                                        }
-                                        Text(
-                                            text = kind.defaultLineStyle.label,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = ComposeColor(0xFF38BDF8)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
                                 text = "Trail Opacity",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -5030,6 +4984,58 @@ private fun MapSettingsDialog(
                                             maxLines = 1,
                                             softWrap = false,
                                             textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Trail Types & Styles",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ComposeColor(0xFFCBD5E1)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(ComposeColor(0xFF0F172A), RoundedCornerShape(10.dp))
+                                    .border(1.dp, ComposeColor(0xFF1E293B), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TrailRouteKind.values().forEach { kind ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = kind.iconEmoji,
+                                                fontSize = 13.sp
+                                            )
+                                            Text(
+                                                text = kind.displayName,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = ComposeColor.White
+                                            )
+                                        }
+                                        TrailLegendLinePreview(
+                                            style = kind.defaultLineStyle,
+                                            thickness = trailThickness,
+                                            opacity = trailOpacity,
+                                            lineColor = when (kind) {
+                                                TrailRouteKind.HIKING -> ComposeColor(0xFFEF4444)
+                                                TrailRouteKind.EDUCATIONAL -> ComposeColor(0xFF22C55E)
+                                                TrailRouteKind.CYCLING -> ComposeColor(0xFF3B82F6)
+                                                TrailRouteKind.MTB -> ComposeColor(0xFFF97316)
+                                                TrailRouteKind.KAYAKING -> ComposeColor(0xFF06B6D4)
+                                            }
                                         )
                                     }
                                 }
@@ -6278,6 +6284,73 @@ private fun MapSettingsDialog(
 
             Spacer(modifier = Modifier.height(36.dp))
         }
+    }
+}
+
+@Composable
+private fun TrailLegendLinePreview(
+    style: TrailLineStyle,
+    thickness: TrailThickness,
+    opacity: TrailOpacity,
+    lineColor: ComposeColor
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val strokeWidthPx = when (thickness) {
+        TrailThickness.NORMAL -> 2.5f
+        TrailThickness.THICK -> 4.2f
+        TrailThickness.EXTRA_THICK -> 5.8f
+    } * density
+
+    val pathEffect = remember(style, strokeWidthPx, density) {
+        when (style) {
+            TrailLineStyle.SOLID -> null
+            TrailLineStyle.DASHED -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                floatArrayOf((strokeWidthPx * 4.5f).coerceAtLeast(6f * density), (strokeWidthPx * 1.6f).coerceAtLeast(2.4f * density)),
+                0f
+            )
+            TrailLineStyle.DOTTED -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                floatArrayOf(1f * density, (strokeWidthPx * 2.2f).coerceAtLeast(3.5f * density)),
+                0f
+            )
+            TrailLineStyle.DASH_DOT -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                floatArrayOf(
+                    (strokeWidthPx * 3.8f).coerceAtLeast(5f * density),
+                    (strokeWidthPx * 1.5f).coerceAtLeast(2.2f * density),
+                    1f * density,
+                    (strokeWidthPx * 1.5f).coerceAtLeast(2.2f * density)
+                ),
+                0f
+            )
+        }
+    }
+
+    val strokeCap = when (style) {
+        TrailLineStyle.DASHED -> androidx.compose.ui.graphics.StrokeCap.Butt
+        TrailLineStyle.SOLID, TrailLineStyle.DOTTED, TrailLineStyle.DASH_DOT -> androidx.compose.ui.graphics.StrokeCap.Round
+    }
+
+    androidx.compose.foundation.Canvas(
+        modifier = Modifier
+            .width(52.dp)
+            .height(14.dp)
+    ) {
+        val y = size.height / 2f
+        drawLine(
+            color = ComposeColor(0xFF020617).copy(alpha = 0.70f * opacity.alphaFraction),
+            start = androidx.compose.ui.geometry.Offset(2f, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - 2f, y),
+            strokeWidth = strokeWidthPx + 1.8f * density,
+            cap = strokeCap,
+            pathEffect = pathEffect
+        )
+        drawLine(
+            color = lineColor.copy(alpha = opacity.alphaFraction),
+            start = androidx.compose.ui.geometry.Offset(2f, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - 2f, y),
+            strokeWidth = strokeWidthPx,
+            cap = strokeCap,
+            pathEffect = pathEffect
+        )
     }
 }
 

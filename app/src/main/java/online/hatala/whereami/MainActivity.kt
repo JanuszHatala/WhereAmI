@@ -664,12 +664,23 @@ fun LocationScreen(viewModel: MainViewModel) {
     DisposableEffect(shouldKeepScreenOn, isScreenDimmed, effectiveDimEnabled, effectiveDimLevelPercent) {
         val win = activity?.window
         if (win != null) {
+            val systemBrightnessFraction = try {
+                val raw = android.provider.Settings.System.getInt(
+                    activity.contentResolver,
+                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                    128
+                )
+                (raw / 255f).coerceIn(0.01f, 1.0f)
+            } catch (_: Exception) {
+                1.0f
+            }
             val attrs = win.attributes
             attrs.screenBrightness = ScreenDimController.resolveWindowBrightness(
                 shouldKeepScreenOn = shouldKeepScreenOn,
                 isDimmed = isScreenDimmed,
                 effectiveDimEnabled = effectiveDimEnabled,
-                effectiveLevelPercent = effectiveDimLevelPercent
+                effectiveLevelPercent = effectiveDimLevelPercent,
+                systemBrightnessFraction = systemBrightnessFraction
             )
             win.attributes = attrs
         }
@@ -1775,6 +1786,37 @@ fun LocationScreen(viewModel: MainViewModel) {
                 onUpdateState = { magnifierState = it },
                 onDismiss = { magnifierState = MagnifierState() }
             )
+        }
+        if (isScreenDimmed) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = if (isLandscape) 64.dp else 84.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xDD0F172A),
+                    border = BorderStroke(1.dp, Color(0x5538BDF8)),
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        EmojiText(emoji = "🌙", fontSize = 13.sp, yOffsetDp = 0.dp)
+                        Text(
+                            text = "Screen Dimmed • Tap to wake",
+                            color = Color(0xFFF1F5F9),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -4143,7 +4185,14 @@ fun LocationScreen(viewModel: MainViewModel) {
                     dimLevelPercent = screenDimLevelPercent,
                     onToggleDimEnabled = { viewModel.setScreenDimEnabled(it) },
                     onSelectTimeoutSec = { viewModel.setScreenDimTimeoutSec(it) },
-                    onChangeLevelPercent = { viewModel.setScreenDimLevelPercent(it) }
+                    onChangeLevelPercent = { viewModel.setScreenDimLevelPercent(it) },
+                    onPreviewDim = {
+                        scope.launch {
+                            isScreenDimmed = true
+                            kotlinx.coroutines.delay(3000L)
+                            isScreenDimmed = false
+                        }
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -11416,13 +11465,14 @@ private fun LocalityCard(
                                     .fillMaxWidth()
                                     .padding(vertical = 1.dp)
                                     .clickable { onTrailClick?.invoke(line.primaryTrail) },
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.Top
                             ) {
                                 EmojiText(emoji = line.primaryTrail.kind.iconEmoji, fontSize = 12.sp, yOffsetDp = 0.dp)
                                 Spacer(modifier = Modifier.width(4.dp))
                                 for (col in line.colors.filter { it != TrailColor.NONE }) {
                                     Box(
                                         modifier = Modifier
+                                            .padding(top = 3.dp)
                                             .size(7.dp)
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(col.hexColor)))
@@ -11434,7 +11484,9 @@ private fun LocalityCard(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = Color(0xFF38BDF8),
-                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    maxLines = 2,
+                                    softWrap = true,
                                     overflow = TextOverflow.Ellipsis,
                                     style = TextStyle(
                                         platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -12028,7 +12080,7 @@ private fun LocalityCard(
                                 modifier = Modifier
                                     .padding(top = 1.dp)
                                     .clickable { onTrailClick?.invoke(line.primaryTrail) },
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.Center
                             ) {
                                 EmojiText(emoji = line.primaryTrail.kind.iconEmoji, fontSize = 12.sp, yOffsetDp = 0.dp)
@@ -12036,6 +12088,7 @@ private fun LocalityCard(
                                 for (col in line.colors.filter { it != TrailColor.NONE }) {
                                     Box(
                                         modifier = Modifier
+                                            .padding(top = 3.dp)
                                             .size(7.dp)
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(col.hexColor)))
@@ -12048,7 +12101,9 @@ private fun LocalityCard(
                                     fontWeight = FontWeight.Medium,
                                     color = Color(0xFF38BDF8),
                                     textAlign = TextAlign.Center,
-                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    maxLines = 2,
+                                    softWrap = true,
                                     overflow = TextOverflow.Ellipsis,
                                     style = TextStyle(
                                         platformStyle = PlatformTextStyle(includeFontPadding = false),
