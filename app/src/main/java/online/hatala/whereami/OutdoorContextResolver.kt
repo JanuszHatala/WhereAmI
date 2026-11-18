@@ -97,7 +97,8 @@ object OutdoorContextResolver {
 
             try {
                 lastQueryTime = System.currentTimeMillis()
-                val ql = buildOverpassQuery(lat, lng)
+                val proximities = MapProfileConfigHelper.getAllTrailProximities(context)
+                val ql = buildOverpassQuery(lat, lng, proximities)
                 val body = executeOverpassQuery(
                     ql = ql,
                     connectTimeoutMs = 5000,
@@ -263,7 +264,23 @@ object OutdoorContextResolver {
         }
     }
 
-    fun buildOverpassQuery(lat: Double, lng: Double): String {
+    fun buildOverpassQuery(
+        lat: Double,
+        lng: Double,
+        proximities: Map<TrailRouteKind, Int> = emptyMap()
+    ): String {
+        val hikingDist = proximities[TrailRouteKind.HIKING] ?: 40
+        val cyclingDist = proximities[TrailRouteKind.CYCLING] ?: 40
+        val mtbDist = proximities[TrailRouteKind.MTB] ?: 40
+        val kayakDist = proximities[TrailRouteKind.KAYAKING] ?: 40
+        val eduDist = proximities[TrailRouteKind.EDUCATIONAL] ?: 40
+
+        val trailBlock = if (hikingDist == cyclingDist && cyclingDist == mtbDist && mtbDist == kayakDist) {
+            "way(around:$hikingDist,$lat,$lng)[highway];rel(bw)[type=route][route~\"^(hiking|foot|mtb|bicycle|canoe|kayak)$\"];out tags;"
+        } else {
+            "(way(around:$hikingDist,$lat,$lng)[highway];rel(bw)[type=route][route~\"^(hiking|foot)$\"];way(around:$cyclingDist,$lat,$lng)[highway];rel(bw)[type=route][route~\"^(bicycle|cycling)$\"];way(around:$mtbDist,$lat,$lng)[highway];rel(bw)[type=route][route=\"mtb\"];way(around:$kayakDist,$lat,$lng);rel(bw)[type=route][route~\"^(canoe|kayak)$\"];);out tags;"
+        }
+
         return """
             [out:json][timeout:8];
             is_in($lat,$lng)->.a;
@@ -274,9 +291,7 @@ object OutdoorContextResolver {
               area.a[leisure="nature_reserve"][name];
             );
             out tags;
-            way(around:40,$lat,$lng)[highway];
-            rel(bw)[type=route][route~"^(hiking|foot|mtb|bicycle|canoe|kayak)$"];
-            out tags;
+            $trailBlock
             (
               node(around:12000,$lat,$lng)[natural~"^(mountain_range|massif)$"][name];
               way(around:12000,$lat,$lng)[natural~"^(mountain_range|massif)$"][name];
@@ -291,7 +306,7 @@ object OutdoorContextResolver {
               way(around:150,$lat,$lng)[waterway~"^(river|stream|canal)$"][name];
               way(around:200,$lat,$lng)[natural="water"][name];
               rel(around:200,$lat,$lng)[natural="water"][name];
-              way(around:50,$lat,$lng)[highway][~"^(educational|information)$"~".*"][name];
+              way(around:$eduDist,$lat,$lng)[highway][~"^(educational|information)$"~".*"][name];
             );
             out center tags;
         """.trimIndent().replace("\n", "")

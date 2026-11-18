@@ -58,6 +58,10 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
 
     private var lastRenderedIntAlt: Long? = null
     private var currentOffsetIndex: Int = 0
+    private var speedVisibilityState: Boolean = true
+
+    private val baseBgAlpha = 0x75
+    private val baseStrokeAlpha = 0xFF
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         // Semi-transparent dark blue background (~46% opacity / 0x75), allowing underlying polyline
@@ -141,12 +145,26 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         cosRot: Float,
         sinRot: Float
     ) {
-        if (currentSpeedKmh >= 15f) return
+        // Speed hysteresis: hide above 17 km/h, restore below 13 km/h
+        if (currentSpeedKmh >= 17.0f) {
+            speedVisibilityState = false
+            return
+        } else if (currentSpeedKmh <= 13.0f) {
+            speedVisibilityState = true
+        } else if (!speedVisibilityState) {
+            return
+        }
+
         if (!isGpsMode && isGpsFallback) return
 
         val alt = altitudeM ?: return
         if (alt.isNaN() || alt == 0.0) return
         val pt = centerGeoPoint ?: return
+
+        // Smooth alpha fade between 13.0 and 17.0 km/h to prevent abrupt visual pops
+        val speedAlpha = if (currentSpeedKmh > 13.0f) {
+            ((17.0f - currentSpeedKmh) / 4.0f).coerceIn(0.08f, 1.0f)
+        } else 1.0f
 
         try {
             mapView.projection.toPixels(pt, screenPoint)
@@ -209,7 +227,8 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
                 glyph = "▲",
                 text = altText,
                 textColor = 0xFFFFFFFF.toInt(), // White (#FFFFFF)
-                isDashed = isGpsFallback
+                isDashed = isGpsFallback,
+                speedAlpha = speedAlpha
             )
         } catch (_: Exception) {}
     }
@@ -222,7 +241,8 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         glyph: String,
         text: String,
         textColor: Int,
-        isDashed: Boolean
+        isDashed: Boolean,
+        speedAlpha: Float = 1.0f
     ) {
         val effectiveDensity = density * fontScaleFactor
         textPaint.textSize = 12f * effectiveDensity
@@ -241,6 +261,12 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
         val badgeHeight = 19f * effectiveDensity
         val cornerRadius = 6f * effectiveDensity
 
+        bgPaint.alpha = (baseBgAlpha * speedAlpha).toInt().coerceIn(0, 255)
+        val borderPaint = if (isDashed) dashedStrokePaint else strokePaint
+        borderPaint.alpha = (baseStrokeAlpha * speedAlpha).toInt().coerceIn(0, 255)
+        textPaint.alpha = (255f * speedAlpha).toInt().coerceIn(0, 255)
+        glyphPaint.alpha = (255f * speedAlpha).toInt().coerceIn(0, 255)
+
         canvas.save()
         canvas.rotate(-orientationDeg, badgeCenterX, badgeCenterY)
 
@@ -251,8 +277,6 @@ class AltitudeCursorBadgeOverlay(context: Context) : Overlay() {
 
         pillRect.set(left, top, right, bottom)
         canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, bgPaint)
-
-        val borderPaint = if (isDashed) dashedStrokePaint else strokePaint
         canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, borderPaint)
 
         val textY = top + padV + (10.5f * effectiveDensity)

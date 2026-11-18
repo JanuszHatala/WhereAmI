@@ -30,6 +30,9 @@ object MapProfileConfigHelper {
     const val PREF_SHOW_RAW_POLYLINE = "pref_show_raw_polyline"
     const val DEFAULT_SHOW_FILTERED_POLYLINE = true
     const val DEFAULT_SHOW_RAW_POLYLINE = false
+    const val DEFAULT_TRAIL_PROXIMITY_METERS = 40
+    const val MIN_TRAIL_PROXIMITY_METERS = 10
+    const val MAX_TRAIL_PROXIMITY_METERS = 150
     private const val PREF_MIGRATED_CLEAN_MAP_V240 = "pref_migrated_clean_map_views_v240"
 
     fun getDefaultConfig(profile: ActivityProfile): ProfileMapConfig = when (profile) {
@@ -260,6 +263,25 @@ object MapProfileConfigHelper {
     fun setSupplementMissingOsmTrails(context: Context, profile: ActivityProfile, enabled: Boolean) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean("profile_${profile.name}_supplement_osm_trails", enabled).apply()
+    }
+
+    fun getTrailProximityMeters(context: Context, kind: TrailRouteKind): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt("pref_trail_proximity_${kind.name.lowercase()}", DEFAULT_TRAIL_PROXIMITY_METERS)
+            .coerceIn(MIN_TRAIL_PROXIMITY_METERS, MAX_TRAIL_PROXIMITY_METERS)
+    }
+
+    fun setTrailProximityMeters(context: Context, kind: TrailRouteKind, meters: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt("pref_trail_proximity_${kind.name.lowercase()}", meters.coerceIn(MIN_TRAIL_PROXIMITY_METERS, MAX_TRAIL_PROXIMITY_METERS)).apply()
+    }
+
+    fun getAllTrailProximities(context: Context): Map<TrailRouteKind, Int> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return TrailRouteKind.values().associateWith { kind ->
+            prefs.getInt("pref_trail_proximity_${kind.name.lowercase()}", DEFAULT_TRAIL_PROXIMITY_METERS)
+                .coerceIn(MIN_TRAIL_PROXIMITY_METERS, MAX_TRAIL_PROXIMITY_METERS)
+        }
     }
 
     fun setFontScale(context: Context, profile: ActivityProfile, scale: MapFontScale) {

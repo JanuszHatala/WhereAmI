@@ -682,6 +682,14 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
+    // Reset inactivity timer and dim state whenever the app returns to foreground from background or lock screen
+    LaunchedEffect(isAppInForeground) {
+        if (isAppInForeground) {
+            lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+            isScreenDimmed = false
+        }
+    }
+
     LaunchedEffect(shouldKeepScreenOn, effectiveDimEnabled, screenDimTimeoutSec, lastUserInteractionElapsedMs, isScreenDimmed, isDimPreviewActive) {
         if (isDimPreviewActive) return@LaunchedEffect
         if (!shouldKeepScreenOn || !effectiveDimEnabled) {
@@ -11708,28 +11716,52 @@ private fun LocalityCard(
                                     fontSize = 11.sp
                                 )
                             }
-                            val metricText = compactMetricText
-                            val compactMetricFontSize = if (movingAvgSpeedKmh != null) 10.sp else 11.sp
-                            Text(
-                                text = metricText,
-                                fontSize = compactMetricFontSize,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                maxLines = 1,
-                                softWrap = false,
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    lineHeightStyle = LineHeightStyle(
-                                        alignment = LineHeightStyle.Alignment.Center,
-                                        trim = LineHeightStyle.Trim.Both
-                                    ),
-                                    lineHeight = compactMetricFontSize
-                                ),
+                            val compactMetric = SpeedPaceFormatter.formatSpeedOrPaceParts(
+                                currentSpeedMs = locationData.speedMs,
+                                movingAvgSpeedKmh = movingAvgSpeedKmh,
+                                preferPace = preferPace
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable { onToggleSpeedPace() }
                                     .padding(horizontal = 2.dp)
-                            )
+                            ) {
+                                Text(
+                                    text = compactMetric.primaryText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.Both
+                                        ),
+                                        lineHeight = 11.sp
+                                    )
+                                )
+                                if (compactMetric.separator != null && compactMetric.secondaryText != null) {
+                                    Text(
+                                        text = compactMetric.separator,
+                                        fontSize = 9.5.sp,
+                                        color = Color(0xFF64748B),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    Text(
+                                        text = compactMetric.secondaryText,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF94A3B8),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
                         }
 
                         DropdownMenu(
@@ -12174,13 +12206,43 @@ private fun LocalityCard(
                     }
                 }
 
-                // ── Dedicated Active Trail Line(s) (Normal: up to 2 lines) ──
+                // Administrative Hierarchy (Gmina, Powiat, Województwo, Country) placed directly below Street Name
+                val fullHierarchyNormal = buildString {
+                    if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
+                    val country = primaryPlace?.country?.takeIf { it.isNotBlank() && it != "Unknown Country" }
+                    if (!country.isNullOrBlank()) {
+                        if (isNotEmpty()) append(" • ")
+                        append(country)
+                    }
+                }
+
+                if (fullHierarchyNormal.isNotEmpty()) {
+                    Text(
+                        text = fullHierarchyNormal,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF38BDF8),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 1.dp),
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both
+                            ),
+                            lineHeight = 13.sp
+                        )
+                    )
+                }
+
+                // ── Dedicated Active Trail Line(s) (Normal: up to 2 lines, full card width wrap) ──
                 if (showHikingTrails) {
                     locationData.outdoorContext?.activeTrails?.takeIf { it.isNotEmpty() }?.let { trails ->
                         val trailLines = formatActiveTrailLines(trails).take(2)
                         for (line in trailLines) {
                             Row(
                                 modifier = Modifier
+                                    .fillMaxWidth()
                                     .padding(top = 1.dp)
                                     .clickable { onTrailClick?.invoke(line.primaryTrail) },
                                 verticalAlignment = Alignment.Top,
@@ -12214,41 +12276,12 @@ private fun LocalityCard(
                                             alignment = LineHeightStyle.Alignment.Center,
                                             trim = LineHeightStyle.Trim.Both
                                         ),
-                                        lineHeight = 13.sp
+                                        lineHeight = 14.sp
                                     )
                                 )
                             }
                         }
                     }
-                }
-
-                // Administrative Hierarchy (Gmina, Powiat, Województwo, Country)
-                val fullHierarchyNormal = buildString {
-                    if (hierarchySubtitle.isNotEmpty()) append(hierarchySubtitle)
-                    val country = primaryPlace?.country?.takeIf { it.isNotBlank() && it != "Unknown Country" }
-                    if (!country.isNullOrBlank()) {
-                        if (isNotEmpty()) append(" • ")
-                        append(country)
-                    }
-                }
-
-                if (fullHierarchyNormal.isNotEmpty()) {
-                    Text(
-                        text = fullHierarchyNormal,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF38BDF8),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 1.dp),
-                        style = TextStyle(
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(
-                                alignment = LineHeightStyle.Alignment.Center,
-                                trim = LineHeightStyle.Trim.Both
-                            ),
-                            lineHeight = 13.sp
-                        )
-                    )
                 }
 
                 // ── Outdoor Awareness Row (Ranges, Parks, Active Trail, Summits) ──
@@ -12410,10 +12443,14 @@ private fun LocalityCard(
                             .clickable { onToggleSpeedPace() }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        val normalMetricFontSize = if (movingAvgSpeedKmhNormal != null) 13.sp else 15.sp
+                        val normalMetric = SpeedPaceFormatter.formatSpeedOrPaceParts(
+                            currentSpeedMs = locationData.speedMs,
+                            movingAvgSpeedKmh = movingAvgSpeedKmhNormal,
+                            preferPace = preferPace
+                        )
                         Text(
-                            text = normalMetricText,
-                            fontSize = normalMetricFontSize,
+                            text = normalMetric.primaryText,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
                             maxLines = 1,
@@ -12424,9 +12461,34 @@ private fun LocalityCard(
                                     alignment = LineHeightStyle.Alignment.Center,
                                     trim = LineHeightStyle.Trim.Both
                                 ),
-                                lineHeight = normalMetricFontSize
+                                lineHeight = 15.sp
                             )
                         )
+                        if (normalMetric.separator != null && normalMetric.secondaryText != null) {
+                            Text(
+                                text = normalMetric.separator,
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                            Text(
+                                text = normalMetric.secondaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                softWrap = false,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    ),
+                                    lineHeight = 11.sp
+                                )
+                            )
+                        }
                     }
                 }
             }

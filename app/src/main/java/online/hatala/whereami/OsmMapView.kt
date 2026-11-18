@@ -5002,41 +5002,79 @@ private fun MapSettingsDialog(
                                     .background(ComposeColor(0xFF0F172A), RoundedCornerShape(10.dp))
                                     .border(1.dp, ComposeColor(0xFF1E293B), RoundedCornerShape(10.dp))
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 TrailRouteKind.values().forEach { kind ->
-                                    Row(
+                                    Column(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
                                     ) {
                                         Row(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = kind.iconEmoji,
+                                                    fontSize = 13.sp
+                                                )
+                                                Text(
+                                                    text = kind.displayName,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = ComposeColor.White
+                                                )
+                                            }
+                                            TrailLegendLinePreview(
+                                                style = kind.defaultLineStyle,
+                                                thickness = trailThickness,
+                                                opacity = trailOpacity,
+                                                lineColor = when (kind) {
+                                                    TrailRouteKind.HIKING -> ComposeColor(0xFFEF4444)
+                                                    TrailRouteKind.EDUCATIONAL -> ComposeColor(0xFF22C55E)
+                                                    TrailRouteKind.CYCLING -> ComposeColor(0xFF3B82F6)
+                                                    TrailRouteKind.MTB -> ComposeColor(0xFFF97316)
+                                                    TrailRouteKind.KAYAKING -> ComposeColor(0xFF06B6D4)
+                                                }
+                                            )
+                                        }
+
+                                        var kindProximity by remember(kind) {
+                                            mutableStateOf(MapProfileConfigHelper.getTrailProximityMeters(context, kind))
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = kind.iconEmoji,
-                                                fontSize = 13.sp
+                                                text = "Proximity: ${kindProximity}m",
+                                                fontSize = 11.sp,
+                                                color = ComposeColor(0xFF94A3B8)
                                             )
-                                            Text(
-                                                text = kind.displayName,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = ComposeColor.White
+                                            Slider(
+                                                value = kindProximity.toFloat(),
+                                                onValueChange = { newVal ->
+                                                    val rounded = ((newVal / 5f).let { kotlin.math.round(it) } * 5).toInt().coerceIn(10, 150)
+                                                    kindProximity = rounded
+                                                    MapProfileConfigHelper.setTrailProximityMeters(context, kind, rounded)
+                                                },
+                                                valueRange = 10f..150f,
+                                                steps = 27,
+                                                modifier = Modifier
+                                                    .width(170.dp)
+                                                    .height(24.dp),
+                                                colors = SliderDefaults.colors(
+                                                    thumbColor = ComposeColor(0xFF38BDF8),
+                                                    activeTrackColor = ComposeColor(0xFF38BDF8),
+                                                    inactiveTrackColor = ComposeColor(0xFF334155)
+                                                )
                                             )
                                         }
-                                        TrailLegendLinePreview(
-                                            style = kind.defaultLineStyle,
-                                            thickness = trailThickness,
-                                            opacity = trailOpacity,
-                                            lineColor = when (kind) {
-                                                TrailRouteKind.HIKING -> ComposeColor(0xFFEF4444)
-                                                TrailRouteKind.EDUCATIONAL -> ComposeColor(0xFF22C55E)
-                                                TrailRouteKind.CYCLING -> ComposeColor(0xFF3B82F6)
-                                                TrailRouteKind.MTB -> ComposeColor(0xFFF97316)
-                                                TrailRouteKind.KAYAKING -> ComposeColor(0xFF06B6D4)
-                                            }
-                                        )
                                     }
                                 }
                             }

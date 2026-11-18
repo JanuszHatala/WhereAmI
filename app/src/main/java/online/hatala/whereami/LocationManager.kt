@@ -1548,12 +1548,13 @@ class LocationManager private constructor(private val context: Context) {
         val mapConfig = MapProfileConfigHelper.getConfig(context, activeProfile)
         val recordOutdoorPlaces = tripMgr.getRecordOutdoorPlacesForProfile(activeProfile)
         val realTimeNeeded = AppStateManager.getInstance(context).isRealTimeDisplayNeeded()
+        val activeTripIsOutdoor = activeTrip?.activityProfile?.isOutdoorProfile == true
         val decision = computeOutdoorFetchDecision(
             showOutdoorAreasOverlay = mapConfig.showOutdoorAreasOverlay,
             showHikingOverlay = mapConfig.showHikingOverlay,
             isRealTimeNeeded = realTimeNeeded,
             hasActiveTrip = activeTrip != null,
-            activeTripIsOutdoorProfile = activeTrip?.activityProfile?.isOutdoorProfile == true,
+            activeTripIsOutdoorProfile = activeTripIsOutdoor,
             activeTripPaused = tripMgr.isPaused.value,
             recordOutdoorPlacesEnabled = recordOutdoorPlaces
         )
@@ -1572,7 +1573,9 @@ class LocationManager private constructor(private val context: Context) {
         val now = SystemClock.elapsedRealtime()
         val distMoved = FloatArray(1)
         AndroidLocation.distanceBetween(lastOutdoorResolvedLat, lastOutdoorResolvedLng, lat, lng, distMoved)
-        if (!force && lastOutdoorResolvedTimeMs != 0L && distMoved[0] < 250f && (now - lastOutdoorResolvedTimeMs < 30_000L)) {
+        val minOutdoorDist = if (activeTripIsOutdoor) 100f else 250f
+        val minOutdoorTime = if (activeTripIsOutdoor) 18_000L else 30_000L
+        if (!force && lastOutdoorResolvedTimeMs != 0L && distMoved[0] < minOutdoorDist && (now - lastOutdoorResolvedTimeMs < minOutdoorTime)) {
             return
         }
         synchronized(outdoorLock) {
