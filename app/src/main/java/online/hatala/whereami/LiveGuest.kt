@@ -14,7 +14,8 @@ data class LiveGuest(
     val colorIndex: Int = 0,
     val rawIsInactive: Boolean = false,
     val firstSeen: Long = lastUpdated,
-    val viewCount: Int = 1
+    val viewCount: Int = 1,
+    val lastPolled: Long? = null
 ) {
     val geoPoint: GeoPoint
         get() = GeoPoint(lat, lng)
@@ -25,8 +26,21 @@ data class LiveGuest(
     val isInactive: Boolean
         get() = isInactiveAt(System.currentTimeMillis())
 
+    fun isActiveAt(now: Long = System.currentTimeMillis()): Boolean {
+        if (rawIsInactive) return false
+        val pollFresh = lastPolled != null && (now - lastPolled) <= POLL_ACTIVE_THRESHOLD_MS
+        val positionFresh = (now - lastUpdated) <= POSITION_ACTIVE_THRESHOLD_MS
+        return pollFresh || positionFresh
+    }
+
     fun isInactiveAt(now: Long = System.currentTimeMillis()): Boolean {
-        return rawIsInactive || (now - lastUpdated > INACTIVITY_THRESHOLD_MS)
+        return !isActiveAt(now)
+    }
+
+    fun isRecentAt(now: Long = System.currentTimeMillis()): Boolean {
+        if (!hasValidLocation) return false
+        val latestActivity = maxOf(lastUpdated, lastPolled ?: 0L)
+        return (now - latestActivity) <= RECENT_THRESHOLD_MS
     }
 
     fun getBearingFrom(hostLat: Double, hostLng: Double): Float {
@@ -76,6 +90,10 @@ data class LiveGuest(
             other.name.isNotBlank() && !other.name.startsWith("Guest ", ignoreCase = true) -> other.name
             else -> newest.name
         }
+        val mergedLastPolled = when {
+            this.lastPolled != null && other.lastPolled != null -> maxOf(this.lastPolled, other.lastPolled)
+            else -> this.lastPolled ?: other.lastPolled
+        }
         return newest.copy(
             id = newest.id,
             name = mergedName,
@@ -85,12 +103,17 @@ data class LiveGuest(
             lastUpdated = maxOf(this.lastUpdated, other.lastUpdated),
             firstSeen = minOf(this.firstSeen, other.firstSeen),
             viewCount = this.viewCount + other.viewCount,
-            rawIsInactive = newest.rawIsInactive
+            rawIsInactive = newest.rawIsInactive,
+            lastPolled = mergedLastPolled
         )
     }
 
     companion object {
-        const val INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000L
+        const val POLL_ACTIVE_THRESHOLD_MS = 3 * 60 * 1000L
+        const val POSITION_ACTIVE_THRESHOLD_MS = 15 * 60 * 1000L
+        const val RECENT_THRESHOLD_MS = 24 * 60 * 60 * 1000L
+        @Deprecated("Use POSITION_ACTIVE_THRESHOLD_MS")
+        const val INACTIVITY_THRESHOLD_MS = POSITION_ACTIVE_THRESHOLD_MS
 
         val PALETTE_COLORS = intArrayOf(
             0xFF10B981.toInt(), // Emerald
@@ -201,6 +224,9 @@ data class LiveGuest(
             val isInactive = json.optBoolean("isInactive", false)
             val firstSeen = json.optLong("firstSeen", t)
             val viewCount = json.optInt("viewCount", 1).coerceAtLeast(1)
+            val lastPolled = if (json.has("lastPolled") && !json.isNull("lastPolled")) {
+                json.optLong("lastPolled", -1L).takeIf { it > 0L }
+            } else null
 
             return LiveGuest(
                 id = id,
@@ -212,7 +238,8 @@ data class LiveGuest(
                 colorIndex = colorIndex,
                 rawIsInactive = isInactive,
                 firstSeen = firstSeen,
-                viewCount = viewCount
+                viewCount = viewCount,
+                lastPolled = lastPolled
             )
         }
     }

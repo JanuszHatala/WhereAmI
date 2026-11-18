@@ -103,9 +103,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val currentLocationFix: StateFlow<LocationFix?> = _currentLocationFix.asStateFlow()
 
-    // Screen On Preference
+    // Screen On Preference & Idle Dimming Settings
     private val _keepScreenOn = MutableStateFlow(appPrefs.getBoolean("pref_keep_screen_on", false))
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
+
+    private val _screenDimEnabled = MutableStateFlow(ScreenDimController.loadDefaultEnabled(appPrefs))
+    val screenDimEnabled: StateFlow<Boolean> = _screenDimEnabled.asStateFlow()
+
+    private val _screenDimTimeoutSec = MutableStateFlow(ScreenDimController.loadDefaultTimeoutSec(appPrefs))
+    val screenDimTimeoutSec: StateFlow<Int> = _screenDimTimeoutSec.asStateFlow()
+
+    private val _screenDimLevelPercent = MutableStateFlow(ScreenDimController.loadDefaultLevelPercent(appPrefs))
+    val screenDimLevelPercent: StateFlow<Int> = _screenDimLevelPercent.asStateFlow()
+
+    // Per-trip/session temporary dim overrides (reset when trip ends or app restarts)
+    private val _sessionDimOverrideEnabled = MutableStateFlow<Boolean?>(null)
+    val sessionDimOverrideEnabled: StateFlow<Boolean?> = _sessionDimOverrideEnabled.asStateFlow()
+
+    private val _sessionDimOverrideLevelPercent = MutableStateFlow<Int?>(null)
+    val sessionDimOverrideLevelPercent: StateFlow<Int?> = _sessionDimOverrideLevelPercent.asStateFlow()
 
     // Activity Profile (Car, Walking, Cycling)
     val activityProfile: StateFlow<ActivityProfile> = tripManager.activityProfile
@@ -447,6 +463,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else if (lastActiveTripId != null) {
                     val finishedId = lastActiveTripId
                     lastActiveTripId = null
+                    _sessionDimOverrideEnabled.value = null
+                    _sessionDimOverrideLevelPercent.value = null
                     val trips = kotlinx.coroutines.withContext(Dispatchers.IO) { tripManager.getAllTrips() }
                     _savedTrips.value = trips
                     if (finishedId != null && trips.any { t -> t.id == finishedId }) {
@@ -1066,6 +1084,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         appPrefs.edit().putBoolean("pref_keep_screen_on", newState).apply()
     }
 
+    fun setScreenDimEnabled(enabled: Boolean) {
+        _screenDimEnabled.value = enabled
+        appPrefs.edit().putBoolean(ScreenDimController.PREF_DIM_ENABLED, enabled).apply()
+    }
+
+    fun setScreenDimTimeoutSec(seconds: Int) {
+        val clamped = ScreenDimController.clampTimeoutSec(seconds)
+        _screenDimTimeoutSec.value = clamped
+        appPrefs.edit().putInt(ScreenDimController.PREF_DIM_TIMEOUT_SEC, clamped).apply()
+    }
+
+    fun setScreenDimLevelPercent(percent: Int) {
+        val clamped = ScreenDimController.clampLevelPercent(percent)
+        _screenDimLevelPercent.value = clamped
+        appPrefs.edit().putInt(ScreenDimController.PREF_DIM_LEVEL_PERCENT, clamped).apply()
+    }
+
+    fun setSessionDimOverrideEnabled(enabled: Boolean?) {
+        _sessionDimOverrideEnabled.value = enabled
+    }
+
+    fun setSessionDimOverrideLevelPercent(percent: Int?) {
+        _sessionDimOverrideLevelPercent.value = percent?.let { ScreenDimController.clampLevelPercent(it) }
+    }
+
+    fun clearSessionDimOverride() {
+        _sessionDimOverrideEnabled.value = null
+        _sessionDimOverrideLevelPercent.value = null
+    }
+
+    suspend fun fetchExtendedPlaceMetadata(lat: Double, lng: Double): NominatimExtendedMetadata? {
+        return locationManager.fetchExtendedNominatimMetadata(lat, lng, _displayLanguage.value)
+    }
+
     fun setTripMode(mode: TripMode) {
         tripManager.setTripMode(mode)
     }
@@ -1467,6 +1519,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mapPrefs.edit().clear().apply()
 
         _keepScreenOn.value = false
+        _screenDimEnabled.value = ScreenDimController.DEFAULT_DIM_ENABLED
+        _screenDimTimeoutSec.value = ScreenDimController.DEFAULT_DIM_TIMEOUT_SEC
+        _screenDimLevelPercent.value = ScreenDimController.DEFAULT_DIM_LEVEL_PERCENT
+        _sessionDimOverrideEnabled.value = null
+        _sessionDimOverrideLevelPercent.value = null
         _localityCardStyle.value = LocalityCardStyle.NORMAL
         _orientationMode.value = MapOrientationMode.NORTH
         _showHeatMap.value = false

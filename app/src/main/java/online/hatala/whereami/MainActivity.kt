@@ -36,9 +36,11 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,9 +69,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -339,6 +345,11 @@ fun LocationScreen(viewModel: MainViewModel) {
     val currentLatLng by viewModel.currentLatLng.collectAsState()
     val currentLocationFix by viewModel.currentLocationFix.collectAsState()
     val keepScreenOn by viewModel.keepScreenOn.collectAsState()
+    val screenDimEnabled by viewModel.screenDimEnabled.collectAsState()
+    val screenDimTimeoutSec by viewModel.screenDimTimeoutSec.collectAsState()
+    val screenDimLevelPercent by viewModel.screenDimLevelPercent.collectAsState()
+    val sessionDimOverrideEnabled by viewModel.sessionDimOverrideEnabled.collectAsState()
+    val sessionDimOverrideLevelPercent by viewModel.sessionDimOverrideLevelPercent.collectAsState()
     val activeTrip by viewModel.activeTrip.collectAsState()
     val rawTrackPoints by viewModel.rawTrackPoints.collectAsState()
     val tripMode by viewModel.tripMode.collectAsState()
@@ -517,6 +528,11 @@ fun LocationScreen(viewModel: MainViewModel) {
     val liveHistoryListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val showCacheManagerDialog by viewModel.showCacheManagerDialog.collectAsState()
     val requestedDialogTarget by viewModel.requestedDialogTarget.collectAsState()
+    var lastUserInteractionElapsedMs by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+    var isScreenDimmed by remember { mutableStateOf(false) }
+    var showDimOverrideDialog by remember { mutableStateOf(false) }
+    var magnifierState by remember { mutableStateOf(MagnifierState()) }
+    var placeDetailsSnapshot by remember { mutableStateOf<PlaceDetailsSnapshot?>(null) }
 
     val dismissAllDialogs = {
         showTripsSheet = false
@@ -543,6 +559,8 @@ fun LocationScreen(viewModel: MainViewModel) {
         showLiveQrCodeModal = false
         showHeatMapSettingsDialog = false
         showMapSettingsDialog = false
+        showDimOverrideDialog = false
+        placeDetailsSnapshot = null
         activeLocationShareTarget = null
         selectedGuestDetails = null
         returnToLiveViewsOnGuestDismiss = false
@@ -611,8 +629,11 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    DisposableEffect(keepScreenOn, activeTrip, isLiveSharingActive, screenInactivityTimeoutReached) {
-        val shouldKeepScreenOn = keepScreenOn && (activeTrip != null || isLiveSharingActive || !screenInactivityTimeoutReached)
+    val shouldKeepScreenOn = keepScreenOn && (activeTrip != null || isLiveSharingActive || !screenInactivityTimeoutReached)
+    val effectiveDimEnabled = ScreenDimController.isEffectiveDimEnabled(screenDimEnabled, sessionDimOverrideEnabled)
+    val effectiveDimLevelPercent = ScreenDimController.effectiveLevelPercent(screenDimLevelPercent, sessionDimOverrideLevelPercent)
+
+    DisposableEffect(shouldKeepScreenOn) {
         if (shouldKeepScreenOn) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
@@ -623,11 +644,69 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
+    LaunchedEffect(shouldKeepScreenOn, effectiveDimEnabled, screenDimTimeoutSec, lastUserInteractionElapsedMs, isScreenDimmed) {
+        if (!shouldKeepScreenOn || !effectiveDimEnabled) {
+            isScreenDimmed = false
+            return@LaunchedEffect
+        }
+        if (!isScreenDimmed) {
+            val timeoutMs = screenDimTimeoutSec * 1000L
+            val elapsed = android.os.SystemClock.elapsedRealtime() - lastUserInteractionElapsedMs
+            val remaining = timeoutMs - elapsed
+            if (remaining > 0L) {
+                kotlinx.coroutines.delay(remaining)
+            }
+            isScreenDimmed = true
+        }
+    }
+
+    DisposableEffect(shouldKeepScreenOn, isScreenDimmed, effectiveDimEnabled, effectiveDimLevelPercent) {
+        val win = activity?.window
+        if (win != null) {
+            val attrs = win.attributes
+            attrs.screenBrightness = ScreenDimController.resolveWindowBrightness(
+                shouldKeepScreenOn = shouldKeepScreenOn,
+                isDimmed = isScreenDimmed,
+                effectiveDimEnabled = effectiveDimEnabled,
+                effectiveLevelPercent = effectiveDimLevelPercent
+            )
+            win.attributes = attrs
+        }
+        onDispose {
+            val disposeWin = activity?.window
+            if (disposeWin != null) {
+                val attrs = disposeWin.attributes
+                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                disposeWin.attributes = attrs
+            }
+        }
+    }
+
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val primaryPlace = locationData.primaryPlace
     val secondaryPlace = locationData.secondaryPlace
     val hierarchySubtitle = remember(primaryPlace) { LocationManager.formatHierarchy(primaryPlace) }
+
+    val openPlaceDetailsSnapshot: () -> Unit = {
+        val snap = PlaceDetailsSnapshot(
+            capturedAtMs = System.currentTimeMillis(),
+            primaryPlace = primaryPlace,
+            secondaryPlace = secondaryPlace,
+            hierarchySubtitle = hierarchySubtitle,
+            lat = currentLatLng?.first,
+            lng = currentLatLng?.second,
+            altitudeM = displayAltitude ?: locationData.altitude,
+            accuracyM = locationData.accuracy,
+            speedMs = locationData.speedMs,
+            dataFreshness = locationData.dataFreshness,
+            staleDistanceMeters = locationData.staleSinceDistanceMeters,
+            outdoorContext = locationData.outdoorContext,
+            tripRoute = activeTrip?.let { TripRouteSnapshot(it.distanceMeters, it.placesVisited.toList()) }
+        )
+        dismissAllDialogs()
+        placeDetailsSnapshot = snap
+    }
 
     val shareCurrentLocation = remember(currentLatLng, primaryPlace, secondaryPlace) {
         {
@@ -791,7 +870,11 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
     }
 
-    BackHandler(enabled = !showTripsSheet) {
+    BackHandler(enabled = magnifierState.isVisible) {
+        magnifierState = MagnifierState()
+    }
+
+    BackHandler(enabled = !showTripsSheet && !magnifierState.isVisible) {
         val nowElapsed = android.os.SystemClock.elapsedRealtime()
         when (
             MapBackNavigationPolicy.resolveAction(
@@ -863,7 +946,41 @@ fun LocationScreen(viewModel: MainViewModel) {
                 rootScreenWidthPx = it.size.width
                 rootScreenHeightPx = it.size.height
             }
+            .pointerInput(isScreenDimmed, shouldKeepScreenOn, effectiveDimEnabled) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val anyDown = event.changes.any { it.pressed }
+                        if (anyDown) {
+                            lastUserInteractionElapsedMs = android.os.SystemClock.elapsedRealtime()
+                            if (isScreenDimmed) {
+                                // Wake screen on first touch and consume the entire wake gesture
+                                isScreenDimmed = false
+                                event.changes.forEach { it.consume() }
+                                while (true) {
+                                    val followUp = awaitPointerEvent(PointerEventPass.Initial)
+                                    followUp.changes.forEach { it.consume() }
+                                    if (followUp.changes.none { it.pressed }) break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (magnifierState.isActive) {
+                        transformOrigin = TransformOrigin.Center
+                        scaleX = magnifierState.scale
+                        scaleY = magnifierState.scale
+                        translationX = magnifierState.offsetX
+                        translationY = magnifierState.offsetY
+                    }
+                }
+        ) {
         // ── Fullscreen Map Canvas (Both Portrait and Landscape) ──────────────
         OsmMapView(
             latLng = currentLatLng,
@@ -960,6 +1077,10 @@ fun LocationScreen(viewModel: MainViewModel) {
             searchRouteColorHex = searchRouteColorHex,
             searchRouteFitTrigger = searchRouteFitTrigger,
             onVectorTrailsLoadingChange = { isVectorTrailsLoading = it },
+            onActivateMagnifier = {
+                dismissAllDialogs()
+                magnifierState = MagnifierState(phase = MagnifierPhase.AWAITING_TAP)
+            },
             onTrailSelected = { trail ->
                 viewModel.selectSearchResult(
                     SearchResultItem(
@@ -1010,6 +1131,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                                 dismissAllDialogs()
                                 showActiveTripRouteDialog = true
                             },
+                            onShowPlaceDetails = openPlaceDetailsSnapshot,
                             onShowLiveShare = {
                                 dismissAllDialogs()
                                 if (liveSession?.isActive == true) {
@@ -1142,6 +1264,7 @@ fun LocationScreen(viewModel: MainViewModel) {
                         dismissAllDialogs()
                         showActiveTripRouteDialog = true
                     },
+                    onShowPlaceDetails = openPlaceDetailsSnapshot,
                     onShowLiveShare = {
                         dismissAllDialogs()
                         if (liveSession?.isActive == true) {
@@ -1535,6 +1658,10 @@ fun LocationScreen(viewModel: MainViewModel) {
                 keepScreenOn = keepScreenOn,
                 isRecording = activeTrip != null,
                 onToggleKeepScreenOn = { viewModel.toggleKeepScreenOn() },
+                onLongPressKeepScreenOn = {
+                    dismissAllDialogs()
+                    showDimOverrideDialog = true
+                },
                 onToggleTripRecording = {
                     if (activeTrip != null) {
                         showStopTripConfirmDialog = true
@@ -1635,6 +1762,16 @@ fun LocationScreen(viewModel: MainViewModel) {
         }
         }
         LocationScreenMapHost3()
+        }
+        if (magnifierState.isVisible) {
+            MagnifierInteractionOverlay(
+                state = magnifierState,
+                viewportWidthPx = rootScreenWidthPx.toFloat(),
+                viewportHeightPx = rootScreenHeightPx.toFloat(),
+                onUpdateState = { magnifierState = it },
+                onDismiss = { magnifierState = MagnifierState() }
+            )
+        }
     }
 
         // ── 4. Places Passed & Trips History Full-Screen Screen Overlay ────────
@@ -3992,6 +4129,18 @@ fun LocationScreen(viewModel: MainViewModel) {
                         )
                     )
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Screen Dimming (Keep Screen On) Settings
+                ScreenDimSettingsCard(
+                    dimEnabled = screenDimEnabled,
+                    dimTimeoutSec = screenDimTimeoutSec,
+                    dimLevelPercent = screenDimLevelPercent,
+                    onToggleDimEnabled = { viewModel.setScreenDimEnabled(it) },
+                    onSelectTimeoutSec = { viewModel.setScreenDimTimeoutSec(it) },
+                    onChangeLevelPercent = { viewModel.setScreenDimLevelPercent(it) }
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -6547,6 +6696,31 @@ fun LocationScreen(viewModel: MainViewModel) {
     }
     }
     LocationScreenHost10()
+
+    @Composable fun LocationScreenHost10b() {
+        if (showDimOverrideDialog) {
+            DimSessionOverrideDialog(
+                defaultEnabled = screenDimEnabled,
+                defaultLevelPercent = screenDimLevelPercent,
+                overrideEnabled = sessionDimOverrideEnabled,
+                overrideLevelPercent = sessionDimOverrideLevelPercent,
+                hasActiveTrip = activeTrip != null,
+                onSetOverrideEnabled = { viewModel.setSessionDimOverrideEnabled(it) },
+                onSetOverrideLevelPercent = { viewModel.setSessionDimOverrideLevelPercent(it) },
+                onResetOverride = { viewModel.clearSessionDimOverride() },
+                onDismiss = { showDimOverrideDialog = false }
+            )
+        }
+        val activeSnapshot = placeDetailsSnapshot
+        if (activeSnapshot != null) {
+            PlaceDetailsModalSheet(
+                snapshot = activeSnapshot,
+                fetchExtendedMetadata = { lat, lng -> viewModel.fetchExtendedPlaceMetadata(lat, lng) },
+                onDismiss = { placeDetailsSnapshot = null }
+            )
+        }
+    }
+    LocationScreenHost10b()
 
     // ── Live Location Sharing Management Dialog ─────────────────────────────
     @Composable fun LocationScreenHost11() {
@@ -10913,6 +11087,7 @@ private fun LocalityCard(
     hierarchySubtitle: String,
     currentLatLng: Triple<Double, Double, Float?>?,
     onShowActiveTripRoute: () -> Unit,
+    onShowPlaceDetails: () -> Unit = {},
     onShowLiveShare: () -> Unit,
     onOpenSavedPlaces: () -> Unit = {},
     onSetLocalityCardStyle: (LocalityCardStyle) -> Unit,
@@ -11057,13 +11232,12 @@ private fun LocalityCard(
                     allowHouseNumber = allowHouseNum
                 ).orEmpty()
 
-                val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
-                val paceStr = if (speedKmh > 1.0f) {
-                    val min = (60f / speedKmh).toInt()
-                    val sec = ((60f / speedKmh - min) * 60).toInt()
-                    String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
-                } else "- min/km"
+                val movingAvgSpeedKmh = SpeedPaceFormatter.computeMovingAvgSpeedKmh(activeTrip)
+                val compactMetricText = SpeedPaceFormatter.formatSpeedOrPace(
+                    currentSpeedMs = locationData.speedMs,
+                    movingAvgSpeedKmh = movingAvgSpeedKmh,
+                    preferPace = preferPace
+                )
 
                 var profileMenuExpanded by remember { mutableStateOf(false) }
 
@@ -11076,8 +11250,8 @@ private fun LocalityCard(
                     Row(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable(enabled = activeTrip != null) {
-                                onShowActiveTripRoute()
+                            .clickable {
+                                onShowPlaceDetails()
                             },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -11376,25 +11550,27 @@ private fun LocalityCard(
                                     fontSize = 11.sp
                                 )
                             }
-                            val metricText = if (preferPace) paceStr else speedStr
+                            val metricText = compactMetricText
+                            val compactMetricFontSize = if (movingAvgSpeedKmh != null) 10.sp else 11.sp
                             Text(
                                 text = metricText,
-                                fontSize = 11.sp,
+                                fontSize = compactMetricFontSize,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8),
+                                maxLines = 1,
                                 softWrap = false,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .clickable { onToggleSpeedPace() }
-                                    .padding(horizontal = 2.dp),
                                 style = TextStyle(
                                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                                     lineHeightStyle = LineHeightStyle(
                                         alignment = LineHeightStyle.Alignment.Center,
                                         trim = LineHeightStyle.Trim.Both
                                     ),
-                                    lineHeight = 11.sp
-                                )
+                                    lineHeight = compactMetricFontSize
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { onToggleSpeedPace() }
+                                    .padding(horizontal = 2.dp)
                             )
                         }
 
@@ -11712,8 +11888,8 @@ private fun LocalityCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = activeTrip != null) {
-                            onShowActiveTripRoute()
+                        .clickable {
+                            onShowPlaceDetails()
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -11885,13 +12061,12 @@ private fun LocalityCard(
                 }
 
                 // Profile-Aware Speed & Pace Line with Sleek Dropdown Picker
-                val speedKmh = (locationData.speedMs ?: 0f) * 3.6f
-                val speedStr = String.format(Locale.getDefault(), "%.1f km/h", speedKmh)
-                val paceStr = if (speedKmh > 1.0f) {
-                    val min = (60f / speedKmh).toInt()
-                    val sec = ((60f / speedKmh - min) * 60).toInt()
-                    String.format(Locale.getDefault(), "%d:%02d min/km", min, sec)
-                } else "- min/km"
+                val movingAvgSpeedKmhNormal = SpeedPaceFormatter.computeMovingAvgSpeedKmh(activeTrip)
+                val normalMetricText = SpeedPaceFormatter.formatSpeedOrPace(
+                    currentSpeedMs = locationData.speedMs,
+                    movingAvgSpeedKmh = movingAvgSpeedKmhNormal,
+                    preferPace = preferPace
+                )
 
                 var profileMenuExpanded by remember { mutableStateOf(false) }
 
@@ -12021,7 +12196,7 @@ private fun LocalityCard(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Metric display: tap to toggle Speed <-> Pace (remembered per profile), single value only
+                    // Metric display: tap to toggle Speed <-> Pace (remembered per profile), current + avg while recording
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -12029,10 +12204,10 @@ private fun LocalityCard(
                             .clickable { onToggleSpeedPace() }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        val primaryMetric = if (preferPace) paceStr else speedStr
+                        val normalMetricFontSize = if (movingAvgSpeedKmhNormal != null) 13.sp else 15.sp
                         Text(
-                            text = primaryMetric,
-                            fontSize = 15.sp,
+                            text = normalMetricText,
+                            fontSize = normalMetricFontSize,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF38BDF8),
                             maxLines = 1,
@@ -12043,7 +12218,7 @@ private fun LocalityCard(
                                     alignment = LineHeightStyle.Alignment.Center,
                                     trim = LineHeightStyle.Trim.Both
                                 ),
-                                lineHeight = 15.sp
+                                lineHeight = normalMetricFontSize
                             )
                         )
                     }
@@ -12115,11 +12290,13 @@ private fun LocalityCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MainBottomControlsCard(
     keepScreenOn: Boolean,
     isRecording: Boolean,
     onToggleKeepScreenOn: () -> Unit,
+    onLongPressKeepScreenOn: () -> Unit = {},
     onToggleTripRecording: () -> Unit,
     onShowTripsSheet: () -> Unit,
     onShowSearch: () -> Unit,
@@ -12152,13 +12329,16 @@ private fun MainBottomControlsCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. Keep Screen On Toggle Button
+            // 1. Keep Screen On Toggle Button (tap: toggle, long-press: session dim override)
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
                     .background(if (keepScreenOn) Color(0xFF0284C7) else Color(0xFF1E293B))
-                    .clickable { onToggleKeepScreenOn() },
+                    .combinedClickable(
+                        onClick = { onToggleKeepScreenOn() },
+                        onLongClick = { onLongPressKeepScreenOn() }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

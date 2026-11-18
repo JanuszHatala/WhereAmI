@@ -456,7 +456,7 @@ function createLiveSessionRepository(pool) {
 
   async function getGuests(sessionId) {
     const res = await pool.query(
-      'SELECT guest_id, name, color_index, first_seen, created_at, view_count, lat, lng, acc, last_seen FROM live_guests WHERE session_id = $1',
+      'SELECT guest_id, name, color_index, first_seen, created_at, view_count, lat, lng, acc, last_seen, last_polled FROM live_guests WHERE session_id = $1',
       [sessionId]
     );
     const map = {};
@@ -472,6 +472,7 @@ function createLiveSessionRepository(pool) {
         lng: r.lng,
         acc: r.acc,
         t: r.last_seen ? new Date(r.last_seen).getTime() : undefined,
+        lastPolled: r.last_polled ? new Date(r.last_polled).getTime() : undefined,
       };
     }
     return map;
@@ -517,8 +518,8 @@ function createLiveSessionRepository(pool) {
         colorIndex = identity.colorIndex;
 
         await client.query(
-          `INSERT INTO live_guests (session_id, guest_id, name, color_index, first_seen, created_at, view_count, lat, lng, acc, last_seen)
-           VALUES ($1, $2, $3, $4, $5, $5, 1, $6, $7, $8, $5)`,
+          `INSERT INTO live_guests (session_id, guest_id, name, color_index, first_seen, created_at, view_count, lat, lng, acc, last_seen, last_polled)
+           VALUES ($1, $2, $3, $4, $5, $5, 1, $6, $7, $8, $5, $5)`,
           [sessionId, guestId, guestName, colorIndex, now, lat, lng, acc || null]
         );
       } else {
@@ -539,7 +540,7 @@ function createLiveSessionRepository(pool) {
 
         await client.query(
           `UPDATE live_guests
-           SET name = $3, color_index = $4, lat = $5, lng = $6, acc = $7, last_seen = $8
+           SET name = $3, color_index = $4, lat = $5, lng = $6, acc = $7, last_seen = $8, last_polled = $8
            WHERE session_id = $1 AND guest_id = $2`,
           [sessionId, guestId, guestName, colorIndex, lat, lng, acc || null, now]
         );
@@ -556,6 +557,7 @@ function createLiveSessionRepository(pool) {
           lng,
           acc: typeof acc === 'number' ? acc : null,
           t: now.getTime(),
+          lastPolled: now.getTime(),
           firstSeen: existing && existing.first_seen ? new Date(existing.first_seen).getTime() : now.getTime(),
           viewCount: existing ? existing.view_count : 1,
         }
@@ -599,8 +601,8 @@ function createLiveSessionRepository(pool) {
         gName = identity.name;
         gColor = identity.colorIndex;
         await client.query(
-          `INSERT INTO live_guests (session_id, guest_id, name, color_index, first_seen, created_at, view_count)
-           VALUES ($1, $2, $3, $4, now(), now(), 1)`,
+          `INSERT INTO live_guests (session_id, guest_id, name, color_index, first_seen, created_at, view_count, last_polled)
+           VALUES ($1, $2, $3, $4, now(), now(), 1, now())`,
           [sessionId, cleanGuestId, gName, gColor]
         );
       } else {
@@ -608,7 +610,12 @@ function createLiveSessionRepository(pool) {
         gColor = typeof existing.color_index === 'number' ? existing.color_index : 0;
         if (isPv) {
           await client.query(
-            'UPDATE live_guests SET view_count = view_count + 1 WHERE session_id = $1 AND guest_id = $2',
+            'UPDATE live_guests SET view_count = view_count + 1, last_polled = now() WHERE session_id = $1 AND guest_id = $2',
+            [sessionId, cleanGuestId]
+          );
+        } else {
+          await client.query(
+            'UPDATE live_guests SET last_polled = now() WHERE session_id = $1 AND guest_id = $2',
             [sessionId, cleanGuestId]
           );
         }

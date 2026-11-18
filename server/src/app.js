@@ -3,6 +3,42 @@ const cors = require('cors');
 const path = require('path');
 const { resolveGuestDisplayName } = require('../guestNaming');
 
+const GUEST_POLL_ACTIVE_WINDOW_MS = 3 * 60_000;
+const GUEST_POSITION_ACTIVE_WINDOW_MS = 15 * 60_000;
+
+function isGuestActiveAt(guest, nowMs = Date.now()) {
+  if (!guest) return false;
+  const pollFresh = typeof guest.lastPolled === 'number' && (nowMs - guest.lastPolled) <= GUEST_POLL_ACTIVE_WINDOW_MS;
+  const posFresh = typeof guest.t === 'number' && (nowMs - guest.t) <= GUEST_POSITION_ACTIVE_WINDOW_MS;
+  return pollFresh || posFresh;
+}
+
+function serializeGuestsList(guestsMap, { requireCoords = false, nowMs = Date.now() } = {}) {
+  if (!guestsMap) return [];
+  const guestsList = [];
+  for (const [gId, g] of Object.entries(guestsMap)) {
+    if (!g) continue;
+    const hasCoords = typeof g.lat === 'number' && typeof g.lng === 'number';
+    if (requireCoords && !hasCoords) continue;
+    const isInactive = !isGuestActiveAt(g, nowMs);
+    const displayName = resolveGuestDisplayName(g, guestsMap, gId);
+    guestsList.push({
+      id: g.id || gId,
+      name: displayName,
+      lat: hasCoords ? g.lat : null,
+      lng: hasCoords ? g.lng : null,
+      acc: typeof g.acc === 'number' ? g.acc : null,
+      t: g.t || g.createdAt || nowMs,
+      lastPolled: typeof g.lastPolled === 'number' ? g.lastPolled : null,
+      colorIndex: typeof g.colorIndex === 'number' ? g.colorIndex : 0,
+      isInactive: isInactive,
+      firstSeen: g.firstSeen || g.createdAt || g.t,
+      viewCount: g.viewCount || 1,
+    });
+  }
+  return guestsList;
+}
+
 function createApp({ repo, pool }) {
   const app = express();
 
@@ -155,29 +191,10 @@ function createApp({ repo, pool }) {
       if (result.expired) return res.status(410).json({ error: 'Session expired' });
 
       const session = result.session;
-      const inactivityThresholdMs = 5 * 60_000;
       const guestsMap = await repo.getGuests(id);
-      const guestsList = [];
-
-      if (session.followGuests !== false && guestsMap) {
-        for (const [gId, g] of Object.entries(guestsMap)) {
-          if (!g || typeof g.lat !== 'number' || typeof g.lng !== 'number') continue;
-          const isInactive = (Date.now() - (g.t || 0)) > inactivityThresholdMs;
-          const displayName = resolveGuestDisplayName(g, guestsMap, gId);
-          guestsList.push({
-            id: g.id || gId,
-            name: displayName,
-            lat: g.lat,
-            lng: g.lng,
-            acc: g.acc,
-            t: g.t,
-            colorIndex: typeof g.colorIndex === 'number' ? g.colorIndex : 0,
-            isInactive: isInactive,
-            firstSeen: g.firstSeen || g.createdAt || g.t,
-            viewCount: g.viewCount || 1,
-          });
-        }
-      }
+      const guestsList = session.followGuests !== false
+        ? serializeGuestsList(guestsMap, { requireCoords: true })
+        : [];
 
       const viewLog = await repo.getViewLog(id, 200);
 
@@ -314,26 +331,7 @@ function createApp({ repo, pool }) {
       if (!session) return res.status(404).json({ error: 'Session not found' });
 
       const guestsMap = await repo.getGuests(targetId);
-      const inactivityThresholdMs = 5 * 60_000;
-      const guestsList = [];
-
-      for (const [gId, g] of Object.entries(guestsMap)) {
-        if (!g) continue;
-        const isInactive = (Date.now() - (g.t || g.createdAt || 0)) > inactivityThresholdMs;
-        const displayName = resolveGuestDisplayName(g, guestsMap, gId);
-        guestsList.push({
-          id: g.id || gId,
-          name: displayName,
-          lat: typeof g.lat === 'number' ? g.lat : null,
-          lng: typeof g.lng === 'number' ? g.lng : null,
-          acc: typeof g.acc === 'number' ? g.acc : null,
-          t: g.t || g.createdAt || Date.now(),
-          colorIndex: typeof g.colorIndex === 'number' ? g.colorIndex : 0,
-          isInactive: isInactive,
-          firstSeen: g.firstSeen || g.createdAt || g.t,
-          viewCount: g.viewCount || 1,
-        });
-      }
+      const guestsList = serializeGuestsList(guestsMap, { requireCoords: false });
 
       const viewLog = await repo.getViewLog(targetId, 200);
 
@@ -409,4 +407,10 @@ function createApp({ repo, pool }) {
   return app;
 }
 
-module.exports = { createApp };
+module.exports = {
+  createApp,
+  isGuestActiveAt,
+  serializeGuestsList,
+  GUEST_POLL_ACTIVE_WINDOW_MS,
+  GUEST_POSITION_ACTIVE_WINDOW_MS,
+};

@@ -129,4 +129,12 @@ describe('LiveSessionRepository Integration Tests', () => {
     const uniqueNames = new Set(names);
     assert.equal(uniqueNames.size, 3);
   });
+
+  it('updates lastPolled when recording viewer polls', async () => {
+    await repo.upsertSession('sess-poll', { title: 'Poll Test' });
+    await repo.recordViewEvent('sess-poll', 'viewer-1', 'Mozilla/5.0', true);
+    const guests = await repo.getGuests('sess-poll');
+    assert.ok(guests['viewer-1']);
+    assert.equal(typeof guests['viewer-1'].lastPolled, 'number');
+  });
 });

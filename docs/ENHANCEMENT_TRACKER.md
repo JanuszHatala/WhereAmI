@@ -62,37 +62,10 @@ It is updated after every phase to maintain full traceability across agent invoc
 | **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 4 | 4 | 0 | 0 |
 | **Round 78** | Indoor Stationary Course-Up Map Auto-Rotation Gating & Multipath Stillness Anchor (2026-10-18) | 4 | 4 | 0 | 0 |
 | **Round 79** | Walking Smooth Tracking Repair, Screen-Off Polyline Sync & Monotonic Catmull-Rom Tangents (2026-10-18) | 5 | 5 | 0 | 0 |
-| **Round 68** | Map Pin Altitude Badge, Reactive Map Setting Binding, Elevation Data Progress Notification & Saved Places Elevation (2026-10-14) | 5 | 5 | 0 | 0 |
-| **Round 69** | Open-Meteo Multi-Provider DEM & SQLite Cache, Saved Places Callout Badge, Map Font Scaling, Altitude Source Mode & Dashed GPS Fallback (2026-10-15) | 6 | 6 | 0 | 0 |
-| **Round 70** | Smooth Tracking & Map Rotation Repair: 250ms Interpolation Ease-Out, Shortest-Arc Rotation Slew, Low-Speed Polyline Resolution & Stationary Gate Disarm (2026-10-15) | 5 | 5 | 0 | 0 |
-| **Round 71** | Saved Place Altitude Editing, DEM Fetching, Custom Source Flag, Places-First Batch Correction & Single-Line Dialog Buttons (2026-10-15) | 4 | 4 | 0 | 0 |
-| **Round 72** | OpenTopoData Multi-Provider Failover, 429 Quota Backoff & Immediate Places Refresh (2026-10-15) | 3 | 3 | 0 | 0 |
-| **Round 73** | DEM Coroutine Dispatcher & Main-Thread Exception Fix (2026-10-15) | 2 | 2 | 0 | 0 |
-| **Round 75** | Field Testing (2026-10-16) Sleep/Standby Oscillation Resolution & GNSS Zero-Drain Enforcement | 3 | 3 | 0 | 0 |
-| **Round 76** | Field Testing (2026-10-16) Altitude Speed Gating, Frozen Altitude Fix, Map Pins Dem-Decoupling & Post-Trip DEM Supplementation | 4 | 4 | 0 | 0 |
-| **Round 77** | Continuous Smooth Tracking, Buffered Hermite Spline, Dynamic Polyline Anchoring & Frame-Rate Slerp Map Rotation (2026-10-17) | 5 | 5 | 0 | 0 |
-| **Round 97** | Pin Boundary Containment, Live-Border Mute & Outdoor POI Titles (2026-10-21) | 3 | 3 | 0 | 0 |
-| **Round 114** | Screen-Off GNSS Drain, Heartbeat Loop & Fast-Track Stationary Shutdown Overhaul (2026-10-23) | 9 | 9 | 0 | 0 |
-| **Round 115** | Trip 250 Polyline Chord Lock-Up Fix, Screen-Off Catch-Up Zigzag Elimination & Android Auto 1 Hz Real-Time Speed Updates (2026-10-23) | 4 | 4 | 0 | 0 |
-| **Round 116** | Battery & Modem Optimization, Car Auto-Start Duration, Live Share Resilience & UI Polish (2026-10-25) | 9 | 9 | 0 | 0 |
-| **Round 117** | Overnight Sleep Extension to Morning Alarm & Motion Wake Deduplication (2026-10-26) | 4 | 4 | 0 | 0 |
-| **Round 118** | Overnight Sleep Burst Backoff, Avatar Deconfliction, Street Cache Sanitization, House Numbers & Smooth Tracking Recovery (2026-10-27) | 12 | 12 | 0 | 0 |
-| **Round 119** | Trip Details End Tile Leg Line Elimination, Screen-Adaptive Avatar Spiderfy & Outer Altitude Collision Clearance (2026-10-27) | 3 | 3 | 0 | 0 |
-| **Round 130** | Field Test Stabilization (2026-11-04): Alarm Wake Live Share Recovery, Android Auto Instant Speed, Polyline Corner Fillet Smoothing, Czaniec Multipath Gate, Standby Battery Gating, Guest Avatar Clamping & CursorWindow Summary Projection (v2.0.10) | 8 | 8 | 0 | 0 |
-| **Round 53** | Field Testing (2026-11-05 Trip 305) Stabilization & Guest Sync (v2.1.2) | 5 | 5 | 0 | 0 |
-| **Round 54** | Field Testing (2026-11-06 Trip 306) Sleep Mode GNSS Recovery, Foreground Primacy & Active Trip Invariant (v2.1.3) | 6 | 6 | 0 | 0 |
-| **Round 55** | Android Auto Standby FGS Preservation, On-Map Outdoor Area Badge & DK52 Corridor Hysteresis (2026-11-09 v2.3.2) | 4 | 4 | 0 | 0 |
-| **Round 58** | Global Universality Audit, Resilient Outdoor Context, Clean Map Base Views, Selective Trail Filtering & Kinematic Alignment (2026-11-13 v2.4.0 - v2.4.1) | 9 | 9 | 0 | 0 |
-| **Round 66** | Field Testing UI & Map Polish (2026-11-15 v2.4.10): Stats Frequent Localities Layout, Outdoor Areas LocalityCard Toggle Gating, Multi-Trip High-Contrast Map Overlays Above All Layers & Exact Profile Activity Filter | 5 | 5 | 0 | 0 |
-| **Round 67** | Outdoor Layer Network/Card Gating & Merged Trip Junction Segments (2026-11-15 v2.4.11): Full Outdoor Badge Toggle Sync, Overpass/Nominatim Outdoor Network Gating & Merged/Resumed Sub-Trip Segment Boundaries + Dashed Junction Connectors | 6 | 6 | 0 | 0 |
-| **Round 59** | Zoom-Out Vector Trails, Thickness/Style/Opacity Controls, Persistent Wrapping Outdoor Badges & Pin Context (2026-11-14 v2.4.2) | 6 | 6 | 0 | 0 |
-| **Round 60** | Outdoor Badge Compact Spacing, Wider Dashed Trails & Resilient OSM 0.6/Cache Route Clicks (2026-11-14 v2.4.3) | 4 | 4 | 0 | 0 |
-| **Round 61** | Field Test Round 60 Diagnostics: Stacked Parallel Vector Trails & Overpass Supplement, Per-Source Signal Pill Hysteresis, Geocoder Contention/Gmina Stability, Safe Live-Trip DEM & Batch Missing-DEM UI, Wrapped Badges & Safe Controls Framing (2026-11-15 v2.4.4) | 6 | 6 | 0 | 0 |
-| **Round 62** | Reference Dashed Trail Styling (~3:1 Dash-Gap, BUTT Caps, Side-by-Side 1.38x Parallel Lanes & Multi-Zoom Calibration v2.4.5) | 3 | 3 | 0 | 0 |
-| **Round 63** | Missing Boundaries Fetch Parity, Sibling/Legacy Cache Retention & 429 Cooldown Retry (v2.4.6) | 3 | 3 | 0 | 0 |
-| **Round 64** | Multi-Stage Back Navigation (Overlay -> Center -> Zoom 17.6 -> Exit Toast -> Finish) & Offline Cache DEM Occupied Storage Metric (v2.4.8) | 3 | 3 | 0 | 0 |
+| **Round 68** | Vector Trail Progressive Streaming, Cross-Profile Leak Fix, Road Refs, Border Cache TTL & Unified Settings Spacing (2026-11-17 v2.4.12) | 5 | 5 | 0 | 0 |
+| **Round 69** | Guest Activity Windows, Screen Magnifier, Idle Dimming, Place Details & Moving Average Speed (2026-11-18 v2.5.0) | 5 | 5 | 0 | 0 |
 | **Backlog** | Platform Features Inventory Backlog | 8 | 0 | 0 | 8 |
-| **Total** | | **406** | **398** | **0** | **8** |
+| **Total** | | **411** | **403** | **0** | **8** |
 
 
 ---
@@ -2031,6 +2004,27 @@ User field testing screenshot & trace feedback (`v2.4.11`, `trip339`):
 | **RDN-68-04** | Preserve `A4 (E40)`, `DK8 (E67)`, `DK1 (E75 / E462)` across normalizer, OSRM/OSM coalescing, and `SpatialCacheHelper` startup sanitization/healing. | `RoadNameNormalizer.kt`, `LocationManager.kt`, `SpatialCacheHelper.kt`, `RoadNameNormalizerTest.kt` | Implemented | `testRichMultiRefPreservationA4E40AndDk1E75E462` passes; `GLOB '*[0-9]*'` bug resolved. |
 | **UI-68-05** | Per-profile `Record Outdoor Areas in Trip Route`, Pause button in Stop Trip dialog, scaled `Pause` badges, unified `2/4/12dp` spacing, `Place & Map Names Language` + Native CLDR fix, `LOCAL DEV / ADB ONLY` card, smooth recenter/map animation & main-thread SQLite removal. | `TripManager.kt`, `MainViewModel.kt`, `OsmMapView.kt`, `VectorTrailOverlay.kt`, `MainActivity.kt`, `AppBuildEnv.kt`, `DESIGN_SYSTEM.md`, `StatsOutdoorTripOverlayTest.kt`, `DataAcquisitionAndDemResilienceTest.kt` | Implemented | All unit tests & `replay.sh` pass cleanly. |
 | **VER-68** | Bump to `versionCode = 213`, `versionName = "2.4.12"`. | `app/build.gradle.kts` | Implemented | `testDebugUnitTest` (`737` tests: `736` passed, `0` failed, `1` skipped `FieldReplayTest.replay`), `assembleDebug`, and `replay.sh` pass. |
+
+---
+
+## Round 69 - Guest Activity Windows, Screen Magnifier, Idle Dimming, Place Details & Moving Average Speed (2026-11-18 v2.5.0)
+
+Feature enhancements:
+- **Live Guest Activity Windows & Recency Filter**: Upgraded Live Sharing client and server to track `lastPolled` alongside `lastUpdated`. Active guests are defined by poll freshness (`<= 3 min`) or position freshness (`<= 15 min`). Map rendering and Fit menu target options retain guests active within 24 hours (`<= 24h` recency), filtering out multi-day stale markers while preserving active/recent guest distinctions. Fit button remains accessible with dynamic options (`Trip & Active Guests`, `Me & Active Guests`, `Active Guests`, `Me & Recent Guests (24h)`).
+- **Whole-Screen Magnifier**: Integrated tap-to-zoom whole-screen magnifier overlay (`MagnifierPhase.AWAITING_TAP` -> `MagnifierPhase.ACTIVE`). Scales centered on the tapped pixel (`graphicsLayer`), supports 1-finger pan and 2-finger pinch with edge clamping, provides an unscaled status badge + exit button, and intercepts system back gestures.
+- **Keep-Screen-On Idle Dimming**: Battery and OLED burn-in prevention when `FLAG_KEEP_SCREEN_ON` is active. Configurable timeout (15s–5m) and dimming level (5%–60%) via `ScreenDimController` and Settings sheet. Per-session override dialog accessible via long-press on the Keep Screen On eye button (auto-cleared on trip completion). Initial-pass touch consumption wakes the display without triggering unintended map or button clicks.
+- **Place Details Modal Sheet & On-Demand Nominatim Metadata**: Tapping the locality title on Compact or Normal `LocalityCard` captures a frozen `PlaceDetailsSnapshot` and opens `PlaceDetailsModalSheet` (`skipPartiallyExpanded = true`). Shows full administrative hierarchy, canonical road/street, outdoor features, coordinates in Decimal and DMS with copy/Maps buttons, trip route places, and on-demand Nominatim extended metadata (postcode, ISO codes, TERYT SIMC, Lau/Nuts, OSM ID, Wikidata, Wikipedia, population).
+- **LocalityCard Moving Average Speed & Pace**: Displays active-trip moving average speed (`⌀ X.X km/h` or `⌀ M:SS /km`) alongside current speed/pace, excluding completed and in-progress pauses.
+
+| Item ID | User Request / Description | Target Components / Files | Status | Verification & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **GST-69-01** | Live Guest 3m poll / 15m position active window, 24h recent map filter, and multi-target Fit menu. | `LiveGuest.kt`, `OsmMapView.kt`, `server/src/app.js`, `server/src/db/liveSessionRepository.js`, `LiveGuestTest.kt`, `server/test/guestActivity.test.js` | Implemented | Client `LiveGuestTest` and server mocha test suite (22/22) pass cleanly. |
+| **MAG-69-02** | Whole-screen tap-to-zoom Magnifier overlay with pan/pinch, edge clamping, and back handler. | `ScreenMagnifierController.kt`, `ScreenOverlays.kt`, `MainActivity.kt`, `EnhancementsUnitTest.kt` | Implemented | `MagnifierStateActivatesCenteredOnTapAndClampsEdges` unit test passes. |
+| **DIM-69-03** | Idle screen dimming with touch wake swallow, settings preferences, and session override dialog. | `ScreenDimController.kt`, `ScreenOverlays.kt`, `MainViewModel.kt`, `MainActivity.kt`, `EnhancementsUnitTest.kt` | Implemented | `ScreenDimControllerResolvesOverridesAndWindowBrightness` unit test passes. |
+| **PLC-69-04** | Clickable locality name opening Place Details Modal Sheet with snapshot and Nominatim metadata. | `ExtendedPlaceDetails.kt`, `LocationManager.kt`, `MainViewModel.kt`, `PlaceDetailsSheet.kt`, `MainActivity.kt`, `EnhancementsUnitTest.kt` | Implemented | `NominatimExtendedMetadata` and `CoordinateFormatHelper` unit tests pass; build verified. |
+| **SPD-69-05** | Moving average speed & pace computation excluding pauses and LocalityCard display. | `SpeedPaceFormatter.kt`, `MainActivity.kt`, `EnhancementsUnitTest.kt` | Implemented | `SpeedPaceFormatterComputesMovingAverageExcludingPausesAndFormatsMetrics` unit test passes. |
+| **VER-69** | Bump to `versionCode = 214`, `versionName = "2.5.0"`. | `app/build.gradle.kts` | Implemented | Pre-release gates `./gradlew testDebugUnitTest` and `./gradlew assembleDebug` pass. |
+
 
 
 
